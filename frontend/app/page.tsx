@@ -29,10 +29,10 @@ const services = [
     icon: Package,
     title: "Atacado",
     badge: "Sem pedido mínimo",
-    desc: "Compre do jeito que precisar — 1 peça ou 1.000. Sem quantidade mínima, sem burocracia. Preço de atacado para todo lojista.",
+    desc: "Direto da fábrica para você. Preço justo, produção própria e qualidade garantida em cada peça — para lojistas que levam o negócio a sério.",
     items: [
-      "Sem quantidade mínima de peças",
-      "Preço de atacado direto da fábrica",
+      "Preço direto da fábrica, sem intermediários",
+      "Produção própria com qualidade garantida",
       "Variedade de modelos, tamanhos e cores",
       "Produção sob encomenda disponível",
     ],
@@ -115,28 +115,12 @@ export default async function LandingPage() {
                 <span className="text-[#4361EE]">Confecções</span>
               </h1>
 
-              <p className="text-white/60 text-lg lg:text-xl font-light mb-3 max-w-md mx-auto lg:mx-0">
+              <p className="text-white/60 text-lg lg:text-xl font-light mb-4 max-w-md mx-auto lg:mx-0">
                 Atacado · Dropshipping
               </p>
-              <p className="text-white/40 text-base mb-8 max-w-sm mx-auto lg:mx-0 leading-relaxed">
-                Compre quanto precisar, do 1 ao 1.000. Sem pedido mínimo.
+              <p className="text-white/75 text-lg lg:text-xl mb-10 max-w-md mx-auto lg:mx-0 leading-relaxed font-medium">
+                Compre sem pedido mínimo, nosso atendimento é o mais rápido da região!
               </p>
-
-              {/* Speed highlights */}
-              <div className="flex flex-wrap gap-2 justify-center lg:justify-start mb-10">
-                {[
-                  "Resposta em minutos",
-                  "Entrega ágil",
-                  "Sem burocracia",
-                ].map((tag) => (
-                  <span
-                    key={tag}
-                    className="text-xs font-semibold bg-white/8 border border-white/12 text-white/70 px-3 py-1.5 rounded-full"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
                 <a
