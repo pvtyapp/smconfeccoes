@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+__pycache__/
+*.pyc
+.venv/
+dist/
+.next/
+.vercel/
+.railway/
