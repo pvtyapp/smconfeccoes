@@ -23,9 +23,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "name e file são obrigatórios" }, { status: 400 })
     }
 
-    const blob = await put(`catalog/${Date.now()}-${file.name}`, file, {
-      access: "public",
-    })
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json(
+        { error: "BLOB_READ_WRITE_TOKEN não configurado. Configure em Vercel Dashboard > Storage > Blob." },
+        { status: 500 }
+      )
+    }
+
+    const blob = await put(`catalog/${Date.now()}-${file.name}`, file, { access: "public" })
 
     const { rows } = await pool.query(
       "INSERT INTO catalog_products (name, image_url) VALUES ($1, $2) RETURNING id, name, image_url, display_order",
@@ -34,7 +39,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json(rows[0], { status: 201 })
   } catch (err) {
-    console.error("POST /api/catalog:", err)
-    return NextResponse.json({ error: "Erro interno" }, { status: 500 })
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error("POST /api/catalog:", msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

@@ -16,9 +16,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [router])
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-[#F4F6FB] overflow-hidden" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <Topbar />
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>

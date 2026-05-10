@@ -1,136 +1,165 @@
 "use client"
 
-import { storageGet } from "@/lib/storage"
-import { MOCK_VARIANTS, MOCK_STOCK_MOVEMENTS, MOCK_OPERATIONAL_COSTS } from "@/lib/mock-data"
-import type { ProductVariant, StockMovement, OperationalCost } from "@/lib/types"
-import { calcInventoryMetrics, calcMonthlyOperationalCost, formatCurrency } from "@/lib/calculations"
-
-function getVariants(): ProductVariant[] { return storageGet<ProductVariant[]>("variants") ?? MOCK_VARIANTS }
-function getMovements(): StockMovement[] { return storageGet<StockMovement[]>("movements") ?? MOCK_STOCK_MOVEMENTS }
-function getCosts(): OperationalCost[] { return storageGet<OperationalCost[]>("opcosts") ?? MOCK_OPERATIONAL_COSTS }
+import { useEffect, useState } from "react"
+import { calcInventoryMetrics, calcMonthlyOperationalCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
+import type { OperationalCost } from "@/lib/types"
 
 export default function RelatoriosPage() {
-  const variants = getVariants()
-  const movements = getMovements()
-  const costs = getCosts()
-  const opCost = calcMonthlyOperationalCost(costs)
-  const metrics = calcInventoryMetrics(variants, movements, opCost)
+  const [balance, setBalance] = useState<BalanceRow[]>([])
+  const [costs, setCosts] = useState<OperationalCost[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const byGiro = [...metrics].sort((a, b) => b.salesLast30Days - a.salesLast30Days)
-  const byMargin = [...metrics].sort((a, b) => b.unitProfit - a.unitProfit)
-  const critical = metrics.filter((m) => m.status === "urgent" || m.status === "attention")
-  const stopped = metrics.filter((m) => m.status === "stopped" || m.status === "excess")
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/stock/balance").then((r) => r.json()),
+      fetch("/api/operational-costs").then((r) => r.json()),
+    ]).then(([bal, cost]) => {
+      setBalance(Array.isArray(bal) ? bal : [])
+      setCosts(Array.isArray(cost) ? cost : [])
+    }).finally(() => setLoading(false))
+  }, [])
+
+  const opCost  = calcMonthlyOperationalCost(costs)
+  const metrics = calcInventoryMetrics(balance, opCost)
+
+  const byProduct = Object.values(
+    balance.reduce((acc, b) => {
+      const key = b.productName
+      if (!acc[key]) acc[key] = { name: key, variants: 0, totalStock: 0, salesLast30Days: 0 }
+      acc[key].variants++
+      acc[key].totalStock += b.currentStock
+      acc[key].salesLast30Days += b.salesLast30Days
+      return acc
+    }, {} as Record<string, { name: string; variants: number; totalStock: number; salesLast30Days: number }>)
+  ).sort((a, b) => b.salesLast30Days - a.salesLast30Days)
+
+  const lowStock = metrics
+    .filter((m) => m.status === "urgent" || m.status === "attention")
+    .sort((a, b) => (a.stockDaysRemaining ?? 999) - (b.stockDaysRemaining ?? 999))
+
+  const stopped = metrics.filter((m) => m.status === "stopped")
+
+  const marginData = [...metrics]
+    .sort((a, b) => b.unitProfit - a.unitProfit)
+    .slice(0, 10)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-7 h-7 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  function Table({ title, headers, rows }: { title: string; headers: string[]; rows: (string | number)[][] }) {
+    return (
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
+          <h2 className="text-sm font-bold text-[#0F1E3C]">{title}</h2>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[#0F1E3C]/5">
+              {headers.map((h) => (
+                <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#0F1E3C]/4">
+            {rows.length === 0 ? (
+              <tr><td colSpan={headers.length} className="py-8 text-center text-sm text-[#0F1E3C]/30">Sem dados</td></tr>
+            ) : rows.map((row, i) => (
+              <tr key={i} className="hover:bg-[#F4F6FB] transition-colors">
+                {row.map((cell, j) => (
+                  <td key={j} className="px-5 py-2.5 text-[#0F1E3C]/70">{cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Relatórios</h1>
-        <p className="text-sm text-gray-500">Indicadores e análise de desempenho</p>
+        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Relatórios</h1>
+        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Visão consolidada de desempenho e estoque</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-700">Maior giro (30 dias)</h2>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-              <tr>
-                <th className="text-left px-5 py-3">Variação</th>
-                <th className="text-left px-5 py-3">Vendas 30d</th>
-                <th className="text-left px-5 py-3">Margem</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {byGiro.map((m) => (
-                <tr key={m.variantId} className="hover:bg-gray-50">
-                  <td className="px-5 py-2.5 font-medium text-gray-800">{m.productName} {m.color} {m.size}</td>
-                  <td className="px-5 py-2.5 font-semibold text-blue-700">{m.salesLast30Days}</td>
-                  <td className="px-5 py-2.5 text-green-700">{formatCurrency(m.unitProfit)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <Table
+        title="Produtos mais vendidos — últimos 30 dias"
+        headers={["Produto", "Variações", "Estoque total", "Vendas 30d"]}
+        rows={byProduct.map((p) => [p.name, p.variants, p.totalStock, p.salesLast30Days])}
+      />
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-700">Maior margem por peça</h2>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-              <tr>
-                <th className="text-left px-5 py-3">Variação</th>
-                <th className="text-left px-5 py-3">Lucro/peça</th>
-                <th className="text-left px-5 py-3">Custo médio</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {byMargin.map((m) => {
-                const v = variants.find((x) => x.id === m.variantId)
-                return (
-                  <tr key={m.variantId} className="hover:bg-gray-50">
-                    <td className="px-5 py-2.5 font-medium text-gray-800">{m.productName} {m.color} {m.size}</td>
-                    <td className="px-5 py-2.5 font-semibold text-green-700">{formatCurrency(m.unitProfit)}</td>
-                    <td className="px-5 py-2.5 text-gray-500">{v ? formatCurrency(v.averageCost) : "—"}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      <Table
+        title="Estoque baixo — ação necessária"
+        headers={["Variação", "SKU", "Estoque", "Dias rest."]}
+        rows={lowStock.map((m) => [
+          `${m.productName} ${m.color} ${m.size}`,
+          m.sku,
+          m.currentStock,
+          m.stockDaysRemaining?.toFixed(0) ?? "—",
+        ])}
+      />
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-700">Estoque baixo / urgente</h2>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-              <tr>
-                <th className="text-left px-5 py-3">Variação</th>
-                <th className="text-left px-5 py-3">Estoque</th>
-                <th className="text-left px-5 py-3">Dias rest.</th>
-                <th className="text-left px-5 py-3">Produzir</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {critical.length === 0 && <tr><td colSpan={4} className="px-5 py-4 text-center text-gray-400">Nenhum crítico</td></tr>}
-              {critical.map((m) => (
-                <tr key={m.variantId} className="hover:bg-gray-50">
-                  <td className="px-5 py-2.5 font-medium text-gray-800">{m.productName} {m.color} {m.size}</td>
-                  <td className="px-5 py-2.5 text-red-700 font-semibold">{m.currentStock}</td>
-                  <td className="px-5 py-2.5 text-gray-600">{m.stockDaysRemaining?.toFixed(0) ?? "—"}</td>
-                  <td className="px-5 py-2.5 text-blue-700 font-bold">+{m.suggestedProduction}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <Table
+        title="Estoque parado"
+        headers={["Variação", "SKU", "Estoque", "Lucro/un."]}
+        rows={stopped.map((m) => [
+          `${m.productName} ${m.color} ${m.size}`,
+          m.sku,
+          m.currentStock,
+          formatCurrency(m.unitProfit),
+        ])}
+      />
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-700">Estoque parado / excesso</h2>
+      <Table
+        title="Margem por variação"
+        headers={["Variação", "Preço venda", "Custo médio", "Lucro/un.", "Margem"]}
+        rows={marginData.map((m) => {
+          const bal = balance.find((b) => b.variantId === m.variantId)
+          const price  = bal ? Number(bal.salePrice) : 0
+          const cost   = bal ? Number(bal.averageCost) : 0
+          const margin = price > 0 ? ((price - cost) / price * 100).toFixed(1) + "%" : "—"
+          return [
+            `${m.productName} ${m.color} ${m.size}`,
+            formatCurrency(price),
+            formatCurrency(cost),
+            formatCurrency(m.unitProfit),
+            margin,
+          ]
+        })}
+      />
+
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
+        <h2 className="text-sm font-bold text-[#0F1E3C] mb-4">Custo operacional por categoria</h2>
+        {costs.filter((c) => c.active).length === 0 ? (
+          <p className="text-sm text-[#0F1E3C]/30 text-center py-4">Nenhum custo cadastrado</p>
+        ) : (
+          <div className="space-y-2">
+            {costs.filter((c) => c.active).map((c) => {
+              const pct = opCost > 0 ? (Number(c.monthlyValue) / opCost * 100) : 0
+              return (
+                <div key={c.id}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-[#0F1E3C]/70">{c.name}</span>
+                    <span className="font-semibold text-[#0F1E3C]">{formatCurrency(Number(c.monthlyValue))}</span>
+                  </div>
+                  <div className="h-1.5 bg-[#F4F6FB] rounded-full overflow-hidden">
+                    <div className="h-full bg-[#4361EE] rounded-full" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              )
+            })}
+            <div className="flex justify-between text-sm font-black pt-2 border-t border-[#0F1E3C]/6">
+              <span className="text-[#0F1E3C]">Total</span>
+              <span className="text-[#4361EE]">{formatCurrency(opCost)}</span>
+            </div>
           </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-              <tr>
-                <th className="text-left px-5 py-3">Variação</th>
-                <th className="text-left px-5 py-3">Estoque</th>
-                <th className="text-left px-5 py-3">Vendas 30d</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {stopped.length === 0 && <tr><td colSpan={3} className="px-5 py-4 text-center text-gray-400">Nenhum parado</td></tr>}
-              {stopped.map((m) => (
-                <tr key={m.variantId} className="hover:bg-gray-50">
-                  <td className="px-5 py-2.5 font-medium text-gray-800">{m.productName} {m.color} {m.size}</td>
-                  <td className="px-5 py-2.5 text-gray-600">{m.currentStock}</td>
-                  <td className="px-5 py-2.5 text-purple-700">{m.salesLast30Days}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        )}
       </div>
     </div>
   )

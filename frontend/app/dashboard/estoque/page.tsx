@@ -1,170 +1,200 @@
 "use client"
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { storageGet, storageSet } from "@/lib/storage"
-import { MOCK_VARIANTS, MOCK_STOCK_MOVEMENTS } from "@/lib/mock-data"
-import type { StockMovement, ProductVariant } from "@/lib/types"
-import { calcCurrentStock, formatCurrency } from "@/lib/calculations"
+import { useEffect, useState } from "react"
+import { Loader2 } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
+import type { BalanceRow } from "@/lib/calculations"
 
-function getMovements(): StockMovement[] { return storageGet<StockMovement[]>("movements") ?? MOCK_STOCK_MOVEMENTS }
-function getVariants(): ProductVariant[] { return storageGet<ProductVariant[]>("variants") ?? MOCK_VARIANTS }
+type Movement = {
+  id: string; variantId: string; productName: string; color: string; size: string
+  type: "in" | "out"; quantity: number; reason: string; createdAt: string
+}
 
-const ENTRY_REASONS = ["entrada_manual", "producao", "devolucao", "ajuste_positivo"]
-const EXIT_REASONS = ["saida_manual", "venda_manual", "perda", "defeito", "ajuste_negativo"]
+const ENTRY_REASONS = ["producao", "devolucao", "entrada_manual", "ajuste_positivo"]
+const EXIT_REASONS  = ["venda_manual", "saida_manual", "perda", "defeito", "ajuste_negativo"]
+const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
+
+const reasonLabel: Record<string, string> = {
+  producao: "Produção", devolucao: "Devolução", entrada_manual: "Entrada manual",
+  ajuste_positivo: "Ajuste +", venda_manual: "Venda manual", saida_manual: "Saída manual",
+  perda: "Perda", defeito: "Defeito", ajuste_negativo: "Ajuste −",
+}
 
 export default function EstoquePage() {
-  const [movements, setMovements] = useState<StockMovement[]>(getMovements)
-  const variants = getVariants()
+  const [balance, setBalance] = useState<BalanceRow[]>([])
+  const [movements, setMovements] = useState<Movement[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ variantId: "", type: "in" as "in" | "out", quantity: "", reason: "", notes: "" })
+  const [error, setError] = useState("")
 
-  function saveMovements(list: StockMovement[]) { setMovements(list); storageSet("movements", list) }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const novo: StockMovement = {
-      id: `sm${Date.now()}`,
-      variantId: form.variantId,
-      type: form.type,
-      quantity: Number(form.quantity),
-      reason: form.reason,
-      channel: "manual",
-      notes: form.notes,
-      createdAt: new Date().toISOString().split("T")[0],
+  async function load() {
+    setLoading(true)
+    try {
+      const [bRes, mRes] = await Promise.all([fetch("/api/stock/balance"), fetch("/api/stock/movements")])
+      if (bRes.ok) setBalance(await bRes.json())
+      if (mRes.ok) setMovements(await mRes.json())
+    } finally {
+      setLoading(false)
     }
-    saveMovements([...movements, novo])
-    setForm({ variantId: "", type: "in", quantity: "", reason: "", notes: "" })
   }
 
-  const today = new Date().toISOString().split("T")[0]
-  const thisMonth = today.slice(0, 7)
-  const entriesMonth = movements.filter((m) => m.type === "in" && m.createdAt.startsWith(thisMonth)).reduce((a, m) => a + m.quantity, 0)
-  const exitsMonth = movements.filter((m) => m.type === "out" && m.createdAt.startsWith(thisMonth)).reduce((a, m) => a + m.quantity, 0)
-  const totalStock = variants.reduce((a, v) => a + calcCurrentStock(v.id, movements), 0)
-  const critical = variants.filter((v) => calcCurrentStock(v.id, movements) <= v.minStock).length
+  useEffect(() => { load() }, [])
 
-  const reasons = form.type === "in" ? ENTRY_REASONS : EXIT_REASONS
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    setError("")
+    try {
+      const res = await fetch("/api/stock/movements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantId: form.variantId, type: form.type, quantity: Number(form.quantity), reason: form.reason, notes: form.notes || null }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
+      setForm({ variantId: "", type: "in", quantity: "", reason: "", notes: "" })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao lançar")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const totalStock  = balance.reduce((a, b) => a + b.currentStock, 0)
+  const critical    = balance.filter((b) => b.currentStock <= b.minStock).length
+  const now         = new Date()
+  const thisMonth   = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+  const entMonth    = movements.filter((m) => m.type === "in"  && m.createdAt.startsWith(thisMonth)).reduce((a, m) => a + m.quantity, 0)
+  const outMonth    = movements.filter((m) => m.type === "out" && m.createdAt.startsWith(thisMonth)).reduce((a, m) => a + m.quantity, 0)
+  const reasons     = form.type === "in" ? ENTRY_REASONS : EXIT_REASONS
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Estoque</h1>
-        <p className="text-sm text-gray-500">Entrada e saída manual de peças</p>
+        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Estoque</h1>
+        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Entrada e saída manual — histórico completo</p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title="Estoque total" value={totalStock + " peças"} />
-        <MetricCard title="Entradas no mês" value={entriesMonth} color="green" />
-        <MetricCard title="Saídas no mês" value={exitsMonth} color="yellow" />
-        <MetricCard title="Estoque crítico" value={critical} color={critical > 0 ? "red" : "default"} />
+        <MetricCard title="Estoque total"    value={`${totalStock} peças`} />
+        <MetricCard title="Entradas no mês"  value={entMonth} color="green" />
+        <MetricCard title="Saídas no mês"    value={outMonth} color="yellow" />
+        <MetricCard title="Est. crítico"     value={critical} color={critical > 0 ? "red" : "default"} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Lançar movimentação</h2>
+        {/* Form */}
+        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6">
+          <h2 className="text-sm font-bold text-[#0F1E3C] mb-5">Lançar movimentação</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label>Variação</Label>
-              <select className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" value={form.variantId} onChange={(e) => setForm({ ...form, variantId: e.target.value })} required>
+              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Variação</label>
+              <select className={inputCls} value={form.variantId} onChange={(e) => setForm({ ...form, variantId: e.target.value })} required>
                 <option value="">Selecione...</option>
-                {variants.map((v) => <option key={v.id} value={v.id}>{v.productName} {v.color} {v.size}</option>)}
+                {balance.map((b) => (
+                  <option key={b.variantId} value={b.variantId}>
+                    {b.productName} {b.color} {b.size} (est: {b.currentStock})
+                  </option>
+                ))}
               </select>
             </div>
             <div>
-              <Label>Tipo</Label>
-              <select className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as "in" | "out", reason: "" })}>
+              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Tipo</label>
+              <select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as "in" | "out", reason: "" })}>
                 <option value="in">Entrada</option>
                 <option value="out">Saída</option>
               </select>
             </div>
             <div>
-              <Label>Motivo</Label>
-              <select className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} required>
+              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Motivo</label>
+              <select className={inputCls} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} required>
                 <option value="">Selecione...</option>
-                {reasons.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+                {reasons.map((r) => <option key={r} value={r}>{reasonLabel[r]}</option>)}
               </select>
             </div>
             <div>
-              <Label>Quantidade</Label>
-              <Input className="mt-1" type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required />
+              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Quantidade</label>
+              <input className={inputCls} type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required />
             </div>
             <div>
-              <Label>Observação</Label>
-              <Input className="mt-1" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Observação</label>
+              <input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Opcional" />
             </div>
-            <Button type="submit" className="w-full">Lançar</Button>
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <button type="submit" disabled={saving} className="w-full flex items-center justify-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold py-3 rounded-xl transition-colors disabled:opacity-60">
+              {saving && <Loader2 size={14} className="animate-spin" />}
+              Lançar
+            </button>
           </form>
         </div>
 
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-700">Saldo por variação</h2>
+        {/* Tables */}
+        <div className="lg:col-span-2 space-y-5">
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
+              <h2 className="text-sm font-bold text-[#0F1E3C]">Saldo por variação</h2>
             </div>
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-                <tr>
-                  <th className="text-left px-5 py-3">Variação</th>
-                  <th className="text-left px-5 py-3">SKU</th>
-                  <th className="text-left px-5 py-3">Estoque atual</th>
-                  <th className="text-left px-5 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {variants.map((v) => {
-                  const stock = calcCurrentStock(v.id, movements)
-                  const isCritical = stock <= v.minStock
-                  return (
-                    <tr key={v.id} className="hover:bg-gray-50">
-                      <td className="px-5 py-3 font-medium text-gray-800">{v.productName} {v.color} {v.size}</td>
-                      <td className="px-5 py-3 text-gray-500 font-mono text-xs">{v.sku}</td>
-                      <td className="px-5 py-3 font-semibold text-gray-800">{stock}</td>
-                      <td className="px-5 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isCritical ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
-                          {isCritical ? "Crítico" : "OK"}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+            {loading ? (
+              <div className="flex items-center justify-center py-10"><div className="w-6 h-6 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" /></div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#0F1E3C]/5">
+                    {["Variação", "SKU", "Estoque", "Status"].map((h) => (
+                      <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#0F1E3C]/4">
+                  {balance.map((b) => {
+                    const crit = b.currentStock <= b.minStock
+                    return (
+                      <tr key={b.variantId} className="hover:bg-[#F4F6FB] transition-colors">
+                        <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{b.productName} {b.color} {b.size}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-[#0F1E3C]/50">{b.sku}</td>
+                        <td className="px-5 py-3 font-bold text-[#0F1E3C]">{b.currentStock}</td>
+                        <td className="px-5 py-3">
+                          <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${crit ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
+                            {crit ? "Crítico" : "OK"}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {balance.length === 0 && <tr><td colSpan={4} className="py-8 text-center text-sm text-[#0F1E3C]/30">Sem variações cadastradas</td></tr>}
+                </tbody>
+              </table>
+            )}
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-700">Últimas movimentações</h2>
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
+              <h2 className="text-sm font-bold text-[#0F1E3C]">Últimas movimentações</h2>
             </div>
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-                <tr>
-                  <th className="text-left px-5 py-3">Variação</th>
-                  <th className="text-left px-5 py-3">Tipo</th>
-                  <th className="text-left px-5 py-3">Qtd</th>
-                  <th className="text-left px-5 py-3">Motivo</th>
-                  <th className="text-left px-5 py-3">Data</th>
+              <thead>
+                <tr className="border-b border-[#0F1E3C]/5">
+                  {["Variação", "Tipo", "Qtd", "Motivo", "Data"].map((h) => (
+                    <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {[...movements].reverse().slice(0, 10).map((m) => {
-                  const v = variants.find((x) => x.id === m.variantId)
-                  return (
-                    <tr key={m.id} className="hover:bg-gray-50">
-                      <td className="px-5 py-2.5 text-gray-700">{v ? `${v.productName} ${v.color} ${v.size}` : m.variantId}</td>
-                      <td className="px-5 py-2.5">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${m.type === "in" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                          {m.type === "in" ? "Entrada" : "Saída"}
-                        </span>
-                      </td>
-                      <td className="px-5 py-2.5 font-semibold text-gray-800">{m.quantity}</td>
-                      <td className="px-5 py-2.5 text-gray-500">{m.reason.replace(/_/g, " ")}</td>
-                      <td className="px-5 py-2.5 text-gray-400">{m.createdAt}</td>
-                    </tr>
-                  )
-                })}
+              <tbody className="divide-y divide-[#0F1E3C]/4">
+                {movements.slice(0, 15).map((m) => (
+                  <tr key={m.id} className="hover:bg-[#F4F6FB] transition-colors">
+                    <td className="px-5 py-2.5 text-[#0F1E3C]/80">{m.productName} {m.color} {m.size}</td>
+                    <td className="px-5 py-2.5">
+                      <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${m.type === "in" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                        {m.type === "in" ? "Entrada" : "Saída"}
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5 font-bold text-[#0F1E3C]">{m.quantity}</td>
+                    <td className="px-5 py-2.5 text-[#0F1E3C]/50">{reasonLabel[m.reason] ?? m.reason}</td>
+                    <td className="px-5 py-2.5 text-[#0F1E3C]/40 text-xs">{new Date(m.createdAt).toLocaleDateString("pt-BR")}</td>
+                  </tr>
+                ))}
+                {movements.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-sm text-[#0F1E3C]/30">Nenhuma movimentação</td></tr>}
               </tbody>
             </table>
           </div>

@@ -1,6 +1,6 @@
 import Image from "next/image"
 import Link from "next/link"
-import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight, Instagram } from "lucide-react"
+import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight } from "lucide-react"
 import CatalogCarousel, { type CatalogProduct } from "@/components/landing/CatalogCarousel"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
@@ -454,7 +454,9 @@ export default async function LandingPage() {
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 hover:text-white/60 transition-colors"
             >
-              <Instagram size={12} />
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
+              </svg>
               @smconfeccoes.franca
             </a>
             <span className="text-white/15">·</span>

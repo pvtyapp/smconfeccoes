@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import { Upload, Trash2, ImagePlus, Loader2, AlertCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import type { CatalogProduct } from "@/components/landing/CatalogCarousel"
 
 export default function CatalogoPage() {
@@ -23,9 +20,7 @@ export default function CatalogoPage() {
     try {
       const res = await fetch("/api/catalog")
       if (res.ok) setProducts(await res.json())
-    } catch {
-      // API indisponível
-    }
+    } catch { /* silencioso */ }
   }
 
   useEffect(() => { fetchProducts() }, [])
@@ -51,10 +46,11 @@ export default function CatalogoPage() {
       const form = new FormData()
       form.append("name", name.trim())
       form.append("file", file)
-
       const res = await fetch("/api/catalog", { method: "POST", body: form })
-      if (!res.ok) throw new Error(await res.text())
-
+      if (!res.ok) {
+        const d = await res.json()
+        throw new Error(d.error ?? "Erro ao enviar")
+      }
       const product = await res.json()
       setProducts((p) => [...p, product])
       setName("")
@@ -77,28 +73,33 @@ export default function CatalogoPage() {
     }
   }
 
+  const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
+
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="space-y-6 max-w-4xl">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Catálogo da Landing Page</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Produtos adicionados aqui aparecem no carrossel público. Imagens salvas no Vercel Blob.
+        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
+          Produtos na Landing Page
+        </h1>
+        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">
+          Produtos aqui aparecem no carrossel público da LP. Imagens salvas no Vercel Blob.
         </p>
       </div>
 
       {/* Form */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
-        <h2 className="font-semibold text-gray-700">Adicionar produto</h2>
-
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6">
+        <h2 className="text-sm font-bold text-[#0F1E3C] mb-5">Adicionar produto</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
           {/* Upload */}
           <div>
-            <Label className="mb-2 block text-sm">Foto do produto</Label>
+            <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2">
+              Foto do produto <span className="normal-case text-[#0F1E3C]/30">(proporção 1:1 recomendada)</span>
+            </label>
             <div
-              className={`relative border-2 border-dashed rounded-xl aspect-square flex flex-col items-center justify-center cursor-pointer transition-colors ${
+              className={`relative border-2 border-dashed rounded-2xl aspect-square flex flex-col items-center justify-center cursor-pointer transition-all ${
                 dragging
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-400 bg-gray-50"
+                  ? "border-[#4361EE] bg-[#4361EE]/5"
+                  : "border-[#0F1E3C]/15 hover:border-[#4361EE]/40 bg-[#F4F6FB]"
               }`}
               onClick={() => fileRef.current?.click()}
               onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
@@ -106,12 +107,14 @@ export default function CatalogoPage() {
               onDrop={handleDrop}
             >
               {preview ? (
-                <Image src={preview} alt="preview" fill className="object-cover rounded-xl" />
+                <Image src={preview} alt="preview" fill className="object-cover rounded-2xl" />
               ) : (
-                <div className="flex flex-col items-center gap-2 text-gray-400 p-4 text-center">
-                  <ImagePlus size={32} />
-                  <span className="text-sm font-medium">Clique ou arraste a foto</span>
-                  <span className="text-xs">JPG, PNG, WEBP</span>
+                <div className="flex flex-col items-center gap-3 text-[#0F1E3C]/30 p-6 text-center">
+                  <ImagePlus size={36} />
+                  <div>
+                    <p className="text-sm font-semibold">Clique ou arraste a foto</p>
+                    <p className="text-xs mt-0.5">JPG, PNG, WEBP</p>
+                  </div>
                 </div>
               )}
             </div>
@@ -127,57 +130,53 @@ export default function CatalogoPage() {
           {/* Name + action */}
           <div className="flex flex-col h-full gap-4">
             <div>
-              <Label htmlFor="pname" className="mb-2 block text-sm">Nome do produto</Label>
-              <Input
-                id="pname"
+              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2">
+                Nome do produto
+              </label>
+              <input
+                className={inputCls}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Ex: Camiseta Básica Preta"
                 onKeyDown={(e) => { if (e.key === "Enter") handleAdd() }}
                 disabled={loading}
               />
-              <p className="text-xs text-gray-400 mt-1.5">
+              <p className="text-xs text-[#0F1E3C]/35 mt-1.5">
                 Aparecerá como legenda no carrossel da landing page.
               </p>
             </div>
 
             {error && (
-              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg">
-                <AlertCircle size={15} />
-                {error}
+              <div className="flex items-start gap-2 text-red-600 text-sm bg-red-50 border border-red-100 px-3 py-2.5 rounded-xl">
+                <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+                <span>{error}</span>
               </div>
             )}
 
-            <Button
+            <button
               onClick={handleAdd}
               disabled={!name.trim() || !file || loading}
-              className="mt-auto gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A]"
+              className="mt-auto flex items-center justify-center gap-2 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-bold py-3 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {loading ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Enviando...
-                </>
+                <><Loader2 size={16} className="animate-spin" />Enviando...</>
               ) : (
-                <>
-                  <Upload size={16} />
-                  Adicionar ao catálogo
-                </>
+                <><Upload size={16} />Adicionar ao catálogo</>
               )}
-            </Button>
+            </button>
           </div>
         </div>
       </div>
 
       {/* List */}
       <div>
-        <h2 className="font-semibold text-gray-700 mb-4">
+        <h2 className="text-sm font-bold text-[#0F1E3C] mb-4">
           Produtos no catálogo{" "}
-          <span className="text-gray-400 font-normal">({products.length})</span>
+          <span className="text-[#0F1E3C]/35 font-normal">({products.length})</span>
         </h2>
 
         {products.length === 0 ? (
-          <div className="bg-white rounded-xl border border-dashed border-gray-200 py-14 text-center text-gray-400">
+          <div className="bg-white rounded-2xl border-2 border-dashed border-[#0F1E3C]/10 py-16 text-center text-[#0F1E3C]/25">
             <ImagePlus size={36} className="mx-auto mb-2 opacity-40" />
             <p className="text-sm">Nenhum produto no catálogo ainda.</p>
           </div>
@@ -186,9 +185,9 @@ export default function CatalogoPage() {
             {products.map((p) => (
               <div
                 key={p.id}
-                className="bg-white rounded-xl border border-gray-200 overflow-hidden group shadow-sm"
+                className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden group shadow-sm hover:shadow-md transition-shadow"
               >
-                <div className="relative aspect-square bg-gray-50">
+                <div className="relative aspect-square bg-[#F4F6FB]">
                   <Image
                     src={p.image_url}
                     alt={p.name}
@@ -199,17 +198,13 @@ export default function CatalogoPage() {
                   <button
                     onClick={() => handleDelete(p.id)}
                     disabled={deleting === p.id}
-                    className="absolute top-2 right-2 w-7 h-7 bg-red-500 text-white rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 disabled:opacity-70"
+                    className="absolute top-2 right-2 w-7 h-7 bg-red-500 text-white rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 disabled:opacity-60"
                   >
-                    {deleting === p.id ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Trash2 size={12} />
-                    )}
+                    {deleting === p.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                   </button>
                 </div>
                 <div className="p-3">
-                  <p className="text-xs font-semibold text-gray-700 truncate">{p.name}</p>
+                  <p className="text-xs font-bold text-[#0F1E3C] truncate">{p.name}</p>
                 </div>
               </div>
             ))}

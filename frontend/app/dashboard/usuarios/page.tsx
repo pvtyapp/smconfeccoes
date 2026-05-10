@@ -1,56 +1,61 @@
-const MOCK_USERS = [
-  { name: "Administrador", email: "dev@smconfeccoes.app", role: "admin", status: "ativo" },
+const USERS = [
+  { name: "Administrador", email: "dev@smconfeccoes.app", role: "Admin", status: "Ativo" },
 ]
 
-const roleLabel: Record<string, string> = { admin: "Admin", estoque: "Estoque", pdv: "PDV" }
-const roleColor: Record<string, string> = { admin: "bg-blue-100 text-blue-700", estoque: "bg-green-100 text-green-700", pdv: "bg-orange-100 text-orange-700" }
+const PERMISSIONS: Record<string, string[]> = {
+  Admin:   ["Produtos", "Variações", "Estoque", "Custos", "Metas", "Relatórios", "Usuários", "Catálogo LP"],
+  Estoque: ["Produtos (leitura)", "Variações (leitura)", "Estoque", "Custo de Produção"],
+  PDV:     ["Consulta de estoque", "Vendas (em breve)"],
+}
 
 export default function UsuariosPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Usuários</h1>
-        <p className="text-sm text-gray-500">Gestão de acesso — em desenvolvimento</p>
+        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Usuários</h1>
+        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Gerenciamento de acesso — CRUD completo disponível em breve</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-sm text-gray-600">
-        {[
-          { role: "Admin", desc: "Acesso total: produtos, custos, estoque, relatórios, usuários" },
-          { role: "Estoque", desc: "Lançamento de entrada/saída, consulta de produtos e variações" },
-          { role: "PDV", desc: "Vendas futuras, consulta de estoque — sem acesso a custos" },
-        ].map((p) => (
-          <div key={p.role} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-            <p className="font-semibold text-gray-800 mb-1">{p.role}</p>
-            <p className="text-gray-500">{p.desc}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-            <tr>
-              <th className="text-left px-5 py-3">Nome</th>
-              <th className="text-left px-5 py-3">Email</th>
-              <th className="text-left px-5 py-3">Perfil</th>
-              <th className="text-left px-5 py-3">Status</th>
+          <thead>
+            <tr className="border-b border-[#0F1E3C]/5">
+              {["Nome", "Email", "Perfil", "Status"].map((h) => (
+                <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+              ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {MOCK_USERS.map((u) => (
-              <tr key={u.email} className="hover:bg-gray-50">
-                <td className="px-5 py-3 font-medium text-gray-800">{u.name}</td>
-                <td className="px-5 py-3 text-gray-600">{u.email}</td>
+          <tbody className="divide-y divide-[#0F1E3C]/4">
+            {USERS.map((u) => (
+              <tr key={u.email} className="hover:bg-[#F4F6FB] transition-colors">
+                <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{u.name}</td>
+                <td className="px-5 py-3 text-[#0F1E3C]/60">{u.email}</td>
                 <td className="px-5 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleColor[u.role]}`}>{roleLabel[u.role]}</span>
+                  <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-[#4361EE]/10 text-[#4361EE]">{u.role}</span>
                 </td>
                 <td className="px-5 py-3">
-                  <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700">{u.status}</span>
+                  <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-emerald-100 text-emerald-700">{u.status}</span>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {Object.entries(PERMISSIONS).map(([role, perms]) => (
+          <div key={role} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
+            <h3 className="text-sm font-bold text-[#0F1E3C] mb-3">Perfil: {role}</h3>
+            <ul className="space-y-1.5">
+              {perms.map((p) => (
+                <li key={p} className="flex items-center gap-2 text-xs text-[#0F1E3C]/65">
+                  <span className="w-1.5 h-1.5 bg-[#4361EE] rounded-full flex-shrink-0" />
+                  {p}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </div>
     </div>
   )
