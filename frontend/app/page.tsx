@@ -60,7 +60,7 @@ export default async function LandingPage() {
       <LandingNavbar waLink={WA_LINK} />
 
       {/* ── HERO ── */}
-      <section className="relative bg-[#0A1628] text-white overflow-hidden pt-[68px]">
+      <section className="relative bg-[#0A1628] text-white overflow-hidden pt-[100px]">
         {/* Grid texture */}
         <div
           className="absolute inset-0 opacity-[0.035]"
@@ -118,10 +118,25 @@ export default async function LandingPage() {
               <p className="text-white/60 text-lg lg:text-xl font-light mb-3 max-w-md mx-auto lg:mx-0">
                 Atacado · Dropshipping
               </p>
-              <p className="text-white/40 text-base mb-10 max-w-sm mx-auto lg:mx-0 leading-relaxed">
-                Compre quanto precisar, do 1 ao 1.000.
-                Sem pedido mínimo. Atendimento pelo WhatsApp.
+              <p className="text-white/40 text-base mb-8 max-w-sm mx-auto lg:mx-0 leading-relaxed">
+                Compre quanto precisar, do 1 ao 1.000. Sem pedido mínimo.
               </p>
+
+              {/* Speed highlights */}
+              <div className="flex flex-wrap gap-2 justify-center lg:justify-start mb-10">
+                {[
+                  "Resposta em minutos",
+                  "Entrega ágil",
+                  "Sem burocracia",
+                ].map((tag) => (
+                  <span
+                    key={tag}
+                    className="text-xs font-semibold bg-white/8 border border-white/12 text-white/70 px-3 py-1.5 rounded-full"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
                 <a
@@ -177,7 +192,7 @@ export default async function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
-              Ponto de Postagem
+              Ponto de Coleta
             </h2>
             <p className="text-[#0F1E3C]/50 text-base sm:text-lg max-w-lg mx-auto leading-relaxed">
               Vendedor de Shopee ou TikTok Shop? Traga seus pedidos vendidos aqui.
@@ -221,10 +236,13 @@ export default async function LandingPage() {
             </div>
           </div>
 
-          <div className="bg-[#4361EE]/8 border border-[#4361EE]/15 rounded-2xl px-6 py-4 max-w-xl mx-auto text-center">
-            <p className="text-sm text-[#0F1E3C]/70 leading-relaxed">
-              <span className="font-bold text-[#0F1E3C]">Como vai funcionar:</span> você traz os pedidos já vendidos, nós geramos as etiquetas e postamos. Simples assim.
-            </p>
+          <div className="flex items-center justify-center gap-3 max-w-xl mx-auto">
+            <div className="flex items-center gap-2.5 bg-white border border-[#0F1E3C]/8 rounded-xl px-5 py-3 shadow-sm">
+              <span className="text-[#0F1E3C] text-sm font-semibold">Horário de Funcionamento</span>
+              <span className="bg-[#4361EE]/10 text-[#4361EE] text-[10px] font-black uppercase tracking-wide px-2.5 py-1 rounded-full">
+                Em Breve
+              </span>
+            </div>
           </div>
         </div>
       </section>
@@ -322,16 +340,31 @@ export default async function LandingPage() {
       {/* ── LOCALIZAÇÃO ── */}
       <section id="localizacao" className="py-20 sm:py-28 px-5 bg-[#F4F6FB]">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-14">
+          <div className="text-center mb-10">
             <h2
               className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Onde nos encontrar
             </h2>
-            <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto">
+            <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto mb-6">
               Visite a fábrica ou fale antes pelo WhatsApp
             </p>
+            {/* Reference tags */}
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {[
+                "Em frente ao Condomínio Franca Garden",
+                "Ao lado do Tiaozinho Supermercado",
+              ].map((ref) => (
+                <span
+                  key={ref}
+                  className="inline-flex items-center gap-1.5 bg-white border border-[#0F1E3C]/10 text-[#0F1E3C]/65 text-xs font-semibold px-3.5 py-1.5 rounded-full shadow-sm"
+                >
+                  <MapPin size={11} className="text-[#4361EE]" />
+                  {ref}
+                </span>
+              ))}
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-[#0F1E3C]/6">
@@ -356,11 +389,6 @@ export default async function LandingPage() {
                 <div>
                   <p className="font-bold text-[#0F1E3C] text-sm">SM Confecções</p>
                   <p className="text-sm text-[#0F1E3C]/50 mt-0.5">Av. Santa Cruz, 3088 — Vila Santa Cruz, Franca/SP</p>
-                  <p className="text-xs text-[#0F1E3C]/55 mt-1.5 leading-relaxed max-w-xs">
-                    Em frente à entrada do Condomínio Franca Garden,
-                    ao lado do estacionamento do Tiaozinho Supermercado
-                  </p>
-                  <p className="text-xs text-[#0F1E3C]/35 mt-1.5">Seg–Sex: 8h às 18h · Sáb: 8h às 13h</p>
                 </div>
               </div>
               <a

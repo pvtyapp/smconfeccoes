@@ -17,8 +17,21 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-50 bg-white/96 backdrop-blur-md border-b border-[#0F1E3C]/8">
-        <div className="max-w-6xl mx-auto px-5 h-[68px] flex items-center justify-between">
+      <header className="fixed top-0 left-0 right-0 z-50">
+        {/* Announcement bar */}
+        <div className="bg-[#0F1E3C] text-white text-xs py-2 px-5 text-center">
+          <span className="text-white/50 mr-1.5">Em breve:</span>
+          <span className="font-semibold text-white/90">Ponto de Coleta</span>
+          <span className="mx-2 text-white/25">·</span>
+          <span className="font-black text-[#F95B2B]">Shopee</span>
+          <span className="mx-2 text-white/25">&</span>
+          <span className="font-black text-white">TikTok Shop</span>
+          <span className="ml-2 text-white/40">— Franca/SP</span>
+        </div>
+
+        {/* Main nav */}
+        <div className="bg-white/96 backdrop-blur-md border-b border-[#0F1E3C]/8">
+        <div className="max-w-6xl mx-auto px-5 h-[64px] flex items-center justify-between">
 
           {/* Left: logo + brand */}
           <Link href="/" className="flex items-center gap-3">
@@ -69,6 +82,9 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
               {open ? <X size={20} /> : <Menu size={20} />}
             </button>
           </div>
+        </div>
+
+        </div>
         </div>
 
         {/* Mobile menu */}
