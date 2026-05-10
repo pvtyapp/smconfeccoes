@@ -1,6 +1,6 @@
 import Image from "next/image"
 import Link from "next/link"
-import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight } from "lucide-react"
+import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight, Instagram } from "lucide-react"
 import CatalogCarousel, { type CatalogProduct } from "@/components/landing/CatalogCarousel"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
@@ -448,7 +448,15 @@ export default async function LandingPage() {
               (16) 99999-9999
             </a>
             <span className="text-white/15">·</span>
-            <span>@smconfeccoes</span>
+            <a
+              href="https://www.instagram.com/smconfeccoes.franca/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 hover:text-white/60 transition-colors"
+            >
+              <Instagram size={12} />
+              @smconfeccoes.franca
+            </a>
             <span className="text-white/15">·</span>
             <Link href="/login" className="hover:text-white/60 transition-colors">
               Área administrativa
