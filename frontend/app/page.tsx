@@ -29,10 +29,11 @@ const services = [
     icon: Package,
     title: "Atacado",
     badge: "Sem pedido mínimo",
-    desc: "Direto da fábrica para você. Preço justo, produção própria e qualidade garantida em cada peça — para lojistas que levam o negócio a sério.",
+    desc: "Somos a fábrica. Qualidade em cada peça, preço de quem produz e atendimento rápido direto no WhatsApp.",
+    cta: "Fazer pedido no WhatsApp",
     items: [
-      "Preço direto da fábrica, sem intermediários",
-      "Produção própria com qualidade garantida",
+      "Preço de fábrica, sem intermediários",
+      "Produção própria com qualidade",
       "Variedade de modelos, tamanhos e cores",
       "Produção sob encomenda disponível",
     ],
@@ -42,6 +43,7 @@ const services = [
     title: "Dropshipping",
     badge: "Sem estoque próprio",
     desc: "Venda nossas peças sem precisar comprar estoque. Você vende, nós produzimos e enviamos direto ao seu cliente.",
+    cta: "Quero revender no WhatsApp",
     items: [
       "Zero investimento em estoque",
       "Nós cuidamos da produção e envio",
@@ -310,7 +312,7 @@ export default async function LandingPage() {
                   }`}
                 >
                   <MessageCircle size={15} />
-                  Quero {s.title.toLowerCase()} no WhatsApp
+                  {s.cta}
                 </a>
               </div>
             ))}
@@ -338,7 +340,7 @@ export default async function LandingPage() {
             <div className="flex flex-wrap items-center justify-center gap-2">
               {[
                 "Em frente ao Condomínio Franca Garden",
-                "Ao lado do Tiaozinho Supermercado",
+                "Ao lado da entrada do estacionamento do Tiaozinho Supermercado",
               ].map((ref) => (
                 <span
                   key={ref}
