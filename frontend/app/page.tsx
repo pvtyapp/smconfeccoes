@@ -1,6 +1,6 @@
 import Image from "next/image"
 import Link from "next/link"
-import { MessageCircle, MapPin, Package, Truck, Store, ShieldCheck, ChevronRight } from "lucide-react"
+import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight } from "lucide-react"
 import CatalogCarousel, { type CatalogProduct } from "@/components/landing/CatalogCarousel"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
@@ -28,23 +28,26 @@ const services = [
   {
     icon: Package,
     title: "Atacado",
-    desc: "Preços especiais para lojistas. Compra por quantidade com variedade de tamanhos e cores.",
-    items: ["Pedido mínimo combinado", "Variedade de modelos", "Produção sob encomenda"],
-    accent: "#4361EE",
-  },
-  {
-    icon: Store,
-    title: "Varejo",
-    desc: "Venda unitária com peças prontas para entrega. Qualidade garantida em cada peça.",
-    items: ["Sem pedido mínimo", "Peças prontas", "Retirada presencial"],
-    accent: "#0F1E3C",
+    badge: "Sem pedido mínimo",
+    desc: "Compre do jeito que precisar — 1 peça ou 1.000. Sem quantidade mínima, sem burocracia. Preço de atacado para todo lojista.",
+    items: [
+      "Sem quantidade mínima de peças",
+      "Preço de atacado direto da fábrica",
+      "Variedade de modelos, tamanhos e cores",
+      "Produção sob encomenda disponível",
+    ],
   },
   {
     icon: Truck,
     title: "Dropshipping",
-    desc: "Você vende, nós enviamos direto ao seu cliente. Sem necessidade de estoque próprio.",
-    items: ["Sem estoque próprio", "Logística por nossa conta", "Integração simplificada"],
-    accent: "#4361EE",
+    badge: "Sem estoque próprio",
+    desc: "Venda nossas peças sem precisar comprar estoque. Você vende, nós produzimos e enviamos direto ao seu cliente.",
+    items: [
+      "Zero investimento em estoque",
+      "Nós cuidamos da produção e envio",
+      "Margens atrativas para revendedores",
+      "Atendimento direto pelo WhatsApp",
+    ],
   },
 ]
 
@@ -89,11 +92,11 @@ export default async function LandingPage() {
                 />
               </div>
 
-              {/* Badge — ponto de coleta */}
+              {/* Badge */}
               <div className="mt-8 flex items-center gap-2.5 bg-white/8 border border-white/15 backdrop-blur-sm px-4 py-2.5 rounded-full">
-                <ShieldCheck size={15} className="text-[#93A8F4]" />
+                <Package size={14} className="text-[#93A8F4]" />
                 <span className="text-xs font-semibold text-white/80 tracking-wide">
-                  Ponto de Coleta · Shopee &amp; TikTok Shop
+                  Atacado sem pedido mínimo
                 </span>
               </div>
             </div>
@@ -101,7 +104,7 @@ export default async function LandingPage() {
             {/* RIGHT — Title + CTAs */}
             <div className="flex-1 text-center lg:text-left">
               <p className="text-[#93A8F4] text-sm font-semibold uppercase tracking-[0.2em] mb-4">
-                Confecção própria
+                Confecção própria · Franca/SP
               </p>
 
               <h1
@@ -113,11 +116,11 @@ export default async function LandingPage() {
               </h1>
 
               <p className="text-white/60 text-lg lg:text-xl font-light mb-3 max-w-md mx-auto lg:mx-0">
-                Atacado · Varejo · Dropshipping
+                Atacado · Dropshipping
               </p>
               <p className="text-white/40 text-base mb-10 max-w-sm mx-auto lg:mx-0 leading-relaxed">
-                Produção própria com qualidade e entrega ágil.
-                Atendimento direto pelo WhatsApp.
+                Compre quanto precisar, do 1 ao 1.000.
+                Sem pedido mínimo. Atendimento pelo WhatsApp.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
@@ -150,8 +153,8 @@ export default async function LandingPage() {
       <div className="bg-[#4361EE]">
         <div className="max-w-5xl mx-auto px-5 py-4 flex items-center justify-between overflow-x-auto gap-6">
           {[
+            { val: "Sem mínimo", label: "Compre quanto quiser" },
             { val: "100%", label: "Produção própria" },
-            { val: "Shopee + TikTok", label: "Pontos de coleta" },
             { val: "Atacado & Drop", label: "Para lojistas" },
             { val: "WhatsApp", label: "Atendimento direto" },
           ].map((s) => (
@@ -168,52 +171,61 @@ export default async function LandingPage() {
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-14">
             <span className="inline-block bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-[0.18em] px-4 py-1.5 rounded-full mb-5">
-              Novidade
+              Em Breve
             </span>
             <h2
               className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
-              Ponto de Coleta Oficial
+              Ponto de Postagem
             </h2>
-            <p className="text-[#0F1E3C]/50 text-base sm:text-lg max-w-md mx-auto leading-relaxed">
-              Comprou online? Retire sua encomenda diretamente aqui com segurança e sem complicação.
+            <p className="text-[#0F1E3C]/50 text-base sm:text-lg max-w-lg mx-auto leading-relaxed">
+              Vendedor de Shopee ou TikTok Shop? Traga seus pedidos vendidos aqui.
+              Nós cuidamos de todo o processo de postagem e envio pra você.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-xl mx-auto mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-xl mx-auto mb-8">
             {/* Shopee */}
-            <div className="bg-white rounded-2xl p-7 sm:p-8 flex flex-col items-center gap-5 border border-[#F95B2B]/15 hover:border-[#F95B2B]/30 hover:shadow-lg transition-all group">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#FF6130] to-[#F95B2B] flex items-center justify-center shadow-md shadow-[#F95B2B]/25 group-hover:scale-105 transition-transform">
+            <div className="bg-white rounded-2xl p-7 sm:p-8 flex flex-col items-center gap-5 border border-gray-100 opacity-75">
+              <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-[#FF6130] to-[#F95B2B] flex items-center justify-center shadow-md shadow-[#F95B2B]/20">
                 <span className="text-white text-2xl font-black">S</span>
+                <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
+                  <Clock size={12} color="white" />
+                </div>
               </div>
               <div className="text-center">
                 <p className="text-xl font-black text-[#0F1E3C]">Shopee</p>
-                <p className="text-sm text-[#0F1E3C]/45 mt-1">Ponto de coleta credenciado</p>
+                <p className="text-sm text-[#0F1E3C]/45 mt-1">Ponto de postagem para vendedores</p>
               </div>
-              <span className="bg-[#FFF0EB] text-[#F95B2B] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
-                Disponível agora
+              <span className="bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
+                Em Breve
               </span>
             </div>
 
             {/* TikTok */}
-            <div className="bg-white rounded-2xl p-7 sm:p-8 flex flex-col items-center gap-5 border border-gray-100 hover:border-gray-200 hover:shadow-lg transition-all group">
-              <div className="w-16 h-16 rounded-2xl bg-[#010101] flex items-center justify-center shadow-md shadow-black/20 group-hover:scale-105 transition-transform">
+            <div className="bg-white rounded-2xl p-7 sm:p-8 flex flex-col items-center gap-5 border border-gray-100 opacity-75">
+              <div className="relative w-16 h-16 rounded-2xl bg-[#010101] flex items-center justify-center shadow-md shadow-black/15">
                 <span className="text-white text-2xl font-black">T</span>
+                <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
+                  <Clock size={12} color="white" />
+                </div>
               </div>
               <div className="text-center">
                 <p className="text-xl font-black text-[#0F1E3C]">TikTok Shop</p>
-                <p className="text-sm text-[#0F1E3C]/45 mt-1">Ponto de coleta credenciado</p>
+                <p className="text-sm text-[#0F1E3C]/45 mt-1">Ponto de postagem para vendedores</p>
               </div>
-              <span className="bg-gray-100 text-gray-600 text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
-                Disponível agora
+              <span className="bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
+                Em Breve
               </span>
             </div>
           </div>
 
-          <p className="text-center text-sm text-[#4361EE] font-semibold">
-            + Em breve: mais plataformas disponíveis
-          </p>
+          <div className="bg-[#4361EE]/8 border border-[#4361EE]/15 rounded-2xl px-6 py-4 max-w-xl mx-auto text-center">
+            <p className="text-sm text-[#0F1E3C]/70 leading-relaxed">
+              <span className="font-bold text-[#0F1E3C]">Como vai funcionar:</span> você traz os pedidos já vendidos, nós geramos as etiquetas e postamos. Simples assim.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -225,49 +237,79 @@ export default async function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
-              Como atendemos você
+              Para lojistas e revendedores
             </h2>
             <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-md mx-auto">
-              Soluções para lojistas, revendedores e clientes finais
+              Duas formas de trabalhar com a SM Confecções
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-3xl mx-auto">
             {services.map((s, i) => (
               <div
                 key={s.title}
-                className={`rounded-2xl p-7 border transition-all hover:shadow-md group ${
-                  i === 1
-                    ? "bg-[#0F1E3C] border-[#0F1E3C] text-white"
-                    : "bg-white border-[#0F1E3C]/8 hover:border-[#4361EE]/25"
+                className={`rounded-2xl p-8 border transition-all hover:shadow-md ${
+                  i === 0
+                    ? "bg-[#0F1E3C] border-[#0F1E3C]"
+                    : "bg-white border-[#0F1E3C]/8 hover:border-[#4361EE]/20"
                 }`}
               >
-                <div
-                  className="w-11 h-11 rounded-xl flex items-center justify-center mb-5"
-                  style={{ backgroundColor: i === 1 ? "rgba(255,255,255,0.1)" : `${s.accent}15` }}
-                >
-                  <s.icon size={20} color={i === 1 ? "#fff" : s.accent} />
+                <div className="flex items-center gap-3 mb-5">
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center"
+                    style={{ backgroundColor: i === 0 ? "rgba(255,255,255,0.1)" : "#4361EE15" }}
+                  >
+                    <s.icon size={20} color={i === 0 ? "#93A8F4" : "#4361EE"} />
+                  </div>
+                  <span
+                    className="text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full"
+                    style={
+                      i === 0
+                        ? { backgroundColor: "rgba(255,255,255,0.12)", color: "#93A8F4" }
+                        : { backgroundColor: "#4361EE15", color: "#4361EE" }
+                    }
+                  >
+                    {s.badge}
+                  </span>
                 </div>
+
                 <h3
-                  className={`text-xl font-black mb-2 ${i === 1 ? "text-white" : "text-[#0F1E3C]"}`}
+                  className={`text-2xl font-black mb-3 ${i === 0 ? "text-white" : "text-[#0F1E3C]"}`}
                   style={{ fontFamily: "var(--font-playfair)" }}
                 >
                   {s.title}
                 </h3>
-                <p className={`text-sm leading-relaxed mb-5 ${i === 1 ? "text-white/55" : "text-[#0F1E3C]/50"}`}>
+                <p className={`text-sm leading-relaxed mb-6 ${i === 0 ? "text-white/55" : "text-[#0F1E3C]/50"}`}>
                   {s.desc}
                 </p>
-                <ul className="space-y-2.5">
+                <ul className="space-y-3">
                   {s.items.map((item) => (
-                    <li key={item} className={`flex items-center gap-2.5 text-sm ${i === 1 ? "text-white/70" : "text-[#0F1E3C]/65"}`}>
+                    <li
+                      key={item}
+                      className={`flex items-center gap-2.5 text-sm ${i === 0 ? "text-white/70" : "text-[#0F1E3C]/65"}`}
+                    >
                       <span
                         className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: i === 1 ? "#93A8F4" : s.accent }}
+                        style={{ backgroundColor: i === 0 ? "#93A8F4" : "#4361EE" }}
                       />
                       {item}
                     </li>
                   ))}
                 </ul>
+
+                <a
+                  href={WA_LINK}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`mt-7 flex items-center justify-center gap-2 text-sm font-bold py-3 rounded-xl transition-colors ${
+                    i === 0
+                      ? "bg-white/10 hover:bg-white/15 text-white"
+                      : "bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white"
+                  }`}
+                >
+                  <MessageCircle size={15} />
+                  Quero {s.title.toLowerCase()} no WhatsApp
+                </a>
               </div>
             ))}
           </div>
@@ -285,10 +327,10 @@ export default async function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
-              Localização
+              Onde nos encontrar
             </h2>
             <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto">
-              Retire sua encomenda ou visite nossa loja
+              Visite a fábrica ou fale antes pelo WhatsApp
             </p>
           </div>
 
@@ -314,7 +356,11 @@ export default async function LandingPage() {
                 <div>
                   <p className="font-bold text-[#0F1E3C] text-sm">SM Confecções</p>
                   <p className="text-sm text-[#0F1E3C]/50 mt-0.5">Av. Santa Cruz, 3088 — Vila Santa Cruz, Franca/SP</p>
-                  <p className="text-xs text-[#0F1E3C]/40 mt-1">Seg–Sex: 8h às 18h · Sáb: 8h às 13h</p>
+                  <p className="text-xs text-[#0F1E3C]/55 mt-1.5 leading-relaxed max-w-xs">
+                    Em frente à entrada do Condomínio Franca Garden,
+                    ao lado do estacionamento do Tiaozinho Supermercado
+                  </p>
+                  <p className="text-xs text-[#0F1E3C]/35 mt-1.5">Seg–Sex: 8h às 18h · Sáb: 8h às 13h</p>
                 </div>
               </div>
               <a
@@ -347,10 +393,10 @@ export default async function LandingPage() {
             className="text-3xl sm:text-4xl md:text-5xl font-black mb-5 leading-tight"
             style={{ fontFamily: "var(--font-playfair)" }}
           >
-            Pronto para fazer seu pedido?
+            Quer comprar no atacado?
           </h2>
           <p className="text-white/45 text-base sm:text-lg mb-10 leading-relaxed max-w-md mx-auto">
-            Atendemos atacadistas, revendedores e clientes finais. Resposta rápida garantida.
+            Sem pedido mínimo. Fale agora no WhatsApp, te respondemos rápido.
           </p>
           <a
             href={WA_LINK}
