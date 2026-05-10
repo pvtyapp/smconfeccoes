@@ -12,6 +12,7 @@ import {
   Target,
   BarChart3,
   Users,
+  Images,
 } from "lucide-react"
 
 const nav = [
@@ -24,6 +25,7 @@ const nav = [
   { href: "/dashboard/metas", label: "Metas de Produção", icon: Target },
   { href: "/dashboard/relatorios", label: "Relatórios", icon: BarChart3 },
   { href: "/dashboard/usuarios", label: "Usuários", icon: Users },
+  { href: "/dashboard/catalogo", label: "Catálogo LP", icon: Images },
 ]
 
 export default function Sidebar() {
