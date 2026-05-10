@@ -16,24 +16,24 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
   const [open, setOpen] = useState(false)
 
   return (
-    <>
-      <header className="fixed top-0 left-0 right-0 z-50">
-        {/* Announcement bar */}
-        <div className="bg-[#0F1E3C] text-white text-xs py-2 px-5 text-center">
-          <span className="text-white/50 mr-1.5">Em breve:</span>
-          <span className="font-semibold text-white/90">Ponto de Coleta</span>
-          <span className="mx-2 text-white/25">·</span>
-          <span className="font-black text-[#F95B2B]">Shopee</span>
-          <span className="mx-2 text-white/25">&</span>
-          <span className="font-black text-white">TikTok Shop</span>
-          <span className="ml-2 text-white/40">— Franca/SP</span>
-        </div>
+    <header className="fixed top-0 left-0 right-0 z-50">
 
-        {/* Main nav */}
-        <div className="bg-white/96 backdrop-blur-md border-b border-[#0F1E3C]/8">
+      {/* Announcement bar */}
+      <div className="bg-[#0F1E3C] text-white text-xs py-2 px-5 text-center">
+        <span className="text-white/50 mr-1.5">Em breve:</span>
+        <span className="font-semibold text-white/90">Ponto de Coleta</span>
+        <span className="mx-2 text-white/25">·</span>
+        <span className="font-black text-[#F95B2B]">Shopee</span>
+        <span className="mx-2 text-white/25">&amp;</span>
+        <span className="font-black text-white">TikTok Shop</span>
+        <span className="ml-2 text-white/40">— Franca/SP</span>
+      </div>
+
+      {/* Main nav + mobile menu */}
+      <div className="bg-white/96 backdrop-blur-md border-b border-[#0F1E3C]/8">
         <div className="max-w-6xl mx-auto px-5 h-[64px] flex items-center justify-between">
 
-          {/* Left: logo + brand */}
+          {/* Left */}
           <Link href="/" className="flex items-center gap-3">
             <Image
               src="/smsemfundo.png"
@@ -50,7 +50,7 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
             </span>
           </Link>
 
-          {/* Center: nav links (desktop) */}
+          {/* Center */}
           <nav className="hidden md:flex items-center gap-7">
             {links.map((l) => (
               <a
@@ -63,7 +63,7 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
             ))}
           </nav>
 
-          {/* Right: WA + hamburger */}
+          {/* Right */}
           <div className="flex items-center gap-3">
             <a
               href={waLink}
@@ -84,12 +84,9 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
           </div>
         </div>
 
-        </div>
-        </div>
-
         {/* Mobile menu */}
         {open && (
-          <div className="md:hidden bg-white border-t border-gray-100 px-5 py-4 space-y-1">
+          <div className="md:hidden border-t border-gray-100 px-5 py-4 space-y-1">
             {links.map((l) => (
               <a
                 key={l.href}
@@ -113,7 +110,8 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
             </div>
           </div>
         )}
-      </header>
-    </>
+      </div>
+
+    </header>
   )
 }
