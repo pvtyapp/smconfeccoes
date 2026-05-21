@@ -11,10 +11,7 @@ export type Product = {
   categoryId?: string | null
   description?: string
   salePrice: number
-  materialCost: number
-  laborCost: number
-  additionalCosts: number
-  dailyProduction: number
+  costPrice: number
   sizes: string[]
   colors: string[]
   status: "active" | "inactive"

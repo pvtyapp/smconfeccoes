@@ -1,10 +1,10 @@
 import type { Product, ProductVariant, StockMovement, OperationalCost } from "./types"
 
 export const MOCK_PRODUCTS: Product[] = [
-  { id: "p1", name: "Camiseta Básica", description: "Camiseta básica 100% algodão", salePrice: 39.9, materialCost: 10, laborCost: 4, additionalCosts: 1.9, dailyProduction: 30, sizes: ["P","M","G","GG"], colors: ["Preto","Branco"], status: "active", chatbotEnabled: false, createdAt: "2024-01-10" },
-  { id: "p2", name: "Moletom Canguru", description: "Moletom canguru com bolso frontal", salePrice: 89.9, materialCost: 30, laborCost: 8, additionalCosts: 4, dailyProduction: 15, sizes: ["P","M","G"], colors: ["Preto"], status: "active", chatbotEnabled: false, createdAt: "2024-01-10" },
-  { id: "p3", name: "Calça Moletom", description: "Calça de moletom com elástico", salePrice: 79.9, materialCost: 25, laborCost: 7, additionalCosts: 3, dailyProduction: 20, sizes: ["P","M","G","GG"], colors: ["Preto","Cinza"], status: "active", chatbotEnabled: false, createdAt: "2024-01-15" },
-  { id: "p4", name: "Bermuda Moletom", description: "Bermuda de moletom", salePrice: 59.9, materialCost: 16, laborCost: 5, additionalCosts: 3, dailyProduction: 25, sizes: ["P","M","G"], colors: ["Preto","Branco","Cinza"], status: "active", chatbotEnabled: false, createdAt: "2024-01-15" },
+  { id: "p1", name: "Camiseta Básica", description: "Camiseta básica 100% algodão", salePrice: 39.9, costPrice: 15.9, sizes: ["P","M","G","GG"], colors: ["Preto","Branco"], status: "active", chatbotEnabled: false, createdAt: "2024-01-10" },
+  { id: "p2", name: "Moletom Canguru", description: "Moletom canguru com bolso frontal", salePrice: 89.9, costPrice: 42.0, sizes: ["P","M","G"], colors: ["Preto"], status: "active", chatbotEnabled: false, createdAt: "2024-01-10" },
+  { id: "p3", name: "Calça Moletom", description: "Calça de moletom com elástico", salePrice: 79.9, costPrice: 35.0, sizes: ["P","M","G","GG"], colors: ["Preto","Cinza"], status: "active", chatbotEnabled: false, createdAt: "2024-01-15" },
+  { id: "p4", name: "Bermuda Moletom", description: "Bermuda de moletom", salePrice: 59.9, costPrice: 24.0, sizes: ["P","M","G"], colors: ["Preto","Branco","Cinza"], status: "active", chatbotEnabled: false, createdAt: "2024-01-15" },
 ]
 
 export const MOCK_VARIANTS: ProductVariant[] = [

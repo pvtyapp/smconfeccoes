@@ -7,18 +7,15 @@ export async function GET() {
       SELECT
         id,
         name,
-        category_id        AS "categoryId",
+        category_id      AS "categoryId",
         description,
-        sale_price         AS "salePrice",
-        material_cost      AS "materialCost",
-        labor_cost         AS "laborCost",
-        additional_costs   AS "additionalCosts",
-        daily_production   AS "dailyProduction",
+        sale_price       AS "salePrice",
+        material_cost    AS "costPrice",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
-        chatbot_enabled    AS "chatbotEnabled",
-        created_at         AS "createdAt"
+        chatbot_enabled  AS "chatbotEnabled",
+        created_at       AS "createdAt"
       FROM products
       ORDER BY name ASC
     `)
@@ -33,31 +30,30 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { name, categoryId, description, salePrice, materialCost, laborCost, additionalCosts, dailyProduction, sizes, colors, chatbotEnabled } = body
+    const { name, categoryId, description, salePrice, costPrice, sizes, colors, chatbotEnabled } = body
 
-    if (!name?.trim()) return NextResponse.json({ error: "name é obrigatório" }, { status: 400 })
+    if (!name?.trim()) return NextResponse.json({ error: "Nome é obrigatório" }, { status: 400 })
+    if (!categoryId) return NextResponse.json({ error: "Categoria é obrigatória" }, { status: 400 })
 
-    const sizeArr = Array.isArray(sizes) ? sizes.filter(Boolean) : []
+    const sizeArr  = Array.isArray(sizes)  ? sizes.filter(Boolean)  : []
     const colorArr = Array.isArray(colors) ? colors.filter(Boolean) : []
 
     const { rows } = await pool.query(`
-      INSERT INTO products (name, category_id, description, sale_price, material_cost, labor_cost, additional_costs, daily_production, size_list, color_list, chatbot_enabled)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      INSERT INTO products
+        (name, category_id, description, sale_price, material_cost, labor_cost, additional_costs, daily_production, size_list, color_list, chatbot_enabled)
+      VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6, $7, $8)
       RETURNING
         id, name,
-        category_id      AS "categoryId",
+        category_id   AS "categoryId",
         description,
-        sale_price       AS "salePrice",
-        material_cost    AS "materialCost",
-        labor_cost       AS "laborCost",
-        additional_costs AS "additionalCosts",
-        daily_production AS "dailyProduction",
+        sale_price    AS "salePrice",
+        material_cost AS "costPrice",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
-        chatbot_enabled  AS "chatbotEnabled",
-        created_at AS "createdAt"
-    `, [name.trim(), categoryId ?? null, description ?? null, salePrice ?? 0, materialCost ?? 0, laborCost ?? 0, additionalCosts ?? 0, dailyProduction ?? 0, sizeArr, colorArr, chatbotEnabled ?? false])
+        chatbot_enabled AS "chatbotEnabled",
+        created_at      AS "createdAt"
+    `, [name.trim(), categoryId, description ?? null, salePrice ?? 0, costPrice ?? 0, sizeArr, colorArr, chatbotEnabled ?? false])
 
     return NextResponse.json(rows[0], { status: 201 })
   } catch (err) {

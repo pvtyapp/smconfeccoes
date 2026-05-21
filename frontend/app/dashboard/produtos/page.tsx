@@ -1,32 +1,33 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Plus, Pencil, Power, Loader2, ChevronRight, ChevronDown, X } from "lucide-react"
+import { Plus, Pencil, Power, Loader2, ChevronRight, ChevronDown, X, Trash2 } from "lucide-react"
 import type { Category, Product } from "@/lib/types"
 
 const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">{label}</label>
+      <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
       {children}
     </div>
   )
 }
 
-// ---------- Category tree picker ----------
+// ── Category tree picker ─────────────────────────────────────────────────────
 
 type TreeNode = Category & { children: TreeNode[] }
 
 function buildTree(cats: Category[]): TreeNode[] {
-  const roots = cats.filter((c) => !c.parentId)
   const ch = (pid: string): TreeNode[] =>
     cats.filter((c) => c.parentId === pid).map((c) => ({ ...c, children: ch(c.id) }))
-  return roots.map((r) => ({ ...r, children: ch(r.id) }))
+  return cats.filter((c) => !c.parentId).map((r) => ({ ...r, children: ch(r.id) }))
 }
 
-function TreeNode({ node, selected, onSelect, depth = 0 }: { node: TreeNode; selected: string | null; onSelect: (id: string) => void; depth?: number }) {
+function TreeNodeItem({ node, selected, onSelect, depth = 0 }: { node: TreeNode; selected: string | null; onSelect: (id: string) => void; depth?: number }) {
   const [open, setOpen] = useState(true)
   const hasKids = node.children.length > 0
   const active = selected === node.id
@@ -45,7 +46,7 @@ function TreeNode({ node, selected, onSelect, depth = 0 }: { node: TreeNode; sel
         </div>
         <span className={`text-sm ${active ? "font-semibold" : ""}`}>{node.name}</span>
       </div>
-      {hasKids && open && node.children.map((c) => <TreeNode key={c.id} node={c} selected={selected} onSelect={onSelect} depth={depth + 1} />)}
+      {hasKids && open && node.children.map((c) => <TreeNodeItem key={c.id} node={c} selected={selected} onSelect={onSelect} depth={depth + 1} />)}
     </div>
   )
 }
@@ -59,46 +60,30 @@ function CategoryPicker({ categories, value, onChange }: { categories: Category[
   )
   return (
     <div className="border border-[#0F1E3C]/15 rounded-xl max-h-48 overflow-y-auto py-1.5">
-      {tree.map((n) => <TreeNode key={n.id} node={n} selected={value} onSelect={(id) => onChange(id === value ? null : id)} />)}
+      {tree.map((n) => <TreeNodeItem key={n.id} node={n} selected={value} onSelect={(id) => onChange(id === value ? null : id)} />)}
     </div>
   )
 }
 
-// ---------- Dynamic single-value slots ----------
+// ── Slot list ────────────────────────────────────────────────────────────────
 
 function SlotList({ placeholder, values, onChange }: { placeholder: string; values: string[]; onChange: (v: string[]) => void }) {
-  // Always show filled values + one empty slot at end
   const slots = [...values, ""]
-
   function update(i: number, val: string) {
     const next = [...values]
-    if (i < values.length) {
-      if (val === "") next.splice(i, 1)
-      else next[i] = val
-    } else if (val !== "") {
-      next.push(val)
-    }
+    if (i < values.length) { if (val === "") next.splice(i, 1); else next[i] = val }
+    else if (val !== "") next.push(val)
     onChange(next)
   }
-
   return (
     <div className="space-y-2">
       {slots.map((slot, i) => {
         const isLast = i === slots.length - 1
         return (
           <div key={i} className="flex gap-2 items-center">
-            <input
-              className={inputCls}
-              placeholder={placeholder}
-              value={slot}
-              onChange={(e) => update(i, e.target.value)}
-            />
+            <input className={inputCls} placeholder={placeholder} value={slot} onChange={(e) => update(i, e.target.value)} />
             {!isLast && (
-              <button
-                type="button"
-                onClick={() => update(i, "")}
-                className="w-8 h-8 flex items-center justify-center text-[#0F1E3C]/30 hover:text-red-500 transition-colors flex-shrink-0"
-              >
+              <button type="button" onClick={() => update(i, "")} className="w-8 h-8 flex items-center justify-center text-[#0F1E3C]/30 hover:text-red-500 transition-colors flex-shrink-0">
                 <X size={14} />
               </button>
             )}
@@ -109,17 +94,14 @@ function SlotList({ placeholder, values, onChange }: { placeholder: string; valu
   )
 }
 
-// ---------- Main Page ----------
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 const formInit = {
   name: "",
   categoryId: null as string | null,
   description: "",
   salePrice: "",
-  materialCost: "",
-  laborCost: "",
-  additionalCosts: "",
-  dailyProduction: "",
+  costPrice: "",
   sizes: [] as string[],
   colors: [] as string[],
   chatbotEnabled: false,
@@ -131,18 +113,14 @@ function catName(cats: Category[], id?: string | null) {
 }
 
 export default function ProdutosPage() {
-  const [products, setProducts] = useState<Product[]>([])
+  const [products, setProducts]   = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [editing, setEditing] = useState<Product | null>(null)
-  const [form, setForm] = useState(formInit)
-  const [error, setError] = useState("")
-
-  const costPrice = useMemo(() => {
-    return (parseFloat(form.materialCost) || 0) + (parseFloat(form.laborCost) || 0) + (parseFloat(form.additionalCosts) || 0)
-  }, [form.materialCost, form.laborCost, form.additionalCosts])
+  const [loading, setLoading]     = useState(true)
+  const [saving, setSaving]       = useState(false)
+  const [showForm, setShowForm]   = useState(false)
+  const [editing, setEditing]     = useState<Product | null>(null)
+  const [form, setForm]           = useState(formInit)
+  const [error, setError]         = useState("")
 
   async function load() {
     setLoading(true)
@@ -166,16 +144,13 @@ export default function ProdutosPage() {
   function openEdit(p: Product) {
     setEditing(p)
     setForm({
-      name: p.name,
-      categoryId: p.categoryId ?? null,
-      description: p.description ?? "",
-      salePrice: String(p.salePrice),
-      materialCost: String(p.materialCost),
-      laborCost: String(p.laborCost),
-      additionalCosts: String(p.additionalCosts),
-      dailyProduction: p.dailyProduction > 0 ? String(p.dailyProduction) : "",
-      sizes: [...(p.sizes ?? [])],
-      colors: [...(p.colors ?? [])],
+      name:           p.name,
+      categoryId:     p.categoryId ?? null,
+      description:    p.description ?? "",
+      salePrice:      String(p.salePrice),
+      costPrice:      String(p.costPrice),
+      sizes:          [...(p.sizes ?? [])],
+      colors:         [...(p.colors ?? [])],
       chatbotEnabled: p.chatbotEnabled ?? false,
     })
     setError(""); setShowForm(true)
@@ -183,19 +158,23 @@ export default function ProdutosPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true); setError("")
+    setError("")
+
+    if (!form.categoryId) {
+      setError("Selecione uma categoria para continuar.")
+      return
+    }
+
+    setSaving(true)
     try {
       const payload = {
-        name: form.name,
-        categoryId: form.categoryId || null,
-        description: form.description || null,
-        salePrice: parseFloat(form.salePrice) || 0,
-        materialCost: parseFloat(form.materialCost) || 0,
-        laborCost: parseFloat(form.laborCost) || 0,
-        additionalCosts: parseFloat(form.additionalCosts) || 0,
-        dailyProduction: parseInt(form.dailyProduction) || 0,
-        sizes: form.sizes.filter(Boolean),
-        colors: form.colors.filter(Boolean),
+        name:           form.name,
+        categoryId:     form.categoryId,
+        description:    form.description || null,
+        salePrice:      parseFloat(form.salePrice) || 0,
+        costPrice:      parseFloat(form.costPrice) || 0,
+        sizes:          form.sizes.filter(Boolean),
+        colors:         form.colors.filter(Boolean),
         chatbotEnabled: form.chatbotEnabled,
       }
       const res = await fetch(editing ? `/api/products/${editing.id}` : "/api/products", {
@@ -219,6 +198,17 @@ export default function ProdutosPage() {
     await load()
   }
 
+  async function deleteProduct(p: Product) {
+    if (!confirm(`Deletar "${p.name}"?\n\nEsta ação remove o produto e todas as suas variantes. Não pode ser desfeita.`)) return
+    const res = await fetch(`/api/products/${p.id}`, { method: "DELETE" })
+    if (!res.ok) {
+      const d = await res.json()
+      alert(d.error ?? "Erro ao deletar")
+      return
+    }
+    await load()
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -231,18 +221,21 @@ export default function ProdutosPage() {
         </button>
       </div>
 
+      {/* Form */}
       {showForm && (
         <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6">
           <h2 className="text-sm font-bold text-[#0F1E3C] mb-5">{editing ? "Editar produto" : "Novo produto"}</h2>
           <form onSubmit={handleSubmit} className="space-y-5">
 
-            <Field label="Nome do produto">
+            <Field label="Nome do produto" required>
               <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} required placeholder="Ex: Camiseta Básica Gola O" />
             </Field>
 
-            <Field label="Categoria">
+            <Field label="Categoria" required>
               <CategoryPicker categories={categories} value={form.categoryId} onChange={(id) => set("categoryId", id)} />
-              {form.categoryId && <p className="mt-1.5 text-xs text-[#4361EE] font-semibold">✓ {catName(categories, form.categoryId)}</p>}
+              {form.categoryId
+                ? <p className="mt-1.5 text-xs text-[#4361EE] font-semibold">✓ {catName(categories, form.categoryId)}</p>
+                : <p className="mt-1.5 text-xs text-red-400">Selecione uma categoria</p>}
             </Field>
 
             <Field label="Descrição (opcional)">
@@ -252,78 +245,50 @@ export default function ProdutosPage() {
             {/* Prices */}
             <div>
               <p className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-3">Preços</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Preço de custo (R$)">
+                  <input className={inputCls} type="number" step="0.01" min="0" value={form.costPrice} onChange={(e) => set("costPrice", e.target.value)} placeholder="0,00" />
+                </Field>
                 <Field label="Preço de venda (R$)">
                   <input className={inputCls} type="number" step="0.01" min="0" value={form.salePrice} onChange={(e) => set("salePrice", e.target.value)} placeholder="0,00" />
                 </Field>
-                <Field label="Custo material (R$)">
-                  <input className={inputCls} type="number" step="0.01" min="0" value={form.materialCost} onChange={(e) => set("materialCost", e.target.value)} placeholder="0,00" />
-                </Field>
-                <Field label="Mão de obra (R$)">
-                  <input className={inputCls} type="number" step="0.01" min="0" value={form.laborCost} onChange={(e) => set("laborCost", e.target.value)} placeholder="0,00" />
-                </Field>
-                <Field label="Custos adicionais (R$)">
-                  <input className={inputCls} type="number" step="0.01" min="0" value={form.additionalCosts} onChange={(e) => set("additionalCosts", e.target.value)} placeholder="0,00" />
-                </Field>
-              </div>
-              <div className="mt-3 flex items-center gap-2 bg-[#F4F6FB] rounded-xl px-4 py-3">
-                <span className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider">Preço de custo</span>
-                <span className="ml-auto text-base font-black text-[#0F1E3C]">R$ {costPrice.toFixed(2).replace(".", ",")}</span>
               </div>
             </div>
 
-            {/* Daily production */}
-            <Field label="Produção média diária (peças/dia)">
-              <input className={inputCls} type="number" min="0" step="1" value={form.dailyProduction} onChange={(e) => set("dailyProduction", e.target.value)} placeholder="Ex: 20" />
-            </Field>
-
-            {/* Variations — two separate cards */}
+            {/* Variations */}
             <div>
               <p className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-3">Variações</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Sizes card */}
                 <div className="border border-[#0F1E3C]/10 rounded-xl p-4 space-y-3">
                   <p className="text-sm font-bold text-[#0F1E3C]">Tamanhos</p>
-                  <SlotList
-                    placeholder="Ex: P, M, G, 38, 40..."
-                    values={form.sizes}
-                    onChange={(v) => set("sizes", v)}
-                  />
-                  {form.sizes.length > 0 && (
-                    <p className="text-[10px] text-[#0F1E3C]/35">{form.sizes.length} tamanho(s) cadastrado(s)</p>
-                  )}
+                  <SlotList placeholder="Ex: P, M, G, 38, 40..." values={form.sizes} onChange={(v) => set("sizes", v)} />
+                  {form.sizes.length > 0 && <p className="text-[10px] text-[#0F1E3C]/35">{form.sizes.length} tamanho(s)</p>}
                 </div>
-
-                {/* Colors card */}
                 <div className="border border-[#0F1E3C]/10 rounded-xl p-4 space-y-3">
                   <p className="text-sm font-bold text-[#0F1E3C]">Cores</p>
-                  <SlotList
-                    placeholder="Ex: Preto, Branco, Azul..."
-                    values={form.colors}
-                    onChange={(v) => set("colors", v)}
-                  />
-                  {form.colors.length > 0 && (
-                    <p className="text-[10px] text-[#0F1E3C]/35">{form.colors.length} cor(es) cadastrada(s)</p>
-                  )}
+                  <SlotList placeholder="Ex: Preto, Branco, Azul..." values={form.colors} onChange={(v) => set("colors", v)} />
+                  {form.colors.length > 0 && <p className="text-[10px] text-[#0F1E3C]/35">{form.colors.length} cor(es)</p>}
                 </div>
               </div>
-
               {form.sizes.length > 0 && form.colors.length > 0 && (
                 <p className="mt-2 text-xs text-[#0F1E3C]/40">
-                  {form.sizes.length * form.colors.length} combinações de SKU — ex: {form.name || "Produto"}-{form.sizes[0]}-{form.colors[0]}
+                  {form.sizes.length * form.colors.length} combinações — ex: {form.name || "Produto"}-{form.sizes[0]}-{form.colors[0]}
                 </p>
               )}
             </div>
 
-            {/* Chatbot */}
+            {/* Chatbot toggle */}
             <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
               <button
                 type="button"
                 onClick={() => set("chatbotEnabled", !form.chatbotEnabled)}
-                className={`relative w-10 h-5.5 rounded-full transition-colors flex-shrink-0 ${form.chatbotEnabled ? "bg-[#25D366]" : "bg-[#0F1E3C]/15"}`}
+                className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.chatbotEnabled ? "bg-[#25D366]" : "bg-[#0F1E3C]/15"}`}
                 style={{ height: "22px" }}
               >
-                <span className={`absolute top-0.5 w-4.5 h-4.5 bg-white rounded-full shadow transition-transform ${form.chatbotEnabled ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
+                <span
+                  className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.chatbotEnabled ? "translate-x-5" : "translate-x-0.5"}`}
+                  style={{ width: "18px", height: "18px" }}
+                />
               </button>
               <div>
                 <p className="text-sm font-semibold text-[#0F1E3C]">Disponível no chatbot</p>
@@ -346,6 +311,7 @@ export default function ProdutosPage() {
         </div>
       )}
 
+      {/* Table */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16">
@@ -355,7 +321,7 @@ export default function ProdutosPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#0F1E3C]/5">
-                {["Nome", "Categoria", "Venda", "Custo", "Prod./dia", "Tamanhos", "Cores", "Chatbot", "Status", ""].map((h) => (
+                {["Nome", "Categoria", "Custo", "Venda", "Tamanhos", "Cores", "Chatbot", "Status", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -363,36 +329,33 @@ export default function ProdutosPage() {
             <tbody className="divide-y divide-[#0F1E3C]/4">
               {products.length === 0 ? (
                 <tr><td colSpan={9} className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum produto cadastrado</td></tr>
-              ) : products.map((p) => {
-                const cost = Number(p.materialCost) + Number(p.laborCost) + Number(p.additionalCosts)
-                return (
-                  <tr key={p.id} className="hover:bg-[#F4F6FB] transition-colors">
-                    <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{p.name}</td>
-                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{catName(categories, p.categoryId)}</td>
-                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {Number(p.salePrice).toFixed(2)}</td>
-                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {cost.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{p.dailyProduction > 0 ? `${p.dailyProduction} pç` : "—"}</td>
-                    <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.sizes?.join(", ") || "—"}</td>
-                    <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.colors?.join(", ") || "—"}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.chatbotEnabled ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>
-                        {p.chatbotEnabled ? "Sim" : "Não"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${p.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
-                        {p.status === "active" ? "Ativo" : "Inativo"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-3 justify-end">
-                        <button onClick={() => openEdit(p)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors"><Pencil size={14} /></button>
-                        <button onClick={() => toggleStatus(p)} className="text-[#0F1E3C]/30 hover:text-amber-500 transition-colors"><Power size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
+              ) : products.map((p) => (
+                <tr key={p.id} className="hover:bg-[#F4F6FB] transition-colors">
+                  <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{p.name}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{catName(categories, p.categoryId)}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {Number(p.costPrice).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {Number(p.salePrice).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.sizes?.join(", ") || "—"}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.colors?.join(", ") || "—"}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.chatbotEnabled ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>
+                      {p.chatbotEnabled ? "Sim" : "Não"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${p.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                      {p.status === "active" ? "Ativo" : "Inativo"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-3 justify-end">
+                      <button onClick={() => openEdit(p)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors" title="Editar"><Pencil size={14} /></button>
+                      <button onClick={() => toggleStatus(p)} className="text-[#0F1E3C]/30 hover:text-amber-500 transition-colors" title={p.status === "active" ? "Desativar" : "Ativar"}><Power size={14} /></button>
+                      <button onClick={() => deleteProduct(p)} className="text-[#0F1E3C]/30 hover:text-red-500 transition-colors" title="Deletar"><Trash2 size={14} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
