@@ -105,6 +105,7 @@ const formInit = {
   sizes: [] as string[],
   colors: [] as string[],
   chatbotEnabled: false,
+  stockEnabled: false,
 }
 
 function catName(cats: Category[], id?: string | null) {
@@ -152,6 +153,7 @@ export default function ProdutosPage() {
       sizes:          [...(p.sizes ?? [])],
       colors:         [...(p.colors ?? [])],
       chatbotEnabled: p.chatbotEnabled ?? false,
+      stockEnabled:   p.stockEnabled ?? false,
     })
     setError(""); setShowForm(true)
   }
@@ -176,6 +178,7 @@ export default function ProdutosPage() {
         sizes:          form.sizes.filter(Boolean),
         colors:         form.colors.filter(Boolean),
         chatbotEnabled: form.chatbotEnabled,
+        stockEnabled:   form.stockEnabled,
       }
       const res = await fetch(editing ? `/api/products/${editing.id}` : "/api/products", {
         method: editing ? "PUT" : "POST",
@@ -277,22 +280,42 @@ export default function ProdutosPage() {
               )}
             </div>
 
-            {/* Chatbot toggle */}
-            <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
-              <button
-                type="button"
-                onClick={() => set("chatbotEnabled", !form.chatbotEnabled)}
-                className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.chatbotEnabled ? "bg-[#25D366]" : "bg-[#0F1E3C]/15"}`}
-                style={{ height: "22px" }}
-              >
-                <span
-                  className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.chatbotEnabled ? "translate-x-5" : "translate-x-0.5"}`}
-                  style={{ width: "18px", height: "18px" }}
-                />
-              </button>
-              <div>
-                <p className="text-sm font-semibold text-[#0F1E3C]">Disponível no chatbot</p>
-                <p className="text-xs text-[#0F1E3C]/45">Clientes podem pedir este produto via WhatsApp</p>
+            {/* Toggles */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
+                <button
+                  type="button"
+                  onClick={() => set("chatbotEnabled", !form.chatbotEnabled)}
+                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.chatbotEnabled ? "bg-[#25D366]" : "bg-[#0F1E3C]/15"}`}
+                  style={{ height: "22px" }}
+                >
+                  <span
+                    className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.chatbotEnabled ? "translate-x-5" : "translate-x-0.5"}`}
+                    style={{ width: "18px", height: "18px" }}
+                  />
+                </button>
+                <div>
+                  <p className="text-sm font-semibold text-[#0F1E3C]">Disponível no chatbot</p>
+                  <p className="text-xs text-[#0F1E3C]/45">Clientes podem pedir via WhatsApp</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
+                <button
+                  type="button"
+                  onClick={() => set("stockEnabled", !form.stockEnabled)}
+                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.stockEnabled ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}
+                  style={{ height: "22px" }}
+                >
+                  <span
+                    className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.stockEnabled ? "translate-x-5" : "translate-x-0.5"}`}
+                    style={{ width: "18px", height: "18px" }}
+                  />
+                </button>
+                <div>
+                  <p className="text-sm font-semibold text-[#0F1E3C]">Controle de estoque</p>
+                  <p className="text-xs text-[#0F1E3C]/45">Gera variantes cores × tamanhos</p>
+                </div>
               </div>
             </div>
 
@@ -321,14 +344,14 @@ export default function ProdutosPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#0F1E3C]/5">
-                {["Nome", "Categoria", "Custo", "Venda", "Tamanhos", "Cores", "Chatbot", "Status", ""].map((h) => (
+                {["Nome", "Categoria", "Custo", "Venda", "Tamanhos", "Cores", "Chatbot", "Estoque", "Status", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#0F1E3C]/4">
               {products.length === 0 ? (
-                <tr><td colSpan={9} className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum produto cadastrado</td></tr>
+                <tr><td colSpan={10} className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum produto cadastrado</td></tr>
               ) : products.map((p) => (
                 <tr key={p.id} className="hover:bg-[#F4F6FB] transition-colors">
                   <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{p.name}</td>
@@ -340,6 +363,11 @@ export default function ProdutosPage() {
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.chatbotEnabled ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>
                       {p.chatbotEnabled ? "Sim" : "Não"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.stockEnabled ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-400"}`}>
+                      {p.stockEnabled ? "Ativo" : "Off"}
                     </span>
                   </td>
                   <td className="px-4 py-3">

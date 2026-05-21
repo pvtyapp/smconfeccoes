@@ -1,19 +1,23 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { syncVariants } from "@/lib/products/syncVariants"
 
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const client = await pool.connect()
   try {
     const { id } = await params
     const body = await req.json()
-    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled } = body
+    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled } = body
 
     const sizeArr  = Array.isArray(sizes)  ? sizes.filter(Boolean)  : null
     const colorArr = Array.isArray(colors) ? colors.filter(Boolean) : null
 
-    const { rows } = await pool.query(`
+    await client.query("BEGIN")
+
+    const { rows } = await client.query(`
       UPDATE products SET
         name            = COALESCE($1, name),
         category_id     = COALESCE($2, category_id),
@@ -23,14 +27,16 @@ export async function PUT(
         size_list       = COALESCE($6, size_list),
         color_list      = COALESCE($7, color_list),
         status          = COALESCE($8, status),
-        chatbot_enabled = COALESCE($9, chatbot_enabled)
-      WHERE id = $10
+        chatbot_enabled = COALESCE($9, chatbot_enabled),
+        stock_enabled   = COALESCE($10, stock_enabled)
+      WHERE id = $11
       RETURNING
         id, name,
-        category_id   AS "categoryId",
+        category_id     AS "categoryId",
         description,
-        sale_price    AS "salePrice",
-        material_cost AS "costPrice",
+        sale_price      AS "salePrice",
+        material_cost   AS "costPrice",
+        stock_enabled   AS "stockEnabled",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
@@ -40,21 +46,43 @@ export async function PUT(
       name ?? null,
       categoryId !== undefined ? (categoryId || null) : null,
       description ?? null,
-      salePrice ?? null,
-      costPrice ?? null,
+      salePrice  ?? null,
+      costPrice  ?? null,
       sizeArr,
       colorArr,
-      status ?? null,
+      status     ?? null,
       chatbotEnabled ?? null,
+      stockEnabled   ?? null,
       id,
     ])
 
-    if (rows.length === 0) return NextResponse.json({ error: "Não encontrado" }, { status: 404 })
-    return NextResponse.json(rows[0])
+    if (rows.length === 0) {
+      await client.query("ROLLBACK")
+      return NextResponse.json({ error: "Não encontrado" }, { status: 404 })
+    }
+
+    const product = rows[0]
+
+    // Sync variants whenever stockEnabled or sizes/colors changed
+    if (stockEnabled !== undefined || sizeArr !== null || colorArr !== null) {
+      await syncVariants(
+        client,
+        id,
+        product.colors,
+        product.sizes,
+        product.salePrice,
+        product.stockEnabled,
+      )
+    }
+
+    await client.query("COMMIT")
+    return NextResponse.json(product)
   } catch (err) {
+    await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)
-    console.error("PUT /api/products/[id]:", msg)
     return NextResponse.json({ error: msg }, { status: 500 })
+  } finally {
+    client.release()
   }
 }
 
@@ -79,7 +107,6 @@ export async function DELETE(
         { status: 409 }
       )
     }
-    console.error("DELETE /api/products/[id]:", msg)
     return NextResponse.json({ error: msg }, { status: 500 })
   } finally {
     client.release()

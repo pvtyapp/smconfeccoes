@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { syncVariants } from "@/lib/products/syncVariants"
 
 export async function GET() {
   try {
@@ -7,58 +8,73 @@ export async function GET() {
       SELECT
         id,
         name,
-        category_id      AS "categoryId",
+        category_id     AS "categoryId",
         description,
-        sale_price       AS "salePrice",
-        material_cost    AS "costPrice",
+        sale_price      AS "salePrice",
+        material_cost   AS "costPrice",
+        stock_enabled   AS "stockEnabled",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
-        chatbot_enabled  AS "chatbotEnabled",
-        created_at       AS "createdAt"
+        chatbot_enabled AS "chatbotEnabled",
+        created_at      AS "createdAt"
       FROM products
       ORDER BY name ASC
     `)
     return NextResponse.json(rows)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error("GET /api/products:", msg)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
 export async function POST(req: Request) {
+  const client = await pool.connect()
   try {
     const body = await req.json()
-    const { name, categoryId, description, salePrice, costPrice, sizes, colors, chatbotEnabled } = body
+    const { name, categoryId, description, salePrice, costPrice, sizes, colors, chatbotEnabled, stockEnabled } = body
 
-    if (!name?.trim()) return NextResponse.json({ error: "Nome é obrigatório" }, { status: 400 })
-    if (!categoryId) return NextResponse.json({ error: "Categoria é obrigatória" }, { status: 400 })
+    if (!name?.trim())  return NextResponse.json({ error: "Nome é obrigatório" },       { status: 400 })
+    if (!categoryId)    return NextResponse.json({ error: "Categoria é obrigatória" },  { status: 400 })
 
     const sizeArr  = Array.isArray(sizes)  ? sizes.filter(Boolean)  : []
     const colorArr = Array.isArray(colors) ? colors.filter(Boolean) : []
 
-    const { rows } = await pool.query(`
+    await client.query("BEGIN")
+
+    const { rows } = await client.query(`
       INSERT INTO products
-        (name, category_id, description, sale_price, material_cost, labor_cost, additional_costs, daily_production, size_list, color_list, chatbot_enabled)
-      VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6, $7, $8)
+        (name, category_id, description, sale_price, material_cost, labor_cost, additional_costs, daily_production,
+         size_list, color_list, chatbot_enabled, stock_enabled)
+      VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6, $7, $8, $9)
       RETURNING
         id, name,
-        category_id   AS "categoryId",
+        category_id     AS "categoryId",
         description,
-        sale_price    AS "salePrice",
-        material_cost AS "costPrice",
+        sale_price      AS "salePrice",
+        material_cost   AS "costPrice",
+        stock_enabled   AS "stockEnabled",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
         chatbot_enabled AS "chatbotEnabled",
         created_at      AS "createdAt"
-    `, [name.trim(), categoryId, description ?? null, salePrice ?? 0, costPrice ?? 0, sizeArr, colorArr, chatbotEnabled ?? false])
+    `, [name.trim(), categoryId, description ?? null, salePrice ?? 0, costPrice ?? 0,
+        sizeArr, colorArr, chatbotEnabled ?? false, stockEnabled ?? false])
 
-    return NextResponse.json(rows[0], { status: 201 })
+    const product = rows[0]
+
+    if (stockEnabled) {
+      await syncVariants(client, product.id, colorArr, sizeArr, salePrice ?? 0, true)
+    }
+
+    await client.query("COMMIT")
+    return NextResponse.json(product, { status: 201 })
   } catch (err) {
+    await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)
-    console.error("POST /api/products:", msg)
     return NextResponse.json({ error: msg }, { status: 500 })
+  } finally {
+    client.release()
   }
 }

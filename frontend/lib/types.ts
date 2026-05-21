@@ -16,6 +16,7 @@ export type Product = {
   colors: string[]
   status: "active" | "inactive"
   chatbotEnabled: boolean
+  stockEnabled: boolean
   createdAt: string
 }
 
