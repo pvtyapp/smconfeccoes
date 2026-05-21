@@ -11,10 +11,10 @@ type Props = {
 }
 
 const STATUS_FLOW: Record<string, { next: string; label: string; color: string }> = {
-  triagem:      { next: "confirmando",  label: "Enviar p/ Confirmar",  color: "bg-purple-600 hover:bg-purple-700" },
+  triagem:      { next: "confirmando",  label: "Enviar p/ Confirmar",   color: "bg-purple-600 hover:bg-purple-700" },
   confirmando:  { next: "em_separacao", label: "Confirmar Quantidades", color: "bg-blue-600 hover:bg-blue-700"    },
-  em_separacao: { next: "pronto",       label: "Marcar como Pronto",   color: "bg-green-600 hover:bg-green-700"   },
-  pronto:       { next: "concluido",    label: "Concluir Pedido",      color: "bg-[#0F1E3C] hover:bg-[#1a2f5e]"  },
+  em_separacao: { next: "pronto",       label: "Marcar como Pronto",    color: "bg-green-600 hover:bg-green-700"   },
+  // pronto é estado final — sem avanço
 }
 
 export default function OrderModal({ order, onClose, onRefresh }: Props) {
@@ -219,7 +219,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           </div>
 
           <div className="flex gap-2">
-            {order.status !== "concluido" && order.status !== "cancelado" && (
+            {order.status !== "pronto" && order.status !== "cancelado" && (
               <button
                 onClick={cancelOrder}
                 disabled={saving}

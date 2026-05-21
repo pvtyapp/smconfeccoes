@@ -16,6 +16,7 @@ import {
   Users,
   Images,
   ShoppingBag,
+  Receipt,
 } from "lucide-react"
 
 type NavItem = { href: string; label: string; icon: React.ElementType }
@@ -24,8 +25,9 @@ const navOperacional: NavItem[] = [
   { href: "/dashboard",                   label: "Dashboard",        icon: LayoutDashboard },
   { href: "/dashboard/categorias",        label: "Categorias",       icon: FolderTree },
   { href: "/dashboard/produtos",          label: "Produtos",         icon: Package },
-  { href: "/dashboard/estoque",           label: "Estoque",          icon: Boxes },
-  { href: "/dashboard/custo-operacional", label: "Custo Operacional",icon: Wallet },
+  { href: "/dashboard/estoque",              label: "Estoque",              icon: Boxes },
+  { href: "/dashboard/clientes-a-receber",  label: "Clientes a Receber",   icon: Receipt },
+  { href: "/dashboard/custo-operacional",   label: "Custo Operacional",    icon: Wallet },
 ]
 
 const navProducao: NavItem[] = [
