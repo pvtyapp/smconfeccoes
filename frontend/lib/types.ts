@@ -1,11 +1,24 @@
+export type Category = {
+  id: string
+  name: string
+  parentId: string | null
+  createdAt: string
+}
+
 export type Product = {
   id: string
   name: string
-  category: string
+  categoryId?: string | null
   description?: string
-  defaultSalePrice: number
-  averageCost: number
+  salePrice: number
+  materialCost: number
+  laborCost: number
+  additionalCosts: number
+  dailyProduction: number
+  sizes: string[]
+  colors: string[]
   status: "active" | "inactive"
+  chatbotEnabled: boolean
   createdAt: string
 }
 

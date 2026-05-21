@@ -1,12 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { Plus, Pencil, Power, Loader2 } from "lucide-react"
-import type { Product } from "@/lib/types"
+import { useEffect, useMemo, useState } from "react"
+import { Plus, Pencil, Power, Loader2, ChevronRight, ChevronDown, X } from "lucide-react"
+import type { Category, Product } from "@/lib/types"
 
-const CATEGORIES = ["Camisetas", "Moletons", "Calças", "Bermudas", "Conjuntos", "Outros"]
-
-const formInit = { name: "", category: "", description: "", defaultSalePrice: "", averageCost: "" }
+const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -17,10 +15,124 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
+// ---------- Category tree picker ----------
+
+type TreeNode = Category & { children: TreeNode[] }
+
+function buildTree(cats: Category[]): TreeNode[] {
+  const roots = cats.filter((c) => !c.parentId)
+  const ch = (pid: string): TreeNode[] =>
+    cats.filter((c) => c.parentId === pid).map((c) => ({ ...c, children: ch(c.id) }))
+  return roots.map((r) => ({ ...r, children: ch(r.id) }))
+}
+
+function TreeNode({ node, selected, onSelect, depth = 0 }: { node: TreeNode; selected: string | null; onSelect: (id: string) => void; depth?: number }) {
+  const [open, setOpen] = useState(true)
+  const hasKids = node.children.length > 0
+  const active = selected === node.id
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-1.5 py-1.5 rounded-lg cursor-pointer transition-colors ${active ? "bg-[#4361EE]/10 text-[#4361EE]" : "hover:bg-[#F4F6FB] text-[#0F1E3C]/70"}`}
+        style={{ paddingLeft: `${12 + depth * 16}px`, paddingRight: "12px" }}
+        onClick={() => onSelect(node.id)}
+      >
+        {hasKids
+          ? <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(!open) }} className="w-4 h-4 flex items-center justify-center">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>
+          : <span className="w-4 h-4" />}
+        <div className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${active ? "bg-[#4361EE] border-[#4361EE]" : "border-[#0F1E3C]/25"}`}>
+          {active && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
+        </div>
+        <span className={`text-sm ${active ? "font-semibold" : ""}`}>{node.name}</span>
+      </div>
+      {hasKids && open && node.children.map((c) => <TreeNode key={c.id} node={c} selected={selected} onSelect={onSelect} depth={depth + 1} />)}
+    </div>
+  )
+}
+
+function CategoryPicker({ categories, value, onChange }: { categories: Category[]; value: string | null; onChange: (id: string | null) => void }) {
+  const tree = useMemo(() => buildTree(categories), [categories])
+  if (!categories.length) return (
+    <p className="text-xs text-[#0F1E3C]/40 px-3 py-2.5 border border-[#0F1E3C]/15 rounded-xl">
+      Nenhuma categoria. Crie em <a href="/dashboard/categorias" className="text-[#4361EE] underline">Categorias</a>.
+    </p>
+  )
+  return (
+    <div className="border border-[#0F1E3C]/15 rounded-xl max-h-48 overflow-y-auto py-1.5">
+      {tree.map((n) => <TreeNode key={n.id} node={n} selected={value} onSelect={(id) => onChange(id === value ? null : id)} />)}
+    </div>
+  )
+}
+
+// ---------- Dynamic single-value slots ----------
+
+function SlotList({ placeholder, values, onChange }: { placeholder: string; values: string[]; onChange: (v: string[]) => void }) {
+  // Always show filled values + one empty slot at end
+  const slots = [...values, ""]
+
+  function update(i: number, val: string) {
+    const next = [...values]
+    if (i < values.length) {
+      if (val === "") next.splice(i, 1)
+      else next[i] = val
+    } else if (val !== "") {
+      next.push(val)
+    }
+    onChange(next)
+  }
+
+  return (
+    <div className="space-y-2">
+      {slots.map((slot, i) => {
+        const isLast = i === slots.length - 1
+        return (
+          <div key={i} className="flex gap-2 items-center">
+            <input
+              className={inputCls}
+              placeholder={placeholder}
+              value={slot}
+              onChange={(e) => update(i, e.target.value)}
+            />
+            {!isLast && (
+              <button
+                type="button"
+                onClick={() => update(i, "")}
+                className="w-8 h-8 flex items-center justify-center text-[#0F1E3C]/30 hover:text-red-500 transition-colors flex-shrink-0"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------- Main Page ----------
+
+const formInit = {
+  name: "",
+  categoryId: null as string | null,
+  description: "",
+  salePrice: "",
+  materialCost: "",
+  laborCost: "",
+  additionalCosts: "",
+  dailyProduction: "",
+  sizes: [] as string[],
+  colors: [] as string[],
+  chatbotEnabled: false,
+}
+
+function catName(cats: Category[], id?: string | null) {
+  if (!id) return "—"
+  return cats.find((c) => c.id === id)?.name ?? "—"
+}
 
 export default function ProdutosPage() {
   const [products, setProducts] = useState<Product[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -28,63 +140,81 @@ export default function ProdutosPage() {
   const [form, setForm] = useState(formInit)
   const [error, setError] = useState("")
 
+  const costPrice = useMemo(() => {
+    return (parseFloat(form.materialCost) || 0) + (parseFloat(form.laborCost) || 0) + (parseFloat(form.additionalCosts) || 0)
+  }, [form.materialCost, form.laborCost, form.additionalCosts])
+
   async function load() {
     setLoading(true)
     try {
-      const res = await fetch("/api/products")
-      if (res.ok) setProducts(await res.json())
-    } finally {
-      setLoading(false)
-    }
+      const [pr, cr] = await Promise.all([fetch("/api/products"), fetch("/api/categories")])
+      if (pr.ok) setProducts(await pr.json())
+      if (cr.ok) setCategories(await cr.json())
+    } finally { setLoading(false) }
   }
 
   useEffect(() => { load() }, [])
 
+  function set<K extends keyof typeof formInit>(key: K, val: (typeof formInit)[K]) {
+    setForm((f) => ({ ...f, [key]: val }))
+  }
+
   function openNew() {
-    setEditing(null)
-    setForm(formInit)
-    setError("")
-    setShowForm(true)
+    setEditing(null); setForm(formInit); setError(""); setShowForm(true)
   }
 
   function openEdit(p: Product) {
     setEditing(p)
     setForm({
-      name: p.name, category: p.category, description: p.description ?? "",
-      defaultSalePrice: String(p.defaultSalePrice), averageCost: String(p.averageCost),
+      name: p.name,
+      categoryId: p.categoryId ?? null,
+      description: p.description ?? "",
+      salePrice: String(p.salePrice),
+      materialCost: String(p.materialCost),
+      laborCost: String(p.laborCost),
+      additionalCosts: String(p.additionalCosts),
+      dailyProduction: p.dailyProduction > 0 ? String(p.dailyProduction) : "",
+      sizes: [...(p.sizes ?? [])],
+      colors: [...(p.colors ?? [])],
+      chatbotEnabled: p.chatbotEnabled ?? false,
     })
-    setError("")
-    setShowForm(true)
+    setError(""); setShowForm(true)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true)
-    setError("")
+    setSaving(true); setError("")
     try {
       const payload = {
-        name: form.name, category: form.category, description: form.description || null,
-        defaultSalePrice: Number(form.defaultSalePrice), averageCost: Number(form.averageCost),
+        name: form.name,
+        categoryId: form.categoryId || null,
+        description: form.description || null,
+        salePrice: parseFloat(form.salePrice) || 0,
+        materialCost: parseFloat(form.materialCost) || 0,
+        laborCost: parseFloat(form.laborCost) || 0,
+        additionalCosts: parseFloat(form.additionalCosts) || 0,
+        dailyProduction: parseInt(form.dailyProduction) || 0,
+        sizes: form.sizes.filter(Boolean),
+        colors: form.colors.filter(Boolean),
+        chatbotEnabled: form.chatbotEnabled,
       }
-      const url  = editing ? `/api/products/${editing.id}` : "/api/products"
-      const method = editing ? "PUT" : "POST"
-      const res  = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      const res = await fetch(editing ? `/api/products/${editing.id}` : "/api/products", {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
       if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
-      setShowForm(false)
-      await load()
+      setShowForm(false); await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar")
-    } finally {
-      setSaving(false)
-    }
+    } finally { setSaving(false) }
   }
 
   async function toggleStatus(p: Product) {
-    const next = p.status === "active" ? "inactive" : "active"
     await fetch(`/api/products/${p.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: next }),
+      body: JSON.stringify({ status: p.status === "active" ? "inactive" : "active" }),
     })
     await load()
   }
@@ -94,7 +224,7 @@ export default function ProdutosPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Produtos</h1>
-          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Produtos pai — agrupam variações de cor e tamanho</p>
+          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Cadastre produtos com categorias, preços e variações</p>
         </div>
         <button onClick={openNew} className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors">
           <Plus size={15} /> Novo produto
@@ -104,27 +234,106 @@ export default function ProdutosPage() {
       {showForm && (
         <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6">
           <h2 className="text-sm font-bold text-[#0F1E3C] mb-5">{editing ? "Editar produto" : "Novo produto"}</h2>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Nome">
-              <input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <form onSubmit={handleSubmit} className="space-y-5">
+
+            <Field label="Nome do produto">
+              <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} required placeholder="Ex: Camiseta Básica Gola O" />
             </Field>
+
             <Field label="Categoria">
-              <select className={inputCls} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} required>
-                <option value="">Selecione...</option>
-                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <CategoryPicker categories={categories} value={form.categoryId} onChange={(id) => set("categoryId", id)} />
+              {form.categoryId && <p className="mt-1.5 text-xs text-[#4361EE] font-semibold">✓ {catName(categories, form.categoryId)}</p>}
             </Field>
-            <Field label="Descrição">
-              <input className={inputCls} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Opcional" />
+
+            <Field label="Descrição (opcional)">
+              <textarea className={inputCls + " resize-none"} rows={2} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Detalhes do produto..." />
             </Field>
-            <Field label="Preço de venda padrão (R$)">
-              <input className={inputCls} type="number" step="0.01" min="0" value={form.defaultSalePrice} onChange={(e) => setForm({ ...form, defaultSalePrice: e.target.value })} required />
+
+            {/* Prices */}
+            <div>
+              <p className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-3">Preços</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Field label="Preço de venda (R$)">
+                  <input className={inputCls} type="number" step="0.01" min="0" value={form.salePrice} onChange={(e) => set("salePrice", e.target.value)} placeholder="0,00" />
+                </Field>
+                <Field label="Custo material (R$)">
+                  <input className={inputCls} type="number" step="0.01" min="0" value={form.materialCost} onChange={(e) => set("materialCost", e.target.value)} placeholder="0,00" />
+                </Field>
+                <Field label="Mão de obra (R$)">
+                  <input className={inputCls} type="number" step="0.01" min="0" value={form.laborCost} onChange={(e) => set("laborCost", e.target.value)} placeholder="0,00" />
+                </Field>
+                <Field label="Custos adicionais (R$)">
+                  <input className={inputCls} type="number" step="0.01" min="0" value={form.additionalCosts} onChange={(e) => set("additionalCosts", e.target.value)} placeholder="0,00" />
+                </Field>
+              </div>
+              <div className="mt-3 flex items-center gap-2 bg-[#F4F6FB] rounded-xl px-4 py-3">
+                <span className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider">Preço de custo</span>
+                <span className="ml-auto text-base font-black text-[#0F1E3C]">R$ {costPrice.toFixed(2).replace(".", ",")}</span>
+              </div>
+            </div>
+
+            {/* Daily production */}
+            <Field label="Produção média diária (peças/dia)">
+              <input className={inputCls} type="number" min="0" step="1" value={form.dailyProduction} onChange={(e) => set("dailyProduction", e.target.value)} placeholder="Ex: 20" />
             </Field>
-            <Field label="Custo médio (R$)">
-              <input className={inputCls} type="number" step="0.01" min="0" value={form.averageCost} onChange={(e) => setForm({ ...form, averageCost: e.target.value })} required />
-            </Field>
-            {error && <p className="md:col-span-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-            <div className="md:col-span-2 flex gap-3">
+
+            {/* Variations — two separate cards */}
+            <div>
+              <p className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-3">Variações</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Sizes card */}
+                <div className="border border-[#0F1E3C]/10 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-bold text-[#0F1E3C]">Tamanhos</p>
+                  <SlotList
+                    placeholder="Ex: P, M, G, 38, 40..."
+                    values={form.sizes}
+                    onChange={(v) => set("sizes", v)}
+                  />
+                  {form.sizes.length > 0 && (
+                    <p className="text-[10px] text-[#0F1E3C]/35">{form.sizes.length} tamanho(s) cadastrado(s)</p>
+                  )}
+                </div>
+
+                {/* Colors card */}
+                <div className="border border-[#0F1E3C]/10 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-bold text-[#0F1E3C]">Cores</p>
+                  <SlotList
+                    placeholder="Ex: Preto, Branco, Azul..."
+                    values={form.colors}
+                    onChange={(v) => set("colors", v)}
+                  />
+                  {form.colors.length > 0 && (
+                    <p className="text-[10px] text-[#0F1E3C]/35">{form.colors.length} cor(es) cadastrada(s)</p>
+                  )}
+                </div>
+              </div>
+
+              {form.sizes.length > 0 && form.colors.length > 0 && (
+                <p className="mt-2 text-xs text-[#0F1E3C]/40">
+                  {form.sizes.length * form.colors.length} combinações de SKU — ex: {form.name || "Produto"}-{form.sizes[0]}-{form.colors[0]}
+                </p>
+              )}
+            </div>
+
+            {/* Chatbot */}
+            <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
+              <button
+                type="button"
+                onClick={() => set("chatbotEnabled", !form.chatbotEnabled)}
+                className={`relative w-10 h-5.5 rounded-full transition-colors flex-shrink-0 ${form.chatbotEnabled ? "bg-[#25D366]" : "bg-[#0F1E3C]/15"}`}
+                style={{ height: "22px" }}
+              >
+                <span className={`absolute top-0.5 w-4.5 h-4.5 bg-white rounded-full shadow transition-transform ${form.chatbotEnabled ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
+              </button>
+              <div>
+                <p className="text-sm font-semibold text-[#0F1E3C]">Disponível no chatbot</p>
+                <p className="text-xs text-[#0F1E3C]/45">Clientes podem pedir este produto via WhatsApp</p>
+              </div>
+            </div>
+
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+
+            <div className="flex gap-3">
               <button type="submit" disabled={saving} className="flex items-center gap-2 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-60">
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 {editing ? "Salvar" : "Criar produto"}
@@ -146,33 +355,44 @@ export default function ProdutosPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#0F1E3C]/5">
-                {["Nome", "Categoria", "Preço venda", "Custo médio", "Status", ""].map((h) => (
-                  <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+                {["Nome", "Categoria", "Venda", "Custo", "Prod./dia", "Tamanhos", "Cores", "Chatbot", "Status", ""].map((h) => (
+                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#0F1E3C]/4">
               {products.length === 0 ? (
-                <tr><td colSpan={6} className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum produto cadastrado</td></tr>
-              ) : products.map((p) => (
-                <tr key={p.id} className="hover:bg-[#F4F6FB] transition-colors">
-                  <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{p.name}</td>
-                  <td className="px-5 py-3 text-[#0F1E3C]/60">{p.category}</td>
-                  <td className="px-5 py-3 text-[#0F1E3C]/60">R$ {Number(p.defaultSalePrice).toFixed(2)}</td>
-                  <td className="px-5 py-3 text-[#0F1E3C]/60">R$ {Number(p.averageCost).toFixed(2)}</td>
-                  <td className="px-5 py-3">
-                    <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${p.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
-                      {p.status === "active" ? "Ativo" : "Inativo"}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3">
-                    <div className="flex gap-3 justify-end">
-                      <button onClick={() => openEdit(p)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors"><Pencil size={14} /></button>
-                      <button onClick={() => toggleStatus(p)} className="text-[#0F1E3C]/30 hover:text-amber-500 transition-colors"><Power size={14} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                <tr><td colSpan={9} className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum produto cadastrado</td></tr>
+              ) : products.map((p) => {
+                const cost = Number(p.materialCost) + Number(p.laborCost) + Number(p.additionalCosts)
+                return (
+                  <tr key={p.id} className="hover:bg-[#F4F6FB] transition-colors">
+                    <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{p.name}</td>
+                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{catName(categories, p.categoryId)}</td>
+                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {Number(p.salePrice).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {cost.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{p.dailyProduction > 0 ? `${p.dailyProduction} pç` : "—"}</td>
+                    <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.sizes?.join(", ") || "—"}</td>
+                    <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.colors?.join(", ") || "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.chatbotEnabled ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>
+                        {p.chatbotEnabled ? "Sim" : "Não"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${p.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                        {p.status === "active" ? "Ativo" : "Inativo"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-3 justify-end">
+                        <button onClick={() => openEdit(p)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors"><Pencil size={14} /></button>
+                        <button onClick={() => toggleStatus(p)} className="text-[#0F1E3C]/30 hover:text-amber-500 transition-colors"><Power size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

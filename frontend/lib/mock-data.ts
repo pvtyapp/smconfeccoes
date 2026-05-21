@@ -1,10 +1,10 @@
 import type { Product, ProductVariant, StockMovement, OperationalCost } from "./types"
 
 export const MOCK_PRODUCTS: Product[] = [
-  { id: "p1", name: "Camiseta Básica", category: "Camisetas", description: "Camiseta básica 100% algodão", defaultSalePrice: 39.9, averageCost: 15.9, status: "active", createdAt: "2024-01-10" },
-  { id: "p2", name: "Moletom Canguru", category: "Moletons", description: "Moletom canguru com bolso frontal", defaultSalePrice: 89.9, averageCost: 42.0, status: "active", createdAt: "2024-01-10" },
-  { id: "p3", name: "Calça Moletom", category: "Calças", description: "Calça de moletom com elástico", defaultSalePrice: 79.9, averageCost: 35.0, status: "active", createdAt: "2024-01-15" },
-  { id: "p4", name: "Bermuda Moletom", category: "Bermudas", description: "Bermuda de moletom", defaultSalePrice: 59.9, averageCost: 24.0, status: "active", createdAt: "2024-01-15" },
+  { id: "p1", name: "Camiseta Básica", description: "Camiseta básica 100% algodão", salePrice: 39.9, materialCost: 10, laborCost: 4, additionalCosts: 1.9, dailyProduction: 30, sizes: ["P","M","G","GG"], colors: ["Preto","Branco"], status: "active", chatbotEnabled: false, createdAt: "2024-01-10" },
+  { id: "p2", name: "Moletom Canguru", description: "Moletom canguru com bolso frontal", salePrice: 89.9, materialCost: 30, laborCost: 8, additionalCosts: 4, dailyProduction: 15, sizes: ["P","M","G"], colors: ["Preto"], status: "active", chatbotEnabled: false, createdAt: "2024-01-10" },
+  { id: "p3", name: "Calça Moletom", description: "Calça de moletom com elástico", salePrice: 79.9, materialCost: 25, laborCost: 7, additionalCosts: 3, dailyProduction: 20, sizes: ["P","M","G","GG"], colors: ["Preto","Cinza"], status: "active", chatbotEnabled: false, createdAt: "2024-01-15" },
+  { id: "p4", name: "Bermuda Moletom", description: "Bermuda de moletom", salePrice: 59.9, materialCost: 16, laborCost: 5, additionalCosts: 3, dailyProduction: 25, sizes: ["P","M","G"], colors: ["Preto","Branco","Cinza"], status: "active", chatbotEnabled: false, createdAt: "2024-01-15" },
 ]
 
 export const MOCK_VARIANTS: ProductVariant[] = [
