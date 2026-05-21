@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, useCallback } from "react"
-import { Plus, Minus, ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen } from "lucide-react"
+import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList } from "lucide-react"
 import type { BalanceRow } from "@/lib/calculations"
 
 type Movement = {
@@ -18,24 +18,14 @@ type Movement = {
   createdAt: string
 }
 
-type ModalState = {
-  open: boolean
-  type: "in" | "out"
-  variant: BalanceRow | null
+type ProductGroup = {
+  productId: string
+  productName: string
+  rows: BalanceRow[]
+  totalQty: number
+  totalValue: number
+  hasCritical: boolean
 }
-
-const ENTRY_REASONS = [
-  { value: "producao",       label: "Produção" },
-  { value: "entrada_manual", label: "Entrada manual" },
-  { value: "devolucao",      label: "Devolução" },
-  { value: "ajuste_positivo",label: "Ajuste +" },
-]
-const EXIT_REASONS = [
-  { value: "saida_manual",   label: "Retirada manual" },
-  { value: "venda_manual",   label: "Venda" },
-  { value: "perda",          label: "Perda / Defeito" },
-  { value: "ajuste_negativo",label: "Ajuste −" },
-]
 
 const REASON_LABEL: Record<string, string> = {
   producao: "Produção", entrada_manual: "Entrada manual", devolucao: "Devolução",
@@ -44,10 +34,15 @@ const REASON_LABEL: Record<string, string> = {
   venda: "Venda", venda_chatbot: "Venda (chatbot)",
 }
 
-const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] bg-white transition-colors"
-
 function fmtCurrency(v: number) {
   return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+}
+
+function fmtDate(s: string) {
+  return new Date(s).toLocaleDateString("pt-BR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  })
 }
 
 function stockStatus(row: BalanceRow): "zerado" | "critico" | "ok" {
@@ -55,14 +50,6 @@ function stockStatus(row: BalanceRow): "zerado" | "critico" | "ok" {
   if (row.minStock > 0 && row.currentStock <= row.minStock) return "critico"
   return "ok"
 }
-
-const STATUS_CONFIG = {
-  zerado:  { label: "Zerado",   cls: "bg-red-100 text-red-700" },
-  critico: { label: "Crítico",  cls: "bg-orange-100 text-orange-700" },
-  ok:      { label: "OK",       cls: "bg-emerald-100 text-emerald-700" },
-}
-
-// ─── Stat card ───────────────────────────────────────────────────────────────
 
 function StatCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
@@ -74,6 +61,36 @@ function StatCard({ label, value, sub, accent }: { label: string; value: string;
   )
 }
 
+// ─── Color block ──────────────────────────────────────────────────────────────
+
+function ColorBlock({ color, variants }: { color: string; variants: BalanceRow[] }) {
+  const hasCritical = variants.some(v => stockStatus(v) !== "ok")
+  return (
+    <div className={`flex-shrink-0 border rounded-2xl overflow-hidden min-w-[172px] ${hasCritical ? "border-orange-200" : "border-[#0F1E3C]/8"}`}>
+      <div className={`px-3 py-2 flex items-center gap-2 ${hasCritical ? "bg-orange-50" : "bg-[#F4F6FB]"}`}>
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${hasCritical ? "bg-orange-400" : "bg-emerald-400"}`} />
+        <span className="text-sm font-bold text-[#0F1E3C] truncate">{color || "Sem cor"}</span>
+      </div>
+      <div className="divide-y divide-[#0F1E3C]/6">
+        {variants.map(v => {
+          const st = stockStatus(v)
+          return (
+            <div key={v.variantId} className="px-3 py-2.5 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[#0F1E3C]">{v.size || "—"}</p>
+                <p className="text-[10px] font-mono text-[#0F1E3C]/30 truncate">{v.sku}</p>
+              </div>
+              <span className={`text-lg font-black flex-shrink-0 ${st === "zerado" ? "text-red-500" : st === "critico" ? "text-orange-500" : "text-[#0F1E3C]"}`}>
+                {v.currentStock}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function EstoquePage() {
@@ -81,7 +98,7 @@ export default function EstoquePage() {
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
   const [expanded, setExpanded]   = useState<Set<string>>(new Set())
-  const [modal, setModal]         = useState<ModalState>({ open: false, type: "in", variant: null })
+  const [showOrdem, setShowOrdem] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -97,30 +114,24 @@ export default function EstoquePage() {
 
   useEffect(() => { load() }, [load])
 
-  // ── stats ────────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     const now = new Date()
     const mo = now.getMonth(); const yr = now.getFullYear()
-
     const totalValue = balance.reduce((a, r) => a + r.currentStock * Number(r.salePrice), 0)
     const totalQty   = balance.reduce((a, r) => a + r.currentStock, 0)
     const critical   = balance.filter(r => stockStatus(r) !== "ok").length
-
-    const inMonth  = movements.filter(m => {
+    const inMonth    = movements.filter(m => {
       const d = new Date(m.createdAt)
       return m.type === "in" && d.getMonth() === mo && d.getFullYear() === yr
     }).reduce((a, m) => a + m.quantity, 0)
-
-    const outMonth = movements.filter(m => {
+    const outMonth   = movements.filter(m => {
       const d = new Date(m.createdAt)
       return m.type === "out" && d.getMonth() === mo && d.getFullYear() === yr
     }).reduce((a, m) => a + m.quantity, 0)
-
     return { totalValue, totalQty, inMonth, outMonth, critical }
   }, [balance, movements])
 
-  // ── grouped by product ───────────────────────────────────────────────────
-  const groups = useMemo(() => {
+  const groups = useMemo<ProductGroup[]>(() => {
     const map = new Map<string, { productName: string; rows: BalanceRow[] }>()
     for (const row of balance) {
       if (!map.has(row.productId)) map.set(row.productId, { productName: row.productName, rows: [] })
@@ -130,8 +141,8 @@ export default function EstoquePage() {
       productId,
       productName: g.productName,
       rows: g.rows.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size)),
-      totalQty:   g.rows.reduce((s, r) => s + r.currentStock, 0),
-      totalValue: g.rows.reduce((s, r) => s + r.currentStock * Number(r.salePrice), 0),
+      totalQty:    g.rows.reduce((s, r) => s + r.currentStock, 0),
+      totalValue:  g.rows.reduce((s, r) => s + r.currentStock * Number(r.salePrice), 0),
       hasCritical: g.rows.some(r => stockStatus(r) !== "ok"),
     }))
   }, [balance])
@@ -142,10 +153,6 @@ export default function EstoquePage() {
       next.has(productId) ? next.delete(productId) : next.add(productId)
       return next
     })
-  }
-
-  function openModal(type: "in" | "out", variant: BalanceRow | null = null) {
-    setModal({ open: true, type, variant })
   }
 
   return (
@@ -161,10 +168,10 @@ export default function EstoquePage() {
             <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
           </button>
           <button
-            onClick={() => openModal("in")}
+            onClick={() => setShowOrdem(true)}
             className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
           >
-            <Plus size={15} /> Lançar movimentação
+            <ClipboardList size={15} /> Ordem de Entrada
           </button>
         </div>
       </div>
@@ -183,7 +190,7 @@ export default function EstoquePage() {
         />
       </div>
 
-      {/* Inventory by product */}
+      {/* Product list */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="w-7 h-7 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
@@ -191,15 +198,23 @@ export default function EstoquePage() {
       ) : groups.length === 0 ? (
         <div className="flex flex-col items-center py-20 gap-3 text-[#0F1E3C]/25">
           <PackageOpen size={40} strokeWidth={1.2} />
-          <p className="text-sm">Nenhuma variação cadastrada. Cadastre produtos com cores e tamanhos.</p>
+          <p className="text-sm">Nenhuma variação cadastrada. Ative o controle de estoque nos produtos.</p>
         </div>
       ) : (
         <div className="space-y-2">
           {groups.map(group => {
             const isOpen = expanded.has(group.productId)
+
+            // Group variants by color
+            const colorMap = new Map<string, BalanceRow[]>()
+            for (const row of group.rows) {
+              if (!colorMap.has(row.color)) colorMap.set(row.color, [])
+              colorMap.get(row.color)!.push(row)
+            }
+            const colorGroups = [...colorMap.entries()].sort(([a], [b]) => a.localeCompare(b))
+
             return (
               <div key={group.productId} className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
-                {/* Product header row */}
                 <button
                   onClick={() => toggleExpand(group.productId)}
                   className="w-full flex items-center gap-4 px-5 py-4 hover:bg-[#F4F6FB] transition-colors text-left"
@@ -208,80 +223,22 @@ export default function EstoquePage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-[#0F1E3C]">{group.productName}</p>
                     <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-                      {group.rows.length} variações · {group.totalQty} peças · {fmtCurrency(group.totalValue)}
+                      {colorGroups.length} {colorGroups.length === 1 ? "cor" : "cores"} · {group.totalQty} peças · {fmtCurrency(group.totalValue)}
                     </p>
                   </div>
-                  {group.hasCritical && (
-                    <AlertTriangle size={14} className="text-orange-500 flex-shrink-0" />
-                  )}
+                  {group.hasCritical && <AlertTriangle size={14} className="text-orange-500 flex-shrink-0" />}
                   <div className="flex-shrink-0 text-[#0F1E3C]/30">
                     {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   </div>
                 </button>
 
-                {/* Variants table */}
                 {isOpen && (
-                  <div className="border-t border-[#0F1E3C]/6">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-[#F4F6FB] border-b border-[#0F1E3C]/6">
-                          <th className="text-left px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Cor</th>
-                          <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Tam.</th>
-                          <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">SKU</th>
-                          <th className="text-center px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Estoque</th>
-                          <th className="text-center px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Vendas 30d</th>
-                          <th className="text-center px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Status</th>
-                          <th className="px-4 py-2.5" />
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#0F1E3C]/4">
-                        {group.rows.map(row => {
-                          const st = stockStatus(row)
-                          const cfg = STATUS_CONFIG[st]
-                          return (
-                            <tr key={row.variantId} className="hover:bg-[#F4F6FB]/60 transition-colors">
-                              <td className="px-5 py-3 font-medium text-[#0F1E3C]">{row.color || "—"}</td>
-                              <td className="px-4 py-3 text-[#0F1E3C]/60">{row.size || "—"}</td>
-                              <td className="px-4 py-3 font-mono text-xs text-[#0F1E3C]/40">{row.sku}</td>
-                              <td className="px-4 py-3 text-center">
-                                <span className={`text-base font-black ${st === "zerado" ? "text-red-600" : st === "critico" ? "text-orange-600" : "text-[#0F1E3C]"}`}>
-                                  {row.currentStock}
-                                </span>
-                                {row.minStock > 0 && (
-                                  <span className="text-[10px] text-[#0F1E3C]/30 ml-1">/ min {row.minStock}</span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-center text-[#0F1E3C]/50 text-sm">
-                                {row.salesLast30Days > 0 ? row.salesLast30Days : "—"}
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cfg.cls}`}>
-                                  {cfg.label}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-1.5 justify-end">
-                                  <button
-                                    onClick={() => openModal("in", row)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-semibold transition-colors"
-                                    title="Entrada"
-                                  >
-                                    <Plus size={11} /> Entrada
-                                  </button>
-                                  <button
-                                    onClick={() => openModal("out", row)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold transition-colors"
-                                    title="Saída"
-                                  >
-                                    <Minus size={11} /> Saída
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="border-t border-[#0F1E3C]/6 p-4">
+                    <div className="flex gap-3 flex-wrap">
+                      {colorGroups.map(([color, variants]) => (
+                        <ColorBlock key={color} color={color} variants={variants} />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -290,53 +247,44 @@ export default function EstoquePage() {
         </div>
       )}
 
-      {/* Recent movements */}
+      {/* History */}
       {movements.length > 0 && (
         <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
-            <h2 className="text-sm font-bold text-[#0F1E3C]">Últimas movimentações</h2>
+          <div className="px-5 py-4 border-b border-[#0F1E3C]/6 flex items-center gap-2">
+            <ClipboardList size={15} className="text-[#0F1E3C]/30" />
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Histórico de lançamentos</h2>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#F4F6FB] border-b border-[#0F1E3C]/5">
-                {["Produto / Variação", "Tipo", "Qtd", "Motivo", "Data"].map(h => (
-                  <th key={h} className="text-left px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#0F1E3C]/4">
-              {movements.slice(0, 20).map(m => (
-                <tr key={m.id} className="hover:bg-[#F4F6FB] transition-colors">
-                  <td className="px-5 py-2.5">
-                    <p className="font-medium text-[#0F1E3C]">{m.productName}</p>
-                    <p className="text-xs text-[#0F1E3C]/40">{[m.color, m.size, m.sku].filter(Boolean).join(" · ")}</p>
-                  </td>
-                  <td className="px-5 py-2.5">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${m.type === "in" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
-                      {m.type === "in" ? "Entrada" : "Saída"}
-                    </span>
-                  </td>
-                  <td className="px-5 py-2.5 font-bold text-[#0F1E3C]">{m.quantity}</td>
-                  <td className="px-5 py-2.5 text-[#0F1E3C]/50 text-xs">{REASON_LABEL[m.reason] ?? m.reason}</td>
-                  <td className="px-5 py-2.5 text-[#0F1E3C]/35 text-xs">
-                    {new Date(m.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="divide-y divide-[#0F1E3C]/4">
+            {movements.slice(0, 30).map(m => (
+              <div key={m.id} className="flex items-center gap-4 px-5 py-3 hover:bg-[#F4F6FB] transition-colors">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${m.type === "in" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
+                  {m.type === "in" ? "ENTRADA" : "SAÍDA"}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-[#0F1E3C] truncate">{m.productName}</p>
+                  <p className="text-xs text-[#0F1E3C]/40">{[m.color, m.size, m.sku].filter(Boolean).join(" · ")}{m.notes ? ` · ${m.notes}` : ""}</p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className={`text-base font-black ${m.type === "in" ? "text-emerald-600" : "text-red-500"}`}>
+                    {m.type === "in" ? "+" : "−"}{m.quantity}
+                  </p>
+                  <p className="text-[10px] text-[#0F1E3C]/30">{REASON_LABEL[m.reason] ?? m.reason}</p>
+                </div>
+                <p className="text-[10px] text-[#0F1E3C]/30 flex-shrink-0 w-28 text-right">{fmtDate(m.createdAt)}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Modal */}
-      {modal.open && (
-        <MovimentacaoModal
+      {showOrdem && (
+        <OrdemEntradaModal
           balance={balance}
-          initialType={modal.type}
-          initialVariant={modal.variant}
-          onClose={() => setModal({ open: false, type: "in", variant: null })}
+          groups={groups}
+          onClose={() => setShowOrdem(false)}
           onSuccess={async () => {
-            setModal({ open: false, type: "in", variant: null })
+            setShowOrdem(false)
             await load()
           }}
         />
@@ -345,186 +293,262 @@ export default function EstoquePage() {
   )
 }
 
-// ─── Modal ───────────────────────────────────────────────────────────────────
+// ─── Ordem de Entrada Modal ───────────────────────────────────────────────────
 
-function MovimentacaoModal({
+const STEPS = ["Produto", "Cor", "Quantidades", "Resumo"]
+
+function OrdemEntradaModal({
   balance,
-  initialType,
-  initialVariant,
+  groups,
   onClose,
   onSuccess,
 }: {
   balance: BalanceRow[]
-  initialType: "in" | "out"
-  initialVariant: BalanceRow | null
+  groups: ProductGroup[]
   onClose: () => void
   onSuccess: () => Promise<void>
 }) {
-  const [type, setType]           = useState<"in" | "out">(initialType)
-  const [productId, setProductId] = useState(initialVariant?.productId ?? "")
-  const [variantId, setVariantId] = useState(initialVariant?.variantId ?? "")
-  const [quantity, setQuantity]   = useState("")
-  const [reason, setReason]       = useState("")
-  const [notes, setNotes]         = useState("")
-  const [saving, setSaving]       = useState(false)
-  const [error, setError]         = useState("")
+  const [step, setStep]                   = useState(0)
+  const [selectedProductId, setSelectedProductId] = useState("")
+  const [selectedColor, setSelectedColor] = useState("")
+  const [quantities, setQuantities]       = useState<Record<string, string>>({})
+  const [notes, setNotes]                 = useState("")
+  const [saving, setSaving]               = useState(false)
+  const [error, setError]                 = useState("")
 
-  // Unique products for the first select
-  const products = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const r of balance) map.set(r.productId, r.productName)
-    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-  }, [balance])
+  const selectedProduct = groups.find(g => g.productId === selectedProductId)
 
-  const variants = useMemo(
-    () => balance.filter(r => r.productId === productId),
-    [balance, productId]
+  const colorsForProduct = useMemo(() => {
+    if (!selectedProductId) return []
+    const cols = new Set(balance.filter(r => r.productId === selectedProductId).map(r => r.color))
+    return [...cols].sort()
+  }, [balance, selectedProductId])
+
+  const variantsForColor = useMemo(() => {
+    if (!selectedProductId || !selectedColor) return []
+    return balance
+      .filter(r => r.productId === selectedProductId && r.color === selectedColor)
+      .sort((a, b) => a.size.localeCompare(b.size))
+  }, [balance, selectedProductId, selectedColor])
+
+  const summaryItems = useMemo(() =>
+    variantsForColor
+      .filter(v => Number(quantities[v.variantId] ?? 0) > 0)
+      .map(v => ({ ...v, qty: Number(quantities[v.variantId]) })),
+    [variantsForColor, quantities]
   )
 
-  const selectedVariant = balance.find(r => r.variantId === variantId) ?? null
+  function pickProduct(productId: string) {
+    setSelectedProductId(productId)
+    setSelectedColor("")
+    setQuantities({})
+    setStep(1)
+  }
 
-  const reasons = type === "in" ? ENTRY_REASONS : EXIT_REASONS
+  function pickColor(color: string) {
+    setSelectedColor(color)
+    const init: Record<string, string> = {}
+    balance
+      .filter(r => r.productId === selectedProductId && r.color === color)
+      .forEach(v => { init[v.variantId] = "" })
+    setQuantities(init)
+    setStep(2)
+  }
 
-  // Reset reason when type changes
-  const handleTypeChange = (t: "in" | "out") => { setType(t); setReason("") }
-
-  // Reset variant when product changes
-  const handleProductChange = (id: string) => { setProductId(id); setVariantId("") }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!variantId) { setError("Selecione uma variação"); return }
-    if (!reason)    { setError("Selecione um motivo");    return }
-
+  async function handleLaunch() {
+    if (summaryItems.length === 0) { setError("Informe pelo menos uma quantidade maior que zero."); return }
     setSaving(true); setError("")
     try {
-      const res = await fetch("/api/stock/movements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          variantId,
-          type,
-          quantity: Number(quantity),
-          reason,
-          channel: "manual",
-          notes: notes || null,
-        }),
-      })
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
+      for (const item of summaryItems) {
+        const res = await fetch("/api/stock/movements", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            variantId: item.variantId,
+            type: "in",
+            quantity: item.qty,
+            reason: "producao",
+            channel: "manual",
+            notes: notes || null,
+          }),
+        })
+        if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
+      }
       await onSuccess()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao lançar")
     } finally { setSaving(false) }
   }
 
+  const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] bg-white transition-colors"
+
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
-            <h2 className="text-base font-bold text-[#0F1E3C]">Lançar movimentação</h2>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
+            <div>
+              <h2 className="text-base font-bold text-[#0F1E3C]">Ordem de Entrada</h2>
+              <div className="flex items-center gap-1.5 mt-1">
+                {STEPS.map((s, i) => (
+                  <div key={s} className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-semibold ${i === step ? "text-[#4361EE]" : i < step ? "text-[#0F1E3C]/40 line-through" : "text-[#0F1E3C]/20"}`}>
+                      {s}
+                    </span>
+                    {i < STEPS.length - 1 && <span className="text-[#0F1E3C]/15 text-[10px]">›</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40">
               <X size={16} />
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
-            {/* Type toggle */}
-            <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => handleTypeChange("in")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors ${type === "in" ? "bg-emerald-600 text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4"}`}
-              >
-                <Plus size={14} /> Entrada
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTypeChange("out")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors ${type === "out" ? "bg-red-600 text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4"}`}
-              >
-                <Minus size={14} /> Saída
-              </button>
-            </div>
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto">
 
-            {/* Produto */}
-            <div>
-              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Produto</label>
-              <select className={inputCls} value={productId} onChange={e => handleProductChange(e.target.value)} required>
-                <option value="">Selecione um produto...</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
-
-            {/* Variação */}
-            {productId && (
-              <div>
-                <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Variação</label>
-                <select className={inputCls} value={variantId} onChange={e => setVariantId(e.target.value)} required>
-                  <option value="">Selecione...</option>
-                  {variants.map(v => (
-                    <option key={v.variantId} value={v.variantId}>
-                      {v.color} {v.size} — est: {v.currentStock} pç
-                    </option>
-                  ))}
-                </select>
-                {selectedVariant && type === "out" && selectedVariant.currentStock === 0 && (
-                  <p className="mt-1 text-xs text-red-500">⚠ Estoque zerado</p>
+            {/* Step 0 — Produto */}
+            {step === 0 && (
+              <div className="p-5">
+                <p className="text-xs text-[#0F1E3C]/40 mb-4">Selecione o produto para lançar entrada</p>
+                {groups.length === 0 ? (
+                  <p className="text-sm text-center text-[#0F1E3C]/30 py-10">Nenhum produto com estoque ativo.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {groups.map(g => (
+                      <button
+                        key={g.productId}
+                        onClick={() => pickProduct(g.productId)}
+                        className="p-4 border border-[#0F1E3C]/10 rounded-xl text-left hover:border-[#4361EE] hover:bg-[#F4F6FB] transition-colors group"
+                      >
+                        <p className="font-bold text-[#0F1E3C] group-hover:text-[#4361EE] transition-colors text-sm leading-snug">{g.productName}</p>
+                        <p className="text-xs text-[#0F1E3C]/35 mt-1">{g.totalQty} pç em estoque</p>
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
 
-            {/* Motivo */}
-            <div>
-              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Motivo</label>
-              <select className={inputCls} value={reason} onChange={e => setReason(e.target.value)} required>
-                <option value="">Selecione...</option>
-                {reasons.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
-            </div>
+            {/* Step 1 — Cor */}
+            {step === 1 && (
+              <div className="p-5">
+                <p className="text-sm font-bold text-[#0F1E3C] mb-0.5">{selectedProduct?.productName}</p>
+                <p className="text-xs text-[#0F1E3C]/40 mb-5">Selecione a cor</p>
+                <div className="flex flex-wrap gap-2.5">
+                  {colorsForProduct.map(color => (
+                    <button
+                      key={color}
+                      onClick={() => pickColor(color)}
+                      className="px-5 py-3 border border-[#0F1E3C]/12 rounded-xl font-semibold text-sm text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#F4F6FB] transition-colors"
+                    >
+                      {color || "Sem cor"}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setStep(0)} className="mt-6 text-xs text-[#0F1E3C]/35 hover:text-[#0F1E3C] transition-colors">
+                  ← Voltar
+                </button>
+              </div>
+            )}
 
-            {/* Quantidade */}
-            <div>
-              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Quantidade</label>
-              <input
-                className={inputCls}
-                type="number"
-                min="1"
-                value={quantity}
-                onChange={e => setQuantity(e.target.value)}
-                required
-                placeholder="0"
-              />
-            </div>
+            {/* Step 2 — Quantidades */}
+            {step === 2 && (
+              <div className="p-5">
+                <p className="text-sm font-bold text-[#0F1E3C] mb-0.5">{selectedProduct?.productName} — {selectedColor || "Sem cor"}</p>
+                <p className="text-xs text-[#0F1E3C]/40 mb-5">Informe a quantidade por tamanho</p>
+                <div className="space-y-2">
+                  {variantsForColor.map(v => (
+                    <div key={v.variantId} className="flex items-center gap-4 p-3 border border-[#0F1E3C]/8 rounded-xl">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-[#0F1E3C]">{v.size || "Único"}</p>
+                        <p className="text-[10px] font-mono text-[#0F1E3C]/30">{v.sku} · estoque atual: {v.currentStock}</p>
+                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        value={quantities[v.variantId] ?? ""}
+                        onChange={e => setQuantities(prev => ({ ...prev, [v.variantId]: e.target.value }))}
+                        className="w-24 border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-center font-black text-xl text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-3 mt-5">
+                  <button
+                    onClick={() => setStep(1)}
+                    className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors"
+                  >
+                    ← Voltar
+                  </button>
+                  <button
+                    onClick={() => { if (summaryItems.length > 0) setStep(3); else setError("Informe pelo menos uma quantidade.") }}
+                    className="flex-1 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white rounded-xl py-2.5 text-sm font-semibold transition-colors"
+                  >
+                    Revisar →
+                  </button>
+                </div>
+                {error && <p className="mt-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+              </div>
+            )}
 
-            {/* Observação */}
-            <div>
-              <label className="block text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5">Observação (opcional)</label>
-              <input className={inputCls} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ex: lote jan/2026" />
-            </div>
+            {/* Step 3 — Resumo */}
+            {step === 3 && (
+              <div className="p-5">
+                <p className="text-sm font-bold text-[#0F1E3C] mb-0.5">{selectedProduct?.productName} — {selectedColor || "Sem cor"}</p>
+                <p className="text-xs text-[#0F1E3C]/40 mb-4">Resumo da ordem de entrada</p>
 
-            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+                <div className="space-y-2 mb-5">
+                  {summaryItems.map(item => (
+                    <div key={item.variantId} className="flex items-center justify-between px-4 py-3 bg-[#F4F6FB] rounded-xl">
+                      <div>
+                        <p className="font-bold text-[#0F1E3C]">{item.size || "Único"}</p>
+                        <p className="text-xs text-[#0F1E3C]/35">{item.sku} · atual: {item.currentStock} pç</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xl font-black text-emerald-600">+{item.qty}</p>
+                        <p className="text-[10px] text-[#0F1E3C]/35">→ {item.currentStock + item.qty} pç</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
 
-            <div className="flex gap-3 pt-1">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60 ${type === "in" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}
-              >
-                {saving && <Loader2 size={14} className="animate-spin" />}
-                Lançar {type === "in" ? "Entrada" : "Saída"}
-              </button>
-            </div>
-          </form>
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Observação (opcional)</label>
+                  <input
+                    className={inputCls}
+                    placeholder="Ex: Lote jan/2026, produção semanal..."
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                  />
+                </div>
+
+                {error && <p className="mb-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setError(""); setStep(2) }}
+                    className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors"
+                  >
+                    ← Voltar
+                  </button>
+                  <button
+                    onClick={handleLaunch}
+                    disabled={saving}
+                    className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60 transition-colors"
+                  >
+                    {saving && <Loader2 size={14} className="animate-spin" />}
+                    Lançar Entrada
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>
