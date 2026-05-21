@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic"
+
 import Image from "next/image"
 import Link from "next/link"
 import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight } from "lucide-react"
@@ -6,15 +8,28 @@ import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
 import { pool } from "@/lib/db"
 
-const WA_LINK = `https://wa.me/5516999999999?text=${encodeURIComponent(
+const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
   "Olá! Gostaria de mais informações sobre a SM Confecções."
 )}`
 
 async function getCatalog(): Promise<CatalogProduct[]> {
   try {
-    const { rows } = await pool.query(
-      "SELECT id, name, image_url, display_order FROM catalog_products WHERE active = true ORDER BY display_order ASC, created_at ASC"
-    )
+    const { rows } = await pool.query(`
+      SELECT
+        p.id, p.name, p.image_url, p.display_order, p.description, p.cover_color,
+        COALESCE(
+          json_agg(
+            json_build_object('id', i.id, 'image_url', i.image_url, 'display_order', i.display_order, 'color', i.color)
+            ORDER BY i.display_order ASC, i.created_at ASC
+          ) FILTER (WHERE i.id IS NOT NULL),
+          '[]'
+        ) AS images
+      FROM catalog_products p
+      LEFT JOIN catalog_product_images i ON i.product_id = p.id
+      WHERE p.active = true
+      GROUP BY p.id
+      ORDER BY p.display_order ASC, p.created_at ASC
+    `)
     return rows
   } catch {
     return []
@@ -222,19 +237,29 @@ export default async function LandingPage() {
             </div>
           </div>
 
-          <div className="flex items-center justify-center gap-3 max-w-xl mx-auto">
+          <div className="flex flex-wrap items-center justify-center gap-3 max-w-xl mx-auto">
             <div className="flex items-center gap-2.5 bg-white border border-[#0F1E3C]/8 rounded-xl px-5 py-3 shadow-sm">
               <span className="text-[#0F1E3C] text-sm font-semibold">Horário de Funcionamento</span>
               <span className="bg-[#4361EE]/10 text-[#4361EE] text-[10px] font-black uppercase tracking-wide px-2.5 py-1 rounded-full">
                 Em Breve
               </span>
             </div>
+            <a
+              href="#localizacao"
+              className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold px-5 py-3 rounded-xl transition-colors"
+            >
+              <MapPin size={15} />
+              Ver endereço
+            </a>
           </div>
         </div>
       </section>
 
+      {/* ── CATÁLOGO ── */}
+      <CatalogCarousel initialProducts={catalog} waLink={WA_LINK} />
+
       {/* ── SERVIÇOS ── */}
-      <section id="servicos" className="py-20 sm:py-28 px-5 bg-white">
+      <section id="servicos" className="py-20 sm:py-28 px-5 bg-[#F4F6FB]">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-14">
             <h2
@@ -319,9 +344,6 @@ export default async function LandingPage() {
           </div>
         </div>
       </section>
-
-      {/* ── CATÁLOGO ── */}
-      <CatalogCarousel initialProducts={catalog} waLink={WA_LINK} />
 
       {/* ── LOCALIZAÇÃO ── */}
       <section id="localizacao" className="py-20 sm:py-28 px-5 bg-[#F4F6FB]">
@@ -421,7 +443,7 @@ export default async function LandingPage() {
             <MessageCircle size={23} />
             Falar no WhatsApp agora
           </a>
-          <p className="text-white/25 text-sm mt-6">(16) 99999-9999</p>
+          <p className="text-white/25 text-sm mt-6">(16) 99269-2363</p>
         </div>
       </section>
 
@@ -445,7 +467,7 @@ export default async function LandingPage() {
               rel="noopener noreferrer"
               className="hover:text-white/60 transition-colors"
             >
-              (16) 99999-9999
+              (16) 99269-2363
             </a>
             <span className="text-white/15">·</span>
             <a
