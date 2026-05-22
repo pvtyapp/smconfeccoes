@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useMemo, useCallback } from "react"
-import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList } from "lucide-react"
+import { useEffect, useState, useMemo, useCallback, useRef } from "react"
+import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList, Calendar } from "lucide-react"
 import type { BalanceRow } from "@/lib/calculations"
 
 type Movement = {
@@ -34,15 +34,56 @@ const REASON_LABEL: Record<string, string> = {
   venda: "Venda", venda_chatbot: "Venda (chatbot)",
 }
 
+// ─── Timezone helpers (Brasília = UTC-3 fixo) ────────────────────────────────
+
+const BRT_MS = 3 * 60 * 60 * 1000
+
+function brasiliaStartOf(daysAgo: number): Date {
+  const nowBRT  = new Date(Date.now() - BRT_MS)
+  const midnight = new Date(Date.UTC(
+    nowBRT.getUTCFullYear(),
+    nowBRT.getUTCMonth(),
+    nowBRT.getUTCDate() - daysAgo,
+  ))
+  return new Date(midnight.getTime() + BRT_MS) // volta pra UTC
+}
+
+type FilterMode =
+  | { type: "hoje" }
+  | { type: "days"; days: number }
+  | { type: "range"; from: string; to: string } // "YYYY-MM-DD"
+
+function filterDates(f: FilterMode): { from: Date; to: Date } {
+  const now = new Date()
+  if (f.type === "hoje")  return { from: brasiliaStartOf(0), to: now }
+  if (f.type === "days")  return { from: brasiliaStartOf(f.days), to: now }
+  return {
+    from: new Date(f.from + "T00:00:00-03:00"),
+    to:   new Date(f.to   + "T23:59:59-03:00"),
+  }
+}
+
+function filterLabel(f: FilterMode): string {
+  if (f.type === "hoje") return "Hoje"
+  if (f.type === "days") return `${f.days}d`
+  const fmt = (s: string) => s.slice(8) + "/" + s.slice(5, 7)
+  return `${fmt(f.from)} – ${fmt(f.to)}`
+}
+
 function fmtCurrency(v: number) {
   return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
 }
 
 function fmtDate(s: string) {
-  return new Date(s).toLocaleDateString("pt-BR", {
+  return new Date(s).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   })
+}
+
+function todayBRT(): string {
+  return new Date(Date.now() - BRT_MS).toISOString().slice(0, 10)
 }
 
 function stockStatus(row: BalanceRow): "zerado" | "critico" | "ok" {
@@ -93,12 +134,19 @@ function ColorBlock({ color, variants }: { color: string; variants: BalanceRow[]
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-const PERIODS = [
-  { label: "7d",  days: 7  },
-  { label: "15d", days: 15 },
-  { label: "30d", days: 30 },
-  { label: "60d", days: 60 },
+const PRESETS: FilterMode[] = [
+  { type: "hoje" },
+  { type: "days", days: 7  },
+  { type: "days", days: 15 },
+  { type: "days", days: 30 },
+  { type: "days", days: 60 },
 ]
+
+function isActive(f: FilterMode, active: FilterMode) {
+  if (f.type !== active.type) return false
+  if (f.type === "days" && active.type === "days") return f.days === active.days
+  return f.type === active.type
+}
 
 export default function EstoquePage() {
   const [balance, setBalance]     = useState<BalanceRow[]>([])
@@ -106,7 +154,19 @@ export default function EstoquePage() {
   const [loading, setLoading]     = useState(true)
   const [expanded, setExpanded]   = useState<Set<string>>(new Set())
   const [showOrdem, setShowOrdem] = useState(false)
-  const [period, setPeriod]       = useState(30)
+  const [filter, setFilter]       = useState<FilterMode>({ type: "days", days: 30 })
+  const [showCal, setShowCal]     = useState(false)
+  const [calFrom, setCalFrom]     = useState(todayBRT())
+  const [calTo, setCalTo]         = useState(todayBRT())
+  const calRef                    = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (calRef.current && !calRef.current.contains(e.target as Node)) setShowCal(false)
+    }
+    if (showCal) document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showCal])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -122,25 +182,23 @@ export default function EstoquePage() {
 
   useEffect(() => { load() }, [load])
 
-  const periodCutoff = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - period)
-    return d
-  }, [period])
+  const { from: fromDate, to: toDate } = useMemo(() => filterDates(filter), [filter])
 
   const movementsInPeriod = useMemo(
-    () => movements.filter(m => new Date(m.createdAt) >= periodCutoff),
-    [movements, periodCutoff]
+    () => movements.filter(m => { const d = new Date(m.createdAt); return d >= fromDate && d <= toDate }),
+    [movements, fromDate, toDate]
   )
 
   const stats = useMemo(() => {
-    const totalValue = balance.reduce((a, r) => a + r.currentStock * Number(r.salePrice), 0)
+    const totalValue = balance.reduce((a, r) => a + r.currentStock * Number(r.averageCost), 0)
     const totalQty   = balance.reduce((a, r) => a + r.currentStock, 0)
     const critical   = balance.filter(r => stockStatus(r) !== "ok").length
     const inPeriod   = movementsInPeriod.filter(m => m.type === "in").reduce((a, m) => a + m.quantity, 0)
     const outPeriod  = movementsInPeriod.filter(m => m.type === "out").reduce((a, m) => a + m.quantity, 0)
     return { totalValue, totalQty, inPeriod, outPeriod, critical }
   }, [balance, movementsInPeriod])
+
+  const periodTag = filterLabel(filter)
 
   const groups = useMemo<ProductGroup[]>(() => {
     const map = new Map<string, { productName: string; rows: BalanceRow[] }>()
@@ -153,7 +211,7 @@ export default function EstoquePage() {
       productName: g.productName,
       rows: g.rows.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size)),
       totalQty:    g.rows.reduce((s, r) => s + r.currentStock, 0),
-      totalValue:  g.rows.reduce((s, r) => s + r.currentStock * Number(r.salePrice), 0),
+      totalValue:  g.rows.reduce((s, r) => s + r.currentStock * Number(r.averageCost), 0),
       hasCritical: g.rows.some(r => stockStatus(r) !== "ok"),
     }))
   }, [balance])
@@ -177,19 +235,70 @@ export default function EstoquePage() {
         <div className="flex items-center gap-2">
           {/* Period filter */}
           <div className="flex items-center gap-1 bg-[#F4F6FB] rounded-xl p-1 border border-[#0F1E3C]/6">
-            {PERIODS.map(p => (
+            {PRESETS.map((p, i) => (
               <button
-                key={p.days}
-                onClick={() => setPeriod(p.days)}
+                key={i}
+                onClick={() => { setFilter(p); setShowCal(false) }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  period === p.days
+                  isActive(p, filter)
                     ? "bg-white text-[#0F1E3C] shadow-sm"
                     : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
                 }`}
               >
-                {p.label}
+                {filterLabel(p)}
               </button>
             ))}
+          </div>
+
+          {/* Calendar range */}
+          <div className="relative" ref={calRef}>
+            <button
+              onClick={() => setShowCal(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors ${
+                filter.type === "range"
+                  ? "bg-[#4361EE] text-white border-[#4361EE]"
+                  : "bg-[#F4F6FB] border-[#0F1E3C]/6 text-[#0F1E3C]/50 hover:text-[#0F1E3C]"
+              }`}
+            >
+              <Calendar size={13} />
+              {filter.type === "range" ? filterLabel(filter) : "Range"}
+            </button>
+
+            {showCal && (
+              <div className="absolute right-0 top-full mt-2 z-30 bg-white border border-[#0F1E3C]/10 rounded-2xl shadow-xl p-4 w-64">
+                <p className="text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider mb-3">Intervalo personalizado</p>
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-[#0F1E3C]/40 mb-1">De</label>
+                    <input
+                      type="date"
+                      value={calFrom}
+                      max={calTo}
+                      onChange={e => setCalFrom(e.target.value)}
+                      className="w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-[#0F1E3C]/40 mb-1">Até</label>
+                    <input
+                      type="date"
+                      value={calTo}
+                      min={calFrom}
+                      max={todayBRT()}
+                      onChange={e => setCalTo(e.target.value)}
+                      className="w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE]"
+                    />
+                  </div>
+                  <button
+                    onClick={() => { setFilter({ type: "range", from: calFrom, to: calTo }); setShowCal(false) }}
+                    disabled={!calFrom || !calTo}
+                    className="w-full mt-1 py-2 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-semibold rounded-xl transition-colors disabled:opacity-40"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors">
             <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
@@ -205,10 +314,10 @@ export default function EstoquePage() {
 
       {/* Stats */}
       <div className="grid grid-cols-5 gap-3">
-        <StatCard label="Valor em estoque"  value={fmtCurrency(stats.totalValue)} sub="preço de venda" />
+        <StatCard label="Valor em estoque"  value={fmtCurrency(stats.totalValue)} sub="preço de custo" />
         <StatCard label="Peças em estoque"  value={`${stats.totalQty}`}  sub="total geral" />
-        <StatCard label={`Entradas ${period}d`} value={`+${stats.inPeriod}`}  accent="text-emerald-600" sub={`últimos ${period} dias`} />
-        <StatCard label={`Saídas ${period}d`}   value={`−${stats.outPeriod}`} accent="text-red-500"     sub={`últimos ${period} dias`} />
+        <StatCard label="Entradas período" value={`+${stats.inPeriod}`}  accent="text-emerald-600" sub={periodTag} />
+        <StatCard label="Saídas período"   value={`−${stats.outPeriod}`} accent="text-red-500"     sub={periodTag} />
         <StatCard
           label="Crítico / Zerado"
           value={String(stats.critical)}
@@ -281,7 +390,7 @@ export default function EstoquePage() {
             <div className="flex items-center gap-2">
               <ClipboardList size={15} className="text-[#0F1E3C]/30" />
               <h2 className="text-sm font-bold text-[#0F1E3C]">Histórico de lançamentos</h2>
-              <span className="text-xs text-[#0F1E3C]/35 bg-[#F4F6FB] px-2 py-0.5 rounded-full">últimos {period}d</span>
+              <span className="text-xs text-[#0F1E3C]/35 bg-[#F4F6FB] px-2 py-0.5 rounded-full">{periodTag}</span>
             </div>
             <span className="text-xs text-[#0F1E3C]/30">{movementsInPeriod.length} registro(s)</span>
           </div>
