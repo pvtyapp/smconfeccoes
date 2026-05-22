@@ -11,6 +11,7 @@ export type BalanceRow = {
   targetStock: number
   salePrice: number
   averageCost: number
+  costPrice: number   // material_cost do produto
   currentStock: number
   salesLast30Days: number
 }

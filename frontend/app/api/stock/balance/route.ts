@@ -16,6 +16,7 @@ export async function GET() {
         pv.target_stock  AS "targetStock",
         pv.sale_price    AS "salePrice",
         pv.average_cost  AS "averageCost",
+        p.material_cost  AS "costPrice",
         COALESCE(bal.qty, 0)::int    AS "currentStock",
         COALESCE(s30.qty, 0)::int    AS "salesLast30Days"
       FROM product_variants pv
