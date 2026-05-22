@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
-import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList, Calendar } from "lucide-react"
+import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList, Calendar, SlidersHorizontal } from "lucide-react"
 import type { BalanceRow } from "@/lib/calculations"
 
 type Movement = {
@@ -32,6 +32,7 @@ const REASON_LABEL: Record<string, string> = {
   ajuste_positivo: "Ajuste +", saida_manual: "Retirada manual", venda_manual: "Venda",
   perda: "Perda / Defeito", ajuste_negativo: "Ajuste −",
   venda: "Venda", venda_chatbot: "Venda (chatbot)",
+  manutencao: "Manutenção",
 }
 
 // ─── Timezone helpers (Brasília = UTC-3 fixo) ────────────────────────────────
@@ -153,7 +154,8 @@ export default function EstoquePage() {
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
   const [expanded, setExpanded]   = useState<Set<string>>(new Set())
-  const [showOrdem, setShowOrdem] = useState(false)
+  const [showOrdem, setShowOrdem]         = useState(false)
+  const [adjustingGroup, setAdjustingGroup] = useState<ProductGroup | null>(null)
   const [filter, setFilter]       = useState<FilterMode>({ type: "hoje" })
   const [showCal, setShowCal]     = useState(false)
   const [calFrom, setCalFrom]     = useState(todayBRT())
@@ -351,22 +353,34 @@ export default function EstoquePage() {
 
             return (
               <div key={group.productId} className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
-                <button
-                  onClick={() => toggleExpand(group.productId)}
-                  className="w-full flex items-center gap-4 px-5 py-4 hover:bg-[#F4F6FB] transition-colors text-left"
-                >
-                  <div className={`w-1.5 h-7 rounded-full flex-shrink-0 ${group.hasCritical ? "bg-orange-400" : "bg-emerald-400"}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-[#0F1E3C]">{group.productName}</p>
-                    <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-                      {colorGroups.length} {colorGroups.length === 1 ? "cor" : "cores"} · {group.totalQty} peças · {fmtCurrency(group.totalValue)}
-                    </p>
-                  </div>
-                  {group.hasCritical && <AlertTriangle size={14} className="text-orange-500 flex-shrink-0" />}
-                  <div className="flex-shrink-0 text-[#0F1E3C]/30">
+                <div className="flex items-center gap-2 px-5 py-4">
+                  {/* Expand area */}
+                  <button
+                    onClick={() => toggleExpand(group.productId)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                  >
+                    <div className={`w-1.5 h-7 rounded-full flex-shrink-0 ${group.hasCritical ? "bg-orange-400" : "bg-emerald-400"}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-[#0F1E3C]">{group.productName}</p>
+                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
+                        {colorGroups.length} {colorGroups.length === 1 ? "cor" : "cores"} · {group.totalQty} peças · {fmtCurrency(group.totalValue)}
+                      </p>
+                    </div>
+                    {group.hasCritical && <AlertTriangle size={14} className="text-orange-500 flex-shrink-0" />}
+                  </button>
+
+                  {/* Actions */}
+                  <button
+                    onClick={() => setAdjustingGroup(group)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-[#0F1E3C]/40 hover:text-[#4361EE] hover:bg-[#4361EE]/8 transition-colors flex-shrink-0"
+                    title="Ajuste de estoque"
+                  >
+                    <SlidersHorizontal size={13} /> Editar
+                  </button>
+                  <button onClick={() => toggleExpand(group.productId)} className="text-[#0F1E3C]/30 flex-shrink-0">
                     {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </div>
-                </button>
+                  </button>
+                </div>
 
                 {isOpen && (
                   <div className="border-t border-[#0F1E3C]/6 p-4">
@@ -417,7 +431,16 @@ export default function EstoquePage() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Ajuste modal */}
+      {adjustingGroup && (
+        <AjusteEstoqueModal
+          group={adjustingGroup}
+          onClose={() => setAdjustingGroup(null)}
+          onSuccess={async () => { setAdjustingGroup(null); await load() }}
+        />
+      )}
+
+      {/* Ordem de Entrada modal */}
       {showOrdem && (
         <OrdemEntradaModal
           balance={balance}
@@ -430,6 +453,221 @@ export default function EstoquePage() {
         />
       )}
     </div>
+  )
+}
+
+// ─── Ajuste de Estoque Modal ─────────────────────────────────────────────────
+
+function AjusteEstoqueModal({
+  group,
+  onClose,
+  onSuccess,
+}: {
+  group: ProductGroup
+  onClose: () => void
+  onSuccess: () => Promise<void>
+}) {
+  const [step, setStep]     = useState<"edit" | "review">("edit")
+  const [qtys, setQtys]     = useState<Record<string, string>>(() =>
+    Object.fromEntries(group.rows.map(r => [r.variantId, String(r.currentStock)]))
+  )
+  const [notes, setNotes]   = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState("")
+
+  const changes = group.rows
+    .map(r => ({ row: r, newQty: Number(qtys[r.variantId] ?? r.currentStock) }))
+    .filter(({ row, newQty }) => newQty !== row.currentStock && !isNaN(newQty) && newQty >= 0)
+
+  function goReview() {
+    setError("")
+    if (!notes.trim()) { setError("A observação é obrigatória."); return }
+    if (changes.length === 0) { setError("Nenhuma quantidade foi alterada."); return }
+    setStep("review")
+  }
+
+  async function handleConfirm() {
+    setSaving(true); setError("")
+    try {
+      for (const { row, newQty } of changes) {
+        const delta = newQty - row.currentStock
+        await fetch("/api/stock/movements", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            variantId: row.variantId,
+            type:      delta > 0 ? "in" : "out",
+            quantity:  Math.abs(delta),
+            reason:    "manutencao",
+            channel:   "manual",
+            notes:     notes.trim(),
+          }),
+        }).then(async r => { if (!r.ok) throw new Error((await r.json()).error ?? "Erro") })
+      }
+      await onSuccess()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar")
+    } finally { setSaving(false) }
+  }
+
+  const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] bg-white"
+
+  // Group rows by color for the edit view
+  const colorMap = new Map<string, BalanceRow[]>()
+  for (const r of group.rows) {
+    if (!colorMap.has(r.color)) colorMap.set(r.color, [])
+    colorMap.get(r.color)!.push(r)
+  }
+  const colorGroups = [...colorMap.entries()].sort(([a], [b]) => a.localeCompare(b))
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
+            <div>
+              <h2 className="text-base font-bold text-[#0F1E3C]">Ajuste de Estoque</h2>
+              <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{group.productName}</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex gap-1.5 text-[10px] font-semibold">
+                <span className={step === "edit" ? "text-[#4361EE]" : "text-[#0F1E3C]/25 line-through"}>Editar</span>
+                <span className="text-[#0F1E3C]/20">›</span>
+                <span className={step === "review" ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}>Resumo</span>
+              </div>
+              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+
+            {/* Step: edit */}
+            {step === "edit" && (
+              <div className="p-5 space-y-4">
+                <p className="text-xs text-[#0F1E3C]/40">Altere as quantidades. Deixe igual para não modificar.</p>
+
+                {colorGroups.map(([color, variants]) => (
+                  <div key={color}>
+                    <p className="text-xs font-bold text-[#0F1E3C]/50 uppercase tracking-wider mb-2">{color || "Sem cor"}</p>
+                    <div className="space-y-2">
+                      {variants.sort((a, b) => a.size.localeCompare(b.size)).map(v => {
+                        const newQty = Number(qtys[v.variantId] ?? v.currentStock)
+                        const changed = newQty !== v.currentStock && !isNaN(newQty)
+                        return (
+                          <div key={v.variantId} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${changed ? "border-[#4361EE]/30 bg-[#4361EE]/4" : "border-[#0F1E3C]/8"}`}>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-[#0F1E3C] text-sm">{v.size || "Único"}</p>
+                              <p className="text-[10px] font-mono text-[#0F1E3C]/30">{v.sku}</p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="text-xs text-[#0F1E3C]/35">atual: <span className="font-bold text-[#0F1E3C]">{v.currentStock}</span></span>
+                              {changed && (
+                                <span className={`text-xs font-bold ${newQty > v.currentStock ? "text-emerald-600" : "text-red-500"}`}>
+                                  {newQty > v.currentStock ? `+${newQty - v.currentStock}` : `${newQty - v.currentStock}`}
+                                </span>
+                              )}
+                            </div>
+                            <input
+                              type="number"
+                              min="0"
+                              value={qtys[v.variantId] ?? v.currentStock}
+                              onChange={e => setQtys(prev => ({ ...prev, [v.variantId]: e.target.value }))}
+                              className="w-20 border border-[#0F1E3C]/15 rounded-xl px-2 py-1.5 text-center font-black text-lg text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE]"
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">
+                    Observação <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    className={inputCls + " resize-none"}
+                    rows={2}
+                    placeholder="Ex: Contagem física realizada em 21/05, ajuste pós-produção..."
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                  />
+                </div>
+
+                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+
+                <div className="flex gap-3">
+                  <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
+                    Cancelar
+                  </button>
+                  <button onClick={goReview} className="flex-1 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white rounded-xl py-2.5 text-sm font-semibold transition-colors">
+                    Ver resumo →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step: review */}
+            {step === "review" && (
+              <div className="p-5 space-y-4">
+                <div>
+                  <p className="text-xs text-[#0F1E3C]/40 mb-3">
+                    {changes.length} variação(ões) serão ajustadas. Confirme antes de aplicar.
+                  </p>
+                  <div className="space-y-2">
+                    {changes.map(({ row, newQty }) => {
+                      const delta = newQty - row.currentStock
+                      return (
+                        <div key={row.variantId} className="flex items-center justify-between px-4 py-3 bg-[#F4F6FB] rounded-xl">
+                          <div>
+                            <p className="font-bold text-[#0F1E3C] text-sm">{row.color} · {row.size || "Único"}</p>
+                            <p className="text-[10px] font-mono text-[#0F1E3C]/30">{row.sku}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm text-[#0F1E3C]/50">
+                              {row.currentStock} <span className="text-[#0F1E3C]/25">→</span> <span className="font-black text-[#0F1E3C]">{newQty}</span>
+                            </p>
+                            <p className={`text-sm font-black ${delta > 0 ? "text-emerald-600" : "text-red-500"}`}>
+                              {delta > 0 ? `+${delta}` : delta}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <p className="text-xs font-semibold text-amber-700 mb-0.5">Observação</p>
+                  <p className="text-sm text-amber-800">{notes}</p>
+                </div>
+
+                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+
+                <div className="flex gap-3">
+                  <button onClick={() => { setStep("edit"); setError("") }} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
+                    ← Voltar
+                  </button>
+                  <button
+                    onClick={handleConfirm}
+                    disabled={saving}
+                    className="flex-1 flex items-center justify-center gap-2 bg-[#4361EE] hover:bg-[#3451D4] text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60 transition-colors"
+                  >
+                    {saving && <Loader2 size={14} className="animate-spin" />}
+                    Confirmar ajuste
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
