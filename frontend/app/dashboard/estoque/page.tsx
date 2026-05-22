@@ -93,12 +93,20 @@ function ColorBlock({ color, variants }: { color: string; variants: BalanceRow[]
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
+const PERIODS = [
+  { label: "7d",  days: 7  },
+  { label: "15d", days: 15 },
+  { label: "30d", days: 30 },
+  { label: "60d", days: 60 },
+]
+
 export default function EstoquePage() {
   const [balance, setBalance]     = useState<BalanceRow[]>([])
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
   const [expanded, setExpanded]   = useState<Set<string>>(new Set())
   const [showOrdem, setShowOrdem] = useState(false)
+  const [period, setPeriod]       = useState(30)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -114,22 +122,25 @@ export default function EstoquePage() {
 
   useEffect(() => { load() }, [load])
 
+  const periodCutoff = useMemo(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - period)
+    return d
+  }, [period])
+
+  const movementsInPeriod = useMemo(
+    () => movements.filter(m => new Date(m.createdAt) >= periodCutoff),
+    [movements, periodCutoff]
+  )
+
   const stats = useMemo(() => {
-    const now = new Date()
-    const mo = now.getMonth(); const yr = now.getFullYear()
     const totalValue = balance.reduce((a, r) => a + r.currentStock * Number(r.salePrice), 0)
     const totalQty   = balance.reduce((a, r) => a + r.currentStock, 0)
     const critical   = balance.filter(r => stockStatus(r) !== "ok").length
-    const inMonth    = movements.filter(m => {
-      const d = new Date(m.createdAt)
-      return m.type === "in" && d.getMonth() === mo && d.getFullYear() === yr
-    }).reduce((a, m) => a + m.quantity, 0)
-    const outMonth   = movements.filter(m => {
-      const d = new Date(m.createdAt)
-      return m.type === "out" && d.getMonth() === mo && d.getFullYear() === yr
-    }).reduce((a, m) => a + m.quantity, 0)
-    return { totalValue, totalQty, inMonth, outMonth, critical }
-  }, [balance, movements])
+    const inPeriod   = movementsInPeriod.filter(m => m.type === "in").reduce((a, m) => a + m.quantity, 0)
+    const outPeriod  = movementsInPeriod.filter(m => m.type === "out").reduce((a, m) => a + m.quantity, 0)
+    return { totalValue, totalQty, inPeriod, outPeriod, critical }
+  }, [balance, movementsInPeriod])
 
   const groups = useMemo<ProductGroup[]>(() => {
     const map = new Map<string, { productName: string; rows: BalanceRow[] }>()
@@ -158,12 +169,28 @@ export default function EstoquePage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Estoque</h1>
           <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Controle de entradas e saídas por produto</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Period filter */}
+          <div className="flex items-center gap-1 bg-[#F4F6FB] rounded-xl p-1 border border-[#0F1E3C]/6">
+            {PERIODS.map(p => (
+              <button
+                key={p.days}
+                onClick={() => setPeriod(p.days)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  period === p.days
+                    ? "bg-white text-[#0F1E3C] shadow-sm"
+                    : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors">
             <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
           </button>
@@ -180,8 +207,8 @@ export default function EstoquePage() {
       <div className="grid grid-cols-5 gap-3">
         <StatCard label="Valor em estoque"  value={fmtCurrency(stats.totalValue)} sub="preço de venda" />
         <StatCard label="Peças em estoque"  value={`${stats.totalQty}`}  sub="total geral" />
-        <StatCard label="Entradas no mês"   value={`+${stats.inMonth}`}  accent="text-emerald-600" />
-        <StatCard label="Saídas no mês"     value={`−${stats.outMonth}`} accent="text-red-500" />
+        <StatCard label={`Entradas ${period}d`} value={`+${stats.inPeriod}`}  accent="text-emerald-600" sub={`últimos ${period} dias`} />
+        <StatCard label={`Saídas ${period}d`}   value={`−${stats.outPeriod}`} accent="text-red-500"     sub={`últimos ${period} dias`} />
         <StatCard
           label="Crítico / Zerado"
           value={String(stats.critical)}
@@ -248,14 +275,18 @@ export default function EstoquePage() {
       )}
 
       {/* History */}
-      {movements.length > 0 && (
+      {movementsInPeriod.length > 0 && (
         <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#0F1E3C]/6 flex items-center gap-2">
-            <ClipboardList size={15} className="text-[#0F1E3C]/30" />
-            <h2 className="text-sm font-bold text-[#0F1E3C]">Histórico de lançamentos</h2>
+          <div className="px-5 py-4 border-b border-[#0F1E3C]/6 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ClipboardList size={15} className="text-[#0F1E3C]/30" />
+              <h2 className="text-sm font-bold text-[#0F1E3C]">Histórico de lançamentos</h2>
+              <span className="text-xs text-[#0F1E3C]/35 bg-[#F4F6FB] px-2 py-0.5 rounded-full">últimos {period}d</span>
+            </div>
+            <span className="text-xs text-[#0F1E3C]/30">{movementsInPeriod.length} registro(s)</span>
           </div>
           <div className="divide-y divide-[#0F1E3C]/4">
-            {movements.slice(0, 30).map(m => (
+            {movementsInPeriod.slice(0, 50).map(m => (
               <div key={m.id} className="flex items-center gap-4 px-5 py-3 hover:bg-[#F4F6FB] transition-colors">
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${m.type === "in" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
                   {m.type === "in" ? "ENTRADA" : "SAÍDA"}
