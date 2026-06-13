@@ -331,6 +331,7 @@ export default function PedidosPage() {
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const chatInputRef    = useRef<HTMLTextAreaElement>(null)
   const latestMsgAt     = useRef<string | null>(null)
+  const isFirstLoad     = useRef(false)
 
   // ── Load global settings ───────────────────────────────────────────────────
 
@@ -571,6 +572,20 @@ export default function PedidosPage() {
 
   // ── Load messages (full load ao selecionar, incremental poll) ─────────────
 
+  const refreshMediaUrls = useCallback(async (contactId: number, pendingIds: Set<number>) => {
+    const r = await fetch(`/api/chat/messages?contactId=${contactId}&noSync=1`)
+    if (!r.ok) return
+    const data = await r.json()
+    const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
+    const byId = new Map(msgs.map(m => [m.id, m]))
+    setMessages(prev => prev.map(m => {
+      if (!pendingIds.has(m.id)) return m
+      const updated = byId.get(m.id)
+      if (!updated?.mediaUrl) return m
+      return { ...m, mediaUrl: updated.mediaUrl, mediaCategory: updated.mediaCategory }
+    }))
+  }, [])
+
   const loadMessages = useCallback(async (contactId: number) => {
     const r = await fetch(`/api/chat/messages?contactId=${contactId}`)
     if (!r.ok) return
@@ -581,7 +596,12 @@ export default function PedidosPage() {
     setHasMoreMsgs(more)
     setMsgOffset(0)
     latestMsgAt.current = msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null
-  }, [])
+
+    const pendingIds = new Set(msgs.filter(m => m.mediaType && !m.mediaUrl).map(m => m.id))
+    if (pendingIds.size > 0) {
+      setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
+    }
+  }, [refreshMediaUrls])
 
   const loadOlderMsgs = useCallback(async (contactId: number, currentOffset: number) => {
     setLoadingOlderMsgs(true)
@@ -628,6 +648,7 @@ export default function PedidosPage() {
   useEffect(() => {
     if (!chatContact) return
     latestMsgAt.current = null
+    isFirstLoad.current = true
     // Sync PIV's sent messages from Evolution first, then load
     syncOutgoing(chatContact.id, chatContact.jid).then(() => loadMessages(chatContact.id))
     loadContactDtfOrders(chatContact.id)
@@ -664,7 +685,10 @@ export default function PedidosPage() {
   }
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (messages.length === 0) return
+    const behavior = isFirstLoad.current ? "instant" : "smooth"
+    isFirstLoad.current = false
+    messagesEndRef.current?.scrollIntoView({ behavior })
   }, [messages])
 
   // ── Send message ───────────────────────────────────────────────────────────

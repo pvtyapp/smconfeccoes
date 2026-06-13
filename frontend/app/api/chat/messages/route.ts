@@ -172,8 +172,9 @@ export async function GET(req: Request) {
     const contactId = searchParams.get("contactId")
     if (!contactId) return NextResponse.json({ error: "contactId obrigatório" }, { status: 400 })
 
-    const since  = searchParams.get("since")
-    const offset = parseInt(searchParams.get("offset") ?? "0") || 0
+    const since   = searchParams.get("since")
+    const noSync  = searchParams.get("noSync") === "1"
+    const offset  = parseInt(searchParams.get("offset") ?? "0") || 0
 
     // Incremental poll — no sync, no pagination
     if (since) {
@@ -197,11 +198,11 @@ export async function GET(req: Request) {
       return NextResponse.json(rows)
     }
 
-    // Full load — sync on first page only
+    // Full load — sync on first page only (unless noSync=1)
     const contactRes = await pool.query("SELECT jid FROM wa_contacts WHERE id = $1", [contactId])
     const jid: string | undefined = contactRes.rows[0]?.jid
     let pending: PendingMedia[] = []
-    if (jid && offset === 0) {
+    if (jid && offset === 0 && !noSync) {
       pending = await syncMessagesFromEvolution(jid, Number(contactId))
     }
 
