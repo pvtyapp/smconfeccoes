@@ -1,0 +1,53 @@
+import { NextResponse } from "next/server"
+import { pool } from "@/lib/db"
+
+const ALLOWED_KEYS = new Set([
+  "nome_empresa", "endereco_retirada", "pix_key",
+  "chatbot_ativo", "pedidos_auto",
+  "dtf_ativo", "dtf_preco_por_metro",
+  "dtf_horario_dias", "dtf_horario_inicio", "dtf_horario_fim", "dtf_fechado_ate",
+  "produto_ativo",
+  "produto_horario_dias", "produto_horario_inicio", "produto_horario_fim", "produto_fechado_ate",
+  "proactive_hour",
+  "novo_d2_msg",
+  "ausente_d7_msg", "ausente_d15_msg", "ausente_d30_msg", "ausente_d45_msg",
+  "curioso_c7_msg", "curioso_c14_msg", "curioso_c21_msg",
+])
+
+export async function GET() {
+  try {
+    const { rows } = await pool.query(`SELECT key, value FROM app_settings ORDER BY key`)
+    const settings: Record<string, string> = {}
+    for (const row of rows) settings[row.key] = row.value
+    return NextResponse.json(settings)
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
+export async function PUT(req: Request) {
+  try {
+    const body = await req.json() as Record<string, string>
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      for (const [key, value] of Object.entries(body)) {
+        if (!ALLOWED_KEYS.has(key)) continue
+        await client.query(`
+          INSERT INTO app_settings (key, value)
+          VALUES ($1, $2)
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        `, [key, String(value)])
+      }
+      await client.query("COMMIT")
+      return NextResponse.json({ ok: true })
+    } catch (err) {
+      await client.query("ROLLBACK")
+      throw err
+    } finally {
+      client.release()
+    }
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}

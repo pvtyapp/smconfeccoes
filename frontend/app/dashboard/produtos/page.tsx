@@ -106,6 +106,7 @@ const formInit = {
   colors: [] as string[],
   chatbotEnabled: false,
   stockEnabled: false,
+  precoPorMetro: false,
 }
 
 function catName(cats: Category[], id?: string | null) {
@@ -154,6 +155,7 @@ export default function ProdutosPage() {
       colors:         [...(p.colors ?? [])],
       chatbotEnabled: p.chatbotEnabled ?? false,
       stockEnabled:   p.stockEnabled ?? false,
+      precoPorMetro:  p.precoPorMetro ?? false,
     })
     setError(""); setShowForm(true)
   }
@@ -179,6 +181,7 @@ export default function ProdutosPage() {
         colors:         form.colors.filter(Boolean),
         chatbotEnabled: form.chatbotEnabled,
         stockEnabled:   form.stockEnabled,
+        precoPorMetro:  form.precoPorMetro,
       }
       const res = await fetch(editing ? `/api/products/${editing.id}` : "/api/products", {
         method: editing ? "PUT" : "POST",
@@ -281,7 +284,7 @@ export default function ProdutosPage() {
             </div>
 
             {/* Toggles */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
                 <button
                   type="button"
@@ -317,6 +320,24 @@ export default function ProdutosPage() {
                   <p className="text-xs text-[#0F1E3C]/45">Gera variantes cores × tamanhos</p>
                 </div>
               </div>
+
+              <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
+                <button
+                  type="button"
+                  onClick={() => set("precoPorMetro", !form.precoPorMetro)}
+                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.precoPorMetro ? "bg-[#7C3AED]" : "bg-[#0F1E3C]/15"}`}
+                  style={{ height: "22px" }}
+                >
+                  <span
+                    className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.precoPorMetro ? "translate-x-5" : "translate-x-0.5"}`}
+                    style={{ width: "18px", height: "18px" }}
+                  />
+                </button>
+                <div>
+                  <p className="text-sm font-semibold text-[#0F1E3C]">Cobrar por metro</p>
+                  <p className="text-xs text-[#0F1E3C]/45">PDV cobra proporcional ao tamanho</p>
+                </div>
+              </div>
             </div>
 
             {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
@@ -344,7 +365,7 @@ export default function ProdutosPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#0F1E3C]/5">
-                {["Nome", "Categoria", "Custo", "Venda", "Tamanhos", "Cores", "Chatbot", "Estoque", "Status", ""].map((h) => (
+                {["Nome", "Categoria", "Custo", "Venda", "Tamanhos", "Cores", "Chatbot", "Estoque", "Metro", "Status", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -371,6 +392,11 @@ export default function ProdutosPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.precoPorMetro ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-400"}`}>
+                      {p.precoPorMetro ? "Sim" : "Não"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
                     <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${p.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                       {p.status === "active" ? "Ativo" : "Inativo"}
                     </span>
@@ -388,6 +414,7 @@ export default function ProdutosPage() {
           </table>
         )}
       </div>
+
     </div>
   )
 }

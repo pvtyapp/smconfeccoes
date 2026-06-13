@@ -1,0 +1,71 @@
+import { NextResponse } from "next/server"
+import { pool } from "@/lib/db"
+import { sendWhatsApp, type QuotedMsg } from "@/lib/whatsapp/send"
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json() as {
+      jid: string
+      content: string
+      contactId?: number
+      quotedMsgId?: string
+      quotedContent?: string
+      quotedFromMe?: boolean
+    }
+
+    const { jid, content, contactId, quotedMsgId, quotedContent, quotedFromMe } = body
+    if (!jid || !content?.trim())
+      return NextResponse.json({ error: "jid e content são obrigatórios" }, { status: 400 })
+
+    const text = content.trim()
+
+    const quoted: QuotedMsg | undefined = quotedMsgId
+      ? { id: quotedMsgId, fromMe: quotedFromMe ?? false, remoteJid: jid, content: quotedContent ?? "" }
+      : undefined
+
+    let evoOk = false
+    let evoError = ""
+    let evoMsgId: string | null = null
+    try {
+      const evoRes = await sendWhatsApp(jid, text, quoted)
+      evoOk = true
+      evoMsgId = (evoRes as Record<string, unknown>)?.key
+        ? ((evoRes as Record<string, Record<string, unknown>>).key?.id as string) ?? null
+        : null
+    } catch (err) {
+      evoError = err instanceof Error ? err.message : String(err)
+    }
+
+    const qMsgId = quotedMsgId ?? null
+    const qContent = quotedContent ?? null
+
+    if (contactId) {
+      await pool.query(
+        `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, quoted_message_id, quoted_content)
+         VALUES ($1, $2, 'out', $3, 'sent', $4, $5)
+         ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+        [contactId, evoMsgId, text, qMsgId, qContent]
+      ).catch(() => {})
+    } else if (jid.endsWith("@s.whatsapp.net")) {
+      const phone = jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+      const { rows } = await pool.query(
+        `INSERT INTO wa_contacts (jid, name, phone) VALUES ($1, $2, $3)
+         ON CONFLICT (jid) DO UPDATE SET updated_at = NOW()
+         RETURNING id`,
+        [jid, phone, phone]
+      ).catch(() => ({ rows: [] as { id: number }[] }))
+      if (rows[0]?.id) {
+        await pool.query(
+          `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, quoted_message_id, quoted_content)
+           VALUES ($1, $2, 'out', $3, 'sent', $4, $5)
+           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+          [rows[0].id, evoMsgId, text, qMsgId, qContent]
+        ).catch(() => {})
+      }
+    }
+
+    return NextResponse.json({ ok: true, evoOk, evoError: evoError || undefined })
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}

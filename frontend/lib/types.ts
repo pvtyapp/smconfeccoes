@@ -17,6 +17,7 @@ export type Product = {
   status: "active" | "inactive"
   chatbotEnabled: boolean
   stockEnabled: boolean
+  precoPorMetro: boolean
   createdAt: string
 }
 

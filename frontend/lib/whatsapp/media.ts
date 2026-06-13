@@ -11,6 +11,8 @@ export type DownloadedMedia = {
   filename: string
 }
 
+export type MediaCategory = "foto" | "video" | "audio" | "pix" | "dtf" | "documento" | "sticker"
+
 /**
  * Downloads media from Evolution API given a full message object from the webhook.
  */
@@ -22,6 +24,7 @@ export async function downloadEvolutionMedia(message: unknown): Promise<Download
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: EVO_KEY },
         body: JSON.stringify({ message }),
+        signal: AbortSignal.timeout(12_000),
       }
     )
     if (!res.ok) return null
@@ -39,13 +42,49 @@ export async function downloadEvolutionMedia(message: unknown): Promise<Download
 }
 
 /**
+ * Classifies incoming media based on type, mime and current chatbot state.
+ */
+export function classifyMediaCategory(
+  mediaType: string,
+  mimeType: string,
+  contactState: string
+): MediaCategory {
+  const mime = mimeType.toLowerCase()
+
+  // State-based classification takes priority
+  if (contactState === "aguardando_comprovante") return "pix"
+  if (contactState === "aguardando_arte")         return "dtf"
+
+  // Heuristic by mime
+  if (mediaType === "audio")   return "audio"
+  if (mediaType === "sticker") return "sticker"
+  if (mediaType === "video")   return "video"
+
+  if (mediaType === "image") {
+    // Screenshots of PIX are JPEGs too — can't distinguish without vision AI, default to foto
+    return "foto"
+  }
+
+  if (mediaType === "document") {
+    // PDFs, AI, SVG, PNG, JPG sent as documents → likely DTF arte or comprovante
+    if (mime.includes("pdf") || mime.includes("svg") || mime.includes("postscript"))
+      return "dtf"
+    if (mime.includes("image"))
+      return "dtf"
+    return "documento"
+  }
+
+  return "foto"
+}
+
+/**
  * Uploads base64 media to Vercel Blob and returns the public URL.
  */
 export async function uploadToBlob(
   base64: string,
   mimeType: string,
   filename: string,
-  folder: "dtf" | "pix"
+  folder: "dtf" | "pix" | "media" | "audio" | "docs"
 ): Promise<string | null> {
   try {
     const buffer = Buffer.from(base64, "base64")

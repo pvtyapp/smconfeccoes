@@ -12,7 +12,8 @@ export async function GET() {
         description,
         sale_price      AS "salePrice",
         material_cost   AS "costPrice",
-        stock_enabled   AS "stockEnabled",
+        stock_enabled     AS "stockEnabled",
+        COALESCE(preco_por_metro, false) AS "precoPorMetro",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
   const client = await pool.connect()
   try {
     const body = await req.json()
-    const { name, categoryId, description, salePrice, costPrice, sizes, colors, chatbotEnabled, stockEnabled } = body
+    const { name, categoryId, description, salePrice, costPrice, sizes, colors, chatbotEnabled, stockEnabled, precoPorMetro } = body
 
     if (!name?.trim())  return NextResponse.json({ error: "Nome é obrigatório" },       { status: 400 })
     if (!categoryId)    return NextResponse.json({ error: "Categoria é obrigatória" },  { status: 400 })
@@ -45,8 +46,8 @@ export async function POST(req: Request) {
     const { rows } = await client.query(`
       INSERT INTO products
         (name, category_id, description, sale_price, material_cost, labor_cost, additional_costs, daily_production,
-         size_list, color_list, chatbot_enabled, stock_enabled)
-      VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6, $7, $8, $9)
+         size_list, color_list, chatbot_enabled, stock_enabled, preco_por_metro)
+      VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6, $7, $8, $9, $10)
       RETURNING
         id, name,
         category_id     AS "categoryId",
@@ -54,13 +55,14 @@ export async function POST(req: Request) {
         sale_price      AS "salePrice",
         material_cost   AS "costPrice",
         stock_enabled   AS "stockEnabled",
+        COALESCE(preco_por_metro, false) AS "precoPorMetro",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
         chatbot_enabled AS "chatbotEnabled",
         created_at      AS "createdAt"
     `, [name.trim(), categoryId, description ?? null, salePrice ?? 0, costPrice ?? 0,
-        sizeArr, colorArr, chatbotEnabled ?? false, stockEnabled ?? false])
+        sizeArr, colorArr, chatbotEnabled ?? false, stockEnabled ?? false, precoPorMetro ?? false])
 
     const product = rows[0]
 

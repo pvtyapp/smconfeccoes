@@ -14,14 +14,20 @@ const STATUS_FLOW: Record<string, { next: string; label: string; color: string }
   triagem:      { next: "confirmando",  label: "Enviar p/ Confirmar",   color: "bg-purple-600 hover:bg-purple-700" },
   confirmando:  { next: "em_separacao", label: "Confirmar Quantidades", color: "bg-blue-600 hover:bg-blue-700"    },
   em_separacao: { next: "pronto",       label: "Marcar como Pronto",    color: "bg-green-600 hover:bg-green-700"   },
-  // pronto é estado final — sem avanço
 }
 
 export default function OrderModal({ order, onClose, onRefresh }: Props) {
-  const [items, setItems] = useState<OrderItem[]>(order.items.map(i => ({ ...i })))
-  const [saving, setSaving] = useState(false)
-  const [printFormat, setPrintFormat] = useState<"a4" | "thermal">("a4")
-  const [showPrint, setShowPrint] = useState(false)
+  const [items,         setItems]         = useState<OrderItem[]>(order.items.map(i => ({ ...i })))
+  const [saving,        setSaving]        = useState(false)
+  const [printFormat,   setPrintFormat]   = useState<"a4" | "thermal">("a4")
+  const [showPrint,     setShowPrint]     = useState(false)
+  const [showConcluir,  setShowConcluir]  = useState(false)
+  const [usePrazo,      setUsePrazo]      = useState(order.paymentTermEnabled ?? false)
+  const [dueDate,       setDueDate]       = useState("")
+  const [concludeError, setConcludeError] = useState("")
+  const [showCancel,    setShowCancel]    = useState(false)
+  const [notifyClient,  setNotifyClient]  = useState(true)
+  const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
 
   const flow = STATUS_FLOW[order.status]
 
@@ -34,7 +40,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   }
 
   function addItem() {
-    setItems(prev => [...prev, { id: 0, productId: null, productName: "", color: "", size: "", qty: 1, qtyConfirmed: null }])
+    setItems(prev => [...prev, { id: 0, productId: null, productName: "", color: "", size: "", qty: 1, qtyConfirmed: null, isService: false, variantNote: null }])
   }
 
   async function saveItems() {
@@ -76,15 +82,41 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     }
   }
 
-  async function cancelOrder() {
-    if (!confirm("Cancelar este pedido?")) return
+  async function concludeOrder() {
+    if (usePrazo && !dueDate) { setConcludeError("Informe a data de vencimento."); return }
+    setSaving(true)
+    setConcludeError("")
+    try {
+      const r = await fetch(`/api/orders/${order.id}/conclude`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dueDate: usePrazo ? dueDate : null }),
+      })
+      if (!r.ok) {
+        const d = await r.json()
+        setConcludeError(d.error ?? "Erro ao concluir")
+        return
+      }
+      onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function confirmCancel() {
     setSaving(true)
     try {
       await fetch(`/api/orders/${order.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "cancelado", note: "Cancelado pelo operador" }),
+        body: JSON.stringify({
+          status: "cancelado",
+          note: "Cancelado pelo operador",
+          notifyClient,
+          cancelMessage: notifyClient ? cancelMsg : undefined,
+        }),
       })
+      setShowCancel(false)
       onRefresh()
     } finally {
       setSaving(false)
@@ -145,13 +177,13 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                 <input
                   className="flex-1 bg-white border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
                   placeholder="Cor"
-                  value={item.color}
+                  value={item.color ?? ""}
                   onChange={e => updateItem(idx, "color", e.target.value)}
                 />
                 <input
                   className="w-20 bg-white border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
                   placeholder="Tam."
-                  value={item.size}
+                  value={item.size ?? ""}
                   onChange={e => updateItem(idx, "size", e.target.value)}
                 />
                 <div className="flex flex-col gap-0.5">
@@ -189,6 +221,54 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               <p className="text-xs text-amber-800 mt-0.5">{order.notes}</p>
             </div>
           )}
+
+          {/* Concluir form */}
+          {showConcluir && (
+            <div className="mt-4 border border-[#0F1E3C]/10 rounded-2xl p-4 space-y-3 bg-[#F4F6FB]">
+              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Concluir Pedido</p>
+
+              {order.totalValue && (
+                <div className="flex items-center justify-between bg-white rounded-xl px-4 py-3 border border-[#0F1E3C]/8">
+                  <span className="text-sm text-[#0F1E3C]/60">Valor total</span>
+                  <span className="text-lg font-black text-[#0F1E3C]">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => setUsePrazo(v => !v)}
+                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${usePrazo ? "bg-amber-500" : "bg-[#0F1E3C]/15"}`}
+                  style={{ height: "22px" }}>
+                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${usePrazo ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
+                </button>
+                <p className="text-sm font-semibold text-[#0F1E3C]">Pagamento a prazo</p>
+              </div>
+
+              {usePrazo ? (
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50 mb-1.5 block">Data de vencimento *</label>
+                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                    className="w-full border border-amber-300 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400/30" />
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+                  Cliente será notificado com o valor e a chave Pix.
+                </p>
+              )}
+
+              {concludeError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{concludeError}</p>}
+
+              <div className="flex gap-2">
+                <button onClick={concludeOrder} disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
+                  <Check size={14} /> Confirmar Conclusão
+                </button>
+                <button onClick={() => { setShowConcluir(false); setConcludeError("") }}
+                  className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
+                  Voltar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer actions */}
@@ -219,33 +299,31 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           </div>
 
           <div className="flex gap-2">
-            {order.status !== "pronto" && order.status !== "cancelado" && (
-              <button
-                onClick={cancelOrder}
-                disabled={saving}
-                className="px-4 py-2.5 rounded-xl border border-red-200 text-red-500 text-sm font-medium hover:bg-red-50 transition-colors"
-              >
+            {order.status !== "pronto" && order.status !== "cancelado" && order.status !== "concluido" && (
+              <button onClick={() => setShowCancel(true)} disabled={saving}
+                className="px-4 py-2.5 rounded-xl border border-red-200 text-red-500 text-sm font-medium hover:bg-red-50 transition-colors">
                 Cancelar
               </button>
             )}
 
-            <button
-              onClick={saveItems}
-              disabled={saving}
-              className="flex-1 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-medium text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/6 transition-colors"
-            >
-              Salvar alterações
-            </button>
+            {order.status !== "concluido" && order.status !== "cancelado" && (
+              <button onClick={saveItems} disabled={saving}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-medium text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/6 transition-colors">
+                Salvar alterações
+              </button>
+            )}
 
-            {flow && (
-              <button
-                onClick={advanceStatus}
-                disabled={saving}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors ${flow.color}`}
-              >
-                <Check size={14} />
-                {flow.label}
-                <ChevronRight size={14} />
+            {order.status === "pronto" && !showConcluir && (
+              <button onClick={() => setShowConcluir(true)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors">
+                <Check size={14} /> Concluir Pedido
+              </button>
+            )}
+
+            {flow && !showConcluir && (
+              <button onClick={advanceStatus} disabled={saving}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors ${flow.color}`}>
+                <Check size={14} /> {flow.label} <ChevronRight size={14} />
               </button>
             )}
           </div>
@@ -255,6 +333,44 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
       {/* Print sheet — only visible when printing */}
       {showPrint && (
         <PrintSheet order={order} items={items} format={printFormat} onDone={() => setShowPrint(false)} />
+      )}
+
+      {/* Cancel dialog */}
+      {showCancel && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="text-base font-bold text-[#0F1E3C]">Cancelar pedido {order.number}?</h3>
+
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => setNotifyClient(v => !v)}
+                className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${notifyClient ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}
+                style={{ height: "22px" }}>
+                <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${notifyClient ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
+              </button>
+              <p className="text-sm font-medium text-[#0F1E3C]">Notificar cliente via WhatsApp</p>
+            </div>
+
+            {notifyClient && (
+              <textarea
+                value={cancelMsg}
+                onChange={e => setCancelMsg(e.target.value)}
+                rows={3}
+                className="w-full border border-[#0F1E3C]/10 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-[#F4F6FB] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 resize-none"
+              />
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={() => setShowCancel(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
+                Voltar
+              </button>
+              <button onClick={confirmCancel} disabled={saving}
+                className="flex-1 px-4 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
+                {saving ? "..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )

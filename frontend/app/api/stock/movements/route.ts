@@ -16,12 +16,13 @@ export async function GET() {
         sm.reason,
         sm.channel,
         sm.notes,
+        sm.batch_id    AS "batchId",
         sm.created_at  AS "createdAt"
       FROM stock_movements sm
       JOIN product_variants pv ON pv.id = sm.variant_id
       JOIN products p ON p.id = pv.product_id
       ORDER BY sm.created_at DESC
-      LIMIT 200
+      LIMIT 500
     `)
     return NextResponse.json(rows)
   } catch (err) {
@@ -34,7 +35,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { variantId, type, quantity, reason, channel, notes } = body
+    const { variantId, type, quantity, reason, channel, notes, batchId } = body
 
     if (!variantId || !type || !quantity || !reason) {
       return NextResponse.json({ error: "variantId, type, quantity e reason são obrigatórios" }, { status: 400 })
@@ -47,14 +48,15 @@ export async function POST(req: Request) {
     }
 
     const { rows } = await pool.query(`
-      INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes, batch_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING
         id,
         variant_id AS "variantId",
         type, quantity, reason, channel, notes,
+        batch_id AS "batchId",
         created_at AS "createdAt"
-    `, [variantId, type, Number(quantity), reason, channel ?? "manual", notes ?? null])
+    `, [variantId, type, Number(quantity), reason, channel ?? "manual", notes ?? null, batchId ?? null])
 
     return NextResponse.json(rows[0], { status: 201 })
   } catch (err) {

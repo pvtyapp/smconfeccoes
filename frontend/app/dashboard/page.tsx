@@ -1,14 +1,65 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import MetricCard from "@/components/cards/MetricCard"
 import { calcInventoryMetrics, calcMonthlyOperationalCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
 import type { OperationalCost, InventoryMetric } from "@/lib/types"
+import { Factory, Package } from "lucide-react"
+import { todayBR, subDaysBR } from "@/lib/tz"
 
-const statusLabel: Record<string, string> = {
+// ─── Types ─────────────────────────────────────────────────────────────────────
+type PeriodKey = "hoje" | "ontem" | "7d" | "15d" | "30d" | "60d" | "range"
+
+type ProdProduct = {
+  productId: string; productName: string
+  orderCount: number; totalPieces: number
+  materialCost: number; operationalCost: number
+  totalCost: number; costPerPiece: number
+  avgSalePrice: number; margin: number | null
+}
+type ProdData = {
+  period: { start: string; end: string; days: number }
+  summary: { orderCount: number; totalPieces: number; materialCost: number; operationalCost: number; totalCost: number }
+  byProduct: ProdProduct[]
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function fmtR(v: number) { return `R$ ${v.toFixed(2).replace(".", ",")}` }
+
+const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
+  { key: "hoje",  label: "Hoje"    },
+  { key: "ontem", label: "Ontem"   },
+  { key: "7d",    label: "7d"      },
+  { key: "15d",   label: "15d"     },
+  { key: "30d",   label: "30d"     },
+  { key: "60d",   label: "60d"     },
+  { key: "range", label: "Período" },
+]
+
+function getPeriodDates(key: PeriodKey, rs: string, re: string): [string, string] {
+  const t = todayBR()
+  switch (key) {
+    case "hoje":  return [t, t]
+    case "ontem": { const d = subDaysBR(1); return [d, d] }
+    case "7d":    return [subDaysBR(6),  t]
+    case "15d":   return [subDaysBR(14), t]
+    case "30d":   return [subDaysBR(29), t]
+    case "60d":   return [subDaysBR(59), t]
+    case "range": return [rs, re]
+  }
+}
+
+function periodLabel(key: PeriodKey, rs: string, re: string): string {
+  if (key !== "range") return PERIOD_OPTIONS.find(p => p.key === key)?.label ?? ""
+  if (!rs || !re) return "Período"
+  const fmt = (s: string) => { const [y, m, d] = s.split("-"); return `${d}/${m}` }
+  return `${fmt(rs)} – ${fmt(re)}`
+}
+
+const STATUS_LABEL: Record<string, string> = {
   urgent: "Urgente", attention: "Atenção", healthy: "Saudável", excess: "Excesso", stopped: "Parado",
 }
-const statusClass: Record<string, string> = {
+const STATUS_CLASS: Record<string, string> = {
   urgent:    "bg-red-100 text-red-700",
   attention: "bg-amber-100 text-amber-700",
   healthy:   "bg-emerald-100 text-emerald-700",
@@ -16,117 +67,264 @@ const statusClass: Record<string, string> = {
   stopped:   "bg-purple-100 text-purple-700",
 }
 
+// ─── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const [balance, setBalance] = useState<BalanceRow[]>([])
-  const [costs, setCosts] = useState<OperationalCost[]>([])
-  const [metrics, setMetrics] = useState<InventoryMetric[]>([])
-  const [loading, setLoading] = useState(true)
+  // Period filter
+  const [period,     setPeriod]     = useState<PeriodKey>("hoje")
+  const [rangeStart, setRangeStart] = useState("")
+  const [rangeEnd,   setRangeEnd]   = useState("")
 
+  // Production data (period-sensitive)
+  const [prodData,    setProdData]    = useState<ProdData | null>(null)
+  const [prodLoading, setProdLoading] = useState(true)
+
+  // Stock data (always current)
+  const [balance,      setBalance]      = useState<BalanceRow[]>([])
+  const [costs,        setCosts]        = useState<OperationalCost[]>([])
+  const [metrics,      setMetrics]      = useState<InventoryMetric[]>([])
+  const [stockLoading, setStockLoading] = useState(true)
+
+  // Load stock once on mount
   useEffect(() => {
     Promise.all([
-      fetch("/api/stock/balance").then((r) => r.json()),
-      fetch("/api/operational-costs").then((r) => r.json()),
-    ]).then(([bal, cost]) => {
+      fetch("/api/stock/balance").then(r => r.json()),
+      fetch("/api/operational-costs").then(r => r.json()),
+    ]).then(([bal, c]) => {
       const b: BalanceRow[] = Array.isArray(bal) ? bal : []
-      const c: OperationalCost[] = Array.isArray(cost) ? cost : []
-      const opCost = calcMonthlyOperationalCost(c)
+      const cs: OperationalCost[] = Array.isArray(c) ? c : []
       setBalance(b)
-      setCosts(c)
-      setMetrics(calcInventoryMetrics(b, opCost))
-    }).finally(() => setLoading(false))
+      setCosts(cs)
+      setMetrics(calcInventoryMetrics(b, calcMonthlyOperationalCost(cs)))
+    }).finally(() => setStockLoading(false))
   }, [])
 
-  const opCost      = calcMonthlyOperationalCost(costs)
-  const totalStock  = balance.reduce((a, v) => a + v.currentStock, 0)
-  const critical    = metrics.filter((m) => m.status === "urgent" || m.status === "attention")
-  const stopped     = metrics.filter((m) => m.status === "stopped")
-  const toProduced  = metrics.filter((m) => m.suggestedProduction > 0).slice(0, 6)
+  // Load production when period changes
+  const loadProd = useCallback(async () => {
+    const [start, end] = getPeriodDates(period, rangeStart, rangeEnd)
+    if (period === "range" && (!rangeStart || !rangeEnd)) return
+    setProdLoading(true)
+    try {
+      const res = await fetch(`/api/dashboard/production?start=${start}&end=${end}`)
+      if (res.ok) setProdData(await res.json())
+    } finally {
+      setProdLoading(false)
+    }
+  }, [period, rangeStart, rangeEnd])
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-7 h-7 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
+  useEffect(() => { loadProd() }, [loadProd])
+
+  // Derived stock values
+  const opCost     = calcMonthlyOperationalCost(costs)
+  const totalStock = balance.reduce((a, v) => a + v.currentStock, 0)
+  const critical   = metrics.filter(m => m.status === "urgent" || m.status === "attention")
+  const stopped    = metrics.filter(m => m.status === "stopped")
+  const toProduced = metrics.filter(m => m.suggestedProduction > 0).slice(0, 6)
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
-          Dashboard
-        </h1>
-        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Visão geral da SM Confecções</p>
-      </div>
+    <div className="space-y-8">
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        <MetricCard title="Estoque total"       value={`${totalStock} peças`} />
-        <MetricCard title="Custo op./mês"       value={formatCurrency(opCost)} color="blue" />
-        <MetricCard title="Variações ativas"    value={balance.length} />
-        <MetricCard title="Variações críticas"  value={critical.length} color={critical.length > 0 ? "red" : "default"} />
-        <MetricCard title="Produtos parados"    value={stopped.length} color={stopped.length > 0 ? "purple" : "default"} />
-        <MetricCard title="Sugestões produção"  value={toProduced.length} color={toProduced.length > 0 ? "yellow" : "default"} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
-            <h2 className="text-sm font-bold text-[#0F1E3C]">Estoque crítico</h2>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#0F1E3C]/5">
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Variação</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Estoque</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Dias rest.</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#0F1E3C]/4">
-              {critical.length === 0 ? (
-                <tr><td colSpan={4} className="py-8 text-center text-sm text-[#0F1E3C]/30">Nenhuma variação crítica</td></tr>
-              ) : critical.map((m) => (
-                <tr key={m.variantId} className="hover:bg-[#F4F6FB] transition-colors">
-                  <td className="px-5 py-3 font-medium text-[#0F1E3C]">{m.productName} {m.color} {m.size}</td>
-                  <td className="px-5 py-3 text-[#0F1E3C]/65">{m.currentStock}</td>
-                  <td className="px-5 py-3 text-[#0F1E3C]/65">{m.stockDaysRemaining?.toFixed(0) ?? "—"}</td>
-                  <td className="px-5 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${statusClass[m.status]}`}>
-                      {statusLabel[m.status]}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* ── Header + Filtro global ── */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
+            Dashboard
+          </h1>
+          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Visão geral da SM Confecções</p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
-            <h2 className="text-sm font-bold text-[#0F1E3C]">Sugestão de produção</h2>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">
+            {PERIOD_OPTIONS.map(opt => (
+              <button key={opt.key}
+                onClick={() => setPeriod(opt.key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  period === opt.key
+                    ? "bg-[#4361EE] text-white shadow-sm"
+                    : "text-[#0F1E3C]/50 hover:text-[#0F1E3C] hover:bg-white/60"
+                }`}>
+                {opt.label}
+              </button>
+            ))}
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#0F1E3C]/5">
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Variação</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Produzir</th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Lucro/un.</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#0F1E3C]/4">
-              {toProduced.length === 0 ? (
-                <tr><td colSpan={3} className="py-8 text-center text-sm text-[#0F1E3C]/30">Estoque adequado</td></tr>
-              ) : toProduced.map((m) => (
-                <tr key={m.variantId} className="hover:bg-[#F4F6FB] transition-colors">
-                  <td className="px-5 py-3 font-medium text-[#0F1E3C]">{m.productName} {m.color} {m.size}</td>
-                  <td className="px-5 py-3 font-bold text-[#4361EE]">+{m.suggestedProduction}</td>
-                  <td className="px-5 py-3 text-emerald-600 font-semibold">{formatCurrency(m.unitProfit)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {period === "range" && (
+            <div className="flex items-center gap-2">
+              <input type="date" value={rangeStart} onChange={e => setRangeStart(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
+              <span className="text-xs text-[#0F1E3C]/40">até</span>
+              <input type="date" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* ── PRODUÇÃO NO PERÍODO ── */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Factory size={14} className="text-[#4361EE]"/>
+          <h2 className="text-xs font-bold text-[#4361EE] uppercase tracking-widest">
+            Produção — {periodLabel(period, rangeStart, rangeEnd)}
+          </h2>
+        </div>
+
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          {prodLoading
+            ? Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-[72px] rounded-2xl bg-[#0F1E3C]/4 animate-pulse"/>
+              ))
+            : [
+                { title: "Ordens",            value: String(prodData?.summary.orderCount ?? 0) },
+                { title: "Peças produzidas",  value: `${prodData?.summary.totalPieces ?? 0} pç` },
+                { title: "Custo material",    value: fmtR(prodData?.summary.materialCost    ?? 0) },
+                { title: "Custo operacional", value: fmtR(prodData?.summary.operationalCost ?? 0) },
+                { title: "Custo total",       value: fmtR(prodData?.summary.totalCost       ?? 0) },
+              ].map(({ title, value }) => (
+                <MetricCard key={title} title={title} value={value} color="blue"/>
+              ))
+          }
+        </div>
+
+        {/* Cost per product table */}
+        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
+            <p className="text-sm font-bold text-[#0F1E3C]">Custo por produto</p>
+          </div>
+
+          {prodLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <div className="w-6 h-6 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin"/>
+            </div>
+          ) : !prodData?.byProduct.length ? (
+            <p className="py-12 text-center text-sm text-[#0F1E3C]/30">
+              Nenhuma ordem concluída neste período
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#0F1E3C]/8 bg-[#F9FAFB]">
+                    {["Produto","Ordens","Peças","Custo Mat.","Custo Op.","Custo Total","Custo/peça","Preço médio","Margem"].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {prodData.byProduct.map((p, i) => (
+                    <tr key={p.productId}
+                      className={`border-b border-[#0F1E3C]/4 last:border-0 ${i % 2 === 1 ? "bg-[#F9FAFB]/50" : ""}`}>
+                      <td className="px-4 py-3.5 font-semibold text-[#0F1E3C]">{p.productName}</td>
+                      <td className="px-4 py-3.5 text-[#0F1E3C]/50">{p.orderCount}</td>
+                      <td className="px-4 py-3.5 font-bold text-[#0F1E3C]">{p.totalPieces}</td>
+                      <td className="px-4 py-3.5 text-[#0F1E3C]/60">{fmtR(p.materialCost)}</td>
+                      <td className="px-4 py-3.5 text-[#0F1E3C]/60">{fmtR(p.operationalCost)}</td>
+                      <td className="px-4 py-3.5 font-bold text-[#4361EE]">{fmtR(p.totalCost)}</td>
+                      <td className="px-4 py-3.5 font-bold text-[#0F1E3C]">{fmtR(p.costPerPiece)}</td>
+                      <td className="px-4 py-3.5 text-[#0F1E3C]/60">
+                        {p.avgSalePrice > 0 ? fmtR(p.avgSalePrice) : "—"}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {p.margin !== null ? (
+                          <span className={`text-sm font-bold ${
+                            p.margin >= 40 ? "text-emerald-600"
+                            : p.margin >= 20 ? "text-amber-600"
+                            : "text-red-600"
+                          }`}>
+                            {p.margin.toFixed(1)}%
+                          </span>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── ESTOQUE (sempre atual) ── */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Package size={14} className="text-[#0F1E3C]/35"/>
+          <h2 className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Estoque — Hoje</h2>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <MetricCard title="Total em estoque"   value={`${totalStock} peças`} />
+          <MetricCard title="Custo op./mês"       value={formatCurrency(opCost)} color="blue" />
+          <MetricCard title="Variações ativas"    value={balance.length} />
+          <MetricCard title="Variações críticas"  value={critical.length} color={critical.length > 0 ? "red" : "default"} />
+          <MetricCard title="Produtos parados"    value={stopped.length} color={stopped.length > 0 ? "purple" : "default"} />
+          <MetricCard title="Sugestões produção"  value={toProduced.length} color={toProduced.length > 0 ? "yellow" : "default"} />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Estoque crítico */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Estoque crítico</p>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#0F1E3C]/5">
+                  {["Variação","Estoque","Dias rest.","Status"].map(h => (
+                    <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#0F1E3C]/4">
+                {stockLoading ? (
+                  <tr><td colSpan={4} className="py-8 text-center text-sm text-[#0F1E3C]/25">Carregando...</td></tr>
+                ) : critical.length === 0 ? (
+                  <tr><td colSpan={4} className="py-8 text-center text-sm text-[#0F1E3C]/25">Nenhuma variação crítica</td></tr>
+                ) : critical.map(m => (
+                  <tr key={m.variantId} className="hover:bg-[#F4F6FB] transition-colors">
+                    <td className="px-5 py-3 font-medium text-[#0F1E3C]">{m.productName} {m.color} {m.size}</td>
+                    <td className="px-5 py-3 text-[#0F1E3C]/65">{m.currentStock}</td>
+                    <td className="px-5 py-3 text-[#0F1E3C]/65">{m.stockDaysRemaining?.toFixed(0) ?? "—"}</td>
+                    <td className="px-5 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${STATUS_CLASS[m.status]}`}>
+                        {STATUS_LABEL[m.status]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Sugestão de produção */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Sugestão de produção</p>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#0F1E3C]/5">
+                  {["Variação","Produzir","Lucro/un."].map(h => (
+                    <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#0F1E3C]/4">
+                {stockLoading ? (
+                  <tr><td colSpan={3} className="py-8 text-center text-sm text-[#0F1E3C]/25">Carregando...</td></tr>
+                ) : toProduced.length === 0 ? (
+                  <tr><td colSpan={3} className="py-8 text-center text-sm text-[#0F1E3C]/25">Estoque adequado</td></tr>
+                ) : toProduced.map(m => (
+                  <tr key={m.variantId} className="hover:bg-[#F4F6FB] transition-colors">
+                    <td className="px-5 py-3 font-medium text-[#0F1E3C]">{m.productName} {m.color} {m.size}</td>
+                    <td className="px-5 py-3 font-bold text-[#4361EE]">+{m.suggestedProduction}</td>
+                    <td className="px-5 py-3 text-emerald-600 font-semibold">{formatCurrency(m.unitProfit)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
     </div>
   )
 }

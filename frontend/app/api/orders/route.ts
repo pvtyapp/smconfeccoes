@@ -5,22 +5,35 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const status = searchParams.get("status")
+    const source = searchParams.get("source")
 
-    const statusFilter = status ? `WHERE o.status = $1` : ""
-    const params = status ? [status] : []
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (status) { params.push(status); conditions.push(`o.status = $${params.length}`) }
+    if (source) { params.push(source); conditions.push(`o.source = $${params.length}`) }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""
 
     const { rows } = await pool.query(`
       SELECT
         o.id,
         o.number,
         o.status,
+        o.source,
         o.notes,
-        o.created_at   AS "createdAt",
-        o.updated_at   AS "updatedAt",
-        c.id           AS "contactId",
-        c.name         AS "contactName",
-        c.phone        AS "contactPhone",
-        c.jid          AS "contactJid",
+        o.delivery_date        AS "deliveryDate",
+        o.total_value          AS "totalValue",
+        o.due_date             AS "dueDate",
+        o.created_at           AS "createdAt",
+        o.updated_at           AS "updatedAt",
+        c.id                   AS "contactId",
+        c.name                 AS "contactName",
+        c.phone                AS "contactPhone",
+        c.jid                  AS "contactJid",
+        c.payment_term_enabled AS "paymentTermEnabled",
+        c.payment_term_type    AS "paymentTermType",
+        c.payment_term_days    AS "paymentTermDays",
         COALESCE(
           json_agg(
             json_build_object(
@@ -30,7 +43,9 @@ export async function GET(req: Request) {
               'color',        i.color,
               'size',         i.size,
               'qty',          i.qty,
-              'qtyConfirmed', i.qty_confirmed
+              'qtyConfirmed', i.qty_confirmed,
+              'isService',    i.is_service,
+              'variantNote',  i.variant_note
             ) ORDER BY i.id
           ) FILTER (WHERE i.id IS NOT NULL),
           '[]'
@@ -38,8 +53,8 @@ export async function GET(req: Request) {
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       LEFT JOIN order_items i ON i.order_id = o.id
-      ${statusFilter}
-      GROUP BY o.id, c.id
+      ${where}
+      GROUP BY o.id, c.id, c.payment_term_enabled, c.payment_term_type, c.payment_term_days
       ORDER BY o.created_at DESC
     `, params)
 
@@ -55,7 +70,7 @@ export async function POST(req: Request) {
   const client = await pool.connect()
   try {
     const body = await req.json()
-    const { contactId, notes, items } = body
+    const { contactId, notes, items, source, deliveryDate } = body
 
     if (!contactId) return NextResponse.json({ error: "contactId é obrigatório" }, { status: 400 })
     if (!Array.isArray(items) || items.length === 0) return NextResponse.json({ error: "items é obrigatório" }, { status: 400 })
@@ -66,18 +81,27 @@ export async function POST(req: Request) {
     const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
 
     const orderRes = await client.query(`
-      INSERT INTO orders (number, contact_id, notes)
-      VALUES ($1, $2, $3)
-      RETURNING id, number, status, notes, created_at AS "createdAt"
-    `, [number, contactId, notes ?? null])
+      INSERT INTO orders (number, contact_id, notes, source, delivery_date)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, number, status, notes, source, delivery_date AS "deliveryDate", created_at AS "createdAt"
+    `, [number, contactId, notes ?? null, source ?? "whatsapp", deliveryDate ?? null])
 
     const order = orderRes.rows[0]
 
     for (const item of items) {
       await client.query(`
-        INSERT INTO order_items (order_id, product_id, product_name, color, size, qty)
-        VALUES ($1, $2, $3, $4, $5, $6)
-      `, [order.id, item.productId ?? null, item.productName, item.color ?? null, item.size ?? null, item.qty])
+        INSERT INTO order_items (order_id, product_id, product_name, color, size, qty, is_service, variant_note)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [
+        order.id,
+        item.productId ?? null,
+        item.productName,
+        item.color ?? null,
+        item.size ?? null,
+        item.qty,
+        item.isService ?? false,
+        item.variantNote ?? null,
+      ])
     }
 
     await client.query(`

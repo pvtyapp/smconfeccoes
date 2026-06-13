@@ -8,8 +8,8 @@ export default function Topbar() {
   const router = useRouter()
   const session = getSession()
 
-  function handleLogout() {
-    logout()
+  async function handleLogout() {
+    await logout()
     router.push("/login")
   }
 

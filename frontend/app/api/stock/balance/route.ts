@@ -35,7 +35,7 @@ export async function GET() {
         GROUP BY variant_id
       ) s30 ON s30.variant_id = pv.id
       WHERE pv.status = 'active' AND p.status = 'active'
-      ORDER BY p.name ASC, pv.color ASC, pv.size ASC
+      ORDER BY p.name ASC, pv.color ASC, array_position(p.size_list, pv.size) ASC
     `)
     return NextResponse.json(rows)
   } catch (err) {

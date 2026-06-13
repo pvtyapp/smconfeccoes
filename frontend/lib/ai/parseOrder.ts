@@ -26,11 +26,14 @@ Regras:
 - Agrupe itens distintos em entradas separadas
 - Ignore texto que não seja pedido de produto`
 
-export async function parseOrder(text: string): Promise<ParsedItem[]> {
+export async function parseOrder(text: string, clientContext: string | null = null): Promise<ParsedItem[]> {
+  const system = clientContext
+    ? `${SYSTEM}\n\nContexto sobre este cliente: ${clientContext}`
+    : SYSTEM
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: SYSTEM,
+    system,
     messages: [{ role: "user", content: text }],
   })
 
@@ -38,7 +41,10 @@ export async function parseOrder(text: string): Promise<ParsedItem[]> {
 
   // Extract JSON array from response
   const match = raw.match(/\[[\s\S]*\]/)
-  if (!match) throw new Error("AI não retornou JSON válido")
+  if (!match) {
+    console.error("[parseOrder] AI response is not valid JSON:", raw.slice(0, 200))
+    throw new Error("AI não retornou JSON válido")
+  }
 
   const parsed = JSON.parse(match[0]) as ParsedItem[]
   return parsed.filter((i) => i.productName && i.qty > 0)

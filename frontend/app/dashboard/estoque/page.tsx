@@ -15,7 +15,18 @@ type Movement = {
   quantity: number
   reason: string
   notes: string | null
+  batchId: string | null
   createdAt: string
+}
+
+type OrderGroup = {
+  key: string
+  items: Movement[]
+  category: "entrada" | "saida" | "manutencao"
+  productName: string
+  netQty: number
+  date: string
+  notes: string | null
 }
 
 type ProductGroup = {
@@ -84,7 +95,7 @@ function fmtDate(s: string) {
 }
 
 function todayBRT(): string {
-  return new Date(Date.now() - BRT_MS).toISOString().slice(0, 10)
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" })
 }
 
 function stockStatus(row: BalanceRow): "zerado" | "critico" | "ok" {
@@ -153,7 +164,8 @@ export default function EstoquePage() {
   const [balance, setBalance]     = useState<BalanceRow[]>([])
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
-  const [expanded, setExpanded]   = useState<Set<string>>(new Set())
+  const [expanded, setExpanded]         = useState<Set<string>>(new Set())
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
   const [showOrdem, setShowOrdem]         = useState(false)
   const [adjustingGroup, setAdjustingGroup] = useState<ProductGroup | null>(null)
   const [filter, setFilter]       = useState<FilterMode>({ type: "hoje" })
@@ -211,17 +223,51 @@ export default function EstoquePage() {
     return [...map.entries()].map(([productId, g]) => ({
       productId,
       productName: g.productName,
-      rows: g.rows.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size)),
+      rows: g.rows.sort((a, b) => a.color.localeCompare(b.color)),
       totalQty:    g.rows.reduce((s, r) => s + r.currentStock, 0),
       totalValue:  g.rows.reduce((s, r) => s + r.currentStock * Number(r.costPrice), 0),
       hasCritical: g.rows.some(r => stockStatus(r) !== "ok"),
     }))
   }, [balance])
 
+  const orderGroups = useMemo<OrderGroup[]>(() => {
+    const map = new Map<string, Movement[]>()
+    for (const m of movementsInPeriod) {
+      const key = m.batchId ?? m.id
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(m)
+    }
+    return [...map.entries()]
+      .map(([key, items]) => {
+        const isMaintenance = items.some(m => m.reason === "manutencao")
+        const netQty = items.reduce((s, m) => s + (m.type === "in" ? m.quantity : -m.quantity), 0)
+        const category: OrderGroup["category"] =
+          isMaintenance ? "manutencao" : items[0].type === "in" ? "entrada" : "saida"
+        return {
+          key,
+          items: items.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size)),
+          category,
+          productName: items[0].productName,
+          netQty,
+          date: items.reduce((latest, m) => m.createdAt > latest ? m.createdAt : latest, items[0].createdAt),
+          notes: items.find(m => m.notes)?.notes ?? null,
+        }
+      })
+      .sort((a, b) => b.date.localeCompare(a.date))
+  }, [movementsInPeriod])
+
   function toggleExpand(productId: string) {
     setExpanded(prev => {
       const next = new Set(prev)
       next.has(productId) ? next.delete(productId) : next.add(productId)
+      return next
+    })
+  }
+
+  function toggleOrder(key: string) {
+    setExpandedOrders(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
   }
@@ -397,36 +443,73 @@ export default function EstoquePage() {
         </div>
       )}
 
-      {/* History */}
-      {movementsInPeriod.length > 0 && (
+      {/* History — grouped by order */}
+      {orderGroups.length > 0 && (
         <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
           <div className="px-5 py-4 border-b border-[#0F1E3C]/6 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ClipboardList size={15} className="text-[#0F1E3C]/30" />
-              <h2 className="text-sm font-bold text-[#0F1E3C]">Histórico de lançamentos</h2>
+              <h2 className="text-sm font-bold text-[#0F1E3C]">Histórico de ordens</h2>
               <span className="text-xs text-[#0F1E3C]/35 bg-[#F4F6FB] px-2 py-0.5 rounded-full">{periodTag}</span>
             </div>
-            <span className="text-xs text-[#0F1E3C]/30">{movementsInPeriod.length} registro(s)</span>
+            <span className="text-xs text-[#0F1E3C]/30">{orderGroups.length} ordem(s)</span>
           </div>
           <div className="divide-y divide-[#0F1E3C]/4">
-            {movementsInPeriod.slice(0, 50).map(m => (
-              <div key={m.id} className="flex items-center gap-4 px-5 py-3 hover:bg-[#F4F6FB] transition-colors">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${m.type === "in" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
-                  {m.type === "in" ? "ENTRADA" : "SAÍDA"}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[#0F1E3C] truncate">{m.productName}</p>
-                  <p className="text-xs text-[#0F1E3C]/40">{[m.color, m.size, m.sku].filter(Boolean).join(" · ")}{m.notes ? ` · ${m.notes}` : ""}</p>
+            {orderGroups.map(og => {
+              const isOpen = expandedOrders.has(og.key)
+              const badgeCls =
+                og.category === "manutencao" ? "bg-orange-100 text-orange-700" :
+                og.category === "entrada"    ? "bg-emerald-100 text-emerald-700" :
+                                               "bg-red-100 text-red-600"
+              const badgeLabel =
+                og.category === "manutencao" ? "MANUTENÇÃO" :
+                og.category === "entrada"    ? "ENTRADA" : "SAÍDA"
+              const qtyColor =
+                og.category === "manutencao" ? "text-orange-600" :
+                og.category === "entrada"    ? "text-emerald-600" : "text-red-500"
+              const qtyLabel = og.netQty >= 0 ? `+${og.netQty}` : `${og.netQty}`
+
+              return (
+                <div key={og.key}>
+                  <button
+                    onClick={() => toggleOrder(og.key)}
+                    className="w-full flex items-center gap-4 px-5 py-3.5 hover:bg-[#F4F6FB] transition-colors text-left"
+                  >
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
+                      {badgeLabel}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-[#0F1E3C] truncate">{og.productName}</p>
+                      {og.notes && <p className="text-xs text-[#0F1E3C]/40 truncate">{og.notes}</p>}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className={`text-base font-black ${qtyColor}`}>{qtyLabel} pç</p>
+                      <p className="text-[10px] text-[#0F1E3C]/30">{og.items.length} variação(ões)</p>
+                    </div>
+                    <p className="text-[10px] text-[#0F1E3C]/30 flex-shrink-0 w-28 text-right">{fmtDate(og.date)}</p>
+                    <span className="text-[#0F1E3C]/25 flex-shrink-0">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-[#0F1E3C]/4 bg-[#F9FAFB]">
+                      {og.items.map(m => (
+                        <div key={m.id} className="flex items-center gap-3 px-8 py-2.5 border-b border-[#0F1E3C]/4 last:border-0">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-[#0F1E3C] font-medium">
+                              {m.color} · {m.size || "—"}
+                            </p>
+                            <p className="text-[10px] font-mono text-[#0F1E3C]/30">{m.sku}</p>
+                          </div>
+                          <span className={`text-sm font-black flex-shrink-0 ${m.type === "in" ? "text-emerald-600" : "text-red-500"}`}>
+                            {m.type === "in" ? "+" : "−"}{m.quantity}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="text-right flex-shrink-0">
-                  <p className={`text-base font-black ${m.type === "in" ? "text-emerald-600" : "text-red-500"}`}>
-                    {m.type === "in" ? "+" : "−"}{m.quantity}
-                  </p>
-                  <p className="text-[10px] text-[#0F1E3C]/30">{REASON_LABEL[m.reason] ?? m.reason}</p>
-                </div>
-                <p className="text-[10px] text-[#0F1E3C]/30 flex-shrink-0 w-28 text-right">{fmtDate(m.createdAt)}</p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
@@ -488,6 +571,7 @@ function AjusteEstoqueModal({
 
   async function handleConfirm() {
     setSaving(true); setError("")
+    const batchId = crypto.randomUUID()
     try {
       for (const { row, newQty } of changes) {
         const delta = newQty - row.currentStock
@@ -501,6 +585,7 @@ function AjusteEstoqueModal({
             reason:    "manutencao",
             channel:   "manual",
             notes:     notes.trim(),
+            batchId,
           }),
         }).then(async r => { if (!r.ok) throw new Error((await r.json()).error ?? "Erro") })
       }
@@ -555,7 +640,7 @@ function AjusteEstoqueModal({
                   <div key={color}>
                     <p className="text-xs font-bold text-[#0F1E3C]/50 uppercase tracking-wider mb-2">{color || "Sem cor"}</p>
                     <div className="space-y-2">
-                      {variants.sort((a, b) => a.size.localeCompare(b.size)).map(v => {
+                      {variants.map(v => {
                         const newQty = Number(qtys[v.variantId] ?? v.currentStock)
                         const changed = newQty !== v.currentStock && !isNaN(newQty)
                         return (
@@ -673,7 +758,7 @@ function AjusteEstoqueModal({
 
 // ─── Ordem de Entrada Modal ───────────────────────────────────────────────────
 
-const STEPS = ["Produto", "Cor", "Quantidades", "Resumo"]
+const STEPS = ["Produto", "Quantidades", "Resumo"]
 
 function OrdemEntradaModal({
   balance,
@@ -686,56 +771,47 @@ function OrdemEntradaModal({
   onClose: () => void
   onSuccess: () => Promise<void>
 }) {
-  const [step, setStep]                   = useState(0)
+  const [step, setStep]                           = useState(0)
   const [selectedProductId, setSelectedProductId] = useState("")
-  const [selectedColor, setSelectedColor] = useState("")
-  const [quantities, setQuantities]       = useState<Record<string, string>>({})
-  const [notes, setNotes]                 = useState("")
-  const [saving, setSaving]               = useState(false)
-  const [error, setError]                 = useState("")
+  const [quantities, setQuantities]               = useState<Record<string, string>>({})
+  const [notes, setNotes]                         = useState("")
+  const [saving, setSaving]                       = useState(false)
+  const [error, setError]                         = useState("")
 
   const selectedProduct = groups.find(g => g.productId === selectedProductId)
 
-  const colorsForProduct = useMemo(() => {
+  // All variants for the selected product grouped by color
+  const colorGroups = useMemo(() => {
     if (!selectedProductId) return []
-    const cols = new Set(balance.filter(r => r.productId === selectedProductId).map(r => r.color))
-    return [...cols].sort()
+    const variants = balance
+      .filter(r => r.productId === selectedProductId)
+      .sort((a, b) => a.color.localeCompare(b.color))
+    const map = new Map<string, BalanceRow[]>()
+    for (const v of variants) {
+      if (!map.has(v.color)) map.set(v.color, [])
+      map.get(v.color)!.push(v)
+    }
+    return [...map.entries()]
   }, [balance, selectedProductId])
 
-  const variantsForColor = useMemo(() => {
-    if (!selectedProductId || !selectedColor) return []
-    return balance
-      .filter(r => r.productId === selectedProductId && r.color === selectedColor)
-      .sort((a, b) => a.size.localeCompare(b.size))
-  }, [balance, selectedProductId, selectedColor])
-
-  const summaryItems = useMemo(() =>
-    variantsForColor
+  const summaryItems = useMemo(() => {
+    const all = colorGroups.flatMap(([, variants]) => variants)
+    return all
       .filter(v => Number(quantities[v.variantId] ?? 0) > 0)
-      .map(v => ({ ...v, qty: Number(quantities[v.variantId]) })),
-    [variantsForColor, quantities]
-  )
+      .map(v => ({ ...v, qty: Number(quantities[v.variantId]) }))
+  }, [colorGroups, quantities])
 
   function pickProduct(productId: string) {
     setSelectedProductId(productId)
-    setSelectedColor("")
     setQuantities({})
+    setError("")
     setStep(1)
-  }
-
-  function pickColor(color: string) {
-    setSelectedColor(color)
-    const init: Record<string, string> = {}
-    balance
-      .filter(r => r.productId === selectedProductId && r.color === color)
-      .forEach(v => { init[v.variantId] = "" })
-    setQuantities(init)
-    setStep(2)
   }
 
   async function handleLaunch() {
     if (summaryItems.length === 0) { setError("Informe pelo menos uma quantidade maior que zero."); return }
     setSaving(true); setError("")
+    const batchId = crypto.randomUUID()
     try {
       for (const item of summaryItems) {
         const res = await fetch("/api/stock/movements", {
@@ -748,6 +824,7 @@ function OrdemEntradaModal({
             reason: "producao",
             channel: "manual",
             notes: notes || null,
+            batchId,
           }),
         })
         if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
@@ -812,81 +889,73 @@ function OrdemEntradaModal({
               </div>
             )}
 
-            {/* Step 1 — Cor */}
+            {/* Step 1 — Quantidades (all colors) */}
             {step === 1 && (
-              <div className="p-5">
-                <p className="text-sm font-bold text-[#0F1E3C] mb-0.5">{selectedProduct?.productName}</p>
-                <p className="text-xs text-[#0F1E3C]/40 mb-5">Selecione a cor</p>
-                <div className="flex flex-wrap gap-2.5">
-                  {colorsForProduct.map(color => (
-                    <button
-                      key={color}
-                      onClick={() => pickColor(color)}
-                      className="px-5 py-3 border border-[#0F1E3C]/12 rounded-xl font-semibold text-sm text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#F4F6FB] transition-colors"
-                    >
-                      {color || "Sem cor"}
-                    </button>
-                  ))}
+              <div className="p-5 space-y-5">
+                <div>
+                  <p className="text-sm font-bold text-[#0F1E3C]">{selectedProduct?.productName}</p>
+                  <p className="text-xs text-[#0F1E3C]/40 mt-0.5">Preencha as quantidades de entrada por cor e tamanho</p>
                 </div>
-                <button onClick={() => setStep(0)} className="mt-6 text-xs text-[#0F1E3C]/35 hover:text-[#0F1E3C] transition-colors">
-                  ← Voltar
-                </button>
-              </div>
-            )}
-
-            {/* Step 2 — Quantidades */}
-            {step === 2 && (
-              <div className="p-5">
-                <p className="text-sm font-bold text-[#0F1E3C] mb-0.5">{selectedProduct?.productName} — {selectedColor || "Sem cor"}</p>
-                <p className="text-xs text-[#0F1E3C]/40 mb-5">Informe a quantidade por tamanho</p>
-                <div className="space-y-2">
-                  {variantsForColor.map(v => (
-                    <div key={v.variantId} className="flex items-center gap-4 p-3 border border-[#0F1E3C]/8 rounded-xl">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-[#0F1E3C]">{v.size || "Único"}</p>
-                        <p className="text-[10px] font-mono text-[#0F1E3C]/30">{v.sku} · estoque atual: {v.currentStock}</p>
-                      </div>
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={quantities[v.variantId] ?? ""}
-                        onChange={e => setQuantities(prev => ({ ...prev, [v.variantId]: e.target.value }))}
-                        className="w-24 border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-center font-black text-xl text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
-                      />
+                {colorGroups.map(([color, variants]) => (
+                  <div key={color}>
+                    <p className="text-xs font-bold text-[#0F1E3C]/50 uppercase tracking-wider mb-2">{color || "Sem cor"}</p>
+                    <div className="space-y-2">
+                      {variants.map(v => {
+                        const qty = Number(quantities[v.variantId] ?? 0)
+                        return (
+                          <div key={v.variantId} className={`flex items-center gap-4 p-3 border rounded-xl transition-colors ${qty > 0 ? "border-emerald-300 bg-emerald-50/40" : "border-[#0F1E3C]/8"}`}>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-[#0F1E3C]">{v.size || "Único"}</p>
+                              <p className="text-[10px] font-mono text-[#0F1E3C]/30">{v.sku} · atual: {v.currentStock} pç</p>
+                            </div>
+                            {qty > 0 && (
+                              <span className="text-xs font-bold text-emerald-600 flex-shrink-0">→ {v.currentStock + qty} pç</span>
+                            )}
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={quantities[v.variantId] ?? ""}
+                              onChange={e => setQuantities(prev => ({ ...prev, [v.variantId]: e.target.value }))}
+                              className="w-24 border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-center font-black text-xl text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors flex-shrink-0"
+                            />
+                          </div>
+                        )
+                      })}
                     </div>
-                  ))}
-                </div>
-                <div className="flex gap-3 mt-5">
-                  <button
-                    onClick={() => setStep(1)}
-                    className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors"
-                  >
+                  </div>
+                ))}
+                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+                <div className="flex gap-3">
+                  <button onClick={() => { setStep(0); setError("") }} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
                     ← Voltar
                   </button>
                   <button
-                    onClick={() => { if (summaryItems.length > 0) setStep(3); else setError("Informe pelo menos uma quantidade.") }}
+                    onClick={() => { if (summaryItems.length > 0) { setError(""); setStep(2) } else setError("Informe pelo menos uma quantidade.") }}
                     className="flex-1 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white rounded-xl py-2.5 text-sm font-semibold transition-colors"
                   >
                     Revisar →
                   </button>
                 </div>
-                {error && <p className="mt-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
               </div>
             )}
 
-            {/* Step 3 — Resumo */}
-            {step === 3 && (
-              <div className="p-5">
-                <p className="text-sm font-bold text-[#0F1E3C] mb-0.5">{selectedProduct?.productName} — {selectedColor || "Sem cor"}</p>
-                <p className="text-xs text-[#0F1E3C]/40 mb-4">Resumo da ordem de entrada</p>
+            {/* Step 2 — Resumo */}
+            {step === 2 && (
+              <div className="p-5 space-y-4">
+                <div>
+                  <p className="text-sm font-bold text-[#0F1E3C]">{selectedProduct?.productName}</p>
+                  <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
+                    {summaryItems.length} variação(ões) · {summaryItems.reduce((s, i) => s + i.qty, 0)} peças no total
+                  </p>
+                </div>
 
-                <div className="space-y-2 mb-5">
+                <div className="space-y-2">
                   {summaryItems.map(item => (
                     <div key={item.variantId} className="flex items-center justify-between px-4 py-3 bg-[#F4F6FB] rounded-xl">
                       <div>
-                        <p className="font-bold text-[#0F1E3C]">{item.size || "Único"}</p>
-                        <p className="text-xs text-[#0F1E3C]/35">{item.sku} · atual: {item.currentStock} pç</p>
+                        <p className="font-bold text-[#0F1E3C] text-sm">{item.color} · {item.size || "Único"}</p>
+                        <p className="text-[10px] font-mono text-[#0F1E3C]/30">{item.sku} · atual: {item.currentStock} pç</p>
                       </div>
                       <div className="text-right">
                         <p className="text-xl font-black text-emerald-600">+{item.qty}</p>
@@ -896,8 +965,10 @@ function OrdemEntradaModal({
                   ))}
                 </div>
 
-                <div className="mb-4">
-                  <label className="block text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Observação (opcional)</label>
+                <div>
+                  <label className="block text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">
+                    Observação <span className="text-[#0F1E3C]/25">(opcional)</span>
+                  </label>
                   <input
                     className={inputCls}
                     placeholder="Ex: Lote jan/2026, produção semanal..."
@@ -906,13 +977,10 @@ function OrdemEntradaModal({
                   />
                 </div>
 
-                {error && <p className="mb-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
 
                 <div className="flex gap-3">
-                  <button
-                    onClick={() => { setError(""); setStep(2) }}
-                    className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors"
-                  >
+                  <button onClick={() => { setError(""); setStep(1) }} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
                     ← Voltar
                   </button>
                   <button

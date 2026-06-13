@@ -10,7 +10,7 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await req.json()
-    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled } = body
+    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled, precoPorMetro } = body
 
     const sizeArr  = Array.isArray(sizes)  ? sizes.filter(Boolean)  : null
     const colorArr = Array.isArray(colors) ? colors.filter(Boolean) : null
@@ -19,17 +19,18 @@ export async function PUT(
 
     const { rows } = await client.query(`
       UPDATE products SET
-        name            = COALESCE($1, name),
-        category_id     = COALESCE($2, category_id),
-        description     = COALESCE($3, description),
-        sale_price      = COALESCE($4, sale_price),
-        material_cost   = COALESCE($5, material_cost),
-        size_list       = COALESCE($6, size_list),
-        color_list      = COALESCE($7, color_list),
-        status          = COALESCE($8, status),
-        chatbot_enabled = COALESCE($9, chatbot_enabled),
-        stock_enabled   = COALESCE($10, stock_enabled)
-      WHERE id = $11
+        name              = COALESCE($1, name),
+        category_id       = COALESCE($2, category_id),
+        description       = COALESCE($3, description),
+        sale_price        = COALESCE($4, sale_price),
+        material_cost     = COALESCE($5, material_cost),
+        size_list         = COALESCE($6, size_list),
+        color_list        = COALESCE($7, color_list),
+        status            = COALESCE($8, status),
+        chatbot_enabled   = COALESCE($9, chatbot_enabled),
+        stock_enabled     = COALESCE($10, stock_enabled),
+        preco_por_metro   = COALESCE($11, preco_por_metro)
+      WHERE id = $12
       RETURNING
         id, name,
         category_id     AS "categoryId",
@@ -37,6 +38,7 @@ export async function PUT(
         sale_price      AS "salePrice",
         material_cost   AS "costPrice",
         stock_enabled   AS "stockEnabled",
+        COALESCE(preco_por_metro, false) AS "precoPorMetro",
         COALESCE(size_list, '{}')  AS sizes,
         COALESCE(color_list, '{}') AS colors,
         status,
@@ -46,13 +48,14 @@ export async function PUT(
       name ?? null,
       categoryId !== undefined ? (categoryId || null) : null,
       description ?? null,
-      salePrice  ?? null,
-      costPrice  ?? null,
+      salePrice      ?? null,
+      costPrice      ?? null,
       sizeArr,
       colorArr,
-      status     ?? null,
+      status         ?? null,
       chatbotEnabled ?? null,
       stockEnabled   ?? null,
+      precoPorMetro  ?? null,
       id,
     ])
 

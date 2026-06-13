@@ -3,20 +3,36 @@
 import Image from "next/image"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { login } from "@/lib/auth"
+import { setLocalSession } from "@/lib/auth"
 
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (login(email, password)) {
-      router.push("/dashboard")
-    } else {
-      setError("Email ou senha incorretos.")
+    setLoading(true)
+    setError("")
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
+      if (res.ok) {
+        setLocalSession({ email, role: "admin", name: "Administrador", company: "SM Confecções" })
+        router.push("/dashboard")
+      } else {
+        const d = await res.json().catch(() => ({}))
+        setError(d.error ?? "Email ou senha incorretos.")
+      }
+    } catch {
+      setError("Erro de conexão. Tente novamente.")
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -86,9 +102,10 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              className="w-full bg-[#4361EE] hover:bg-[#3451D4] text-white font-bold py-3 rounded-xl transition-all hover:scale-[1.01] mt-2"
+              disabled={loading}
+              className="w-full bg-[#4361EE] hover:bg-[#3451D4] text-white font-bold py-3 rounded-xl transition-all hover:scale-[1.01] mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Entrar
+              {loading ? "Entrando..." : "Entrar"}
             </button>
           </form>
         </div>

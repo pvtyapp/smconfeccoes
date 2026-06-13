@@ -6,6 +6,9 @@ export type MatchedItem = ParsedItem & {
   unitPrice: number | null
   sku: string | null
   matched: boolean
+  alternatives: string[]
+  currentStock: number
+  stockOk: boolean
 }
 
 function norm(s: string): string {
@@ -21,9 +24,10 @@ function score(a: string, b: string): number {
   const na = norm(a)
   const nb = norm(b)
   if (na === nb) return 1
-  if (na.includes(nb) || nb.includes(na)) return 0.85
-  const wa = na.split(/\s+/)
-  const wb = nb.split(/\s+/)
+  const wa = na.split(/\s+/).filter(Boolean)
+  const wb = nb.split(/\s+/).filter(Boolean)
+  const [shorter, longer] = wa.length <= wb.length ? [wa, wb] : [wb, wa]
+  if (shorter.length > 0 && shorter.every(w => longer.includes(w))) return 0.85
   const hits = wa.filter(w => w.length > 2 && wb.includes(w)).length
   return hits / Math.max(wa.length, wb.length)
 }
@@ -36,6 +40,7 @@ type Variant = {
   size: string
   sku: string
   salePrice: number
+  currentStock: number
 }
 
 export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]> {
@@ -47,10 +52,17 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
       pv.color,
       pv.size,
       pv.sku,
-      pv.sale_price   AS "salePrice"
+      pv.sale_price   AS "salePrice",
+      COALESCE(bal.qty, 0)::int AS "currentStock"
     FROM product_variants pv
     JOIN products p ON p.id = pv.product_id
-    WHERE pv.status = 'active' AND p.chatbot_enabled = true
+    LEFT JOIN (
+      SELECT variant_id,
+             SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END) AS qty
+      FROM stock_movements
+      GROUP BY variant_id
+    ) bal ON bal.variant_id = pv.id
+    WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
   `)
 
   return items.map(item => {
@@ -61,7 +73,10 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
       const nameScore  = score(item.productName, v.productName)
       const colorScore = item.color ? score(item.color, v.color) : 0.5
       const sizeScore  = item.size  ? score(item.size,  v.size)  : 0.5
-      const total      = nameScore * 0.6 + colorScore * 0.25 + sizeScore * 0.15
+
+      if (item.color && colorScore < 0.35) continue
+
+      const total = nameScore * 0.5 + colorScore * 0.25 + sizeScore * 0.25
 
       if (total > bestScore && total > 0.5) {
         bestScore = total
@@ -69,12 +84,24 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
       }
     }
 
+    const alternatives = best
+      ? []
+      : variants
+          .filter(v => score(item.productName, v.productName) > 0.5)
+          .map(v => [v.color, v.size].filter(Boolean).join(" "))
+          .filter(Boolean)
+          .slice(0, 5)
+
+    const currentStock = best?.currentStock ?? 0
     return {
       ...item,
-      variantId: best?.id ?? null,
-      unitPrice: best ? Number(best.salePrice) : null,
-      sku:       best?.sku ?? null,
-      matched:   best !== null,
+      variantId:    best?.id ?? null,
+      unitPrice:    best ? Number(best.salePrice) : null,
+      sku:          best?.sku ?? null,
+      matched:      best !== null,
+      alternatives: [...new Set(alternatives)],
+      currentStock,
+      stockOk:      best !== null && currentStock >= item.qty,
     }
   })
 }
