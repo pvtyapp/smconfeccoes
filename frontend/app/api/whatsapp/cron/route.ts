@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
+import { runBlobTtlCleanup } from "@/lib/blob-cleanup"
 
 // Vercel Cron: 0 12 * * * (09h Brasília = 12h UTC)
 export async function GET(req: Request) {
@@ -245,5 +246,8 @@ export async function GET(req: Request) {
     results.stuck = rowCount ?? 0
   } catch { results.errors++ }
 
-  return NextResponse.json({ ok: true, ...results, date: today })
+  // ── 10. Limpeza TTL de blobs de mídia ────────────────────────────────────────
+  const blobCleanup = await runBlobTtlCleanup().catch(() => ({ deleted: 0 }))
+
+  return NextResponse.json({ ok: true, ...results, blobsDeleted: blobCleanup.deleted, date: today })
 }

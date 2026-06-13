@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { cleanDtfBlobsOnConclude } from "@/lib/blob-cleanup"
 
 const VALID = ["triagem", "em_producao", "pronto", "concluido", "cancelado"]
 
@@ -32,7 +33,7 @@ export async function POST(
     await client.query("BEGIN")
 
     const { rows } = await client.query(`
-      SELECT p.id, p.number, p.contact_id, c.jid
+      SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at, c.jid
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1
@@ -84,6 +85,11 @@ export async function POST(
           : WA_MESSAGES[status](pedido.number, endereco, extra)
         sendWhatsApp(pedido.jid, msg).catch(() => {})
       }
+    }
+
+    // Free DTF blobs when order is done (fire-and-forget, outside transaction)
+    if ((status === "concluido" || status === "cancelado") && pedido.contact_id) {
+      cleanDtfBlobsOnConclude(pedido.contact_id, new Date(pedido.pedido_created_at)).catch(() => {})
     }
 
     return NextResponse.json({ ok: true, status })
