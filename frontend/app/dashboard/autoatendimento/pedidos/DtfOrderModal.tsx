@@ -51,15 +51,16 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
 
   async function downloadArtes() {
     setDownloading(true)
+    setError("")
     try {
       const slug = nomeCliente.split(" ")[0]
 
       if (order.attachments.length === 1) {
-        // Single file: fetch directly from public blob URL — no Vercel function proxy needed
-        const att  = order.attachments[0]
+        const att = order.attachments[0]
+        if (!att.blobUrl) throw new Error("URL do arquivo não encontrada")
         const ext  = att.filename?.split(".").pop()?.toLowerCase() ?? "png"
         const r    = await fetch(att.blobUrl)
-        if (!r.ok) throw new Error("fetch failed")
+        if (!r.ok) throw new Error(`Falha ao buscar arquivo (${r.status})`)
         const blob = await r.blob()
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement("a")
@@ -70,9 +71,8 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
       } else {
-        // Multiple files: API builds ZIP with renamed files
         const r = await fetch(`/api/dtf/pedidos/${order.id}/download`)
-        if (!r.ok) throw new Error("download failed")
+        if (!r.ok) throw new Error(`Falha ao gerar ZIP (${r.status})`)
         const blob = await r.blob()
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement("a")
@@ -83,7 +83,9 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
       }
-    } catch { /* silent */ }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao baixar arquivo")
+    }
     finally { setDownloading(false) }
   }
 

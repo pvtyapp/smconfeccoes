@@ -275,7 +275,8 @@ export default function PedidosPage() {
   // DTF panel within chat modal
   const [showDtfPanel,    setShowDtfPanel]    = useState(false)
   const [contactDtfOrders,setContactDtfOrders]= useState<DtfOrder[]>([])
-  const [linkingDtfMsg,   setLinkingDtfMsg]   = useState<number | null>(null) // message id being linked
+  const [linkingDtfMsg,   setLinkingDtfMsg]   = useState<number | null>(null)
+  const [downloadingMsgId,setDownloadingMsgId]= useState<number | null>(null)
 
   // File upload (send media from PIV)
   const fileInputRef  = useRef<HTMLInputElement>(null)
@@ -858,6 +859,24 @@ export default function PedidosPage() {
         URL.revokeObjectURL(url)
       }
     } catch { /* silent */ }
+  }
+
+  async function downloadChatFile(msgId: number, url: string, filename: string | null) {
+    setDownloadingMsgId(msgId)
+    try {
+      const r = await fetch(url)
+      if (!r.ok) return
+      const blob   = await r.blob()
+      const objUrl = URL.createObjectURL(blob)
+      const a      = document.createElement("a")
+      a.href       = objUrl
+      a.download   = filename ?? "arquivo"
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objUrl)
+    } catch { /* silent */ }
+    finally { setDownloadingMsgId(null) }
   }
 
   async function sendFile() {
@@ -1652,7 +1671,12 @@ export default function PedidosPage() {
                                     </p>
                                     {m.caption && <p className={`text-[10px] mt-0.5 ${isOut ? "text-white/70" : "text-[#0F1E3C]/60"}`}>{m.caption}</p>}
                                     {isBlobUrl(m.mediaUrl)
-                                      ? <a href={m.mediaUrl!} target="_blank" rel="noopener noreferrer" className={`text-[9px] underline ${isOut ? "text-white/70" : "text-[#4361EE]"}`}>Baixar arquivo</a>
+                                      ? <button
+                                          onClick={() => downloadChatFile(m.id, m.mediaUrl!, m.fileName)}
+                                          disabled={downloadingMsgId === m.id}
+                                          className={`text-[9px] underline disabled:opacity-50 ${isOut ? "text-white/70" : "text-[#4361EE]"}`}>
+                                          {downloadingMsgId === m.id ? "Baixando..." : "Baixar arquivo"}
+                                        </button>
                                       : m.mediaUrl === ""
                                         ? <span className={`text-[9px] ${isOut ? "text-white/40" : "text-[#0F1E3C]/25"}`}>Arquivo não disponível</span>
                                         : <span className={`text-[9px] ${isOut ? "text-white/50" : "text-[#0F1E3C]/30"}`}>Carregando...</span>
