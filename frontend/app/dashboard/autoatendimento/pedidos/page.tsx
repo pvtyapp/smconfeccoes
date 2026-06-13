@@ -572,18 +572,26 @@ export default function PedidosPage() {
 
   // ── Load messages (full load ao selecionar, incremental poll) ─────────────
 
-  const refreshMediaUrls = useCallback(async (contactId: number, pendingIds: Set<number>) => {
+  const refreshMediaUrls = useCallback(async (
+    contactId: number, pendingIds: Set<number>, attempt = 0
+  ) => {
     const r = await fetch(`/api/chat/messages?contactId=${contactId}&noSync=1`)
     if (!r.ok) return
     const data = await r.json()
     const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
     const byId = new Map(msgs.map(m => [m.id, m]))
+    const stillPending = new Set<number>()
     setMessages(prev => prev.map(m => {
       if (!pendingIds.has(m.id)) return m
       const updated = byId.get(m.id)
-      if (!updated?.mediaUrl) return m
+      if (!updated?.mediaUrl) { stillPending.add(m.id); return m }
       return { ...m, mediaUrl: updated.mediaUrl, mediaCategory: updated.mediaCategory }
     }))
+    // Retry with backoff: 8s, 16s, 30s — para dar tempo ao waitUntil de terminar
+    const delays = [8_000, 16_000, 30_000]
+    if (stillPending.size > 0 && attempt < delays.length) {
+      setTimeout(() => refreshMediaUrls(contactId, stillPending, attempt + 1), delays[attempt])
+    }
   }, [])
 
   const loadMessages = useCallback(async (contactId: number) => {
@@ -649,8 +657,9 @@ export default function PedidosPage() {
     if (!chatContact) return
     latestMsgAt.current = null
     isFirstLoad.current = true
-    // Sync PIV's sent messages from Evolution first, then load
-    syncOutgoing(chatContact.id, chatContact.jid).then(() => loadMessages(chatContact.id))
+    // Carrega do DB imediatamente; sync de saída em paralelo + poll rápido depois
+    loadMessages(chatContact.id)
+    syncOutgoing(chatContact.id, chatContact.jid).then(() => pollMessages(chatContact.id))
     loadContactDtfOrders(chatContact.id)
     // Mark as read in DB + send read receipt to WA (bidirectional)
     fetch("/api/chat/mark-read", {
@@ -658,7 +667,7 @@ export default function PedidosPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contactId: chatContact.id, jid: chatContact.jid }),
     }).then(() => loadConvs())
-  }, [chatContact, syncOutgoing, loadMessages, loadConvs, loadContactDtfOrders])
+  }, [chatContact, syncOutgoing, loadMessages, pollMessages, loadConvs, loadContactDtfOrders])
 
   useEffect(() => {
     if (!chatContact) return
@@ -686,9 +695,7 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (messages.length === 0) return
-    const behavior = isFirstLoad.current ? "instant" : "smooth"
-    isFirstLoad.current = false
-    messagesEndRef.current?.scrollIntoView({ behavior })
+    messagesEndRef.current?.scrollIntoView({ behavior: "instant" })
   }, [messages])
 
   // ── Send message ───────────────────────────────────────────────────────────
