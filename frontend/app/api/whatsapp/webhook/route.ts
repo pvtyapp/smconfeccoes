@@ -44,7 +44,10 @@ async function saveMediaBackground(
     await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_category TEXT`).catch(() => {})
 
     const media = await downloadEvolutionMedia(msg)
-    if (!media) return
+    if (!media) {
+      console.error("[saveMedia] downloadEvolutionMedia returned null — messageId:", messageId, "mediaType:", mediaType)
+      return
+    }
 
     const category: MediaCategory = classifyMediaCategory(mediaType, media.mimeType, contactState)
 
@@ -67,10 +70,10 @@ async function saveMediaBackground(
         [url, category, messageId]
       ).catch(() => {})
     } else {
-      // Fallback: update most recent message from this contact
+      // Fallback: update most recent media message from this contact (any direction)
       await pool.query(
         `UPDATE wa_messages SET media_url = $1, media_category = $2
-         WHERE id = (SELECT id FROM wa_messages WHERE contact_id = $3 AND direction = 'in' ORDER BY created_at DESC LIMIT 1)`,
+         WHERE id = (SELECT id FROM wa_messages WHERE contact_id = $3 AND media_type IS NOT NULL ORDER BY created_at DESC LIMIT 1)`,
         [url, category, contactId]
       ).catch(() => {})
     }
@@ -191,16 +194,23 @@ export async function POST(req: Request) {
           ((msgBody0?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
           ""
         // Capture media sent from phone
+        let outMediaType: string | null = null
+        let outFileName: string | null  = null
         if (!text0 && msgBody0) {
-          if (msgBody0.imageMessage)    text0 = "[📸 imagem]"
-          else if (msgBody0.audioMessage) text0 = "[🎤 áudio]"
-          else if (msgBody0.videoMessage) {
+          if (msgBody0.imageMessage) {
+            text0 = "[📸 imagem]"; outMediaType = "image"
+          } else if (msgBody0.audioMessage) {
+            text0 = "[🎤 áudio]"; outMediaType = "audio"
+          } else if (msgBody0.videoMessage) {
             const cap = (msgBody0.videoMessage as Record<string, unknown>)?.caption as string
-            text0 = cap ? `[🎥 vídeo] ${cap}` : "[🎥 vídeo]"
+            text0 = cap ? `[🎥 vídeo] ${cap}` : "[🎥 vídeo]"; outMediaType = "video"
           } else if (msgBody0.documentMessage) {
             const d = msgBody0.documentMessage as Record<string, unknown>
-            text0 = (d.fileName as string) || "[📄 documento]"
-          } else if (msgBody0.stickerMessage) text0 = "[🎨 sticker]"
+            outFileName = (d.fileName as string) ?? null
+            text0 = outFileName || "[📄 documento]"; outMediaType = "document"
+          } else if (msgBody0.stickerMessage) {
+            text0 = "[🎨 sticker]"; outMediaType = "sticker"
+          }
         }
         if (text0) {
           const outMsgId: string | null = (key?.id as string) ?? null
@@ -208,12 +218,20 @@ export async function POST(req: Request) {
           pool.query(`SELECT id FROM wa_contacts WHERE jid = $1`, [jid])
             .then(({ rows }) => {
               if (!rows[0]) return
+              const contactId0 = rows[0].id as number
               pool.query(
-                `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, created_at)
-                 VALUES ($1, $2, 'out', $3, 'sent', COALESCE($4, NOW()))
-                 ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-                [rows[0].id, outMsgId, text0, ts]
-              ).catch(() => {})
+                `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
+                 VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))
+                 ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
+                   media_type = COALESCE(wa_messages.media_type, EXCLUDED.media_type),
+                   file_name  = COALESCE(wa_messages.file_name,  EXCLUDED.file_name)`,
+                [contactId0, outMsgId, text0, outMediaType, outFileName, ts]
+              ).then(() => {
+                // Download media sent from phone and save to blob
+                if (outMediaType && outMediaType !== "sticker" && outMsgId) {
+                  waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
+                }
+              }).catch(() => {})
             }).catch(() => {})
         }
       }

@@ -591,6 +591,11 @@ export default function PedidosPage() {
     const delays = [8_000, 16_000, 30_000]
     if (stillPending.size > 0 && attempt < delays.length) {
       setTimeout(() => refreshMediaUrls(contactId, stillPending, attempt + 1), delays[attempt])
+    } else if (stillPending.size > 0) {
+      // Retries esgotados — marca como indisponível para parar o "carregando..."
+      setMessages(prev => prev.map(m =>
+        stillPending.has(m.id) ? { ...m, mediaUrl: "" } : m
+      ))
     }
   }, [])
 
@@ -605,7 +610,7 @@ export default function PedidosPage() {
     setMsgOffset(0)
     latestMsgAt.current = msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null
 
-    const pendingIds = new Set(msgs.filter(m => m.mediaType && !m.mediaUrl).map(m => m.id))
+    const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null).map(m => m.id))
     if (pendingIds.size > 0) {
       setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
     }
@@ -1630,7 +1635,9 @@ export default function PedidosPage() {
                                     {m.caption && <p className={`text-[10px] mt-0.5 ${isOut ? "text-white/70" : "text-[#0F1E3C]/60"}`}>{m.caption}</p>}
                                     {isBlobUrl(m.mediaUrl)
                                       ? <a href={m.mediaUrl!} target="_blank" rel="noopener noreferrer" className={`text-[9px] underline ${isOut ? "text-white/70" : "text-[#4361EE]"}`}>Baixar arquivo</a>
-                                      : <span className={`text-[9px] ${isOut ? "text-white/50" : "text-[#0F1E3C]/30"}`}>Carregando...</span>
+                                      : m.mediaUrl === ""
+                                        ? <span className={`text-[9px] ${isOut ? "text-white/40" : "text-[#0F1E3C]/25"}`}>Arquivo não disponível</span>
+                                        : <span className={`text-[9px] ${isOut ? "text-white/50" : "text-[#0F1E3C]/30"}`}>Carregando...</span>
                                     }
                                   </div>
                                 </div>
