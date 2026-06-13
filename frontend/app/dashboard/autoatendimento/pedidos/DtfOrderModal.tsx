@@ -52,19 +52,37 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
   async function downloadArtes() {
     setDownloading(true)
     try {
-      const r = await fetch(`/api/dtf/pedidos/${order.id}/download`)
-      if (!r.ok) return
-      const blob = await r.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement("a")
-      a.href     = url
-      a.download = order.attachments.length > 1
-        ? `${nomeCliente.split(" ")[0]}-artes.zip`
-        : `${nomeCliente.split(" ")[0]}-arte`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      const slug = nomeCliente.split(" ")[0]
+
+      if (order.attachments.length === 1) {
+        // Single file: fetch directly from public blob URL — no Vercel function proxy needed
+        const att  = order.attachments[0]
+        const ext  = att.filename?.split(".").pop()?.toLowerCase() ?? "png"
+        const r    = await fetch(att.blobUrl)
+        if (!r.ok) throw new Error("fetch failed")
+        const blob = await r.blob()
+        const url  = URL.createObjectURL(blob)
+        const a    = document.createElement("a")
+        a.href     = url
+        a.download = `${slug}-arte.${ext}`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } else {
+        // Multiple files: API builds ZIP with renamed files
+        const r = await fetch(`/api/dtf/pedidos/${order.id}/download`)
+        if (!r.ok) throw new Error("download failed")
+        const blob = await r.blob()
+        const url  = URL.createObjectURL(blob)
+        const a    = document.createElement("a")
+        a.href     = url
+        a.download = `${slug}-artes.zip`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
     } catch { /* silent */ }
     finally { setDownloading(false) }
   }

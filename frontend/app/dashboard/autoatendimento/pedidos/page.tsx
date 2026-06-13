@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
-import DtfOrderCard, { type DtfOrder } from "./DtfOrderCard"
+import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
@@ -825,20 +825,38 @@ export default function PedidosPage() {
     }
   }
 
-  async function downloadDtfOrder(orderId: number, attachCount: number, contactName: string) {
+  async function downloadDtfOrder(orderId: number, attachments: DtfAttachment[], contactName: string) {
+    const slug = contactName.split(" ")[0]
     try {
-      const r = await fetch(`/api/dtf/pedidos/${orderId}/download`)
-      if (!r.ok) return
-      const blob = await r.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement("a")
-      a.href     = url
-      // Browser will use Content-Disposition filename from server
-      a.download = attachCount > 1 ? `${contactName}-artes.zip` : `${contactName}-arte`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      if (attachments.length === 1) {
+        // Single file: fetch directly from public blob URL
+        const att = attachments[0]
+        const ext = att.filename?.split(".").pop()?.toLowerCase() ?? "png"
+        const r   = await fetch(att.blobUrl)
+        if (!r.ok) return
+        const blob = await r.blob()
+        const url  = URL.createObjectURL(blob)
+        const a    = document.createElement("a")
+        a.href     = url
+        a.download = `${slug}-arte.${ext}`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } else {
+        // Multiple files: API builds ZIP
+        const r = await fetch(`/api/dtf/pedidos/${orderId}/download`)
+        if (!r.ok) return
+        const blob = await r.blob()
+        const url  = URL.createObjectURL(blob)
+        const a    = document.createElement("a")
+        a.href     = url
+        a.download = `${slug}-artes.zip`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
     } catch { /* silent */ }
   }
 
@@ -1787,7 +1805,7 @@ export default function PedidosPage() {
                     .map(o => (
                       <button
                         key={o.id}
-                        onClick={() => downloadDtfOrder(o.id, o.attachments.length, o.contactName ?? chatContact?.name ?? "arte")}
+                        onClick={() => downloadDtfOrder(o.id, o.attachments, o.contactName ?? chatContact?.name ?? "arte")}
                         className="flex items-center justify-center gap-2 w-full py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl transition-colors">
                         <Download size={13} />
                         {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte (renomeado)"}
