@@ -22,7 +22,7 @@ async function getOrder(id: string) {
             'productName',  i.product_name,
             'color',        i.color,
             'size',         i.size,
-            'qty',          i.qty,
+            'qty',          i.qty::int,
             'qtyConfirmed', i.qty_confirmed
           ) ORDER BY i.id
         ) FILTER (WHERE i.id IS NOT NULL),

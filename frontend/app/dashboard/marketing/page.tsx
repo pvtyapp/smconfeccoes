@@ -7,7 +7,7 @@ import {
   Megaphone, Calendar, Plus, Trash2, Send, Image, X,
   Clock, Users, RefreshCw, ChevronDown, ChevronUp,
   CheckCircle, AlertCircle, Loader2, ToggleLeft, ToggleRight,
-  CalendarClock, Layers,
+  CalendarClock, Layers, Save, SlidersHorizontal,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -831,10 +831,319 @@ function ScheduleRow({
   )
 }
 
+// ─── Lifecycle Tab ────────────────────────────────────────────────────────────
+
+type LCStep =
+  | { type: "msg";    key: string; title: string; chip: string }
+  | { type: "silent"; title: string; desc: string }
+
+type LCSection = {
+  id: string
+  label: string
+  state: string
+  badgeCls: string
+  steps: LCStep[]
+}
+
+const LC_SECTIONS: LCSection[] = [
+  {
+    id: "lead",
+    label: "LEAD NOVO",
+    state: "lifecycle = new",
+    badgeCls: "bg-blue-50 text-blue-600 border border-blue-200",
+    steps: [
+      { type: "msg",    key: "novo_d2_msg",    title: "D2 — Sem compra em 48h",          chip: "idle > 48h · novo_seq=0 · disparo 1×" },
+      { type: "silent", title: "D9+ — Sem resposta ao D2",                                desc: "7 dias após D2 sem resposta → transita para lifecycle=frio. Sem mensagem enviada." },
+    ],
+  },
+  {
+    id: "ativo",
+    label: "CLIENTE ATIVO",
+    state: "lifecycle = active",
+    badgeCls: "bg-emerald-50 text-emerald-600 border border-emerald-200",
+    steps: [
+      { type: "msg",    key: "ausente_d15_msg", title: "D15 — Sem compra há 15 dias",    chip: "last_order_at > 15d · transita para ausente · disparo 1×" },
+    ],
+  },
+  {
+    id: "ausente",
+    label: "AUSENTE",
+    state: "lifecycle = ausente",
+    badgeCls: "bg-amber-50 text-amber-600 border border-amber-200",
+    steps: [
+      { type: "msg",    key: "ausente_d30_msg", title: "D30 — Segunda tentativa",        chip: "ausente_seq=1 · last_order_at > 30d" },
+      { type: "msg",    key: "ausente_d45_msg", title: "D45 — Última mensagem",          chip: "ausente_seq=2 · last_order_at > 45d" },
+      { type: "silent", title: "D75+ — Sem resposta ao D45",                              desc: "30 dias após D45 sem resposta → transita para lifecycle=frio. Sem mensagem enviada." },
+    ],
+  },
+]
+
+const LC_DEFAULTS: Record<string, string> = {
+  novo_d2_msg:     "Oi {nome}! Quando quiser fazer um pedido é só me chamar — produto, cor e tamanho que eu registro na hora.",
+  ausente_d15_msg: "Oi {nome}, faz um tempo! Estoque renovado aqui. Quando quiser pedir é só chamar.",
+  ausente_d30_msg: "{nome}, chegaram peças novas esse mês. Me chama quando precisar.",
+  ausente_d45_msg: "Oi {nome}! Uma última mensagem — quando precisar de estoque, pode contar comigo.",
+}
+
+function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
+  const [settings,   setSettings]   = useState<Record<string, string>>({})
+  const [loading,    setLoading]    = useState(true)
+  const [saving,     setSaving]     = useState(false)
+  const [saved,      setSaved]      = useState(false)
+  const [togglingLC, setTogglingLC] = useState(false)
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then(r => r.json())
+      .then((d: Record<string, string>) => { setSettings(d); setLoading(false) })
+  }, [])
+
+  function setSetting(key: string, value: string) {
+    setSettings(prev => ({ ...prev, [key]: value }))
+  }
+
+  async function toggleLifecycle() {
+    const next = settings.lifecycle_ativo === "false" ? "true" : "false"
+    setTogglingLC(true)
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lifecycle_ativo: next }),
+    })
+    setSettings(prev => ({ ...prev, lifecycle_ativo: next }))
+    setTogglingLC(false)
+  }
+
+  async function saveMessages() {
+    setSaving(true)
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        novo_d2_msg:     settings.novo_d2_msg     ?? "",
+        ausente_d15_msg: settings.ausente_d15_msg ?? "",
+        ausente_d30_msg: settings.ausente_d30_msg ?? "",
+        ausente_d45_msg: settings.ausente_d45_msg ?? "",
+      }),
+    })
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
+  }
+
+  const lifecycleOn  = settings.lifecycle_ativo !== "false"
+  const activeScheds = schedules.filter(s => s.active)
+
+  return (
+    <div className="space-y-6">
+
+      {/* Master toggle */}
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-[#0F1E3C]">Mensagens Proativas do Lifecycle</p>
+            <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
+              {loading ? "Carregando..."
+                : lifecycleOn
+                  ? "Ativo — D2, D15, D30 e D45 disparando às 07h · cobranças sempre ativas"
+                  : "Pausado — chatbot de pedidos e cobranças continuam funcionando"}
+            </p>
+          </div>
+          <button
+            onClick={toggleLifecycle}
+            disabled={togglingLC || loading}
+            className="shrink-0 transition-opacity disabled:opacity-40"
+          >
+            {lifecycleOn
+              ? <ToggleRight size={32} className="text-[#4361EE]" />
+              : <ToggleLeft  size={32} className="text-[#0F1E3C]/25" />}
+          </button>
+        </div>
+        {!lifecycleOn && !loading && (
+          <div className="mt-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+            <AlertCircle size={13} className="text-amber-500 shrink-0" />
+            <p className="text-xs text-amber-700">
+              D2, D15, D30 e D45 pausados. Cobranças de prazo e chatbot de pedidos continuam normais.
+            </p>
+          </div>
+        )}
+        {/* Legenda do toggle */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <div className="flex items-center gap-2 bg-[#F4F6FB] rounded-xl px-3 py-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#4361EE] shrink-0" />
+            <p className="text-[10px] text-[#0F1E3C]/50 font-medium">Controlado pelo toggle: D2, D15, D30, D45</p>
+          </div>
+          <div className="flex items-center gap-2 bg-[#F4F6FB] rounded-xl px-3 py-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+            <p className="text-[10px] text-[#0F1E3C]/50 font-medium">Sempre ativo: cobranças de vencimento</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Funil do lifecycle */}
+      {LC_SECTIONS.map((section, si) => (
+        <div key={section.id} className="space-y-2">
+          {/* Section header */}
+          <div className="flex items-center gap-3">
+            <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">{section.label}</p>
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${section.badgeCls}`}>
+              {section.state}
+            </span>
+            {si < LC_SECTIONS.length - 1 && (
+              <div className="flex-1 h-px bg-[#0F1E3C]/6" />
+            )}
+          </div>
+
+          {/* Steps */}
+          <div className="space-y-2 pl-3 border-l-2 border-[#0F1E3C]/6 ml-1">
+            {section.steps.map((step, idx) => (
+              step.type === "msg" ? (
+                <div key={step.key} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-bold text-[#0F1E3C]">{step.title}</p>
+                      <span className="inline-block mt-1 text-[10px] font-semibold text-[#0F1E3C]/40 bg-[#F4F6FB] px-2 py-0.5 rounded-full">
+                        {step.chip}
+                      </span>
+                    </div>
+                    {!lifecycleOn && (
+                      <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full shrink-0 mt-0.5">
+                        pausado
+                      </span>
+                    )}
+                  </div>
+                  <textarea
+                    value={settings[step.key] ?? ""}
+                    onChange={e => setSetting(step.key, e.target.value)}
+                    rows={3}
+                    placeholder={LC_DEFAULTS[step.key]}
+                    disabled={loading}
+                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 disabled:bg-[#F9FAFC] disabled:text-[#0F1E3C]/40 placeholder:text-[#0F1E3C]/20"
+                  />
+                  <p className="text-[10px] text-[#0F1E3C]/30">
+                    Use <code className="bg-[#F4F6FB] px-1 rounded">{"{nome}"}</code> para o primeiro nome
+                  </p>
+                </div>
+              ) : (
+                <div key={`${section.id}-silent-${idx}`} className="flex items-start gap-3 bg-[#F9FAFC] rounded-xl border border-dashed border-[#0F1E3C]/10 px-4 py-3">
+                  <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center shrink-0 mt-0.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-[#0F1E3C]/40">{step.title}</p>
+                    <p className="text-[11px] text-[#0F1E3C]/30 mt-0.5">{step.desc}</p>
+                  </div>
+                </div>
+              )
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Cobrança — sempre ativa */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">COBRANÇA</p>
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
+            sempre ativa
+          </span>
+          <div className="flex-1 h-px bg-[#0F1E3C]/6" />
+        </div>
+
+        <div className="pl-3 border-l-2 border-[#0F1E3C]/6 ml-1 space-y-2">
+          {/* Cobrança individual */}
+          <div className="bg-[#F9FAFC] rounded-2xl border border-[#0F1E3C]/8 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-[#0F1E3C]">D0 — Vencimento por pedido</p>
+              <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">prazo em dias</span>
+            </div>
+            <div className="bg-white rounded-xl border border-[#0F1E3C]/6 px-3 py-2.5">
+              <p className="text-xs text-[#0F1E3C]/60 font-mono leading-relaxed">
+                Oi <span className="text-[#4361EE] font-semibold">[nome]</span>, o pagamento do pedido <span className="text-[#4361EE] font-semibold">[número]</span> vence hoje — <span className="text-[#4361EE] font-semibold">[valor]</span>. Qualquer dúvida é só chamar!
+              </p>
+            </div>
+          </div>
+
+          {/* Cobrança agrupada */}
+          <div className="bg-[#F9FAFC] rounded-2xl border border-[#0F1E3C]/8 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-[#0F1E3C]">D0 — Vencimento agrupado por cliente</p>
+              <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">data fixa</span>
+            </div>
+            <div className="bg-white rounded-xl border border-[#0F1E3C]/6 px-3 py-2.5">
+              <p className="text-xs text-[#0F1E3C]/60 font-mono leading-relaxed">
+                Oi <span className="text-[#4361EE] font-semibold">[nome]</span>! Os pedidos <span className="text-[#4361EE] font-semibold">[números]</span> vencem hoje — total: <span className="text-[#4361EE] font-semibold">[valor total]</span>. Pode efetuar o pagamento quando puder!
+              </p>
+            </div>
+            <p className="text-[10px] text-[#0F1E3C]/30">Mensagens hardcoded. Edição de templates de cobrança disponível em breve.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Save */}
+      <div className="flex justify-end">
+        <button
+          onClick={saveMessages}
+          disabled={saving || loading}
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50"
+        >
+          {saving ? <Loader2 size={14} className="animate-spin" />
+            : saved  ? <CheckCircle size={14} />
+            : <Save size={14} />}
+          {saving ? "Salvando..." : saved ? "Salvo!" : "Salvar mensagens"}
+        </button>
+      </div>
+
+      {/* Programações ativas */}
+      <div className="space-y-3 pt-3 border-t border-[#0F1E3C]/6">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">PROGRAMAÇÕES ATIVAS</p>
+          <span className="text-[10px] text-[#0F1E3C]/30">
+            {activeScheds.length} ativa{activeScheds.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        {activeScheds.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-6 text-center">
+            <CalendarClock size={20} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+            <p className="text-xs text-[#0F1E3C]/30">Nenhuma programação ativa</p>
+            <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Ative programações na aba Programação</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {activeScheds.map(sched => {
+              const daysLabel =
+                sched.daysOfWeek.length === 7 ? "Todos os dias"
+                : sched.daysOfWeek.length === 5 && !sched.daysOfWeek.includes(0) && !sched.daysOfWeek.includes(6)
+                  ? "Seg–Sex"
+                  : sched.daysOfWeek.map(d => DAYS[d]).join(", ")
+              return (
+                <div key={sched.id} className="bg-white rounded-xl border border-[#0F1E3C]/8 px-4 py-3 flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#0F1E3C] truncate">{sched.name}</p>
+                    <p className="text-[11px] text-[#0F1E3C]/40 mt-0.5">
+                      {sched.timeOfDay.slice(0, 5)} · {daysLabel} · {sched.itemCount} item{sched.itemCount !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  {sched.lastExecutedAt && (
+                    <span className="text-[10px] text-[#0F1E3C]/25 shrink-0 tabular-nums">
+                      {fmtBR(sched.lastExecutedAt)}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MarketingPage() {
-  const [tab,          setTab]          = useState<"campanhas" | "programacao">("campanhas")
+  const [tab,          setTab]          = useState<"campanhas" | "programacao" | "lifecycle">("campanhas")
   const [stats,        setStats]        = useState<Stats | null>(null)
   const [groups,       setGroups]       = useState<Group[]>([])
   const [campaigns,    setCampaigns]    = useState<Campaign[]>([])
@@ -916,8 +1225,9 @@ export default function MarketingPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-[#F4F6FB] p-1 rounded-xl w-fit">
         {([
-          { v: "campanhas",   l: "Campanhas",    Icon: Megaphone   },
-          { v: "programacao", l: "Programação", Icon: CalendarClock },
+          { v: "campanhas",   l: "Campanhas",    Icon: Megaphone         },
+          { v: "programacao", l: "Programação",  Icon: CalendarClock     },
+          { v: "lifecycle",   l: "Lifecycle",    Icon: SlidersHorizontal },
         ] as const).map(({ v, l, Icon }) => (
           <button
             key={v}
@@ -1039,6 +1349,11 @@ export default function MarketingPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Lifecycle ── */}
+      {tab === "lifecycle" && (
+        <LifecycleTab schedules={schedules} />
       )}
 
       {/* Drawers */}

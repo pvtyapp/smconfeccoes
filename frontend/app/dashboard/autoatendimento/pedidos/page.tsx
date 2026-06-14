@@ -51,6 +51,7 @@ export type Order = {
   dueDate: string | null
   createdAt: string
   updatedAt: string
+  needsAttention: boolean | null
   contactId: number
   contactName: string
   contactPhone: string
@@ -158,7 +159,6 @@ function getHistDates(key: HistPeriod, rs: string, re: string): [string, string]
 
 const PROD_COLS = [
   { key: "triagem",      label: "Triagem",      hdr: "bg-amber-50 border-amber-200",   badge: "bg-amber-100 text-amber-700",   txt: "text-amber-700"   },
-  { key: "confirmando",  label: "Confirmando",  hdr: "bg-purple-50 border-purple-200", badge: "bg-purple-100 text-purple-700", txt: "text-purple-700"  },
   { key: "em_separacao", label: "Em Separação", hdr: "bg-blue-50 border-blue-200",     badge: "bg-blue-100 text-blue-700",     txt: "text-blue-700"    },
   { key: "pronto",       label: "Pronto",       hdr: "bg-green-50 border-green-200",   badge: "bg-green-100 text-green-700",   txt: "text-green-700"   },
 ]
@@ -1310,7 +1310,9 @@ export default function PedidosPage() {
             <div className="overflow-x-auto">
               <div className="flex gap-3 pb-2" style={{ minWidth: "max-content" }}>
                 {PROD_COLS.map(col => {
-                  const colOrders = orders.filter(o => o.status === col.key)
+                  const colOrders = col.key === "triagem"
+                    ? orders.filter(o => o.status === "triagem" || o.status === "confirmando")
+                    : orders.filter(o => o.status === col.key)
                   return (
                     <div key={col.key} className="w-64 flex-shrink-0">
                       <div className={`flex items-center justify-between mb-2 px-3 py-2 rounded-xl border ${col.hdr}`}>

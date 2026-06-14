@@ -81,6 +81,16 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Notificações */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Notificações</h2>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">WhatsApp do operador (JID)</label>
+              <input className={inputCls} value={settings.operador_jid ?? ""} onChange={e => set("operador_jid", e.target.value)} placeholder="5516999999999@s.whatsapp.net" />
+              <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Recebe alerta quando cliente pede ajuste no pedido. Formato: DDDnumero@s.whatsapp.net</p>
+            </div>
+          </section>
+
           {/* DTF */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-3">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Impressão DTF</h2>

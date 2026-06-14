@@ -14,8 +14,8 @@ export async function POST(
     await client.query("BEGIN")
 
     const { rows } = await client.query(`
-      SELECT o.id, o.number, o.total_value, o.contact_id,
-             c.jid, c.payment_term_enabled AS "paymentTermEnabled"
+      SELECT o.id, o.number, o.status, o.total_value, o.contact_id,
+             c.jid, c.name AS "contactName"
       FROM orders o
       LEFT JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.id = $1
@@ -27,6 +27,13 @@ export async function POST(
     }
 
     const order = rows[0]
+
+    // Idempotência — já concluído não reprocessa
+    if (order.status === "concluido") {
+      await client.query("ROLLBACK")
+      return NextResponse.json({ ok: true, skipped: true })
+    }
+
     const isPrazo = !!dueDate
 
     await client.query(`
@@ -68,25 +75,17 @@ export async function POST(
       [order.contact_id]
     ).catch(() => {})
 
-    // WA notification
+    // Mensagem de agradecimento
     if (order.jid) {
-      const { rows: s } = await pool.query(`SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`)
-      const cfg: Record<string, string> = {}
-      for (const r of s) cfg[r.key] = r.value
-
-      const valorStr = order.total_value
-        ? `*R$ ${Number(order.total_value).toFixed(2).replace(".", ",")}*`
-        : "—"
-
+      const nome = (order.contactName as string)?.split(" ")[0] ?? ""
       let msg: string
-      if (isPrazo) {
-        const dueFmt = new Date(dueDate + "T12:00:00").toLocaleDateString("pt-BR")
-        msg = `✅ Pedido *${order.number}* concluído!\n\nValor: ${valorStr}\nVencimento: *${dueFmt}*\n\nObrigado pela preferência!`
+      if (isPrazo && dueDate) {
+        const [y, m, d] = (dueDate as string).split("-")
+        const fmt = `${d}/${m}/${y}`
+        msg = `Obrigado${nome ? `, ${nome}` : ""}! Seu pedido *${order.number}* foi registrado com pagamento até *${fmt}*. Qualquer dúvida é só chamar 😊`
       } else {
-        const pix = cfg.pix_key ? `\n\nPix: \`${cfg.pix_key}\`` : ""
-        msg = `✅ Pedido *${order.number}* concluído!\n\nValor: ${valorStr}${pix}\n\nObrigado pela preferência!`
+        msg = `Pagamento confirmado! Obrigado${nome ? `, ${nome}` : ""} pela preferência 🙏 Até a próxima!`
       }
-
       sendWhatsApp(order.jid, msg).catch(() => {})
     }
 

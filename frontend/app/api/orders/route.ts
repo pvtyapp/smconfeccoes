@@ -27,6 +27,13 @@ export async function GET(req: Request) {
         o.due_date             AS "dueDate",
         o.created_at           AS "createdAt",
         o.updated_at           AS "updatedAt",
+        (
+          SELECT oe2.note LIKE '%ajuste%'
+          FROM order_events oe2
+          WHERE oe2.order_id = o.id
+          ORDER BY oe2.created_at DESC
+          LIMIT 1
+        )                      AS "needsAttention",
         c.id                   AS "contactId",
         c.name                 AS "contactName",
         c.phone                AS "contactPhone",
@@ -42,7 +49,7 @@ export async function GET(req: Request) {
               'productName',  i.product_name,
               'color',        i.color,
               'size',         i.size,
-              'qty',          i.qty,
+              'qty',          i.qty::int,
               'qtyConfirmed', i.qty_confirmed,
               'isService',    i.is_service,
               'variantNote',  i.variant_note

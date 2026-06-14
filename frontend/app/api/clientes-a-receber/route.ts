@@ -19,7 +19,7 @@ export async function GET() {
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.paid_at IS NULL
         AND o.status != 'cancelado'
-        AND (c.payment_term_enabled = true OR o.source IN ('manual', 'pdv'))
+        AND (c.payment_term_enabled = true OR o.source IN ('manual', 'pdv') OR o.due_date IS NOT NULL)
       ORDER BY o.due_date ASC NULLS LAST, c.name ASC, o.created_at ASC
     `)
     return NextResponse.json(rows)

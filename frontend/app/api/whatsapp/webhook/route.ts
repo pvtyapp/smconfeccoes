@@ -775,7 +775,7 @@ async function handleMedia(
   if (state === "dtf_coletando") {
     const contactRes = await pool.query(`SELECT state_data FROM wa_contacts WHERE id = $1`, [contactId])
     const stateData = contactRes.rows[0]?.state_data ?? {}
-    await handleDtfMedia(jid, contactId, msg, stateData, chatbotProdutoEnabled)
+    await handleDtfMedia(jid, contactId, stateData)
     return
   }
 
@@ -806,26 +806,8 @@ async function handleMedia(
       replyWA(jid, "Recebi o comprovante! Assim que seu pedido for registrado nossa equipe já vincula.")
     }
   } else if (mediaType === "dtf") {
-    const url = await uploadToBlob(media.base64, media.mimeType, media.filename, "dtf")
-    if (!chatbotDtfEnabled || !dtfStatus.available) {
-      void produtoStatus; void globalSettings
-      replyWA(jid, "Recebemos sua arte! Para pedidos DTF fala diretamente com a nossa equipe.")
-      return
-    }
-    const today = todayBR()
-    const numRes = await pool.query(`SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`)
-    const dtfNumber = numRes.rows[0].num
-    const { rows: dtfRows } = await pool.query(`
-      INSERT INTO dtf_pedidos (number, data, contact_id, status, source)
-      VALUES ($1, $2, $3, 'triagem', 'whatsapp')
-      RETURNING id, number
-    `, [dtfNumber, today, contactId])
-    await pool.query(`
-      INSERT INTO dtf_order_attachments (pedido_id, blob_url, filename, mime_type)
-      VALUES ($1, $2, $3, $4)
-    `, [dtfRows[0].id, url, media.filename, media.mimeType])
-    await tagContact(contactId, "comprou_dtf")
-    replyWA(jid, `✅ Arte recebida! Pedido *${dtfRows[0].number}* criado. Nossa equipe já analisa e avisa quando entrar em produção!`)
+    void chatbotDtfEnabled; void dtfStatus; void produtoStatus; void globalSettings
+    await handleDtfMedia(jid, contactId, {})
   } else {
     void lifecycle
     replyWA(jid, "Recebi! Isso é um comprovante de pagamento ou uma arte pra impressão? Me fala.")
@@ -853,6 +835,39 @@ async function handleText(
   const lower = text.toLowerCase().trim()
 
   if (lower === "cancelar" || lower === "cancel") {
+    const order = await getMostRecentOrder(contactId)
+
+    if (order?.status === "pronto") {
+      await pool.query(
+        `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      )
+      replyWA(jid, `Seu pedido *${order.number}* já está separado. Preciso acionar a equipe — eles entram em contato agora.`)
+      return
+    }
+
+    if (order?.status === "em_separacao") {
+      await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [order.id])
+      await pool.query(`
+        INSERT INTO order_events (order_id, status, actor, note)
+        VALUES ($1, 'cancelado', 'chatbot', 'Cliente solicitou cancelamento durante separação')
+      `, [order.id])
+      await pool.query(
+        `UPDATE wa_contacts SET needs_attention = true, state = 'idle', state_data = '{}', updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      )
+      replyWA(jid, `Ok! Avisamos a equipe para parar a separação do pedido *${order.number}*.`)
+      return
+    }
+
+    if (order && ["triagem", "confirmando"].includes(order.status)) {
+      await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [order.id])
+      await pool.query(`
+        INSERT INTO order_events (order_id, status, actor, note)
+        VALUES ($1, 'cancelado', 'chatbot', 'Cliente solicitou cancelamento via WhatsApp')
+      `, [order.id])
+    }
+
     await setState(contactId, "idle")
     replyWA(jid, "Ok, cancelado. Quando precisar é só chamar.")
     return
@@ -989,16 +1004,28 @@ async function handleIdle(
       await handleVariacao(jid, contactId, text)
 
     } else if (intent === "status") {
-      const res = await pool.query(`
-        SELECT number, status FROM orders
-        WHERE contact_id = $1
-        ORDER BY created_at DESC LIMIT 1
-      `, [contactId])
-      if (res.rows[0]) {
-        replyWA(jid, `Seu último pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
+      const { rows: dtfActive } = await pool.query(
+        `SELECT number FROM dtf_pedidos WHERE contact_id = $1 AND status = 'em_producao' LIMIT 1`,
+        [contactId]
+      )
+      if (dtfActive[0]) {
+        await pool.query(
+          `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+          [contactId]
+        )
+        replyWA(jid, "Vou acionar a equipe agora!")
       } else {
-        await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-        replyWA(jid, `${getGreeting()}, ${firstName}! Me passa o pedido.`)
+        const res = await pool.query(`
+          SELECT number, status FROM orders
+          WHERE contact_id = $1
+          ORDER BY created_at DESC LIMIT 1
+        `, [contactId])
+        if (res.rows[0]) {
+          replyWA(jid, `Seu último pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
+        } else {
+          await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
+          replyWA(jid, `${getGreeting()}, ${firstName}! Me passa o pedido.`)
+        }
       }
 
     } else {
@@ -1348,13 +1375,86 @@ async function handleActiveOrder(
     }
 
     if (isNao && orderId) {
+      await pool.query(`UPDATE orders SET status = 'triagem' WHERE id = $1`, [orderId])
+      await pool.query(
+        `INSERT INTO order_events (order_id, status, actor, note)
+         VALUES ($1, 'triagem', 'chatbot', 'Cliente pediu ajuste via WhatsApp')`,
+        [orderId]
+      )
       await setState(contactId, "triagem", { orderId, orderNumber })
-      replyWA(jid, "Tudo bem! Nossos atendentes vão verificar e ajustar. Qualquer coisa é só chamar.")
+      replyWA(jid, `Tudo bem! Me fala o que quer ajustar no pedido *${orderNumber ?? ""}* — pode mudar quantidade, adicionar ou remover itens. Quando estiver certo é só responder *confirmar*.`)
+
+      // Notifica operador se configurado
+      pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
+        const opJid = rows[0]?.value
+        if (opJid) replyWA(opJid, `⚠️ *${pushName || jid}* pediu ajuste no pedido *${orderNumber ?? ""}*. O chatbot está em contato — pedido voltou para triagem.`)
+      }).catch(() => {})
       return
     }
 
     replyWA(jid, `Seu pedido *${orderNumber ?? ""}* aguarda confirmação. Responde *SIM* para confirmar ou *NÃO* para ajustar.`)
     return
+  }
+
+  // ── cliente sinaliza que pedido está pronto para confirmar (triagem) ────────
+  if (state === "triagem") {
+    const isConfirmar = lower === "pronto" || lower === "ok" || lower === "confirmar" ||
+      ["tá bom", "ta bom", "tudo certo", "pode confirmar", "pode ir", "fechado",
+       "tá certo", "ta certo", "isso mesmo", "está certo", "pode mandar"].some(k => lower.includes(k))
+
+    if (isConfirmar) {
+      const { rows: openConf } = await pool.query(
+        `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
+         ORDER BY created_at DESC LIMIT 1`,
+        [contactId]
+      )
+      if (!openConf[0]) {
+        replyWA(jid, "Não encontrei pedido aberto. Me manda o que você quer pedir!")
+        return
+      }
+      const confOrderId  = openConf[0].id  as number
+      const confOrderNum = openConf[0].number as string
+
+      const { rows: confItems } = await pool.query(
+        `SELECT product_name, color, size, qty::int AS qty FROM order_items WHERE order_id = $1 ORDER BY id`,
+        [confOrderId]
+      )
+      if (!confItems.length) {
+        replyWA(jid, "Seu pedido está vazio. Me manda os itens primeiro!")
+        return
+      }
+
+      const confLines = (confItems as { product_name: string; color: string; size: string; qty: number }[]).map((it, idx) => {
+        const desc = [it.product_name, it.color, it.size].filter(Boolean).join(" ")
+        return `${idx + 1}. ${desc} · *${it.qty} un*`
+      })
+
+      await pool.query(`UPDATE orders SET status = 'confirmando' WHERE id = $1`, [confOrderId])
+      await pool.query(
+        `INSERT INTO order_events (order_id, status, actor, note)
+         VALUES ($1, 'confirmando', 'chatbot', 'Cliente sinalizou pedido pronto para separação')`,
+        [confOrderId]
+      )
+      await setState(contactId, "confirmando", { orderId: confOrderId, orderNumber: confOrderNum })
+
+      replyWA(jid, `Ótimo! Seu pedido *${confOrderNum}* ficou assim:\n\n${confLines.join("\n")}\n\nResponde *SIM* para confirmar e colocar em separação, ou *NÃO* se precisar ajustar mais alguma coisa.`)
+      return
+    }
+  }
+
+  // ── pergunta de prazo → sinaliza para atendimento manual ──────────────────
+  if (state === "em_separacao" || state === "pronto") {
+    const prazoKw = ["quando", "quanto tempo", "cadê", "cade", "terminou",
+      "entrega", "retirada", "posso buscar", "posso retirar",
+      "ta pronto", "tá pronto", "ficou pronto", "status", "meu pedido"]
+    if (prazoKw.some(k => lower.includes(k))) {
+      await pool.query(
+        `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      )
+      replyWA(jid, "Vou acionar a equipe agora!")
+      return
+    }
   }
 
   const intent = await classifyIntent(text)
@@ -1363,7 +1463,7 @@ async function handleActiveOrder(
   if (intent === "remover" && state === "triagem") {
     const { rows: openRem } = await pool.query(
       `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       AND created_at > NOW() - INTERVAL '2 hours' ORDER BY created_at DESC LIMIT 1`,
+       ORDER BY created_at DESC LIMIT 1`,
       [contactId]
     )
     if (!openRem[0]) {
@@ -1374,7 +1474,7 @@ async function handleActiveOrder(
     const remOrderNum = openRem[0].number as string
 
     const { rows: remItems } = await pool.query(
-      `SELECT id, product_name, color, size, qty FROM order_items WHERE order_id = $1 ORDER BY id`,
+      `SELECT id, product_name, color, size, qty::int AS qty FROM order_items WHERE order_id = $1 ORDER BY id`,
       [remOrderId]
     )
     if (!remItems.length) {
@@ -1436,7 +1536,7 @@ async function handleActiveOrder(
   if (intent === "alterar" && state === "triagem") {
     const { rows: openAlt } = await pool.query(
       `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       AND created_at > NOW() - INTERVAL '2 hours' ORDER BY created_at DESC LIMIT 1`,
+       ORDER BY created_at DESC LIMIT 1`,
       [contactId]
     )
     if (!openAlt[0]) {
@@ -1447,7 +1547,7 @@ async function handleActiveOrder(
     const altOrderNum = openAlt[0].number as string
 
     const { rows: altItems } = await pool.query(
-      `SELECT id, product_name, color, size, qty FROM order_items WHERE order_id = $1 ORDER BY id`,
+      `SELECT id, product_name, color, size, qty::int AS qty FROM order_items WHERE order_id = $1 ORDER BY id`,
       [altOrderId]
     )
 
@@ -1660,58 +1760,26 @@ async function trySilentOrderCreate(contactId: number, text: string) {
 async function handleDtfMedia(
   jid: string,
   contactId: number,
-  msg: unknown,
   stateData: Record<string, unknown>,
-  chatbotProdutoEnabled = true
 ) {
-  const media = await downloadEvolutionMedia(msg)
-  if (!media) {
-    replyWA(jid, "Não consegui abrir o arquivo. Pode mandar de novo em formato de imagem?")
-    return
-  }
-
   try {
-    const url = await uploadToBlob(media.base64, media.mimeType, media.filename, "dtf")
-
     const today = todayBR()
-    const numRes = await pool.query(`SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`)
+    const numRes = await pool.query(
+      `SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`
+    )
     const number = numRes.rows[0].num
 
-    const { rows } = await pool.query(`
+    await pool.query(`
       INSERT INTO dtf_pedidos (number, data, contact_id, status, source, largura_cm)
       VALUES ($1, $2, $3, 'triagem', 'whatsapp', $4)
-      RETURNING id, number
-    `, [number, today, contactId, stateData.larguraCm ?? 57])
+    `, [number, today, contactId, stateData.larguraCm ?? null])
 
-    const pedidoId  = rows[0].id
-    const pedidoNum = rows[0].number
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
 
-    await pool.query(`
-      INSERT INTO dtf_order_attachments (pedido_id, blob_url, filename, mime_type)
-      VALUES ($1, $2, $3, $4)
-    `, [pedidoId, url, media.filename, media.mimeType])
-
-    await tagContact(contactId, "comprou_dtf")
-
-    const larguraInfo = stateData.larguraCm ? ` · Largura: *${stateData.larguraCm}cm*` : ""
-
-    // Cross-sell produto com anti-repetição
-    const offeredProduto = await wasOfferedRecently(contactId, "cross_sell_produto", 7)
-    if (chatbotProdutoEnabled && !offeredProduto) {
-      await setState(contactId, "cross_sell_produto")
-      await recordOffer(contactId, "cross_sell_produto")
-      replyWA(
-        jid,
-        `✅ Arte DTF recebida! Pedido *${pedidoNum}* criado.${larguraInfo}\n\nVocê também precisa de algum produto?`
-      )
-    } else {
-      await setState(contactId, "idle")
-      replyWA(
-        jid,
-        `✅ Arte recebida! Pedido *${pedidoNum}* criado.${larguraInfo} Nossa equipe já analisa e avisa quando entrar em produção!`
-      )
-    }
-  } catch {
-    replyWA(jid, "Tive um problema ao processar sua arte. Pode mandar de novo?")
-  }
+    await setState(contactId, "idle")
+    replyWA(jid, "Recebi! Nossa equipe analisa e entra em contato.")
+  } catch { /* silent */ }
 }

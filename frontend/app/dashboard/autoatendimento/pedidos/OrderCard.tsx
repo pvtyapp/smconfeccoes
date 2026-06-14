@@ -1,6 +1,6 @@
 "use client"
 
-import { Phone, Clock } from "lucide-react"
+import { Phone, Clock, AlertTriangle } from "lucide-react"
 import type { Order } from "./page"
 
 const STATUS_LABEL: Record<string, string> = {
@@ -39,8 +39,20 @@ export default function OrderCard({ order, onClick }: Props) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left bg-white rounded-2xl border border-[#0F1E3C]/8 p-4 shadow-sm hover:shadow-md hover:border-[#4361EE]/30 transition-all"
+      className={`w-full text-left bg-white rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${
+        order.needsAttention
+          ? "border-amber-300 hover:border-amber-400"
+          : "border-[#0F1E3C]/8 hover:border-[#4361EE]/30"
+      }`}
     >
+      {/* Attention banner */}
+      {order.needsAttention && (
+        <div className="flex items-center gap-1.5 mb-3 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-xl">
+          <AlertTriangle size={11} className="text-amber-500 flex-shrink-0" />
+          <p className="text-[10px] font-semibold text-amber-700">Cliente pediu ajuste — chatbot em contato</p>
+        </div>
+      )}
+
       {/* Header row */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div>

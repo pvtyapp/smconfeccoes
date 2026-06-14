@@ -5,18 +5,6 @@ import { cleanDtfBlobsOnConclude } from "@/lib/blob-cleanup"
 
 const VALID = ["triagem", "em_producao", "pronto", "concluido", "cancelado"]
 
-const WA_MESSAGES: Record<string, (number: string, endereco: string, extra?: { metros?: number; valor?: number }) => string> = {
-  em_producao: (n, _e, extra) => {
-    let msg = `🖨️ Seu pedido DTF *${n}* está em produção!`
-    if (extra?.metros) msg += `\n📐 Metragem: *${extra.metros.toFixed(2)} m*`
-    if (extra?.valor)  msg += `\n💰 Valor: *R$ ${extra.valor.toFixed(2).replace(".", ",")}*`
-    msg += `\n\nAvisaremos quando estiver pronto.`
-    return msg
-  },
-  pronto:    (n, e) => `✅ Seu pedido DTF *${n}* está *pronto para retirada*!\n\n📍 ${e}`,
-  cancelado: (n) => `❌ Seu pedido DTF *${n}* foi cancelado. Qualquer dúvida, entre em contato.`,
-}
-
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -24,8 +12,16 @@ export async function POST(
   const client = await pool.connect()
   try {
     const { id } = await params
-    const body = await req.json() as { status: string; metrosFinais?: number; precoCobrado?: number; notifyClient?: boolean; cancelMessage?: string }
-    const { status, metrosFinais, precoCobrado, notifyClient, cancelMessage } = body
+    const body = await req.json() as {
+      status: string
+      metrosFinais?: number
+      precoCobrado?: number
+      paymentMode?: "avista" | "prazo"
+      dueDate?: string
+      notifyClient?: boolean
+      cancelMessage?: string
+    }
+    const { status, metrosFinais, precoCobrado, paymentMode, dueDate, notifyClient, cancelMessage } = body
 
     if (!VALID.includes(status))
       return NextResponse.json({ error: `Status inválido. Use: ${VALID.join(", ")}` }, { status: 400 })
@@ -33,7 +29,8 @@ export async function POST(
     await client.query("BEGIN")
 
     const { rows } = await client.query(`
-      SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at, c.jid
+      SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at,
+             p.preco_cobrado AS preco_cobrado_db, c.jid
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1
@@ -46,48 +43,89 @@ export async function POST(
 
     const pedido = rows[0]
 
-    // Save metros / valor when advancing to em_producao
-    if (status === "em_producao" && (metrosFinais != null || precoCobrado != null)) {
+    if (status === "pronto") {
+      // Save metros, preco and due_date; mark lifecycle active
       await client.query(`
         UPDATE dtf_pedidos
-        SET status = $1,
-            metros_finais  = COALESCE($2::numeric, metros_finais),
-            preco_cobrado  = COALESCE($3::numeric, preco_cobrado)
+        SET status        = 'pronto',
+            metros_finais = COALESCE($1::numeric, metros_finais),
+            preco_cobrado = COALESCE($2::numeric, preco_cobrado),
+            due_date      = $3
         WHERE id = $4
-      `, [status, metrosFinais ?? null, precoCobrado ?? null, id])
+      `, [metrosFinais ?? null, precoCobrado ?? null, dueDate ?? null, id])
+
+      if (pedido.contact_id) {
+        await client.query(`
+          UPDATE wa_contacts
+          SET last_order_at = NOW(), lifecycle_state = 'active',
+              lifecycle_updated_at = NOW(), ausente_seq = 0
+          WHERE id = $1
+        `, [pedido.contact_id])
+      }
+
+      await client.query("COMMIT")
+
+      // WA: notify with valor + PIX or due date + address
+      if (pedido.jid) {
+        const { rows: s } = await pool.query(
+          `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
+        )
+        const cfg: Record<string, string> = {}
+        for (const r of s) cfg[r.key] = r.value
+
+        // use body value or fall back to what's already in DB
+        const valorFinal = precoCobrado ?? (pedido.preco_cobrado_db ? Number(pedido.preco_cobrado_db) : null)
+
+        let msg = `✅ Pedido DTF *${pedido.number}* pronto para retirada!`
+
+        if (valorFinal) {
+          msg += `\n\n💰 Valor: *R$ ${valorFinal.toFixed(2).replace(".", ",")}*`
+        }
+
+        if (paymentMode === "prazo" && dueDate) {
+          const dueFmt = new Date(dueDate + "T12:00:00").toLocaleDateString("pt-BR")
+          msg += `\n📅 Vencimento: *${dueFmt}*`
+        } else if (cfg.pix_key) {
+          msg += `\n💳 Pix: \`${cfg.pix_key}\``
+        }
+
+        if (cfg.endereco_retirada) msg += `\n\n📍 ${cfg.endereco_retirada}`
+
+        sendWhatsApp(pedido.jid, msg).catch(() => {})
+      }
+
+    } else if (status === "em_producao") {
+      await client.query(`
+        UPDATE dtf_pedidos
+        SET status        = 'em_producao',
+            metros_finais = COALESCE($1::numeric, metros_finais),
+            preco_cobrado = COALESCE($2::numeric, preco_cobrado)
+        WHERE id = $3
+      `, [metrosFinais ?? null, precoCobrado ?? null, id])
+
+      await client.query("COMMIT")
+
+      if (pedido.jid) {
+        let msg = `✅ Arte confirmada! Pedido *${pedido.number}* em produção.`
+        if (metrosFinais) msg += `\n📐 Metragem: *${Number(metrosFinais).toFixed(2)} m*`
+        if (precoCobrado) msg += `\n💰 Valor estimado: *R$ ${Number(precoCobrado).toFixed(2).replace(".", ",")}*`
+        msg += `\n\nAvisamos quando estiver pronto!`
+        sendWhatsApp(pedido.jid, msg).catch(() => {})
+      }
+
     } else {
       await client.query(`UPDATE dtf_pedidos SET status = $1 WHERE id = $2`, [status, id])
-    }
+      await client.query("COMMIT")
 
-    if (status === "pronto" && pedido.contact_id) {
-      await client.query(`
-        UPDATE wa_contacts
-        SET last_order_at = NOW(), lifecycle_state = 'active',
-            lifecycle_updated_at = NOW(), ausente_seq = 0
-        WHERE id = $1
-      `, [pedido.contact_id])
-    }
-
-    await client.query("COMMIT")
-
-    // WA notification — cancelado only notifies when notifyClient !== false
-    if (pedido.jid && WA_MESSAGES[status]) {
-      if (status === "cancelado" && notifyClient === false) {
-        // Silent cancel — do not notify
-      } else {
-        const { rows: s } = await pool.query(`SELECT value FROM app_settings WHERE key = 'endereco_retirada'`)
-        const endereco = s[0]?.value ?? "Av. Santa Cruz, 3088"
-        const extra = status === "em_producao"
-          ? { metros: metrosFinais, valor: precoCobrado }
-          : undefined
-        const msg = (status === "cancelado" && cancelMessage?.trim())
-          ? cancelMessage.trim()
-          : WA_MESSAGES[status](pedido.number, endereco, extra)
+      // cancelado WA
+      if (status === "cancelado" && pedido.jid && notifyClient !== false) {
+        const msg = cancelMessage?.trim()
+          || `❌ Seu pedido DTF *${pedido.number}* foi cancelado. Qualquer dúvida, entre em contato.`
         sendWhatsApp(pedido.jid, msg).catch(() => {})
       }
     }
 
-    // Free DTF blobs when order is done (fire-and-forget, outside transaction)
+    // Free DTF blobs when order is done (fire-and-forget)
     if ((status === "concluido" || status === "cancelado") && pedido.contact_id) {
       cleanDtfBlobsOnConclude(pedido.contact_id, new Date(pedido.pedido_created_at)).catch(() => {})
     }

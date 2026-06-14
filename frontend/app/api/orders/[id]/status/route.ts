@@ -11,7 +11,7 @@ export async function POST(
   const client = await pool.connect()
   try {
     const { id } = await params
-    const { status, actor, note, notifyClient, cancelMessage } = await req.json()
+    const { status, actor, note, notifyClient, cancelMessage, changes } = await req.json()
 
     if (!VALID_STATUSES.includes(status)) {
       return NextResponse.json(
@@ -76,17 +76,76 @@ export async function POST(
 
     await client.query("COMMIT")
 
-    // Envia lista de confirmação ao cliente e sincroniza state do contato
-    if (status === "confirmando" && order.jid) {
+    // Atualização de estoque em separação → volta pra triagem com WA contextual
+    if (status === "triagem" && Array.isArray(changes) && changes.length > 0 && order.jid) {
       const { rows: itemRows } = await pool.query(`
-        SELECT product_name, color, size, qty
+        SELECT product_name, color, size, qty::int AS qty
         FROM order_items WHERE order_id = $1 ORDER BY id
       `, [id])
       const lines = itemRows.map((it: { product_name: string; color: string; size: string; qty: number }, idx: number) => {
         const desc = [it.product_name, it.color, it.size].filter(Boolean).join(" ")
         return `${idx + 1}. ${desc} · *${it.qty} un*`
       })
-      const confirmMsg = `Olá! Seu pedido *${order.number}* está na lista:\n\n${lines.join("\n")}\n\nConfirme respondendo *SIM* para ir para separação ou *NÃO* se precisar ajustar.`
+      type Change = { productName: string; color: string | null; size: string | null; oldQty: number; newQty: number }
+      function itemLabelT(c: Change) { return [c.productName, c.color, c.size].filter(Boolean).join(" ") }
+      const zeroed  = (changes as Change[]).filter(c => c.newQty === 0)
+      const reduced = (changes as Change[]).filter(c => c.newQty > 0 && c.newQty < c.oldQty)
+      const total   = zeroed.length + reduced.length
+      let intro: string
+      if (total === 1 && zeroed.length === 1) {
+        intro = `A *${itemLabelT(zeroed[0])}* estamos sem estoque, mas o restante do pedido ficou assim:\n\n`
+      } else if (total === 1 && reduced.length === 1) {
+        intro = `Olha, a *${itemLabelT(reduced[0])}* vou ter somente *${reduced[0].newQty}*, seu pedido atualizado ficou:\n\n`
+      } else {
+        const bullets = [
+          ...zeroed.map(c  => `• *${itemLabelT(c)}*: sem estoque`),
+          ...reduced.map(c => `• *${itemLabelT(c)}*: somente *${c.newQty}*`),
+        ]
+        intro = `Atenção, atualizamos alguns itens do pedido *${order.number}*:\n${bullets.join("\n")}\n\nSeu pedido ficou assim:\n\n`
+      }
+      const msg = `${intro}${lines.join("\n")}\n\nResponde *confirmar* quando estiver certo 👍`
+      sendWhatsApp(order.jid, msg).catch(() => {})
+      pool.query(
+        `UPDATE wa_contacts SET state = 'triagem', state_data = $1, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify({ orderId: Number(id), orderNumber: order.number }), order.contact_id]
+      ).catch(() => {})
+    }
+
+    // Envia lista de confirmação ao cliente e sincroniza state do contato
+    if (status === "confirmando" && order.jid) {
+      const { rows: itemRows } = await pool.query(`
+        SELECT product_name, color, size, qty::int AS qty
+        FROM order_items WHERE order_id = $1 ORDER BY id
+      `, [id])
+      const lines = itemRows.map((it: { product_name: string; color: string; size: string; qty: number }, idx: number) => {
+        const desc = [it.product_name, it.color, it.size].filter(Boolean).join(" ")
+        return `${idx + 1}. ${desc} · *${it.qty} un*`
+      })
+
+      type Change = { productName: string; color: string | null; size: string | null; oldQty: number; newQty: number }
+      function itemLabel(c: Change) {
+        return [c.productName, c.color, c.size].filter(Boolean).join(" ")
+      }
+
+      let intro = `Olá! Seu pedido *${order.number}* está na lista:\n\n`
+      if (Array.isArray(changes) && changes.length > 0) {
+        const zeroed  = (changes as Change[]).filter(c => c.newQty === 0)
+        const reduced = (changes as Change[]).filter(c => c.newQty > 0 && c.newQty < c.oldQty)
+        const total   = zeroed.length + reduced.length
+        if (total === 1 && zeroed.length === 1) {
+          intro = `A *${itemLabel(zeroed[0])}* estamos sem estoque, mas o restante do pedido ficou assim:\n\n`
+        } else if (total === 1 && reduced.length === 1) {
+          intro = `Olha, a *${itemLabel(reduced[0])}* vou ter somente *${reduced[0].newQty}*, seu pedido atualizado ficou:\n\n`
+        } else {
+          const bullets = [
+            ...zeroed.map(c  => `• *${itemLabel(c)}*: sem estoque`),
+            ...reduced.map(c => `• *${itemLabel(c)}*: somente *${c.newQty}*`),
+          ]
+          intro = `Atenção, atualizamos alguns itens do pedido *${order.number}*:\n${bullets.join("\n")}\n\nSeu pedido ficou assim:\n\n`
+        }
+      }
+
+      const confirmMsg = `${intro}${lines.join("\n")}\n\nConfirme respondendo *SIM* para ir para separação ou *NÃO* se precisar ajustar.`
       sendWhatsApp(order.jid, confirmMsg).catch(() => {})
       pool.query(
         `UPDATE wa_contacts SET state = 'confirmando', state_data = $1, updated_at = NOW() WHERE id = $2`,
@@ -94,13 +153,23 @@ export async function POST(
       ).catch(() => {})
     }
 
-    // Notifica cliente via WhatsApp quando pedido fica pronto
+    // Notifica cliente quando pedido fica separado (pronto para retirada)
     if (status === "pronto" && order.jid) {
-      const { rows: s } = await pool.query(`SELECT key, value FROM app_settings WHERE key = 'endereco_retirada'`)
-      const endereco = s[0]?.value ?? "Av. Santa Cruz, 3088"
+      const { rows: s } = await pool.query(
+        `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
+      )
+      const cfg: Record<string, string> = {}
+      for (const r of s) cfg[r.key] = r.value
+
+      const valor = order.total_value
+        ? `\n\n💰 Valor: *R$ ${Number(order.total_value).toFixed(2).replace(".", ",")}*`
+        : ""
+      const pix = cfg.pix_key ? `\n💳 Pix: \`${cfg.pix_key}\`` : ""
+      const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
+
       sendWhatsApp(
         order.jid,
-        `🎉 Seu pedido *${order.number}* está *pronto para retirada*!\n\n📍 ${endereco}`
+        `✅ Seu pedido *${order.number}* está separado e pronto para retirada!${valor}${pix}${end}`
       ).catch(() => {})
     }
 

@@ -21,12 +21,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, skipped: "chatbot_ativo=false" })
   }
 
+  const lifecycleActive = s.lifecycle_ativo !== "false"
+
   function t(template: string, name: string) {
     return (template || "").replace(/\{nome\}/g, name.split(" ")[0])
   }
 
   const today = todayBR()
 
+  if (lifecycleActive) {
   // ── 1. Novo D2 — lead que não converteu em 48h ────────────────────────────────
   try {
     const rows = await pool.query(`
@@ -185,6 +188,7 @@ export async function GET(req: Request) {
       } catch { results.errors++ }
     }
   } catch { results.errors++ }
+  } // lifecycleActive
 
   // ── 7. Cobrança dias corridos ─────────────────────────────────────────────────
   try {

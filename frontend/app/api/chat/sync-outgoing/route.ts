@@ -67,6 +67,13 @@ export async function GET(req: Request) {
       synced++
     }
 
+    if (synced > 0) {
+      await pool.query(
+        `UPDATE wa_contacts SET chatbot_paused_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      ).catch(() => {})
+    }
+
     return NextResponse.json({ synced })
   } catch {
     return NextResponse.json({ synced: 0 })

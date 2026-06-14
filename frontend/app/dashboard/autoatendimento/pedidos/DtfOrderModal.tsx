@@ -10,43 +10,44 @@ type Props = {
   onRefresh: () => void
 }
 
+// triagem → em_producao → pronto; concluido handled separately
 const STATUS_FLOW: Record<string, { next: string; label: string; color: string }> = {
-  triagem:     { next: "em_producao", label: "Marcar Em Produção",    color: "bg-blue-600 hover:bg-blue-700"   },
-  em_producao: { next: "pronto",      label: "Marcar Pronto",         color: "bg-green-600 hover:bg-green-700" },
+  triagem:     { next: "em_producao", label: "Marcar Em Produção", color: "bg-blue-600 hover:bg-blue-700"   },
+  em_producao: { next: "pronto",      label: "Marcar Pronto",      color: "bg-green-600 hover:bg-green-700" },
 }
 
 export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
   const [downloading,   setDownloading]   = useState(false)
   const [saving,        setSaving]        = useState(false)
   const [metrosFinais,  setMetrosFinais]  = useState(order.metrosFinais ? String(order.metrosFinais) : "")
-  const [showConcluir,  setShowConcluir]  = useState(false)
-  const [precoCobrado,  setPrecoCobrado]  = useState(order.precoCobrado ? String(order.precoCobrado) : "")
   const [precoPorMetro, setPrecoPorMetro] = useState<number | null>(null)
-  const [dueDate,       setDueDate]       = useState("")
-  const [usePrazo,      setUsePrazo]      = useState(order.paymentTermEnabled ?? false)
+  const [precoCarregado, setPrecoCarregado] = useState(false)
+  const [usePrazo,      setUsePrazo]      = useState(false)
+  const [dueDate,       setDueDate]       = useState(order.dueDate ?? "")
+  const [showConcluir,  setShowConcluir]  = useState(false)
   const [error,         setError]         = useState("")
   const [showCancel,    setShowCancel]    = useState(false)
   const [notifyClient,  setNotifyClient]  = useState(true)
   const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido DTF ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
 
   useEffect(() => {
-    fetch("/api/settings")
+    fetch("/api/dtf/preco")
       .then(r => r.ok ? r.json() : null)
-      .then(s => { if (s?.dtf_preco_por_metro) setPrecoPorMetro(parseFloat(s.dtf_preco_por_metro)) })
-      .catch(() => {})
+      .then(d => {
+        setPrecoPorMetro(d?.precoMetro ?? null)
+        setPrecoCarregado(true)
+      })
+      .catch(() => setPrecoCarregado(true))
   }, [])
 
-  function handleMetrosChange(val: string) {
-    setMetrosFinais(val)
-    if (precoPorMetro && val) {
-      const m = parseFloat(val)
-      if (!isNaN(m) && m > 0) {
-        setPrecoCobrado((m * precoPorMetro).toFixed(2))
-      }
-    }
-  }
+  // valor calculado — nunca digitado manualmente
+  const metros = parseFloat(metrosFinais)
+  const valorCalculado = precoPorMetro && metrosFinais && !isNaN(metros) && metros > 0
+    ? metros * precoPorMetro
+    : null
 
-  const flow = STATUS_FLOW[order.status]
+  const flow       = STATUS_FLOW[order.status]
+  const isProducao = order.status === "em_producao"
   const nomeCliente = order.contactName ?? order.cliente ?? "Cliente não identificado"
 
   async function downloadArtes() {
@@ -85,18 +86,37 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao baixar arquivo")
+    } finally {
+      setDownloading(false)
     }
-    finally { setDownloading(false) }
   }
 
   async function advanceStatus() {
     if (!flow) return
+    if (flow.next === "pronto") {
+      if (!metrosFinais || isNaN(metros) || metros <= 0) {
+        setError("Informe os metros impressos antes de marcar como pronto.")
+        return
+      }
+      if (!precoPorMetro) {
+        setError("Produto DTF não cadastrado. Cadastre o produto em Produtos antes de continuar.")
+        return
+      }
+      if (usePrazo && !dueDate) {
+        setError("Informe a data de vencimento.")
+        return
+      }
+    }
     setSaving(true)
     setError("")
     try {
       const body: Record<string, unknown> = { status: flow.next }
-      if (metrosFinais) body.metrosFinais = parseFloat(metrosFinais)
-      if (precoCobrado) body.precoCobrado = parseFloat(precoCobrado)
+      if (metrosFinais && !isNaN(metros)) body.metrosFinais = metros
+      if (valorCalculado)                 body.precoCobrado = valorCalculado
+      if (flow.next === "pronto") {
+        body.paymentMode = usePrazo ? "prazo" : "avista"
+        if (usePrazo && dueDate) body.dueDate = dueDate
+      }
       const r = await fetch(`/api/dtf/pedidos/${order.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,18 +134,13 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
   }
 
   async function concluir() {
-    if (usePrazo && !dueDate) { setError("Informe a data de vencimento."); return }
     setSaving(true)
     setError("")
     try {
       const r = await fetch(`/api/dtf/pedidos/${order.id}/conclude`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          metrosFinais: metrosFinais ? parseFloat(metrosFinais) : null,
-          precoCobrado: precoCobrado ? parseFloat(precoCobrado) : null,
-          dueDate: usePrazo ? dueDate : null,
-        }),
+        body: JSON.stringify({}),
       })
       if (!r.ok) {
         const d = await r.json()
@@ -200,25 +215,92 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
             )}
           </div>
 
-          {/* Metros + valor — visível em triagem, em_producao e pronto */}
-          {(order.status === "triagem" || order.status === "em_producao" || order.status === "pronto") && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider block">
-                {order.status === "triagem" ? "Metragem (após calcular)" : "Metros finais impresso"}
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={metrosFinais}
-                onChange={e => handleMetrosChange(e.target.value)}
-                placeholder="Ex: 2.50"
-                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-              />
-              {precoPorMetro && metrosFinais && !isNaN(parseFloat(metrosFinais)) && (
-                <p className="text-[10px] text-[#0F1E3C]/40">
-                  {parseFloat(metrosFinais).toFixed(2)} m × R$ {precoPorMetro.toFixed(2)}/m = <span className="font-bold text-[#0F1E3C]/70">R$ {(parseFloat(metrosFinais) * precoPorMetro).toFixed(2)}</span>
-                </p>
+          {/* Metragem — editável em triagem e em_producao */}
+          {(order.status === "triagem" || order.status === "em_producao") && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider block">
+                  {order.status === "triagem" ? "Metragem estimada" : "Metros finais impressos"}
+                </label>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={metrosFinais}
+                  onChange={e => setMetrosFinais(e.target.value)}
+                  placeholder="Ex: 2.50"
+                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                />
+              </div>
+
+              {/* Valor calculado — somente leitura */}
+              <div className="bg-[#F4F6FB] rounded-xl px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Valor calculado</p>
+                  {!precoCarregado ? (
+                    <p className="text-sm text-[#0F1E3C]/40">Carregando...</p>
+                  ) : !precoPorMetro ? (
+                    <p className="text-sm text-amber-600 font-medium">Produto DTF não cadastrado</p>
+                  ) : valorCalculado ? (
+                    <p className="text-lg font-black text-emerald-700">R$ {valorCalculado.toFixed(2).replace(".", ",")}</p>
+                  ) : (
+                    <p className="text-sm text-[#0F1E3C]/30">Informe os metros</p>
+                  )}
+                </div>
+                {precoPorMetro && (
+                  <p className="text-[10px] text-[#0F1E3C]/30">
+                    R$ {precoPorMetro.toFixed(2)}/m
+                  </p>
+                )}
+              </div>
+
+              {/* Prazo / à vista — só aparece quando indo para pronto */}
+              {isProducao && (
+                <div className="space-y-3 pt-1">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setUsePrazo(v => !v)}
+                      className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${usePrazo ? "bg-amber-500" : "bg-[#0F1E3C]/15"}`}
+                      style={{ height: "22px" }}
+                    >
+                      <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${usePrazo ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
+                    </button>
+                    <p className="text-sm font-semibold text-[#0F1E3C]">Pagamento a prazo</p>
+                  </div>
+
+                  {usePrazo ? (
+                    <div>
+                      <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Data de vencimento *</label>
+                      <input
+                        type="date"
+                        value={dueDate}
+                        onChange={e => setDueDate(e.target.value)}
+                        className="w-full border border-amber-300 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+                      <p className="text-xs text-emerald-700">Cliente receberá a chave Pix e o valor ao ser notificado.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Resumo quando já está pronto */}
+          {order.status === "pronto" && (
+            <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 space-y-1">
+              <p className="text-xs font-bold text-green-700 uppercase tracking-wider">Pronto para retirada</p>
+              {order.metrosFinais && (
+                <p className="text-sm text-[#0F1E3C]">Metros: <span className="font-bold">{Number(order.metrosFinais).toFixed(2)} m</span></p>
+              )}
+              {order.precoCobrado && (
+                <p className="text-sm text-[#0F1E3C]">Valor: <span className="font-bold text-emerald-700">R$ {Number(order.precoCobrado).toFixed(2).replace(".", ",")}</span></p>
+              )}
+              {order.dueDate ? (
+                <p className="text-sm text-[#0F1E3C]">Vencimento: <span className="font-bold">{new Date(order.dueDate + "T12:00:00").toLocaleDateString("pt-BR")}</span></p>
+              ) : (
+                <p className="text-sm text-[#0F1E3C]">Pagamento: <span className="font-bold">À vista</span></p>
               )}
             </div>
           )}
@@ -242,16 +324,13 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
               </div>
               <div className="space-y-1.5">
                 {order.attachments.map((a, i) => (
-                  <div
-                    key={a.id}
-                    className="flex items-center gap-3 px-3 py-2.5 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl"
-                  >
+                  <div key={a.id} className="flex items-center gap-3 px-3 py-2.5 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl">
                     <FileImage size={13} className="text-[#7C3AED] flex-shrink-0" />
                     <span className="text-xs font-medium text-[#0F1E3C] truncate flex-1">
                       {a.filename ?? `arquivo-${i + 1}`}
                     </span>
                     <span className="text-[10px] text-[#0F1E3C]/25 flex-shrink-0 uppercase">
-                      {a.mimeType?.split("/")[1] ?? "bin"}
+                      {a.filename?.split(".").pop() ?? "—"}
                     </span>
                   </div>
                 ))}
@@ -266,74 +345,25 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
             </div>
           )}
 
-          {/* Concluir form */}
+          {/* Confirmação de conclusão */}
           {showConcluir && (
             <div className="border border-[#0F1E3C]/10 rounded-2xl p-4 space-y-4 bg-[#F4F6FB]">
-              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Concluir Pedido</p>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider block">Metros finais</label>
-                <input
-                  type="number" step="0.01" min="0"
-                  value={metrosFinais}
-                  onChange={e => handleMetrosChange(e.target.value)}
-                  placeholder="Ex: 2.50"
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                />
-                {precoPorMetro && metrosFinais && !isNaN(parseFloat(metrosFinais)) && (
-                  <p className="text-[10px] text-[#0F1E3C]/40">
-                    {parseFloat(metrosFinais).toFixed(2)} m × R$ {precoPorMetro.toFixed(2)}/m = <span className="font-bold text-[#0F1E3C]/70">R$ {(parseFloat(metrosFinais) * precoPorMetro).toFixed(2)}</span>
-                  </p>
+              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Confirmar pagamento recebido</p>
+              <div className="bg-white border border-[#0F1E3C]/8 rounded-xl px-4 py-3 space-y-1.5">
+                {order.precoCobrado && (
+                  <p className="text-sm text-[#0F1E3C]">Valor: <span className="font-bold text-emerald-700">R$ {Number(order.precoCobrado).toFixed(2).replace(".", ",")}</span></p>
+                )}
+                {order.dueDate ? (
+                  <p className="text-sm text-[#0F1E3C]">Prazo: <span className="font-bold">{new Date(order.dueDate + "T12:00:00").toLocaleDateString("pt-BR")}</span></p>
+                ) : (
+                  <p className="text-sm text-[#0F1E3C]">Forma: <span className="font-bold">À vista</span></p>
                 )}
               </div>
-
-              <div>
-                <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Valor cobrado (R$)</label>
-                <input
-                  type="number" step="0.01" min="0"
-                  value={precoCobrado}
-                  onChange={e => setPrecoCobrado(e.target.value)}
-                  placeholder="Ex: 29,98"
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                />
-                <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Calculado automaticamente. Edite se precisar cobrar diferente.</p>
-              </div>
-
-              {/* Prazo toggle */}
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setUsePrazo(v => !v)}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${usePrazo ? "bg-amber-500" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}
-                >
-                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${usePrazo ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-                </button>
-                <p className="text-sm font-semibold text-[#0F1E3C]">Pagamento a prazo</p>
-              </div>
-
-              {usePrazo ? (
-                <div>
-                  <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Data de vencimento *</label>
-                  <input
-                    type="date"
-                    value={dueDate}
-                    onChange={e => setDueDate(e.target.value)}
-                    className="w-full border border-amber-300 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400/30"
-                  />
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
-                  <p className="text-xs text-emerald-700">O cliente será notificado com o valor e a chave Pix cadastrada.</p>
-                </div>
-              )}
-
               {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-
               <div className="flex gap-2">
                 <button onClick={concluir} disabled={saving}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
-                  <Check size={14} /> Confirmar Conclusão
+                  <Check size={14} /> Confirmar Pagamento
                 </button>
                 <button onClick={() => { setShowConcluir(false); setError("") }}
                   className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
@@ -359,7 +389,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
             )}
 
             {order.status === "pronto" && !showConcluir && (
-              <button onClick={() => setShowConcluir(true)}
+              <button onClick={() => { setShowConcluir(true); setError("") }}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors">
                 <Check size={14} /> Concluir Pedido
               </button>
@@ -368,7 +398,9 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
             {flow && !showConcluir && (
               <button onClick={advanceStatus} disabled={saving}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors ${flow.color}`}>
-                <Check size={14} /> {flow.label} <ChevronRight size={14} />
+                {saving
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <><Check size={14} /> {flow.label} <ChevronRight size={14} /></>}
               </button>
             )}
           </div>
