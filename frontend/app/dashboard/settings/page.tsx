@@ -1,15 +1,23 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Save, RefreshCw } from "lucide-react"
+import { Save, RefreshCw, HardDrive } from "lucide-react"
 
 const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 transition-colors"
+
+type BlobUsage = {
+  totalMB: string
+  folders: Array<{ folder: string; count: number; sizeBytes: number }>
+  db: { blob_count: string; base64_count: string; missing_count: string }
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(false)
   const [saved,    setSaved]    = useState(false)
+  const [blobUsage, setBlobUsage] = useState<BlobUsage | null>(null)
+  const [loadingBlob, setLoadingBlob] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -17,6 +25,13 @@ export default function SettingsPage() {
     if (r.ok) setSettings(await r.json())
     setLoading(false)
   }, [])
+
+  async function loadBlobUsage() {
+    setLoadingBlob(true)
+    const r = await fetch("/api/debug/blob-usage")
+    if (r.ok) setBlobUsage(await r.json())
+    setLoadingBlob(false)
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -105,6 +120,86 @@ export default function SettingsPage() {
                 Ir para Produtos →
               </a>
             </div>
+          </section>
+
+          {/* Armazenamento */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-2">
+                <HardDrive size={14} className="text-[#4361EE]" />
+                Armazenamento de Mídia
+              </h2>
+              <button onClick={loadBlobUsage} disabled={loadingBlob}
+                className="text-[11px] font-semibold text-[#4361EE] hover:underline disabled:opacity-50">
+                {loadingBlob ? "Carregando..." : blobUsage ? "Atualizar" : "Ver uso"}
+              </button>
+            </div>
+            {blobUsage ? (
+              <div className="space-y-3">
+                <p className="text-2xl font-black text-[#0F1E3C]">{blobUsage.totalMB} <span className="text-sm font-medium text-[#0F1E3C]/40">MB usado</span></p>
+                <div className="divide-y divide-[#0F1E3C]/6">
+                  {blobUsage.folders.map(f => (
+                    <div key={f.folder} className="flex items-center justify-between py-1.5">
+                      <span className="text-xs text-[#0F1E3C]/60 font-mono">{f.folder}</span>
+                      <span className="text-xs text-[#0F1E3C]/80">
+                        {f.count} arquivo{f.count !== 1 ? "s" : ""} · {(f.sizeBytes / 1024 / 1024).toFixed(1)} MB
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-[#F4F6FB] rounded-xl px-4 py-2 text-[11px] text-[#0F1E3C]/50 flex gap-4">
+                  <span>Blobs no DB: {blobUsage.db.blob_count}</span>
+                  <span>Base64 inline: {blobUsage.db.base64_count}</span>
+                  <span>Sem URL: {blobUsage.db.missing_count}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-[#0F1E3C]/40">Clique em &quot;Ver uso&quot; para consultar o armazenamento.</p>
+            )}
+          </section>
+
+          {/* Diagnóstico WhatsApp */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Diagnóstico WhatsApp</h2>
+            {(() => {
+              const raw = settings.debug_last_webhook
+              if (!raw) return (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-red-700">Nenhum webhook recebido ainda</p>
+                    <p className="text-[11px] text-red-600 mt-0.5">O Evolution não está enviando eventos para este servidor. Configure o Webhook URL no painel do Evolution.</p>
+                  </div>
+                </div>
+              )
+              let parsed: { event?: string; ts?: string; preview?: string } = {}
+              try { parsed = JSON.parse(raw) } catch { /* raw não é JSON */ }
+              const ts = parsed.ts ? new Date(parsed.ts) : null
+              const age = ts ? Math.round((Date.now() - ts.getTime()) / 60_000) : null
+              const isOk = age !== null && age < 30
+              return (
+                <div className={`flex items-start gap-3 border rounded-xl px-4 py-3 ${isOk ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
+                  <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${isOk ? "bg-emerald-400" : "bg-amber-400"}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xs font-bold ${isOk ? "text-emerald-700" : "text-amber-700"}`}>
+                      Último webhook: {parsed.event ?? "—"}
+                    </p>
+                    <p className={`text-[11px] mt-0.5 ${isOk ? "text-emerald-600" : "text-amber-600"}`}>
+                      {ts ? ts.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "—"}
+                      {age !== null ? ` (${age < 1 ? "< 1 min atrás" : `${age} min atrás`})` : ""}
+                    </p>
+                    {!isOk && age !== null && age >= 30 && (
+                      <p className="text-[10px] text-amber-500 mt-1">
+                        ⚠ Último evento há {age} min. Se mensagens não estão chegando, verifique o Webhook no Evolution.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+            <p className="text-[10px] text-[#0F1E3C]/35 leading-relaxed">
+              URL do Webhook: <code className="bg-[#F4F6FB] px-1.5 py-0.5 rounded font-mono text-[10px]">{typeof window !== "undefined" ? window.location.origin : ""}/api/whatsapp/webhook</code>
+            </p>
           </section>
 
           {/* Save */}

@@ -199,10 +199,7 @@ function dateBRKey(iso: string): string {
 
 function fmtTime(s: string | null) {
   if (!s) return ""
-  const d = new Date(s)
-  const isToday = dateBRKey(s) === dateBRKey(new Date().toISOString())
-  if (isToday) return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: TZ_BR })
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: TZ_BR })
+  return new Date(s).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: TZ_BR })
 }
 
 const MEDIA_EMOJI: Record<string, string> = {
@@ -290,7 +287,7 @@ export default function PedidosPage() {
   const [dtfLinkToast, setDtfLinkToast] = useState<string | null>(null)
 
   // Lightbox
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  const [lightboxMsg, setLightboxMsg] = useState<Message | null>(null)
 
   // Pagination (load older)
   const [msgOffset,        setMsgOffset]        = useState(0)
@@ -333,6 +330,11 @@ export default function PedidosPage() {
   const chatInputRef    = useRef<HTMLTextAreaElement>(null)
   const latestMsgAt     = useRef<string | null>(null)
   const isFirstLoad     = useRef(false)
+  // Rastreia o maior id já visto — usado no poll incremental (afterId)
+  // Garante que mensagens sincronizadas com timestamp histórico nunca sejam perdidas
+  const lastSeenId      = useRef<number>(0)
+  // Ref síncrono para acessar chatContact dentro de callbacks sem stale closure
+  const chatContactRef  = useRef<Conversation | null>(null)
 
   // ── Load global settings ───────────────────────────────────────────────────
 
@@ -352,7 +354,7 @@ export default function PedidosPage() {
         if (s.dtf_horario_fim)        setDtfFim(s.dtf_horario_fim)
         if (s.dtf_fechado_ate)        setDtfFechadoAte(s.dtf_fechado_ate)
       })
-      .catch(() => {})
+      .catch((err) => { console.error("[settings] falha ao carregar:", err) })
   }, [])
 
   const loadProdList = useCallback(async () => {
@@ -413,22 +415,29 @@ export default function PedidosPage() {
 
   async function saveSchedule() {
     setSavingSchedule(true)
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        produto_horario_dias:   prodDias.join(","),
-        produto_horario_inicio: prodInicio,
-        produto_horario_fim:    prodFim,
-        produto_fechado_ate:    prodFechadoAte,
-        dtf_horario_dias:       dtfDias.join(","),
-        dtf_horario_inicio:     dtfInicio,
-        dtf_horario_fim:        dtfFim,
-        dtf_fechado_ate:        dtfFechadoAte,
-      }),
-    }).catch(() => {})
-    setSavingSchedule(false)
-    setShowSchedule(false)
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          produto_horario_dias:   prodDias.join(","),
+          produto_horario_inicio: prodInicio,
+          produto_horario_fim:    prodFim,
+          produto_fechado_ate:    prodFechadoAte,
+          dtf_horario_dias:       dtfDias.join(","),
+          dtf_horario_inicio:     dtfInicio,
+          dtf_horario_fim:        dtfFim,
+          dtf_fechado_ate:        dtfFechadoAte,
+        }),
+      })
+      if (!r.ok) throw new Error("status " + r.status)
+      setShowSchedule(false)
+    } catch (err) {
+      console.error("[saveSchedule] falhou:", err)
+      alert("Erro ao salvar horários. Tente novamente.")
+    } finally {
+      setSavingSchedule(false)
+    }
   }
 
   // ── Load orders ────────────────────────────────────────────────────────────
@@ -499,17 +508,21 @@ export default function PedidosPage() {
     fetch("/api/chat/sync", { method: "POST" }).then(() => loadConvs())
   }, [loadConvs])
 
-  // Poll conversations from DB every 5s (fast, local)
+  // Sync chatContactRef with state so pollMessages can access jid without stale closure
+  useEffect(() => { chatContactRef.current = chatContact }, [chatContact])
+
+  // Poll conversations from DB every 3s (fast, local)
   useEffect(() => {
-    const t = setInterval(loadConvs, 5_000)
+    const t = setInterval(loadConvs, 3_000)
     return () => clearInterval(t)
   }, [loadConvs])
 
-  // Re-sync with Evolution every 5min to update names + profile pics
+  // Re-sync with Evolution every 90s — syncs contacts + messages for top 20 active contacts.
+  // Acts as fallback when Evolution webhooks are not configured or miss events.
   useEffect(() => {
     const t = setInterval(() => {
       fetch("/api/chat/sync", { method: "POST" }).catch(() => {})
-    }, 5 * 60 * 1000)
+    }, 90_000)
     return () => clearInterval(t)
   }, [])
 
@@ -556,8 +569,9 @@ export default function PedidosPage() {
   useEffect(() => {
     if (!selectedGroup) return
     loadGroupMessages(selectedGroup.jid)
+    const jid = selectedGroup.jid
     const t = setInterval(() => {
-      fetch(`/api/chat/thread?jid=${encodeURIComponent(selectedGroup.jid)}&skip=0&limit=20`)
+      fetch(`/api/chat/thread?jid=${encodeURIComponent(jid)}&skip=0&limit=20`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (!data?.messages?.length) return
@@ -569,7 +583,8 @@ export default function PedidosPage() {
         })
     }, 5_000)
     return () => clearInterval(t)
-  }, [selectedGroup, loadGroupMessages])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGroup])
 
   // ── Load messages (full load ao selecionar, incremental poll) ─────────────
 
@@ -610,6 +625,7 @@ export default function PedidosPage() {
     setHasMoreMsgs(more)
     setMsgOffset(0)
     latestMsgAt.current = msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null
+    lastSeenId.current  = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
 
     const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null).map(m => m.id))
     if (pendingIds.size > 0) {
@@ -635,8 +651,11 @@ export default function PedidosPage() {
   }, [])
 
   const pollMessages = useCallback(async (contactId: number) => {
-    if (!latestMsgAt.current) return
-    const r = await fetch(`/api/chat/messages?contactId=${contactId}&since=${encodeURIComponent(latestMsgAt.current)}`)
+    // Só executa após o loadMessages ter rodado ao menos uma vez
+    if (!latestMsgAt.current && lastSeenId.current === 0) return
+    // Usa afterId (baseado em pk auto-increment) para não perder mensagens sincronizadas
+    // com timestamp histórico (createdAt < since mas id > lastSeenId)
+    const r = await fetch(`/api/chat/messages?contactId=${contactId}&afterId=${lastSeenId.current}`)
     if (!r.ok) return
     const newMsgs: Message[] = await r.json()
     if (newMsgs.length === 0) return
@@ -646,8 +665,20 @@ export default function PedidosPage() {
       if (deduped.length === 0) return prev
       return [...prev, ...deduped]
     })
+    const maxId = Math.max(...newMsgs.map(m => m.id))
+    if (maxId > lastSeenId.current) lastSeenId.current = maxId
     latestMsgAt.current = newMsgs[newMsgs.length - 1].createdAt
-    loadConvs()
+    // Se chegaram mensagens novas do cliente com o chat aberto, marca como lidas via Evolution
+    const hasNewIncoming = newMsgs.some(m => m.direction === "in")
+    if (hasNewIncoming && chatContactRef.current) {
+      fetch("/api/chat/mark-read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactId, jid: chatContactRef.current.jid }),
+      }).then(() => loadConvs()).catch(() => {})
+    } else {
+      loadConvs()
+    }
   }, [loadConvs])
 
   const loadContactDtfOrders = useCallback(async (contactId: number) => {
@@ -662,6 +693,7 @@ export default function PedidosPage() {
   useEffect(() => {
     if (!chatContact) return
     latestMsgAt.current = null
+    lastSeenId.current  = 0
     isFirstLoad.current = true
     // Carrega do DB imediatamente; sync de saída em paralelo + poll rápido depois
     loadMessages(chatContact.id)
@@ -678,12 +710,46 @@ export default function PedidosPage() {
   useEffect(() => {
     if (!chatContact) return
     const t = setInterval(() => pollMessages(chatContact.id), 3_000)
-    // Sync outgoing every 15s so messages PIV sends while chat is open appear
+    // A cada 30s: sync de saídas (mensagens que PIV enviou pelo celular) + sync de entrada
+    // O sync de entrada tem throttle de 60s no servidor — garante que mensagens chegam
+    // mesmo que o webhook do Evolution não esteja disparando
     const s = setInterval(() => {
-      syncOutgoing(chatContact.id, chatContact.jid).then(() => pollMessages(chatContact.id))
-    }, 15_000)
+      const cid = chatContact.id
+      const jid = chatContact.jid
+      // Sync incoming: full load sem paginação — servidor fará sync com Evolution (throttle 60s)
+      fetch(`/api/chat/messages?contactId=${cid}`)
+        .then(() => pollMessages(cid))
+        .catch(() => {})
+      // Sync outgoing em paralelo
+      syncOutgoing(cid, jid).catch(() => {})
+    }, 30_000)
     return () => { clearInterval(t); clearInterval(s) }
   }, [chatContact, pollMessages, syncOutgoing])
+
+  // Atualiza status dos ticks (sent/delivered/read) nas mensagens existentes a cada 30s
+  // sem fazer sync com Evolution — só lê do DB local
+  useEffect(() => {
+    if (!chatContact) return
+    const contactId = chatContact.id
+    const t = setInterval(async () => {
+      const r = await fetch(`/api/chat/messages?contactId=${contactId}&noSync=1`)
+      if (!r.ok) return
+      const data = await r.json()
+      const fresh: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
+      if (!fresh.length) return
+      setMessages(prev => {
+        const byId = new Map(fresh.map(m => [m.id, m]))
+        let changed = false
+        const updated = prev.map(m => {
+          const f = byId.get(m.id)
+          if (f && (f.status !== m.status)) { changed = true; return { ...m, status: f.status } }
+          return m
+        })
+        return changed ? updated : prev
+      })
+    }, 30_000)
+    return () => clearInterval(t)
+  }, [chatContact])
 
   // ── Attention actions ──────────────────────────────────────────────────────
 
@@ -727,7 +793,6 @@ export default function PedidosPage() {
       quotedContent: quoted?.content ?? null,
       createdAt: new Date().toISOString(),
     }])
-    setSendingChat(false)
     chatInputRef.current?.focus()
 
     fetch("/api/chat/send", {
@@ -744,6 +809,7 @@ export default function PedidosPage() {
     })
       .then(() => { loadMessages(chatContact.id); loadConvs() })
       .catch(() => { loadMessages(chatContact.id) })
+      .finally(() => setSendingChat(false))
   }
 
   // Clipboard paste → staged file
@@ -782,14 +848,17 @@ export default function PedidosPage() {
   async function deleteConversation() {
     if (!chatContact || !confirm(`Apagar toda a conversa com ${chatContact.name || chatContact.phone}? Isso remove as mensagens daqui e do WhatsApp da SM.`)) return
     setDeletingConv(true)
+    // Remove card imediatamente do estado (optimistic)
+    const deletedId = chatContact.id
+    setConvs(prev => prev.filter(c => c.id !== deletedId))
+    setMessages([])
+    setChatContact(null)
     await fetch("/api/chat/conversations", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contactId: chatContact.id, jid: chatContact.jid }),
+      body: JSON.stringify({ contactId: deletedId, jid: chatContact.jid }),
     }).catch(() => {})
-    setMessages([])
-    setChatContact(null)
-    loadConvs()
+    await loadConvs()
     setDeletingConv(false)
   }
 
@@ -882,16 +951,25 @@ export default function PedidosPage() {
   async function sendFile() {
     if (!chatContact || !stagedFile || sendingFile) return
     setSendingFile(true)
+    const file = stagedFile
     const form = new FormData()
     form.append("jid", chatContact.jid)
     form.append("contactId", String(chatContact.id))
     form.append("caption", chatInput.trim())
-    form.append("file", stagedFile)
+    form.append("file", file)
     setChatInput("")
     setStagedFile(null)
-    await fetch("/api/chat/send-media", { method: "POST", body: form }).catch(() => {})
-    await loadMessages(chatContact.id)
-    setSendingFile(false)
+    try {
+      const r = await fetch("/api/chat/send-media", { method: "POST", body: form })
+      if (!r.ok) throw new Error("status " + r.status)
+      await loadMessages(chatContact.id)
+    } catch (err) {
+      console.error("[sendFile] falhou:", err)
+      setStagedFile(file)
+      alert("Erro ao enviar arquivo. Tente novamente.")
+    } finally {
+      setSendingFile(false)
+    }
   }
 
   function onDragOver(e: React.DragEvent) { e.preventDefault(); setIsDragging(true) }
@@ -923,98 +1001,150 @@ export default function PedidosPage() {
 
   const totalUnread = convs.reduce((s, c) => s + c.unread, 0)
 
+  function fmtDateSep(iso: string): string {
+    const today = dateBRKey(new Date().toISOString())
+    const yesterday = dateBRKey(new Date(Date.now() - 86_400_000).toISOString())
+    const key = dateBRKey(iso)
+    if (key === today) return "Hoje"
+    if (key === yesterday) return "Ontem"
+    return new Date(iso).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short", timeZone: TZ_BR })
+  }
+
   return (
     <div className="flex h-[calc(100vh-88px)] -m-6 overflow-hidden">
 
-      {/* ── LEFT: Chat panel ── */}
-      <div className="w-[300px] flex-shrink-0 flex flex-col bg-white border-r border-[#0F1E3C]/6">
+      {/* ── LEFT: WA-style contact panel ── */}
+      <div className="w-[360px] flex-shrink-0 flex flex-col border-r border-black/30" style={{ background: "#111B21" }}>
 
-        {/* Chat tabs */}
-        <div className="flex border-b border-[#0F1E3C]/6 flex-shrink-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ background: "#202C33" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(0,168,132,0.15)" }}>
+              <MessageCircle size={18} style={{ color: "#00A884" }} />
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold" style={{ color: "#E9EDEF" }}>SM Confecções</p>
+              <p className="text-[10px]" style={{ color: "#8696A0" }}>Autoatendimento</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-0.5">
+            <button onClick={toggleChatbot} disabled={togglingBot} title={chatbotAtivo ? "Bot ativo" : "Bot pausado"}
+              className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+              style={{ color: chatbotAtivo ? "#00A884" : "#8696A0" }}>
+              {chatbotAtivo ? <Bot size={16} /> : <BotOff size={16} />}
+            </button>
+            <button onClick={() => { loadOrders(); loadDtf(); loadConvs() }} title="Atualizar"
+              className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+              style={{ color: "#8696A0" }}>
+              <RefreshCw size={14} className={loadingOrders ? "animate-spin" : ""} />
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b flex-shrink-0" style={{ background: "#111B21", borderColor: "rgba(255,255,255,0.08)" }}>
           <button
             onClick={() => { setChatTab("conversas"); setChatContact(null); setMessages([]) }}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold transition-colors ${
-              chatTab === "conversas"
-                ? "text-[#4361EE] border-b-2 border-[#4361EE]"
-                : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
-            }`}
-          >
+            className="flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-semibold transition-colors relative"
+            style={{ color: chatTab === "conversas" ? "#00A884" : "#8696A0" }}>
             <MessageCircle size={13} />
             Conversas
-            {totalUnread > 0 && chatTab !== "conversas" && (
-              <span className="text-[8px] font-black bg-[#4361EE] text-white w-4 h-4 rounded-full flex items-center justify-center">{totalUnread > 9 ? "9+" : totalUnread}</span>
+            {totalUnread > 0 && (
+              <span className="text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "#00A884", color: "#fff" }}>
+                {totalUnread > 9 ? "9+" : totalUnread}
+              </span>
             )}
+            {chatTab === "conversas" && <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ background: "#00A884" }} />}
           </button>
           <button
             onClick={() => { setChatTab("grupos"); setSelectedGroup(null); setGroupMessages([]) }}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold transition-colors ${
-              chatTab === "grupos"
-                ? "text-[#0F1E3C] border-b-2 border-[#0F1E3C]"
-                : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
-            }`}
-          >
+            className="flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-semibold transition-colors relative"
+            style={{ color: chatTab === "grupos" ? "#00A884" : "#8696A0" }}>
             <Users size={13} />
             Grupos
+            {chatTab === "grupos" && <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ background: "#00A884" }} />}
           </button>
         </div>
 
         {/* ── CONVERSAS ── */}
         {chatTab === "conversas" && (
           <>
-            <div className="px-3 py-2 flex-shrink-0">
+            <div className="px-3 py-2 flex-shrink-0" style={{ background: "#111B21" }}>
               <div className="relative">
-                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#0F1E3C]/25 pointer-events-none" />
-                <input value={chatSearch} onChange={e => setChatSearch(e.target.value)} placeholder="Buscar..."
-                  className="w-full pl-7 pr-3 py-1.5 rounded-lg bg-[#F4F6FB] text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/20" />
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "#8696A0" }} />
+                <input value={chatSearch} onChange={e => setChatSearch(e.target.value)} placeholder="Pesquisar..."
+                  className="w-full pl-9 pr-3 py-2 rounded-lg text-[13px] focus:outline-none"
+                  style={{ background: "#2A3942", color: "#E9EDEF", border: "none" }} />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               {filteredConvs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-2 text-[#0F1E3C]/20">
-                  <MessageCircle size={24} strokeWidth={1.2} />
-                  <p className="text-[10px]">Nenhuma conversa</p>
+                <div className="flex flex-col items-center justify-center py-16 gap-2" style={{ color: "#8696A0" }}>
+                  <MessageCircle size={28} strokeWidth={1.2} />
+                  <p className="text-[11px]">Nenhuma conversa</p>
                 </div>
               ) : [...filteredConvs]
                   .sort((a, b) => (b.needsAttention ? 1 : 0) - (a.needsAttention ? 1 : 0))
                   .map(c => (
-                <button key={c.id} onClick={() => { latestMsgAt.current = null; setReplyTo(null); setChatContact(c) }}
-                  className={`w-full text-left px-3 py-2.5 border-b border-[#0F1E3C]/4 transition-colors ${
-                    chatContact?.id === c.id ? "bg-[#4361EE]/8" :
-                    c.needsAttention ? "bg-orange-50 border-l-2 border-l-orange-400 hover:bg-orange-100"
-                    : "hover:bg-[#F4F6FB]"
-                  }`}>
-                  <div className="flex items-center gap-2.5">
-                    {/* Avatar */}
-                    <div className="flex-shrink-0 w-9 h-9 rounded-full overflow-hidden flex-shrink-0">
+                <button key={c.id} onClick={() => {
+                  latestMsgAt.current = null
+                  setReplyTo(null)
+                  setChatContact(c)
+                  if (c.needsAttention) {
+                    fetch("/api/chat/attention", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ contactId: c.id, action: "dismiss" }),
+                    }).then(() => {
+                      setConvs(prev => prev.map(x => x.id === c.id ? { ...x, needsAttention: false } : x))
+                      setChatContact(prev => prev?.id === c.id ? { ...prev, needsAttention: false } : prev)
+                    }).catch(() => {})
+                  }
+                }}
+                  className="w-full text-left px-3 py-3 transition-colors"
+                  style={{
+                    background: chatContact?.id === c.id
+                      ? "#2A3942"
+                      : c.needsAttention
+                        ? "rgba(217,119,6,0.10)"
+                        : "transparent",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  }}>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden relative">
                       {c.profilePic ? (
                         <img src={c.profilePic} alt={c.name || c.phone}
                           className="w-full h-full object-cover"
                           onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-white text-[11px] font-black"
+                        <div className="w-full h-full flex items-center justify-center text-white text-sm font-bold"
                           style={{ background: avatarColor(c.id) }}>
                           {initials(c.name, c.phone)}
                         </div>
                       )}
+                      {c.needsAttention && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center"
+                          style={{ background: "#F97316", borderColor: "#111B21" }}>
+                          <span className="text-white text-[7px] font-black leading-none">!</span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <div className="flex items-center gap-1 min-w-0">
-                          {c.needsAttention && <AlertCircle size={10} className="flex-shrink-0 text-orange-500" />}
-                          <p className="text-[11px] font-bold text-[#0F1E3C] truncate">{c.name || fmtPhone(c.phone)}</p>
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          {c.unread > 0 && (
-                            <span className="text-[8px] font-black bg-[#4361EE] text-white w-3.5 h-3.5 rounded-full flex items-center justify-center">{c.unread > 9 ? "9+" : c.unread}</span>
-                          )}
-                          <p className="text-[9px] text-[#0F1E3C]/20">{fmtTime(c.lastAt)}</p>
-                        </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[14px] font-medium truncate" style={{ color: "#E9EDEF" }}>{c.name || fmtPhone(c.phone)}</p>
+                        <p className="text-[11px] flex-shrink-0 ml-2" style={{ color: "#8696A0" }}>{fmtTime(c.lastAt)}</p>
                       </div>
-                      <p className="text-[9px] text-[#0F1E3C]/35 truncate">{fmtPhone(c.phone)}</p>
-                      <p className={`text-[10px] truncate ${c.unread > 0 ? "font-semibold text-[#0F1E3C]/60" : "text-[#0F1E3C]/30"}`}>
-                        {c.lastDirection === "out" && <span className="text-[#4361EE]/50">Você: </span>}
-                        {formatMsgPreview(c.lastMessage)}
-                      </p>
+                      <div className="flex items-center justify-between mt-0.5">
+                        <p className="text-[12px] truncate flex-1" style={{ color: c.unread > 0 ? "#E9EDEF" : "#8696A0" }}>
+                          {c.lastDirection === "out" && <span style={{ color: "#8696A0" }}>✓ </span>}
+                          {formatMsgPreview(c.lastMessage)}
+                        </p>
+                        {c.unread > 0 && (
+                          <span className="text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ml-1" style={{ background: "#00A884", color: "#fff" }}>
+                            {c.unread > 9 ? "9+" : c.unread}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </button>
@@ -1027,34 +1157,40 @@ export default function PedidosPage() {
         {chatTab === "grupos" && (
           <div className="flex-1 overflow-y-auto">
             {loadingGroups ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="w-4 h-4 border-2 border-[#0F1E3C]/30 border-t-transparent rounded-full animate-spin" />
+              <div className="flex items-center justify-center py-16">
+                <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#8696A0", borderTopColor: "transparent" }} />
               </div>
             ) : groups.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-2 text-[#0F1E3C]/20">
-                <Users size={24} strokeWidth={1.2} />
-                <p className="text-[10px]">Nenhum grupo ainda</p>
+              <div className="flex flex-col items-center justify-center py-16 gap-2" style={{ color: "#8696A0" }}>
+                <Users size={28} strokeWidth={1.2} />
+                <p className="text-[11px]">Nenhum grupo ainda</p>
               </div>
             ) : groups.map(g => (
               <button key={g.jid} onClick={() => setSelectedGroup(g)}
-                className={`w-full text-left px-3 py-2.5 border-b border-[#0F1E3C]/4 transition-colors ${selectedGroup?.jid === g.jid ? "bg-[#4361EE]/8" : "hover:bg-[#F4F6FB]"}`}>
-                <div className="flex items-center gap-2.5">
-                  <div className="flex-shrink-0 w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
-                    <Users size={14} />
+                className="w-full text-left px-3 py-3 transition-colors"
+                style={{
+                  background: selectedGroup?.jid === g.jid ? "#2A3942" : "transparent",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                }}>
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "rgba(0,168,132,0.15)" }}>
+                    <Users size={18} style={{ color: "#00A884" }} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1">
-                      <p className="text-[11px] font-bold text-[#0F1E3C] truncate">{g.name || g.jid}</p>
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[14px] font-medium truncate" style={{ color: "#E9EDEF" }}>{g.name || g.jid}</p>
+                      <div className="flex items-center gap-1 flex-shrink-0 ml-2">
                         {g.unread > 0 && (
-                          <span className="text-[8px] font-black bg-[#25D366] text-white w-3.5 h-3.5 rounded-full flex items-center justify-center">{g.unread > 9 ? "9+" : g.unread}</span>
+                          <span className="text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "#00A884", color: "#fff" }}>
+                            {g.unread > 9 ? "9+" : g.unread}
+                          </span>
                         )}
-                        <p className="text-[9px] text-[#0F1E3C]/20">{fmtTime(g.lastAt)}</p>
+                        <p className="text-[11px]" style={{ color: "#8696A0" }}>{fmtTime(g.lastAt)}</p>
                       </div>
                     </div>
-                    <p className="text-[10px] truncate text-[#0F1E3C]/30">
-                      {g.lastSender && !g.fromMe && <span className="text-[#0F1E3C]/50">{g.lastSender.split(" ")[0]}: </span>}
-                      {g.fromMe && <span className="text-[#4361EE]/40">Você: </span>}
+                    <p className="text-[12px] truncate mt-0.5" style={{ color: "#8696A0" }}>
+                      {g.lastSender && !g.fromMe && <span style={{ color: "#E9EDEF", opacity: 0.7 }}>{g.lastSender.split(" ")[0]}: </span>}
+                      {g.fromMe && <span style={{ color: "#8696A0" }}>Você: </span>}
                       {g.lastMessage ?? "—"}
                     </p>
                   </div>
@@ -1065,8 +1201,392 @@ export default function PedidosPage() {
         )}
       </div>
 
-      {/* ── RIGHT: Orders panel ── */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#F4F6FB]">
+      {/* ── RIGHT ── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+      {chatContact ? (
+        /* ── INLINE CHAT (WA style) ── */
+        <div className="flex-1 flex overflow-hidden">
+
+          {/* Chat pane */}
+          <div className="flex-1 flex flex-col min-w-0" style={{ background: "#0B141A" }}>
+
+            {/* Chat header */}
+            <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0" style={{ background: "#202C33" }}>
+              <button onClick={() => { setChatContact(null); setReplyTo(null); setShowDtfPanel(false) }}
+                className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+                style={{ color: "#AEBAC1" }}>
+                <ChevronLeft size={20} />
+              </button>
+              <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
+                {chatContact.profilePic ? (
+                  <img src={chatContact.profilePic} alt={chatContact.name || chatContact.phone}
+                    className="w-full h-full object-cover"
+                    onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-white text-sm font-bold"
+                    style={{ background: avatarColor(chatContact.id) }}>
+                    {initials(chatContact.name, chatContact.phone)}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] font-medium" style={{ color: "#E9EDEF" }}>{chatContact.name || fmtPhone(chatContact.phone)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px]" style={{ color: "#8696A0" }}>{fmtPhone(chatContact.phone)}</p>
+                  {chatContact.lifecycleState && (
+                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${LIFECYCLE_COLOR[chatContact.lifecycleState] ?? "bg-gray-100 text-gray-500"}`}>
+                      {LIFECYCLE_LABEL[chatContact.lifecycleState] ?? chatContact.lifecycleState}
+                    </span>
+                  )}
+                  {chatContact.needsAttention && (
+                    <span className="text-[9px] font-bold flex items-center gap-0.5" style={{ color: "#F97316" }}>
+                      <AlertCircle size={9} /> Quer atendimento
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                {chatContact.needsAttention && (
+                  <button onClick={() => attAction("dismiss")} disabled={attLoading}
+                    className="flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-full transition-colors disabled:opacity-40"
+                    style={{ background: "#F97316", color: "#fff" }}>
+                    <UserCheck size={12} /> Encerrar
+                  </button>
+                )}
+                <button onClick={() => attAction("pause_temp")} disabled={attLoading} title="Silenciar bot 12h"
+                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 disabled:opacity-40"
+                  style={{ color: "#AEBAC1" }}>
+                  <BotOff size={16} />
+                </button>
+                <button onClick={() => attAction("pause_perm")} disabled={attLoading} title="Silenciar permanente"
+                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 disabled:opacity-40"
+                  style={{ color: "#AEBAC1" }}>
+                  <Bot size={16} />
+                </button>
+                <button onClick={() => setShowDtfPanel(v => !v)} title="Pedidos DTF"
+                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors"
+                  style={{ background: showDtfPanel ? "#7C3AED" : "transparent", color: showDtfPanel ? "#fff" : "#AEBAC1" }}>
+                  <PanelRight size={16} />
+                </button>
+                <button onClick={deleteConversation} disabled={deletingConv} title="Apagar conversa"
+                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 disabled:opacity-40"
+                  style={{ color: "#AEBAC1" }}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Messages area — WA warm background */}
+            <div className={`flex-1 overflow-y-auto px-4 py-2 relative`}
+              style={{ background: "#EFEAE2" }}
+              onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+              {isDragging && (
+                <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none" style={{ background: "rgba(0,168,132,0.06)" }}>
+                  <div className="rounded-2xl px-8 py-6 text-center border-2 border-dashed" style={{ background: "#fff", borderColor: "rgba(0,168,132,0.4)" }}>
+                    <Paperclip size={24} className="mx-auto mb-1" style={{ color: "#00A884" }} />
+                    <p className="text-xs font-bold" style={{ color: "#00A884" }}>Solte o arquivo aqui</p>
+                  </div>
+                </div>
+              )}
+              {hasMoreMsgs && (
+                <div className="flex justify-center pb-2">
+                  <button onClick={() => loadOlderMsgs(chatContact!.id, msgOffset)} disabled={loadingOlderMsgs}
+                    className="flex items-center gap-1.5 text-[11px] font-medium px-4 py-1.5 rounded-full transition-colors disabled:opacity-50"
+                    style={{ background: "rgba(11,20,26,0.3)", color: "#E9EDEF" }}>
+                    {loadingOlderMsgs
+                      ? <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#E9EDEF", borderTopColor: "transparent" }} />
+                      : <><ChevronUp size={11} /> Mensagens mais antigas</>}
+                  </button>
+                </div>
+              )}
+              {messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-2" style={{ color: "#8696A0" }}>
+                  <MessageCircle size={32} strokeWidth={1} />
+                  <p className="text-[12px]">Nenhuma mensagem ainda.</p>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {messages.map((m, i) => {
+                    const isOut = m.direction === "out"
+                    const showDate = i === 0 || dateBRKey(messages[i - 1].createdAt) !== dateBRKey(m.createdAt)
+                    const nextSame = i < messages.length - 1
+                      && messages[i + 1].direction === m.direction
+                      && dateBRKey(messages[i + 1].createdAt) === dateBRKey(m.createdAt)
+                    const prevSame = i > 0
+                      && messages[i - 1].direction === m.direction
+                      && dateBRKey(messages[i - 1].createdAt) === dateBRKey(m.createdAt)
+                    const showTail = !nextSame
+
+                    return (
+                      <div key={m.id}>
+                        {showDate && (
+                          <div className="flex justify-center my-3">
+                            <span className="text-[11px] font-medium px-3 py-1 rounded-full" style={{ background: "rgba(11,20,26,0.3)", color: "#E9EDEF" }}>
+                              {fmtDateSep(m.createdAt)}
+                            </span>
+                          </div>
+                        )}
+                        <div className={`flex ${isOut ? "justify-end" : "justify-start"} ${prevSame ? "mt-0.5" : "mt-1.5"}`}
+                          onMouseEnter={() => setHoveredMsg(m.id)}
+                          onMouseLeave={() => setHoveredMsg(null)}>
+                          <div className="relative max-w-[65%] group">
+                            {/* WA bubble tail */}
+                            {showTail && (
+                              <div className="absolute bottom-0 w-0 h-0" style={isOut ? {
+                                right: "-7px",
+                                borderLeft: "7px solid #D9FDD3",
+                                borderBottom: "7px solid transparent",
+                              } : {
+                                left: "-7px",
+                                borderRight: "7px solid #FFFFFF",
+                                borderBottom: "7px solid transparent",
+                              }} />
+                            )}
+                            <div className={`text-[13px] leading-relaxed shadow-sm overflow-hidden ${
+                              showTail
+                                ? isOut ? "rounded-xl rounded-br-sm" : "rounded-xl rounded-bl-sm"
+                                : "rounded-xl"
+                            }`} style={{ background: isOut ? "#D9FDD3" : "#FFFFFF" }}>
+
+                              {m.mediaCategory && CATEGORY_BADGE[m.mediaCategory] && (
+                                <div className={`text-[8px] font-black uppercase tracking-widest px-3 pt-1.5 ${CATEGORY_BADGE[m.mediaCategory].cls}`}>
+                                  {CATEGORY_BADGE[m.mediaCategory].label}
+                                </div>
+                              )}
+
+                              {m.quotedContent && (
+                                <div className="mx-2 mt-2 px-3 py-1.5 rounded-lg border-l-[3px] text-[11px]"
+                                  style={{ background: "rgba(0,0,0,0.05)", borderColor: "#00A884", color: "#667781" }}>
+                                  <p className="truncate">{m.quotedContent}</p>
+                                </div>
+                              )}
+
+                              {(() => {
+                                const timeEl = (extra?: string) => (
+                                  <span className={`flex items-center justify-end gap-1 text-[10px] select-none ${extra ?? ""}`} style={{ color: "#667781" }}>
+                                    {fmtTime(m.createdAt)}
+                                    {isOut && (
+                                      m.status === "read" || m.status === "played"
+                                        ? <span className="font-bold" style={{ color: "#53BDEB" }}>✓✓</span>
+                                        : m.status === "delivered"
+                                          ? <span className="font-bold" style={{ color: "#667781" }}>✓✓</span>
+                                          : <span className="font-bold" style={{ color: "#667781" }}>✓</span>
+                                    )}
+                                  </span>
+                                )
+
+                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && m.mediaUrl) return (
+                                  <div>
+                                    <div className="relative">
+                                      {m.mediaType === "video" && isBlobUrl(m.mediaUrl) ? (
+                                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                                        <video controls src={m.mediaUrl} className="w-full max-w-[240px] object-cover rounded" />
+                                      ) : (
+                                        <>
+                                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                                          <img src={m.mediaUrl} alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
+                                            className={`w-full max-w-[240px] object-cover ${isBlobUrl(m.mediaUrl) ? "cursor-zoom-in" : "opacity-70"}`}
+                                            onClick={() => isBlobUrl(m.mediaUrl) && setLightboxMsg(m)} />
+                                          {m.mediaType === "video" && !isBlobUrl(m.mediaUrl) && (
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                              <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm" style={{ background: "rgba(0,0,0,0.5)" }}>▶</div>
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                      {!isBlobUrl(m.mediaUrl) && (
+                                        <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.4)" }}>carregando...</div>
+                                      )}
+                                    </div>
+                                    {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>{m.caption}</p>}
+                                    {timeEl("px-3 pb-1.5")}
+                                  </div>
+                                )
+
+                                if (m.mediaType === "document" || m.mediaCategory === "dtf" || m.mediaCategory === "pix") return (
+                                  <div className="px-3 py-2">
+                                    <div className="flex items-start gap-2">
+                                      <span className="text-lg flex-shrink-0">{m.mediaCategory === "pix" ? "🧾" : m.mediaCategory === "dtf" ? "🎨" : "📄"}</span>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-[12px] font-semibold" style={{ color: "#111B21" }}>
+                                          {m.fileName || (m.mediaCategory === "pix" ? "Comprovante PIX" : m.mediaCategory === "dtf" ? "Arte DTF" : "Documento")}
+                                        </p>
+                                        {m.caption && <p className="text-[11px] mt-0.5" style={{ color: "#667781" }}>{m.caption}</p>}
+                                        {isBlobUrl(m.mediaUrl)
+                                          ? <button onClick={() => downloadChatFile(m.id, m.mediaUrl!, m.fileName)}
+                                              disabled={downloadingMsgId === m.id}
+                                              className="text-[10px] underline disabled:opacity-50" style={{ color: "#00A884" }}>
+                                              {downloadingMsgId === m.id ? "Baixando..." : "Baixar arquivo"}
+                                            </button>
+                                          : m.mediaUrl === ""
+                                            ? <span className="text-[10px]" style={{ color: "#8696A0" }}>Arquivo não disponível</span>
+                                            : <span className="text-[10px]" style={{ color: "#8696A0" }}>Carregando...</span>
+                                        }
+                                      </div>
+                                    </div>
+                                    {!isOut && (m.mediaCategory === "dtf" || m.mediaCategory === "documento") && isBlobUrl(m.mediaUrl) && (
+                                      <button onClick={() => linkDtfFile(m)} disabled={linkingDtfMsg === m.id}
+                                        className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-[10px] font-bold transition-colors disabled:opacity-50"
+                                        style={{ background: "rgba(124,58,237,0.08)", borderColor: "rgba(124,58,237,0.3)", color: "#7C3AED" }}>
+                                        {linkingDtfMsg === m.id
+                                          ? <div className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin" />
+                                          : <><Printer size={10} /> Adicionar ao pedido DTF</>}
+                                      </button>
+                                    )}
+                                    {timeEl("mt-1")}
+                                  </div>
+                                )
+
+                                if (m.mediaType === "audio") return (
+                                  <div className="px-3 py-2">
+                                    {isBlobUrl(m.mediaUrl)
+                                      // eslint-disable-next-line jsx-a11y/media-has-caption
+                                      ? <audio controls src={m.mediaUrl!} className="w-full max-w-[220px]" style={{ height: "32px" }} />
+                                      : <span className="text-[12px]" style={{ color: "#667781" }}>🎤 Áudio</span>
+                                    }
+                                    {timeEl("mt-1")}
+                                  </div>
+                                )
+
+                                return (
+                                  <div className="px-3 py-1.5 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>
+                                    {m.mediaType && !m.mediaUrl
+                                      ? <span style={{ color: "#667781" }}>{MEDIA_EMOJI[m.mediaType] ?? formatMsgPreview(m.content)}</span>
+                                      : formatMsgPreview(m.content)
+                                    }
+                                    {timeEl("mt-0.5")}
+                                  </div>
+                                )
+                              })()}
+                            </div>
+
+                            {hoveredMsg === m.id && (
+                              <div className={`absolute top-0.5 ${isOut ? "left-0 -translate-x-full pr-1" : "right-0 translate-x-full pl-1"} flex items-center gap-0.5`}>
+                                <button onClick={() => setReplyTo(m)}
+                                  className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm hover:bg-white/20"
+                                  style={{ background: "#202C33", color: "#AEBAC1" }}>
+                                  <Reply size={12} />
+                                </button>
+                                <button onClick={() => deleteMessage(m)} disabled={deletingMsg === m.id}
+                                  title={isOut ? "Apagar para todos" : "Apagar aqui"}
+                                  className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm disabled:opacity-40 hover:bg-white/20"
+                                  style={{ background: "#202C33", color: "#AEBAC1" }}>
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+            </div>
+
+            {/* Reply preview */}
+            {replyTo && (
+              <div className="flex-shrink-0 mx-3 mb-1.5 rounded-lg overflow-hidden border-l-4 flex items-center justify-between gap-2 px-3 py-2"
+                style={{ background: "#2A3942", borderColor: "#00A884" }}>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold" style={{ color: "#00A884" }}>{replyTo.direction === "out" ? "Você disse" : "Respondendo"}</p>
+                  <p className="text-[11px] truncate" style={{ color: "#AEBAC1" }}>
+                    {replyTo.mediaType ? (MEDIA_EMOJI[replyTo.mediaType] ?? replyTo.content?.slice(0, 80)) : replyTo.content?.slice(0, 80) || "—"}
+                  </p>
+                </div>
+                <button onClick={() => setReplyTo(null)} style={{ color: "#8696A0" }}><X size={14} /></button>
+              </div>
+            )}
+
+            {/* File staged preview */}
+            {stagedFile && (
+              <div className="flex-shrink-0 mx-3 mb-1.5 flex items-center gap-2 px-3 py-2 rounded-lg border"
+                style={{ background: "#2A3942", borderColor: "rgba(124,58,237,0.4)" }}>
+                <Paperclip size={13} style={{ color: "#7C3AED", flexShrink: 0 }} />
+                <span className="text-[11px] font-semibold truncate flex-1" style={{ color: "#E9EDEF" }}>{stagedFile.name}</span>
+                <button onClick={() => setStagedFile(null)} style={{ color: "#8696A0" }}><X size={13} /></button>
+              </div>
+            )}
+
+            {/* Input bar — WA dark */}
+            <div className="flex-shrink-0 flex items-end gap-2 px-3 py-3" style={{ background: "#202C33" }}>
+              <button onClick={() => fileInputRef.current?.click()} title="Enviar arquivo"
+                className="w-10 h-10 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 flex-shrink-0"
+                style={{ color: "#8696A0" }}>
+                <Paperclip size={20} />
+              </button>
+              <input ref={fileInputRef} type="file" className="hidden"
+                onChange={e => { if (e.target.files?.[0]) { setStagedFile(e.target.files[0]); e.target.value = "" } }} />
+              <textarea ref={chatInputRef} value={chatInput} onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); stagedFile ? sendFile() : sendMessage() } }}
+                placeholder={stagedFile ? "Legenda (opcional)..." : "Mensagem..."}
+                rows={1}
+                className="flex-1 resize-none px-4 py-2.5 rounded-lg text-[13px] focus:outline-none max-h-32 overflow-y-auto"
+                style={{ background: "#2A3942", color: "#E9EDEF", border: "none", minHeight: "44px" }} />
+              <button
+                onClick={stagedFile ? sendFile : sendMessage}
+                disabled={stagedFile ? sendingFile : (!chatInput.trim() || sendingChat)}
+                className="w-10 h-10 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 flex-shrink-0"
+                style={{ background: "#00A884" }}>
+                {sendingFile
+                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <Send size={18} style={{ color: "#fff" }} />}
+              </button>
+            </div>
+          </div>
+
+          {/* DTF side panel */}
+          {showDtfPanel && (
+            <div className="w-72 flex-shrink-0 border-l flex flex-col" style={{ background: "#F4F6FB", borderColor: "rgba(0,0,0,0.1)" }}>
+              <div className="px-4 py-3 border-b flex items-center justify-between flex-shrink-0 bg-white" style={{ borderColor: "rgba(15,30,60,0.08)" }}>
+                <div className="flex items-center gap-2">
+                  <Printer size={13} style={{ color: "#7C3AED" }} />
+                  <p className="text-xs font-bold text-[#0F1E3C]">Pedidos DTF</p>
+                </div>
+                <span className="text-[10px] font-semibold text-[#0F1E3C]/30">{contactDtfOrders.length} pedido{contactDtfOrders.length !== 1 ? "s" : ""}</span>
+              </div>
+              {dtfLinkToast && (
+                <div className="mx-3 mt-2 px-3 py-2 rounded-xl flex items-center justify-between gap-2 flex-shrink-0 border"
+                  style={{ background: "rgba(124,58,237,0.06)", borderColor: "rgba(124,58,237,0.25)" }}>
+                  <p className="text-[10px] font-semibold flex-1" style={{ color: "#7C3AED" }}>{dtfLinkToast}</p>
+                  <button onClick={() => setDtfLinkToast(null)} className="text-gray-400"><X size={11} /></button>
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {contactDtfOrders.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#0F1E3C]/20">
+                    <Printer size={22} strokeWidth={1.2} />
+                    <p className="text-[10px] text-center">Nenhum pedido DTF.<br />Vincule um arquivo para criar.</p>
+                  </div>
+                ) : contactDtfOrders.map(o => (
+                  <DtfOrderCard key={o.id} order={o} onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }} />
+                ))}
+              </div>
+              {contactDtfOrders.some(o => o.attachments.length > 0) && (
+                <div className="p-3 border-t bg-white space-y-1.5" style={{ borderColor: "rgba(15,30,60,0.08)" }}>
+                  {contactDtfOrders
+                    .filter(o => o.attachments.length > 0 && o.status !== "concluido" && o.status !== "cancelado")
+                    .slice(0, 1)
+                    .map(o => (
+                      <button key={o.id}
+                        onClick={() => downloadDtfOrder(o.id, o.attachments, o.contactName ?? chatContact?.name ?? "arte")}
+                        className="flex items-center justify-center gap-2 w-full py-2 text-white text-xs font-bold rounded-xl transition-colors hover:opacity-90"
+                        style={{ background: "#7C3AED" }}>
+                        <Download size={13} />
+                        {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte (renomeado)"}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+      ) : (
+        /* ── KANBAN / OPERATIONS VIEW ── */
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#F4F6FB]">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 bg-white border-b border-[#0F1E3C]/6 flex-shrink-0">
@@ -1468,9 +1988,11 @@ export default function PedidosPage() {
             )}
           </div>
         </div>
+        </div>
+      )}
       </div>
 
-      {/* Modals */}
+      {/* Order/DTF Modals */}
       {selected && (
         <OrderModal order={selected} onClose={() => { setSelected(null); selectedIdRef.current = null }} onRefresh={() => loadOrders()} />
       )}
@@ -1478,480 +2000,138 @@ export default function PedidosPage() {
         <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} />
       )}
 
-      {/* ── MODAL: Chat individual ── */}
-      {chatContact && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={e => { if (e.target === e.currentTarget) { setChatContact(null); setReplyTo(null); setShowDtfPanel(false) } }}>
-          <div className={`bg-white rounded-2xl shadow-2xl w-full flex overflow-hidden ${showDtfPanel ? "max-w-5xl" : "max-w-3xl"}`}
-            style={{ height: "82vh" }}>
-
-          {/* Chat column */}
-          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-
-            {/* Header */}
-            <div className={`flex items-center gap-3 px-4 py-3 flex-shrink-0 border-b ${chatContact.needsAttention ? "bg-orange-50 border-orange-200" : "bg-white border-[#0F1E3C]/6"}`}>
-              <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
-                {chatContact.profilePic ? (
-                  <img src={chatContact.profilePic} alt={chatContact.name || chatContact.phone}
-                    className="w-full h-full object-cover"
-                    onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-white text-xs font-black"
-                    style={{ background: avatarColor(chatContact.id) }}>
-                    {initials(chatContact.name, chatContact.phone)}
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-[#0F1E3C] truncate">{chatContact.name || fmtPhone(chatContact.phone)}</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-[10px] text-[#0F1E3C]/40 flex items-center gap-0.5">
-                    <Phone size={9} /> {fmtPhone(chatContact.phone)}
-                  </p>
-                  {chatContact.lifecycleState && (
-                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${LIFECYCLE_COLOR[chatContact.lifecycleState] ?? "bg-gray-100 text-gray-500"}`}>
-                      {LIFECYCLE_LABEL[chatContact.lifecycleState] ?? chatContact.lifecycleState}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {/* Bot actions — always visible */}
-              <div className="flex items-center gap-1 flex-shrink-0">
-                {chatContact.needsAttention && (
-                  <span className="text-[9px] font-bold text-orange-600 flex items-center gap-1 mr-1">
-                    <AlertCircle size={10} /> Quer atendimento
-                  </span>
-                )}
-                <button onClick={() => attAction("pause_temp")} disabled={attLoading} title="Silenciar bot 12h"
-                  className="flex items-center gap-0.5 text-[9px] font-bold px-2 py-1 rounded-lg bg-[#F4F6FB] border border-[#0F1E3C]/10 text-[#0F1E3C]/60 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 disabled:opacity-40 transition-colors">
-                  <BotOff size={10} /> 12h
-                </button>
-                <button onClick={() => attAction("pause_perm")} disabled={attLoading} title="Silenciar bot permanente"
-                  className="flex items-center gap-0.5 text-[9px] font-bold px-2 py-1 rounded-lg bg-[#F4F6FB] border border-[#0F1E3C]/10 text-[#0F1E3C]/60 hover:bg-red-50 hover:text-red-700 hover:border-red-200 disabled:opacity-40 transition-colors">
-                  <Bot size={10} /> Perm.
-                </button>
-                {chatContact.needsAttention && (
-                  <button onClick={() => attAction("dismiss")} disabled={attLoading} title="Encerrar atendimento humano"
-                    className="flex items-center gap-0.5 text-[9px] font-bold px-2 py-1 rounded-lg bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-40 transition-colors">
-                    <UserCheck size={10} /> Encerrar
-                  </button>
-                )}
-                <button onClick={() => { setShowDtfPanel(v => !v) }} title="Pedidos DTF do contato"
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${showDtfPanel ? "bg-violet-100 text-violet-600" : "bg-[#F4F6FB] text-[#0F1E3C]/40 hover:text-[#7C3AED]"}`}>
-                  <PanelRight size={14} />
-                </button>
-                <button onClick={deleteConversation} disabled={deletingConv} title="Apagar conversa"
-                  className="w-7 h-7 rounded-lg bg-[#F4F6FB] hover:bg-red-50 flex items-center justify-center text-[#0F1E3C]/40 hover:text-red-500 transition-colors disabled:opacity-40">
-                  <Trash2 size={14} />
-                </button>
-                <button onClick={() => { setChatContact(null); setReplyTo(null); setShowDtfPanel(false) }}
-                  className="ml-1 w-7 h-7 rounded-lg bg-[#F4F6FB] hover:bg-[#0F1E3C]/10 flex items-center justify-center text-[#0F1E3C]/40 hover:text-[#0F1E3C] transition-colors">
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div
-              className={`flex-1 overflow-y-auto px-4 py-3 space-y-1.5 bg-[#F4F6FB] relative transition-all ${isDragging ? "ring-2 ring-inset ring-[#4361EE]/40 bg-[#4361EE]/5" : ""}`}
-              onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
-            >
-              {isDragging && (
-                <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                  <div className="bg-white border-2 border-dashed border-[#4361EE]/40 rounded-2xl px-8 py-6 text-center">
-                    <Paperclip size={24} className="text-[#4361EE]/50 mx-auto mb-1" />
-                    <p className="text-xs font-bold text-[#4361EE]/60">Solte o arquivo aqui</p>
-                  </div>
-                </div>
-              )}
-              {/* Load older button */}
-              {hasMoreMsgs && (
-                <div className="flex justify-center pb-1">
-                  <button onClick={() => loadOlderMsgs(chatContact!.id, msgOffset)} disabled={loadingOlderMsgs}
-                    className="flex items-center gap-1.5 text-[10px] font-semibold text-[#4361EE] bg-white hover:bg-[#4361EE]/6 px-3 py-1.5 rounded-full border border-[#4361EE]/20 transition-colors disabled:opacity-50">
-                    {loadingOlderMsgs
-                      ? <div className="w-3 h-3 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
-                      : <><ChevronUp size={11} /> Carregar mais antigas</>
-                    }
-                  </button>
-                </div>
-              )}
-              {messages.length === 0 ? (
-                <p className="text-center text-[10px] text-[#0F1E3C]/20 py-12">Nenhuma mensagem ainda.</p>
-              ) : messages.map((m, i) => {
-                const isOut = m.direction === "out"
-                const showDate = i === 0 || dateBRKey(messages[i-1].createdAt) !== dateBRKey(m.createdAt)
-                const showTime = i === 0 || new Date(messages[i-1].createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: TZ_BR }) !== new Date(m.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: TZ_BR })
-                return (
-                  <div key={m.id}>
-                    {showDate && (
-                      <p className="text-center text-[9px] text-[#0F1E3C]/30 my-2 font-medium">
-                        {new Date(m.createdAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}
-                      </p>
-                    )}
-                    <div className={`flex ${isOut ? "justify-end" : "justify-start"}`}
-                      onMouseEnter={() => setHoveredMsg(m.id)}
-                      onMouseLeave={() => setHoveredMsg(null)}>
-                      <div className="relative group max-w-[72%]">
-                        <div className={`rounded-2xl text-[11.5px] leading-relaxed shadow-sm overflow-hidden ${
-                          isOut ? "bg-[#4361EE] text-white rounded-br-none" : "bg-white text-[#0F1E3C] rounded-bl-none"
-                        }`}>
-                          {/* Category badge */}
-                          {m.mediaCategory && CATEGORY_BADGE[m.mediaCategory] && (
-                            <div className={`text-[8px] font-black uppercase tracking-widest px-3 pt-1.5 ${CATEGORY_BADGE[m.mediaCategory].cls} rounded-t-2xl`}>
-                              {CATEGORY_BADGE[m.mediaCategory].label}
-                            </div>
-                          )}
-
-                          {/* Quote bubble */}
-                          {m.quotedContent && (
-                            <div className={`mx-2 mt-2 px-2 py-1.5 rounded-lg border-l-2 text-[10px] ${
-                              isOut
-                                ? "bg-white/10 border-white/40 text-white/70"
-                                : "bg-[#0F1E3C]/5 border-[#4361EE]/40 text-[#0F1E3C]/50"
-                            }`}>
-                              <p className="truncate">{m.quotedContent}</p>
-                            </div>
-                          )}
-
-                          {/* Time + status helper */}
-                          {(() => {
-                            const tick = isOut ? (
-                              m.status === "read" || m.status === "played"
-                                ? <span className="text-[10px] text-blue-200 font-bold">✓✓</span>
-                                : m.status === "delivered"
-                                  ? <span className="text-[10px] text-white/40 font-bold">✓✓</span>
-                                  : <span className="text-[10px] text-white/40 font-bold">✓</span>
-                            ) : null
-
-                            const timeEl = (extra?: string) => (
-                              <span className={`flex items-center justify-end gap-1 text-[9px] ${extra ?? ""} ${isOut ? "text-white/50" : "text-[#0F1E3C]/30"}`}>
-                                {fmtTime(m.createdAt)}{tick}
-                              </span>
-                            )
-
-                            /* Image / video */
-                            if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && m.mediaUrl) return (
-                              <div>
-                                <div className="relative">
-                                  {m.mediaType === "video" && isBlobUrl(m.mediaUrl) ? (
-                                    // eslint-disable-next-line jsx-a11y/media-has-caption
-                                    <video controls src={m.mediaUrl} className="w-full max-w-[240px] object-cover rounded" />
-                                  ) : (
-                                    <>
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                      <img
-                                        src={m.mediaUrl}
-                                        alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
-                                        className={`w-full max-w-[240px] object-cover ${m.mediaUrl ? "cursor-zoom-in" : ""}`}
-                                        onClick={() => m.mediaUrl && setLightboxSrc(m.mediaUrl)}
-                                      />
-                                      {m.mediaType === "video" && !isBlobUrl(m.mediaUrl) && (
-                                        <div className="absolute inset-0 flex items-center justify-center">
-                                          <div className="w-9 h-9 rounded-full bg-black/50 flex items-center justify-center text-white text-sm">▶</div>
-                                        </div>
-                                      )}
-                                    </>
-                                  )}
-                                  {!m.mediaUrl && (
-                                    <div className="absolute bottom-1 right-1 bg-black/40 text-white text-[8px] px-1.5 py-0.5 rounded-full">carregando...</div>
-                                  )}
-                                </div>
-                                {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words">{m.caption}</p>}
-                                {showTime && timeEl("px-3 pb-1.5")}
-                              </div>
-                            )
-
-                            /* Document / DTF / PIX */
-                            if (m.mediaType === "document" || m.mediaCategory === "dtf" || m.mediaCategory === "pix") return (
-                              <div className="px-3 py-2">
-                                <div className="flex items-start gap-2">
-                                  <span className="text-lg flex-shrink-0">{m.mediaCategory === "pix" ? "🧾" : m.mediaCategory === "dtf" ? "🎨" : "📄"}</span>
-                                  <div className="min-w-0 flex-1">
-                                    <p className={`text-[11px] font-semibold ${isOut ? "text-white" : "text-[#0F1E3C]"}`}>
-                                      {m.fileName || (m.mediaCategory === "pix" ? "Comprovante PIX" : m.mediaCategory === "dtf" ? "Arte DTF" : "Documento")}
-                                    </p>
-                                    {m.caption && <p className={`text-[10px] mt-0.5 ${isOut ? "text-white/70" : "text-[#0F1E3C]/60"}`}>{m.caption}</p>}
-                                    {isBlobUrl(m.mediaUrl)
-                                      ? <button
-                                          onClick={() => downloadChatFile(m.id, m.mediaUrl!, m.fileName)}
-                                          disabled={downloadingMsgId === m.id}
-                                          className={`text-[9px] underline disabled:opacity-50 ${isOut ? "text-white/70" : "text-[#4361EE]"}`}>
-                                          {downloadingMsgId === m.id ? "Baixando..." : "Baixar arquivo"}
-                                        </button>
-                                      : m.mediaUrl === ""
-                                        ? <span className={`text-[9px] ${isOut ? "text-white/40" : "text-[#0F1E3C]/25"}`}>Arquivo não disponível</span>
-                                        : <span className={`text-[9px] ${isOut ? "text-white/50" : "text-[#0F1E3C]/30"}`}>Carregando...</span>
-                                    }
-                                  </div>
-                                </div>
-                                {!isOut && (m.mediaCategory === "dtf" || m.mediaCategory === "documento") && isBlobUrl(m.mediaUrl) && (
-                                  <button onClick={() => linkDtfFile(m)} disabled={linkingDtfMsg === m.id}
-                                    className="mt-1.5 w-full flex items-center justify-center gap-1.5 py-1 rounded-lg bg-violet-50 border border-violet-200 text-[9px] font-bold text-violet-700 hover:bg-violet-100 transition-colors disabled:opacity-50">
-                                    {linkingDtfMsg === m.id
-                                      ? <div className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin" />
-                                      : <><Printer size={10} /> Adicionar ao pedido DTF</>}
-                                  </button>
-                                )}
-                                {showTime && timeEl("mt-1")}
-                              </div>
-                            )
-
-                            /* Audio */
-                            if (m.mediaType === "audio") return (
-                              <div className="px-3 py-2">
-                                {isBlobUrl(m.mediaUrl)
-                                  // eslint-disable-next-line jsx-a11y/media-has-caption
-                                  ? <audio controls src={m.mediaUrl!} className="w-full max-w-[220px]" style={{ height: "32px" }} />
-                                  : <span className={`text-[11px] ${isOut ? "text-white/70" : "text-[#0F1E3C]/50"}`}>🎤 Áudio</span>
-                                }
-                                {showTime && timeEl("mt-1")}
-                              </div>
-                            )
-
-                            /* Text / fallback */
-                            return (
-                              <div className="px-3 py-2 whitespace-pre-wrap break-words">
-                                {m.mediaType && !m.mediaUrl
-                                  ? <span className={isOut ? "text-white/70" : "text-[#0F1E3C]/50"}>{MEDIA_EMOJI[m.mediaType] ?? formatMsgPreview(m.content)}</span>
-                                  : formatMsgPreview(m.content)
-                                }
-                                {showTime && timeEl("mt-0.5")}
-                              </div>
-                            )
-                          })()}
-                        </div>
-                        {/* Actions on hover */}
-                        {hoveredMsg === m.id && (
-                          <div className={`absolute top-0 ${isOut ? "left-0 -translate-x-full pr-1" : "right-0 translate-x-full pl-1"} flex items-center gap-0.5`}>
-                            <button onClick={() => setReplyTo(m)}
-                              className="w-6 h-6 rounded-lg bg-white border border-[#0F1E3C]/10 shadow-sm flex items-center justify-center text-[#0F1E3C]/40 hover:text-[#4361EE] transition-colors">
-                              <Reply size={11} />
-                            </button>
-                            <button
-                              onClick={() => deleteMessage(m)}
-                              disabled={deletingMsg === m.id}
-                              title={isOut ? "Apagar para todos" : "Apagar aqui"}
-                              className="w-6 h-6 rounded-lg bg-white border border-[#0F1E3C]/10 shadow-sm flex items-center justify-center text-[#0F1E3C]/40 hover:text-red-500 transition-colors disabled:opacity-40">
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Reply preview */}
-            {replyTo && (
-              <div className="flex-shrink-0 mx-4 mb-0 bg-[#4361EE]/8 border-l-2 border-[#4361EE] rounded-lg px-3 py-1.5 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-[9px] font-bold text-[#4361EE]">{replyTo.direction === "out" ? "Você disse" : "Respondendo"}</p>
-                  <p className="text-[10px] text-[#0F1E3C]/50 truncate">
-                    {replyTo.mediaType ? (MEDIA_EMOJI[replyTo.mediaType] ?? replyTo.content?.slice(0, 80)) : replyTo.content?.slice(0, 80) || "—"}
-                  </p>
-                </div>
-                <button onClick={() => setReplyTo(null)} className="flex-shrink-0 text-[#0F1E3C]/30 hover:text-[#0F1E3C]">
-                  <X size={12} />
-                </button>
-              </div>
-            )}
-
-            {/* Input */}
-            <div className="flex-shrink-0 border-t border-[#0F1E3C]/6 px-4 py-3 bg-white">
-              {/* File staging preview */}
-              {stagedFile && (
-                <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-violet-50 border border-violet-200 rounded-xl">
-                  <Paperclip size={12} className="text-violet-500 flex-shrink-0" />
-                  <span className="text-[10px] font-semibold text-violet-700 truncate flex-1">{stagedFile.name}</span>
-                  <button onClick={() => setStagedFile(null)} className="text-violet-400 hover:text-violet-700">
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-              <div className="flex items-end gap-2">
-                {/* Attach file button */}
-                <button onClick={() => fileInputRef.current?.click()} title="Enviar arquivo"
-                  className="w-9 h-9 rounded-xl border border-[#0F1E3C]/10 bg-[#F4F6FB] hover:bg-violet-50 hover:border-violet-200 flex items-center justify-center text-[#0F1E3C]/40 hover:text-violet-600 transition-colors flex-shrink-0">
-                  <Paperclip size={14} />
-                </button>
-                <input ref={fileInputRef} type="file" className="hidden"
-                  onChange={e => { if (e.target.files?.[0]) { setStagedFile(e.target.files[0]); e.target.value = "" } }} />
-                <textarea ref={chatInputRef} value={chatInput} onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); stagedFile ? sendFile() : sendMessage() } }}
-                  placeholder={stagedFile ? "Legenda (opcional)..." : "Mensagem... (Enter para enviar, Shift+Enter nova linha)"}
-                  rows={1}
-                  className="flex-1 resize-none px-3 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 max-h-24 overflow-y-auto bg-[#F4F6FB]"
-                  style={{ minHeight: "40px" }} />
-                <button
-                  onClick={stagedFile ? sendFile : sendMessage}
-                  disabled={stagedFile ? sendingFile : (!chatInput.trim() || sendingChat)}
-                  className="w-10 h-10 rounded-xl bg-[#4361EE] hover:bg-[#3451d1] text-white flex items-center justify-center transition-colors disabled:opacity-40 flex-shrink-0 shadow-sm">
-                  {sendingFile ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send size={15} />}
-                </button>
-              </div>
-            </div>
-          </div>{/* end chat column */}
-
-          {/* DTF panel */}
-          {showDtfPanel && (
-            <div className="w-72 flex-shrink-0 border-l border-[#0F1E3C]/8 flex flex-col bg-[#F4F6FB]">
-              <div className="px-4 py-3 border-b border-[#0F1E3C]/8 bg-white flex items-center justify-between flex-shrink-0">
-                <div className="flex items-center gap-2">
-                  <Printer size={13} className="text-[#7C3AED]" />
-                  <p className="text-xs font-bold text-[#0F1E3C]">Pedidos DTF</p>
-                </div>
-                <span className="text-[10px] font-semibold text-[#0F1E3C]/30">{contactDtfOrders.length} pedido{contactDtfOrders.length !== 1 ? "s" : ""}</span>
-              </div>
-              {dtfLinkToast && (
-                <div className="mx-3 mt-2 px-3 py-2 bg-violet-50 border border-violet-200 rounded-xl flex items-center justify-between gap-2 flex-shrink-0">
-                  <p className="text-[10px] font-semibold text-violet-700 flex-1">{dtfLinkToast}</p>
-                  <button onClick={() => setDtfLinkToast(null)} className="text-violet-400 hover:text-violet-600"><X size={11} /></button>
-                </div>
-              )}
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                {contactDtfOrders.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#0F1E3C]/20">
-                    <Printer size={22} strokeWidth={1.2} />
-                    <p className="text-[10px] text-center">Nenhum pedido DTF.<br />Vincule um arquivo para criar.</p>
-                  </div>
-                ) : contactDtfOrders.map(o => (
-                  <DtfOrderCard key={o.id} order={o} onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }} />
-                ))}
-              </div>
-              {/* Download button — uses programmatic fetch to force browser download */}
-              {contactDtfOrders.some(o => o.attachments.length > 0) && (
-                <div className="p-3 border-t border-[#0F1E3C]/8 bg-white space-y-1.5">
-                  {contactDtfOrders
-                    .filter(o => o.attachments.length > 0 && o.status !== "concluido" && o.status !== "cancelado")
-                    .slice(0, 1)
-                    .map(o => (
-                      <button
-                        key={o.id}
-                        onClick={() => downloadDtfOrder(o.id, o.attachments, o.contactName ?? chatContact?.name ?? "arte")}
-                        className="flex items-center justify-center gap-2 w-full py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl transition-colors">
-                        <Download size={13} />
-                        {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte (renomeado)"}
-                      </button>
-                    ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          </div>{/* end modal inner */}
-        </div>
-      )}
-
       {/* ── LIGHTBOX ── */}
-      {lightboxSrc && (
-        <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
-          onClick={() => setLightboxSrc(null)}>
+      {lightboxMsg?.mediaUrl && (
+        <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
+          onClick={() => setLightboxMsg(null)}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightboxSrc} alt="Imagem ampliada"
-            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+          <img src={lightboxMsg.mediaUrl} alt="Imagem ampliada"
+            className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
             onClick={e => e.stopPropagation()} />
-          <button onClick={() => setLightboxSrc(null)}
+
+          {/* Rodapé: info + ações */}
+          <div className="flex items-center gap-3 mt-4" onClick={e => e.stopPropagation()}>
+            <span className="text-white/50 text-xs">
+              {lightboxMsg.direction === "out" ? "Você" : (chatContact?.name || chatContact?.phone)} · {fmtTime(lightboxMsg.createdAt)}
+            </span>
+            <a href={lightboxMsg.mediaUrl} download
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors">
+              <Download size={13} /> Salvar
+            </a>
+            {chatContact && (
+              <button
+                onClick={() => { setReplyTo(lightboxMsg); setLightboxMsg(null) }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors">
+                <Reply size={13} /> Responder
+              </button>
+            )}
+          </div>
+
+          <button onClick={() => setLightboxMsg(null)}
             className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors">
             <X size={18} />
           </button>
         </div>
       )}
 
-      {/* ── MODAL: Grupo ── */}
+      {/* ── MODAL: Grupo (WA style) ── */}
       {chatTab === "grupos" && selectedGroup && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }}
           onClick={e => { if (e.target === e.currentTarget) { setSelectedGroup(null); setGroupMessages([]) } }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden"
-            style={{ height: "82vh" }}>
+          <div className="rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden" style={{ height: "82vh", background: "#111B21" }}>
 
-            {/* Header */}
-            <div className="flex items-center gap-3 px-4 py-3 flex-shrink-0 border-b border-[#0F1E3C]/6">
-              <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                <Users size={18} className="text-emerald-600" />
+            {/* Header WA style */}
+            <div className="flex items-center gap-3 px-4 py-3 flex-shrink-0" style={{ background: "#202C33" }}>
+              <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(0,168,132,0.15)" }}>
+                <Users size={18} style={{ color: "#00A884" }} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-[#0F1E3C] truncate">{selectedGroup.name || selectedGroup.jid}</p>
-                <p className="text-[10px] text-[#0F1E3C]/30">Grupo · {groupMessages.length} msgs</p>
+                <p className="text-sm font-semibold truncate" style={{ color: "#E9EDEF" }}>{selectedGroup.name || selectedGroup.jid}</p>
+                <p className="text-[11px]" style={{ color: "#8696A0" }}>Grupo · {groupMessages.length} msgs · somente leitura</p>
               </div>
               <button onClick={() => { setSelectedGroup(null); setGroupMessages([]) }}
-                className="w-7 h-7 rounded-lg bg-[#F4F6FB] hover:bg-[#0F1E3C]/10 flex items-center justify-center text-[#0F1E3C]/40 hover:text-[#0F1E3C] transition-colors">
-                <X size={14} />
+                className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+                style={{ color: "#AEBAC1" }}>
+                <X size={16} />
               </button>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 bg-[#F4F6FB]">
-              {/* Load older */}
+            {/* Messages — WA warm background */}
+            <div className="flex-1 overflow-y-auto px-4 py-2" style={{ background: "#EFEAE2" }}>
               {groupHasMore && (
                 <div className="flex justify-center mb-3">
                   <button onClick={loadOlderGroupMsgs} disabled={loadingGrpMsg}
-                    className="flex items-center gap-1.5 text-[10px] font-semibold text-[#4361EE] bg-white hover:bg-[#4361EE]/6 px-3 py-1.5 rounded-full border border-[#4361EE]/20 transition-colors disabled:opacity-50">
+                    className="flex items-center gap-1.5 text-[11px] font-medium px-4 py-1.5 rounded-full disabled:opacity-50"
+                    style={{ background: "rgba(11,20,26,0.3)", color: "#E9EDEF" }}>
                     {loadingGrpMsg
-                      ? <div className="w-3 h-3 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
-                      : <><ChevronUp size={11} /> Carregar mais antigas</>
-                    }
+                      ? <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#E9EDEF" }} />
+                      : <><ChevronUp size={11} /> Carregar mais antigas</>}
                   </button>
                 </div>
               )}
               {loadingGrpMsg && groupMessages.length === 0 ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="w-5 h-5 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
+                  <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#00A884" }} />
                 </div>
               ) : groupMessages.length === 0 ? (
-                <p className="text-center text-[10px] text-[#0F1E3C]/20 py-12">Nenhuma mensagem ainda.</p>
+                <p className="text-center text-[11px] py-12" style={{ color: "#8696A0" }}>Nenhuma mensagem ainda.</p>
               ) : (
-                <div className="space-y-1.5">
+                <div className="space-y-0.5">
                   {groupMessages.map((m, i) => {
                     const prev = groupMessages[i - 1]
                     const showDate = i === 0 || dateBRKey(prev.createdAt) !== dateBRKey(m.createdAt)
                     const showSender = !m.fromMe && (!prev || prev.senderJid !== m.senderJid || showDate)
+                    const nextSame = i < groupMessages.length - 1 && groupMessages[i + 1].fromMe === m.fromMe
+                      && dateBRKey(groupMessages[i + 1].createdAt) === dateBRKey(m.createdAt)
+                    const showTail = !nextSame
                     return (
                       <div key={m.id}>
                         {showDate && (
-                          <p className="text-center text-[9px] text-[#0F1E3C]/30 my-2 font-medium">
-                            {new Date(m.createdAt).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}
-                          </p>
+                          <div className="flex justify-center my-3">
+                            <span className="text-[11px] font-medium px-3 py-1 rounded-full" style={{ background: "rgba(11,20,26,0.3)", color: "#E9EDEF" }}>
+                              {fmtDateSep(m.createdAt)}
+                            </span>
+                          </div>
                         )}
-                        <div className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}>
-                          <div className="max-w-[72%]">
+                        <div className={`flex ${m.fromMe ? "justify-end" : "justify-start"} mt-0.5`}>
+                          <div className="max-w-[68%]">
                             {showSender && (
-                              <p className="text-[9px] text-emerald-600 font-bold mb-0.5 px-1">
+                              <p className="text-[10px] font-bold mb-0.5 px-1" style={{ color: "#00A884" }}>
                                 {m.senderName?.split(" ")[0] || "?"}
                               </p>
                             )}
-                            <div className={`rounded-2xl text-[11.5px] leading-relaxed shadow-sm overflow-hidden ${
-                              m.fromMe
-                                ? "bg-[#4361EE] text-white rounded-br-none"
-                                : "bg-white text-[#0F1E3C] rounded-bl-none"
-                            }`}>
+                            <div className={`relative text-[13px] leading-relaxed shadow-sm overflow-hidden ${
+                              showTail ? (m.fromMe ? "rounded-xl rounded-br-sm" : "rounded-xl rounded-bl-sm") : "rounded-xl"
+                            }`} style={{ background: m.fromMe ? "#D9FDD3" : "#FFFFFF", color: "#111B21" }}>
+                              {showTail && (
+                                <div className="absolute bottom-0 w-0 h-0" style={m.fromMe ? {
+                                  right: "-7px", borderLeft: "7px solid #D9FDD3", borderBottom: "7px solid transparent",
+                                } : {
+                                  left: "-7px", borderRight: "7px solid #FFFFFF", borderBottom: "7px solid transparent",
+                                }} />
+                              )}
                               {(m.mediaType === "image" || m.mediaType === "video") && m.thumbnail ? (
                                 <div>
                                   <div className="relative">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                      src={`data:image/jpeg;base64,${m.thumbnail}`}
+                                    <img src={`data:image/jpeg;base64,${m.thumbnail}`}
                                       alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
-                                      className="w-full max-w-[220px] object-cover"
-                                    />
+                                      className="w-full max-w-[220px] object-cover" />
                                     {m.mediaType === "video" && (
                                       <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="w-9 h-9 rounded-full bg-black/50 flex items-center justify-center text-white text-sm">▶</div>
+                                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm" style={{ background: "rgba(0,0,0,0.5)" }}>▶</div>
                                       </div>
                                     )}
                                   </div>
                                   {m.caption && <p className="px-3 pt-1.5 pb-0 whitespace-pre-wrap break-words">{m.caption}</p>}
-                                  <span className={`block text-right text-[9px] px-3 pb-1.5 ${m.fromMe ? "text-white/50" : "text-[#0F1E3C]/30"}`}>{fmtTime(m.createdAt)}</span>
+                                  <span className="block text-right text-[10px] px-3 pb-1.5" style={{ color: "#667781" }}>{fmtTime(m.createdAt)}</span>
                                 </div>
                               ) : (
-                                <div className="px-3 py-2 whitespace-pre-wrap break-words">
-                                  {m.mediaType && !m.thumbnail ? (
-                                    <span className={m.fromMe ? "text-white/70" : "text-[#0F1E3C]/50"}>{MEDIA_EMOJI[m.mediaType] ?? m.content}</span>
-                                  ) : m.content}
-                                  <span className={`block text-right text-[9px] mt-0.5 ${m.fromMe ? "text-white/50" : "text-[#0F1E3C]/30"}`}>{fmtTime(m.createdAt)}</span>
+                                <div className="px-3 py-1.5 whitespace-pre-wrap break-words">
+                                  {m.mediaType && !m.thumbnail
+                                    ? <span style={{ color: "#667781" }}>{MEDIA_EMOJI[m.mediaType] ?? m.content}</span>
+                                    : m.content}
+                                  <span className="block text-right text-[10px] mt-0.5" style={{ color: "#667781" }}>{fmtTime(m.createdAt)}</span>
                                 </div>
                               )}
                             </div>
@@ -1965,8 +2145,8 @@ export default function PedidosPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            <div className="flex-shrink-0 border-t border-[#0F1E3C]/6 px-4 py-2 bg-white">
-              <p className="text-[10px] text-[#0F1E3C]/25 text-center">Chatbot não responde em grupos · somente leitura</p>
+            <div className="flex-shrink-0 px-4 py-2.5" style={{ background: "#202C33" }}>
+              <p className="text-[11px] text-center" style={{ color: "#8696A0" }}>Chatbot não responde em grupos · somente leitura</p>
             </div>
           </div>
         </div>

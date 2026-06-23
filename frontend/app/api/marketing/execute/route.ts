@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { campaignSend } from "@/lib/whatsapp/campaignSend"
 
+const SEND_DELAY_MS = 2_000 // 2s between messages in cron-fired campaigns
+
 const TZ = "America/Sao_Paulo"
 
 function nowBR() {
@@ -31,23 +33,34 @@ export async function POST(req: Request) {
     `)
 
     for (const c of pending) {
+      let sent = 0, errors = 0
       try {
         await pool.query(`UPDATE marketing_campaigns SET status = 'sending' WHERE id = $1`, [c.id])
 
         const contacts = await resolveContacts(c.audienceType, c.audienceLifecycle, c.audienceGroupJids)
-        let sent = 0, errors = 0
 
         for (const ct of contacts) {
           try {
             const msg = (c.content as string).replace(/\{nome\}/g, ((ct.name as string) ?? "").split(" ")[0])
-            await campaignSend(ct.jid as string, msg, c.mediaUrl as string | null)
+            const mUrl = c.mediaUrl as string | null
+            try {
+              await campaignSend(ct.jid as string, msg, mUrl)
+            } catch (mediaErr) {
+              console.error("[campaign-execute] sendMedia falhou para", ct.jid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
+              if (mUrl) await campaignSend(ct.jid as string, msg, null) // fallback texto
+              else throw mediaErr
+            }
             await pool.query(
-              `INSERT INTO wa_messages (contact_id, direction, content) VALUES ($1,'out',$2)`,
-              [ct.id, msg]
+              `INSERT INTO wa_messages (contact_id, direction, content, media_url, media_type)
+               VALUES ($1,'out',$2,$3,$4)`,
+              [ct.id, msg, mUrl ?? null, mUrl ? "image" : null]
             ).catch(() => {})
             sent++
-          } catch { errors++ }
-          await new Promise(r => setTimeout(r, 350))
+          } catch (e) {
+            console.error("[campaign-execute] falhou para", ct.jid, "—", e instanceof Error ? e.message : e)
+            errors++
+          }
+          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
         }
 
         for (const jid of (c.audienceGroupJids as string[])) {
@@ -55,17 +68,19 @@ export async function POST(req: Request) {
             await campaignSend(jid, c.content as string, c.mediaUrl as string | null)
             sent++
           } catch { errors++ }
-          await new Promise(r => setTimeout(r, 350))
+          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
         }
 
+        results.campaigns++
+      } catch (e) {
+        results.errors++; results.errorDetails.push(`campaign ${c.id}: ${e}`)
+      } finally {
         await pool.query(`
           UPDATE marketing_campaigns
           SET status = $1, sent_count = $2, error_count = $3, executed_at = NOW()
           WHERE id = $4
         `, [errors > 0 && sent === 0 ? "failed" : "sent", sent, errors, c.id])
-
-        results.campaigns++
-      } catch (e) { results.errors++; results.errorDetails.push(`campaign ${c.id}: ${e}`) }
+      }
     }
   } catch (e) { results.errors++; results.errorDetails.push(`campaigns query: ${e}`) }
 
@@ -118,15 +133,23 @@ export async function POST(req: Request) {
         for (const ct of contacts) {
           try {
             const msg = (item.content as string).replace(/\{nome\}/g, ((ct.name as string) ?? "").split(" ")[0])
-            await campaignSend(ct.jid as string, msg, item.mediaUrl as string | null)
-          } catch { /* silent — best effort */ }
-          await new Promise(r => setTimeout(r, 350))
+            const mUrl = item.mediaUrl as string | null
+            try {
+              await campaignSend(ct.jid as string, msg, mUrl)
+            } catch (mediaErr) {
+              console.error("[schedule-execute] sendMedia falhou para", ct.jid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
+              if (mUrl) await campaignSend(ct.jid as string, msg, null).catch(() => {})
+            }
+          } catch (e) {
+            console.error("[schedule-execute] falhou para", ct.jid, "—", e instanceof Error ? e.message : e)
+          }
+          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
         }
 
         for (const jid of (s.audienceGroupJids as string[])) {
           try { await campaignSend(jid, item.content as string, item.mediaUrl as string | null) }
           catch { /* silent */ }
-          await new Promise(r => setTimeout(r, 350))
+          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
         }
 
         // Mark item as sent + rotate

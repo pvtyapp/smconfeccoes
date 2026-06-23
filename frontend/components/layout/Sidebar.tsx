@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
@@ -29,6 +30,7 @@ import {
   MessageCircle,
   Megaphone,
   Settings,
+  Signal,
 } from "lucide-react"
 
 type NavItem = { href: string; label: string; icon: React.ElementType }
@@ -66,6 +68,7 @@ const navProducao: NavItem[] = [
   { href: "/dashboard/programacao",        label: "Programação de Produção",    icon: CalendarClock  },
   { href: "/dashboard/custo-producao",     label: "Custos de Produção",         icon: Factory        },
   { href: "/dashboard/costura-revisao",    label: "Costura e Revisão",          icon: ClipboardCheck },
+  { href: "/dashboard/semaforo",           label: "Semáforo de Produção",       icon: Signal         },
 ]
 
 const navCadastros: NavItem[] = [
@@ -110,6 +113,22 @@ function NavSection({ label, items, isActive }: { label: string; items: NavItem[
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const [totalUnread, setTotalUnread] = useState(0)
+
+  useEffect(() => {
+    function fetchUnread() {
+      fetch("/api/chat/conversations")
+        .then(r => r.ok ? r.json() : [])
+        .then((convs: Array<{ unread: number }>) => {
+          setTotalUnread(convs.reduce((s, c) => s + (c.unread ?? 0), 0))
+        })
+        .catch(() => {})
+    }
+    fetchUnread()
+    const t = setInterval(fetchUnread, 5_000)
+    return () => clearInterval(t)
+  }, [])
+
   function isActive(href: string) { return pathname === href }
 
   return (
@@ -127,12 +146,18 @@ export default function Sidebar() {
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         {navTop.map(({ href, label, icon: Icon }) => {
           const active = isActive(href)
+          const isAutoatendimento = href === "/dashboard/autoatendimento/pedidos"
           return (
             <Link key={href} href={href} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
               active ? "bg-[#4361EE] text-white shadow-md shadow-[#4361EE]/20" : "text-white/50 hover:bg-white/6 hover:text-white"
             }`}>
               <Icon size={16} className={active ? "opacity-100" : "opacity-60"} />
               {label}
+              {isAutoatendimento && totalUnread > 0 && (
+                <span className="ml-auto text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "#00A884", color: "#fff" }}>
+                  {totalUnread > 9 ? "9+" : totalUnread}
+                </span>
+              )}
             </Link>
           )
         })}

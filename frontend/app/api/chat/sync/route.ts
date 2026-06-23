@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
+import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
+import { syncContactMessages } from "@/lib/whatsapp/syncMessages"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -80,8 +82,9 @@ async function fetchEvolutionGroups(): Promise<Array<Record<string, string>>> {
 
 export async function POST() {
   try {
-    // Ensure profile_pic column exists
+    // Ensure schema columns exist
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS profile_pic TEXT`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_message_synced_at TIMESTAMPTZ`).catch(() => {})
 
     // Cleanup: remove garbage contacts (@lid JIDs or non-WA JIDs)
     await pool.query(`
@@ -125,7 +128,34 @@ export async function POST() {
       syncedGroups++
     }
 
-    return NextResponse.json({ ok: true, syncedContacts, syncedGroups })
+    // Sync messages for the 20 most recently active contacts that haven't been synced in 90s.
+    // Critical fallback when Evolution webhooks are not firing — ensures new messages
+    // appear in the conversation list even for contacts not currently open in the chat view.
+    const { rows: staleContacts } = await pool.query(`
+      SELECT id, jid FROM wa_contacts
+      WHERE jid LIKE '%@s.whatsapp.net'
+        AND (last_message_synced_at IS NULL OR last_message_synced_at < NOW() - INTERVAL '90 seconds')
+      ORDER BY updated_at DESC NULLS LAST
+      LIMIT 20
+    `).catch(() => ({ rows: [] }))
+
+    if (staleContacts.length > 0) {
+      // Mark all as syncing now before we fire the background jobs (prevents double-sync on concurrent calls)
+      const ids = staleContacts.map((c: { id: number }) => c.id)
+      await pool.query(
+        `UPDATE wa_contacts SET last_message_synced_at = NOW() WHERE id = ANY($1)`,
+        [ids]
+      ).catch(() => {})
+
+      // Fire background sync for each contact — waitUntil keeps function alive after response
+      waitUntil(
+        Promise.allSettled(
+          staleContacts.map((c: { id: number; jid: string }) => syncContactMessages(c.jid, c.id))
+        )
+      )
+    }
+
+    return NextResponse.json({ ok: true, syncedContacts, syncedGroups, bgSyncing: staleContacts.length })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

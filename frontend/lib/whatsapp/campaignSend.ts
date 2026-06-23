@@ -11,6 +11,15 @@ export async function campaignSend(
   const number = jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
   if (mediaUrl) {
+    // Derive fileName + mimetype from URL so Evolution can infer the media type correctly
+    const rawName = mediaUrl.split("/").pop()?.split("?")[0] ?? "image.jpg"
+    const ext = rawName.split(".").pop()?.toLowerCase() ?? "jpg"
+    const MIME: Record<string, string> = {
+      jpg: "image/jpeg", jpeg: "image/jpeg",
+      png: "image/png",  gif: "image/gif",  webp: "image/webp",
+    }
+    const mimetype = MIME[ext] ?? "image/jpeg"
+
     const r = await fetch(`${EVO_URL}/message/sendMedia/${EVO_INST}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: EVO_KEY },
@@ -19,10 +28,16 @@ export async function campaignSend(
         mediatype: "image",
         media: mediaUrl,
         caption: content,
+        mimetype,
+        fileName: rawName,
       }),
       signal: AbortSignal.timeout(15_000),
     })
-    if (!r.ok) throw new Error(`Evolution sendMedia ${r.status}`)
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => "")
+      console.error(`[campaignSend] sendMedia falhou ${r.status} para ${number}:`, errBody.slice(0, 300))
+      throw new Error(`Evolution sendMedia ${r.status}: ${errBody.slice(0, 120)}`)
+    }
   } else {
     const r = await fetch(`${EVO_URL}/message/sendText/${EVO_INST}`, {
       method: "POST",
