@@ -616,20 +616,25 @@ export default function PedidosPage() {
   }, [])
 
   const loadMessages = useCallback(async (contactId: number) => {
-    const r = await fetch(`/api/chat/messages?contactId=${contactId}`)
-    if (!r.ok) return
-    const data = await r.json()
-    const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
-    const more: boolean   = Array.isArray(data) ? false : (data.hasMore ?? false)
-    setMessages(msgs)
-    setHasMoreMsgs(more)
-    setMsgOffset(0)
-    latestMsgAt.current = msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null
-    lastSeenId.current  = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
+    try {
+      const r = await fetch(`/api/chat/messages?contactId=${contactId}`)
+      if (!r.ok) return
+      const data = await r.json()
+      const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
+      const more: boolean   = Array.isArray(data) ? false : (data.hasMore ?? false)
+      setMessages(msgs)
+      setHasMoreMsgs(more)
+      setMsgOffset(0)
+      latestMsgAt.current = msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null
+      lastSeenId.current  = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
 
-    const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null).map(m => m.id))
-    if (pendingIds.size > 0) {
-      setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
+      const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null).map(m => m.id))
+      if (pendingIds.size > 0) {
+        setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
+      }
+    } finally {
+      // Libera o poll mesmo quando o load retorna vazio (contato sem histórico no DB)
+      isFirstLoad.current = false
     }
   }, [refreshMediaUrls])
 
@@ -651,8 +656,8 @@ export default function PedidosPage() {
   }, [])
 
   const pollMessages = useCallback(async (contactId: number) => {
-    // Só executa após o loadMessages ter rodado ao menos uma vez
-    if (!latestMsgAt.current && lastSeenId.current === 0) return
+    // Aguarda loadMessages concluir — isFirstLoad fica true até o finally do loadMessages
+    if (isFirstLoad.current) return
     // Usa afterId (baseado em pk auto-increment) para não perder mensagens sincronizadas
     // com timestamp histórico (createdAt < since mas id > lastSeenId)
     const r = await fetch(`/api/chat/messages?contactId=${contactId}&afterId=${lastSeenId.current}`)

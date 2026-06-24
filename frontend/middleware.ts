@@ -9,6 +9,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/orders/expire",
   "/api/lifecycle/migrate",
   "/api/chat/migrate",
+  "/api/debug/",
 ]
 
 export function middleware(request: NextRequest) {

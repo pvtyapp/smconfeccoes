@@ -133,18 +133,25 @@ export async function syncMessagesFromEvolution(jid: string, contactId: number):
       const ts        = rec.messageTimestamp as number | undefined
       const createdAt = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString()
 
+      // Mensagens de entrada com mais de 24h são auto-marcadas como lidas no sync.
+      // Isso evita que o histórico antigo gere badges de "não lido" enganosos.
+      // COALESCE no DO UPDATE preserva read_at existente e aplica o auto-mark em re-syncs.
+      const isOldMsg = ts ? (Date.now() - ts * 1000 > 24 * 60 * 60 * 1000) : false
+      const readAt   = (direction === 'in' && isOldMsg) ? createdAt : null
+
       const { rowCount } = await pool.query(
-        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_url, file_name, caption, created_at, quoted_message_id, quoted_content)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_url, file_name, caption, created_at, quoted_message_id, quoted_content, read_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
            media_type        = COALESCE(wa_messages.media_type,        EXCLUDED.media_type),
            media_url         = COALESCE(wa_messages.media_url,         EXCLUDED.media_url),
            file_name         = COALESCE(wa_messages.file_name,         EXCLUDED.file_name),
            caption           = COALESCE(wa_messages.caption,           EXCLUDED.caption),
            quoted_message_id = COALESCE(wa_messages.quoted_message_id, EXCLUDED.quoted_message_id),
-           quoted_content    = COALESCE(wa_messages.quoted_content,    EXCLUDED.quoted_content)
+           quoted_content    = COALESCE(wa_messages.quoted_content,    EXCLUDED.quoted_content),
+           read_at           = COALESCE(wa_messages.read_at,           EXCLUDED.read_at)
          RETURNING (xmax = 0) AS inserted`,
-        [contactId, msgId, direction, content, mediaType, mediaUrl, fileName, caption, createdAt, quotedMsgId, quotedContent]
+        [contactId, msgId, direction, content, mediaType, mediaUrl, fileName, caption, createdAt, quotedMsgId, quotedContent, readAt]
       ).catch(() => ({ rowCount: 0 }))
 
       if (mediaType && rowCount) {
