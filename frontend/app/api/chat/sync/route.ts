@@ -128,13 +128,13 @@ export async function POST() {
       syncedGroups++
     }
 
-    // Sync messages for the 20 most recently active contacts that haven't been synced in 90s.
+    // Sync messages for the 20 most recently active contacts that haven't been synced in 30s.
     // Critical fallback when Evolution webhooks are not firing — ensures new messages
     // appear in the conversation list even for contacts not currently open in the chat view.
     const { rows: staleContacts } = await pool.query(`
       SELECT id, jid FROM wa_contacts
       WHERE jid LIKE '%@s.whatsapp.net'
-        AND (last_message_synced_at IS NULL OR last_message_synced_at < NOW() - INTERVAL '90 seconds')
+        AND (last_message_synced_at IS NULL OR last_message_synced_at < NOW() - INTERVAL '30 seconds')
       ORDER BY updated_at DESC NULLS LAST
       LIMIT 20
     `).catch(() => ({ rows: [] }))

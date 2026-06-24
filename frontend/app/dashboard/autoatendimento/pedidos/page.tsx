@@ -517,14 +517,16 @@ export default function PedidosPage() {
     return () => clearInterval(t)
   }, [loadConvs])
 
-  // Re-sync with Evolution every 90s — syncs contacts + messages for top 20 active contacts.
+  // Re-sync with Evolution every 30s — syncs contacts + messages for top 20 active contacts.
   // Acts as fallback when Evolution webhooks are not configured or miss events.
   useEffect(() => {
-    const t = setInterval(() => {
-      fetch("/api/chat/sync", { method: "POST" }).catch(() => {})
-    }, 90_000)
-    return () => clearInterval(t)
-  }, [])
+    const sync = () => fetch("/api/chat/sync", { method: "POST" }).catch(() => {})
+    const t = setInterval(sync, 30_000)
+    // Sync immediately when user returns to this tab after being away
+    const onVisible = () => { if (document.visibilityState === "visible") { sync().then(() => loadConvs()) } }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible) }
+  }, [loadConvs])
 
   // ── Load groups (Evolution-direct) ────────────────────────────────────────
 
@@ -721,13 +723,13 @@ export default function PedidosPage() {
     const s = setInterval(() => {
       const cid = chatContact.id
       const jid = chatContact.jid
-      // Sync incoming: full load sem paginação — servidor fará sync com Evolution (throttle 60s)
+      // Sync incoming: full load sem paginação — servidor fará sync com Evolution (throttle 30s)
       fetch(`/api/chat/messages?contactId=${cid}`)
         .then(() => pollMessages(cid))
         .catch(() => {})
       // Sync outgoing em paralelo
       syncOutgoing(cid, jid).catch(() => {})
-    }, 30_000)
+    }, 10_000)
     return () => { clearInterval(t); clearInterval(s) }
   }, [chatContact, pollMessages, syncOutgoing])
 
