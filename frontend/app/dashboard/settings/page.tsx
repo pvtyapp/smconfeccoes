@@ -72,6 +72,76 @@ export default function SettingsPage() {
       ) : (
         <div className="space-y-6">
 
+          {/* Status do Sistema */}
+          {(() => {
+            const chatbotOn = settings.chatbot_ativo !== "false"
+            const autoOn    = settings.pedidos_auto  !== "false"
+            const raw       = settings.debug_last_webhook
+            let webhookAge: number | null = null
+            let webhookEvent = "—"
+            if (raw) {
+              try {
+                const p = JSON.parse(raw)
+                if (p.ts) webhookAge = Math.round((Date.now() - new Date(p.ts).getTime()) / 60_000)
+                if (p.event) webhookEvent = p.event
+              } catch { /* raw string */ }
+            }
+            const webhookOk  = webhookAge !== null && webhookAge < 240
+            const webhookWarn = webhookAge !== null && webhookAge >= 240 && webhookAge < 1440
+            const webhookBad  = webhookAge === null || webhookAge >= 1440
+
+            function pill(label: string, sub: string, color: "green" | "blue" | "amber" | "red" | "gray") {
+              const map = {
+                green: "bg-emerald-50 border-emerald-200 text-emerald-700",
+                blue:  "bg-blue-50 border-blue-200 text-blue-700",
+                amber: "bg-amber-50 border-amber-200 text-amber-700",
+                red:   "bg-red-50 border-red-200 text-red-700",
+                gray:  "bg-[#F4F6FB] border-[#0F1E3C]/10 text-[#0F1E3C]/40",
+              }
+              const dot = { green: "bg-emerald-400", blue: "bg-blue-400", amber: "bg-amber-400", red: "bg-red-400", gray: "bg-[#0F1E3C]/20" }
+              return (
+                <div className={`flex items-center gap-2 border rounded-xl px-3 py-2.5 ${map[color]}`}>
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${dot[color]} ${color === "green" ? "animate-pulse" : ""}`} />
+                  <div>
+                    <p className="text-[11px] font-bold leading-tight">{label}</p>
+                    <p className="text-[10px] opacity-70 leading-tight">{sub}</p>
+                  </div>
+                </div>
+              )
+            }
+
+            const webhookSub = webhookAge === null
+              ? "nunca recebido"
+              : webhookAge < 1
+              ? `${webhookEvent} · < 1 min atrás`
+              : `${webhookEvent} · ${webhookAge} min atrás`
+
+            return (
+              <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-3">
+                <h2 className="text-sm font-bold text-[#0F1E3C]">Status do Sistema</h2>
+                <div className="grid grid-cols-3 gap-2">
+                  {pill("Chatbot", chatbotOn ? "respondendo" : "mudo", chatbotOn ? "green" : "gray")}
+                  {pill("Auto pedidos", autoOn ? "detectando" : "desligado", autoOn ? "blue" : "gray")}
+                  {pill(
+                    "Webhook",
+                    webhookSub,
+                    webhookOk ? "green" : webhookWarn ? "amber" : "red"
+                  )}
+                </div>
+                {webhookBad && (
+                  <p className="text-[10px] text-red-600 leading-relaxed">
+                    ⚠ Webhook nunca recebido ou há mais de 24h. Mensagens em tempo real podem não estar chegando. Verifique a URL do Webhook no painel do Evolution.
+                  </p>
+                )}
+                {webhookWarn && (
+                  <p className="text-[10px] text-amber-600 leading-relaxed">
+                    ⚠ Último evento há {webhookAge} min. Normal se não houve mensagens recentes. Se esperava atividade, verifique o Evolution.
+                  </p>
+                )}
+              </section>
+            )
+          })()}
+
           {/* Dados da empresa */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Dados da Empresa</h2>
@@ -176,7 +246,7 @@ export default function SettingsPage() {
               try { parsed = JSON.parse(raw) } catch { /* raw não é JSON */ }
               const ts = parsed.ts ? new Date(parsed.ts) : null
               const age = ts ? Math.round((Date.now() - ts.getTime()) / 60_000) : null
-              const isOk = age !== null && age < 30
+              const isOk = age !== null && age < 240
               return (
                 <div className={`flex items-start gap-3 border rounded-xl px-4 py-3 ${isOk ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
                   <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${isOk ? "bg-emerald-400" : "bg-amber-400"}`} />
@@ -188,7 +258,7 @@ export default function SettingsPage() {
                       {ts ? ts.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "—"}
                       {age !== null ? ` (${age < 1 ? "< 1 min atrás" : `${age} min atrás`})` : ""}
                     </p>
-                    {!isOk && age !== null && age >= 30 && (
+                    {!isOk && age !== null && age >= 240 && (
                       <p className="text-[10px] text-amber-500 mt-1">
                         ⚠ Último evento há {age} min. Se mensagens não estão chegando, verifique o Webhook no Evolution.
                       </p>
