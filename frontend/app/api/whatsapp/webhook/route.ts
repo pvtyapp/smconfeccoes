@@ -111,19 +111,21 @@ export async function POST(req: Request) {
     // Use it to clear unread badges in our DB so the dashboard reflects the read state.
     if (event === "chats.upsert") {
       const chats: unknown[] = Array.isArray(body?.data) ? body.data : []
-      for (const chat of chats) {
-        const c = chat as Record<string, unknown>
-        const chatJid = c.id as string | undefined
-        const unreadCount = c.unreadCount as number | undefined
-        if (chatJid && unreadCount != null && unreadCount <= 0 && !chatJid.endsWith("@g.us")) {
-          pool.query(
-            `UPDATE wa_messages SET read_at = NOW()
-             WHERE read_at IS NULL AND direction = 'in'
-               AND contact_id = (SELECT id FROM wa_contacts WHERE jid = $1)`,
-            [chatJid]
-          ).catch(() => {})
-        }
-      }
+      waitUntil(
+        Promise.all(chats.map(async (chat) => {
+          const c = chat as Record<string, unknown>
+          const chatJid    = c.id as string | undefined
+          const unreadCount = c.unreadCount as number | undefined
+          if (chatJid && unreadCount != null && unreadCount <= 0 && !chatJid.endsWith("@g.us")) {
+            await pool.query(
+              `UPDATE wa_messages SET read_at = NOW()
+               WHERE read_at IS NULL AND direction = 'in'
+                 AND contact_id = (SELECT id FROM wa_contacts WHERE jid = $1)`,
+              [chatJid]
+            ).catch(() => {})
+          }
+        }))
+      )
       return NextResponse.json({ ok: true })
     }
 
@@ -148,39 +150,30 @@ export async function POST(req: Request) {
     // Status update (delivery/read ticks)
     if (event === "messages.update") {
       const updates: unknown[] = Array.isArray(body?.data) ? body.data : []
-      for (const upd of updates) {
-        const u = upd as Record<string, unknown>
-        const k = u.key as Record<string, unknown> | undefined
-        const msgId = k?.id as string | undefined
-        const statusCode = (u.update as Record<string, unknown>)?.status as number | undefined
-        if (!msgId || statusCode == null) continue
-        const fromMe = Boolean(k?.fromMe)
-        if (fromMe) {
-          // Outgoing message: update delivery/read status
-          const statusStr = statusCode >= 4 ? "read" : statusCode >= 3 ? "delivered" : statusCode >= 2 ? "sent" : null
-          if (statusStr) {
-            pool.query(
-              `UPDATE wa_messages SET status = $1 WHERE message_id = $2 AND direction = 'out'`,
-              [statusStr, msgId]
-            ).catch(() => {})
-            // Touch updated_at so 30s status refresh on frontend picks up the tick change (requires migrate-v5)
-            pool.query(
-              `UPDATE wa_messages SET updated_at = NOW() WHERE message_id = $1 AND direction = 'out'`,
+      waitUntil(
+        Promise.all(updates.map(async (upd) => {
+          const u = upd as Record<string, unknown>
+          const k = u.key as Record<string, unknown> | undefined
+          const msgId      = k?.id as string | undefined
+          const statusCode = (u.update as Record<string, unknown>)?.status as number | undefined
+          if (!msgId || statusCode == null) return
+          const fromMe = Boolean(k?.fromMe)
+          if (fromMe) {
+            const statusStr = statusCode >= 4 ? "read" : statusCode >= 3 ? "delivered" : statusCode >= 2 ? "sent" : null
+            if (statusStr) {
+              await pool.query(
+                `UPDATE wa_messages SET status = $1, updated_at = NOW() WHERE message_id = $2 AND direction = 'out'`,
+                [statusStr, msgId]
+              ).catch(() => {})
+            }
+          } else if (statusCode >= 4) {
+            await pool.query(
+              `UPDATE wa_messages SET read_at = NOW(), updated_at = NOW() WHERE message_id = $1 AND direction = 'in' AND read_at IS NULL`,
               [msgId]
             ).catch(() => {})
           }
-        } else if (statusCode >= 4) {
-          // Incoming message read by PIV on phone/WA Desktop — sync badge
-          pool.query(
-            `UPDATE wa_messages SET read_at = NOW() WHERE message_id = $1 AND direction = 'in' AND read_at IS NULL`,
-            [msgId]
-          ).catch(() => {})
-          pool.query(
-            `UPDATE wa_messages SET updated_at = NOW() WHERE message_id = $1 AND direction = 'in'`,
-            [msgId]
-          ).catch(() => {})
-        }
-      }
+        }))
+      )
       return NextResponse.json({ ok: true })
     }
 
@@ -224,24 +217,24 @@ export async function POST(req: Request) {
         if (text0) {
           const outMsgId: string | null = (key?.id as string) ?? null
           const ts = key?.timestamp ? new Date(Number(key.timestamp) * 1000) : null
-          pool.query(`SELECT id FROM wa_contacts WHERE jid = $1`, [jid])
-            .then(({ rows }) => {
-              if (!rows[0]) return
-              const contactId0 = rows[0].id as number
-              pool.query(
-                `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
-                 VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))
-                 ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
-                   media_type = COALESCE(wa_messages.media_type, EXCLUDED.media_type),
-                   file_name  = COALESCE(wa_messages.file_name,  EXCLUDED.file_name)`,
-                [contactId0, outMsgId, text0, outMediaType, outFileName, ts]
-              ).then(() => {
-                // Download media sent from phone and save to blob
-                if (outMediaType && outMediaType !== "sticker" && outMsgId) {
-                  waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
-                }
-              }).catch(() => {})
-            }).catch(() => {})
+          // await — Vercel terminava a função antes do INSERT completar (era fire-and-forget .then())
+          const { rows: cRows } = await pool.query(
+            `SELECT id FROM wa_contacts WHERE jid = $1`, [jid]
+          ).catch(() => ({ rows: [] as { id: number }[] }))
+          if (cRows[0]) {
+            const contactId0 = cRows[0].id as number
+            await pool.query(
+              `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
+               VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))
+               ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
+                 media_type = COALESCE(wa_messages.media_type, EXCLUDED.media_type),
+                 file_name  = COALESCE(wa_messages.file_name,  EXCLUDED.file_name)`,
+              [contactId0, outMsgId, text0, outMediaType, outFileName, ts]
+            ).catch(() => {})
+            if (outMediaType && outMediaType !== "sticker" && outMsgId) {
+              waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
+            }
+          }
         }
       }
       return NextResponse.json({ ok: true })

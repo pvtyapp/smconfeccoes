@@ -615,9 +615,9 @@ export default function PedidosPage() {
     }
   }, [])
 
-  const loadMessages = useCallback(async (contactId: number) => {
+  const loadMessages = useCallback(async (contactId: number, noSync = false) => {
     try {
-      const r = await fetch(`/api/chat/messages?contactId=${contactId}`)
+      const r = await fetch(`/api/chat/messages?contactId=${contactId}${noSync ? "&noSync=1" : ""}`)
       if (!r.ok) return
       const data = await r.json()
       const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
@@ -812,8 +812,8 @@ export default function PedidosPage() {
         quotedFromMe: quoted?.direction === "out",
       }),
     })
-      .then(() => { loadMessages(chatContact.id); loadConvs() })
-      .catch(() => { loadMessages(chatContact.id) })
+      .then(() => { loadMessages(chatContact.id, true); loadConvs() })
+      .catch(() => { loadMessages(chatContact.id, true) })
       .finally(() => setSendingChat(false))
   }
 
