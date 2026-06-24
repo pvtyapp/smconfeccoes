@@ -716,7 +716,7 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (!chatContact) return
-    const t = setInterval(() => pollMessages(chatContact.id), 3_000)
+    const t = setInterval(() => pollMessages(chatContact.id), 2_000)
     // A cada 30s: sync de saídas (mensagens que PIV enviou pelo celular) + sync de entrada
     // O sync de entrada tem throttle de 60s no servidor — garante que mensagens chegam
     // mesmo que o webhook do Evolution não esteja disparando

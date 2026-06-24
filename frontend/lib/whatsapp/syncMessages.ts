@@ -59,13 +59,24 @@ export async function syncMessagesFromEvolution(jid: string, contactId: number):
       body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: 80 }),
       signal: ctrl.signal,
     })
-    if (!res.ok) return pending
+    if (!res.ok) {
+      console.error(`[syncMessages] Evolution findMessages não-ok ${res.status} para ${jid}`)
+      return pending
+    }
 
     const data = await res.json()
+    // Evolution v2 retorna em vários formatos dependendo da versão — tenta todos
     const records: unknown[] =
       Array.isArray(data) ? data :
       Array.isArray(data?.messages?.records) ? data.messages.records :
-      Array.isArray(data?.records) ? data.records : []
+      Array.isArray(data?.records) ? data.records :
+      Array.isArray(data?.data) ? data.data :
+      Array.isArray(data?.messages) ? data.messages :
+      []
+
+    if (records.length === 0) {
+      console.error(`[syncMessages] Evolution retornou 0 mensagens para ${jid}. Raw:`, JSON.stringify(data).slice(0, 200))
+    }
 
     for (const r of records) {
       const rec = r as Record<string, unknown>

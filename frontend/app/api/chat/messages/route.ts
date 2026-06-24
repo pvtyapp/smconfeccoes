@@ -3,9 +3,9 @@ import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { syncMessagesFromEvolution, downloadSyncedMedia, type PendingMedia } from "@/lib/whatsapp/syncMessages"
 
-// Throttle Evolution sync — 60s per contact (in-memory, resets on cold start — acceptable)
+// Throttle Evolution sync — 30s per contact (in-memory, resets on cold start — acceptable)
 const syncThrottle = new Map<number, number>()
-const SYNC_INTERVAL_MS = 60 * 1000
+const SYNC_INTERVAL_MS = 30 * 1000
 
 const PAGE_SIZE = 60
 
