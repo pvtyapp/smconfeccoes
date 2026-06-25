@@ -71,10 +71,13 @@ export async function GET() {
           contact: recentContact[0].name || recentContact[0].jid,
           rawKeys: typeof fmData === "object" && fmData !== null ? Object.keys(fmData) : typeof fmData,
           isArray: Array.isArray(fmData),
-          sampleLength: Array.isArray(fmData) ? fmData.length
-            : Array.isArray((fmData as Record<string,unknown>)?.messages?.records) ? (fmData as Record<string,unknown[]>).messages.records.length
-            : Array.isArray((fmData as Record<string,unknown>)?.records) ? (fmData as Record<string,unknown[]>).records.length
-            : "unknown format",
+          sampleLength: (() => {
+              if (Array.isArray(fmData)) return fmData.length
+              const d = fmData as { messages?: { records?: unknown[] }; records?: unknown[] }
+              if (Array.isArray(d?.messages?.records)) return d.messages!.records!.length
+              if (Array.isArray(d?.records)) return d.records!.length
+              return "unknown format"
+            })(),
           raw: JSON.stringify(fmData).slice(0, 500),
         }
       } catch (e) {
