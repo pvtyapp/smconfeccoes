@@ -174,16 +174,32 @@ export async function GET() {
       evoFindChats = { error: String(e) }
     }
 
-    // Count contacts in DB
+    // Count contacts in DB + schema
     const { rows: dbContacts } = await pool.query(
       `SELECT COUNT(*) AS total FROM wa_contacts`
     )
+    const { rows: contactCols } = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'wa_contacts' ORDER BY ordinal_position
+    `).catch(() => ({ rows: [] }))
+    // Test conversations query directly
+    const { rows: convSample } = await pool.query(`
+      SELECT c.id, c.name, c.phone, c.jid, lm.content AS "lastMessage", lm.created_at AS "lastAt"
+      FROM wa_contacts c
+      JOIN LATERAL (
+        SELECT content, created_at FROM wa_messages
+        WHERE contact_id = c.id ORDER BY created_at DESC LIMIT 1
+      ) lm ON true
+      ORDER BY lm.created_at DESC LIMIT 5
+    `).catch(() => ({ rows: [] }))
 
     return NextResponse.json({
       ok: true,
       schema: { columns },
       totalMessages: cnt[0]?.total,
       dbContacts: dbContacts[0]?.total,
+      contactColumns: contactCols.map((c: {column_name: string}) => c.column_name),
+      convSample,
       recentMessages: messages,
       lastWebhook,
       evoUrl: EVO_URL,
