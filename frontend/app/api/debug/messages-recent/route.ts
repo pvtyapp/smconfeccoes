@@ -182,6 +182,11 @@ export async function GET() {
       SELECT column_name FROM information_schema.columns
       WHERE table_name = 'wa_contacts' ORDER BY ordinal_position
     `).catch(() => ({ rows: [] }))
+    // List all @s.whatsapp.net contacts to check for duplicates
+    const { rows: sContacts } = await pool.query(`
+      SELECT id, jid, name, phone FROM wa_contacts WHERE jid LIKE '%@s.whatsapp.net' ORDER BY id
+    `).catch(() => ({ rows: [] }))
+
     // Test conversations query directly
     const { rows: convSample } = await pool.query(`
       SELECT c.id, c.name, c.phone, c.jid, lm.content AS "lastMessage", lm.created_at AS "lastAt"
@@ -199,6 +204,7 @@ export async function GET() {
       totalMessages: cnt[0]?.total,
       dbContacts: dbContacts[0]?.total,
       contactColumns: contactCols.map((c: {column_name: string}) => c.column_name),
+      sContacts,
       convSample,
       recentMessages: messages,
       lastWebhook,
