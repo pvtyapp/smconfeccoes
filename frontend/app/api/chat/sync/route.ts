@@ -7,7 +7,6 @@ const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
 const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
-// How many contacts to backfill per sync cycle (each makes 1 Evolution call)
 const CONTACTS_PER_CYCLE = 5
 const MSGS_PER_CONTACT   = 200
 
@@ -77,32 +76,54 @@ function hasMedia(msgObj: Record<string, unknown> | undefined): boolean {
             msgObj.documentMessage || msgObj.stickerMessage)
 }
 
+// Accepts @s.whatsapp.net and @lid JIDs (individual contacts in both addressing modes)
+function isIndividual(jid: string): boolean {
+  return jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")
+}
+
+// Extract phone: for @lid use lastMessage.key.remoteJidAlt, for @s use the jid itself
+function extractPhone(c: Record<string, unknown>): string {
+  const jid = ((c.remoteJid ?? c.id) as string) || ""
+  if (jid.endsWith("@s.whatsapp.net")) {
+    return jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+  }
+  // @lid: phone is in lastMessage.key.remoteJidAlt
+  const lastMsg = c.lastMessage as Record<string, unknown> | undefined
+  const lastKey = lastMsg?.key as Record<string, unknown> | undefined
+  const alt = (lastKey?.remoteJidAlt as string) || ""
+  if (alt.endsWith("@s.whatsapp.net")) {
+    return alt.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+  }
+  // fallback: strip @lid suffix (numeric lid, not a phone but better than nothing)
+  return jid.replace("@lid", "").replace(/\D/g, "")
+}
+
 export async function POST() {
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)
     `).catch(() => {})
 
-    // ── 1. fetchChats: build full contact list ────────────────────────────────
+    // ── 1. fetchChats: build full contact list (individual only) ──────────────
     const chats = await fetchChats()
 
-    // Individual chats only (skip groups)
     const individualChats = chats.filter(c => {
       const jid = ((c.remoteJid ?? c.id) as string) || ""
-      return jid.endsWith("@s.whatsapp.net")
+      return isIndividual(jid)
     })
 
     // Upsert all contacts from findChats
     for (const c of individualChats) {
       const jid   = ((c.remoteJid ?? c.id) as string) || ""
       const name  = (c.name as string) || (c.pushName as string) || ""
-      const phone = jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+      const phone = extractPhone(c)
       const pic   = (c.profilePicUrl as string) || null
       await pool.query(
         `INSERT INTO wa_contacts (jid, name, phone, profile_pic)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (jid) DO UPDATE SET
            name        = CASE WHEN EXCLUDED.name ~ '^[0-9]+$' THEN wa_contacts.name ELSE EXCLUDED.name END,
+           phone       = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
            profile_pic = COALESCE(EXCLUDED.profile_pic, wa_contacts.profile_pic),
            updated_at  = NOW()`,
         [jid, name || phone, phone, pic]
@@ -124,8 +145,6 @@ export async function POST() {
     }
 
     // ── 3. Per-contact backfill cursor ────────────────────────────────────────
-    // Stores the index into the sorted JID list we've processed up to.
-    // Each cycle: take next CONTACTS_PER_CYCLE contacts, fetch their full history.
     const sortedJids = individualChats
       .map(c => ((c.remoteJid ?? c.id) as string) || "")
       .filter(Boolean)
@@ -142,16 +161,15 @@ export async function POST() {
       let totalSaved = 0
 
       for (const jid of batch) {
-        // Get contact id
         const { rows: cr } = await pool.query(
           `SELECT id FROM wa_contacts WHERE jid = $1 LIMIT 1`, [jid]
         ).catch(() => ({ rows: [] as { id: number }[] }))
         if (!cr.length) continue
         const contactId = cr[0].id
 
-        // Fetch all pages for this contact
         let skip = 0
         let page: unknown[]
+        let phoneUpdated = false
         do {
           page = await fetchMessagesForJid(jid, skip)
           for (const raw of page) {
@@ -178,6 +196,22 @@ export async function POST() {
                createdAt, readAt, fromMe ? "sent" : null]
             ).catch(() => {})
             totalSaved++
+
+            // For @lid contacts: update phone from remoteJidAlt once
+            if (!phoneUpdated && jid.endsWith("@lid")) {
+              const alt = k.remoteJidAlt as string | undefined
+              if (alt?.endsWith("@s.whatsapp.net")) {
+                const realPhone = alt.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+                if (realPhone.length >= 8 && realPhone.length <= 15) {
+                  pool.query(
+                    `UPDATE wa_contacts SET phone = $1, updated_at = NOW()
+                     WHERE id = $2 AND (phone IS NULL OR phone !~ '^[0-9]{8,15}$')`,
+                    [realPhone, contactId]
+                  ).catch(() => {})
+                  phoneUpdated = true
+                }
+              }
+            }
           }
           skip += MSGS_PER_CONTACT
         } while (page.length === MSGS_PER_CONTACT)
