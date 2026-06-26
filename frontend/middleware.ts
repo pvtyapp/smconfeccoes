@@ -10,6 +10,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/lifecycle/migrate",
   "/api/chat/migrate",
   "/api/chat/sync",
+  "/api/chat/cleanup-dupes",
   "/api/debug/",
 ]
 
