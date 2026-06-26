@@ -96,14 +96,25 @@ export async function GET() {
         signal: AbortSignal.timeout(8000),
       })
       const d1 = await fc1.json()
-      const arr1 = Array.isArray(d1) ? d1 : Array.isArray(d1?.chats) ? d1.chats : Array.isArray(d1?.records) ? d1.records : null
+      const arr1: Record<string, unknown>[] = Array.isArray(d1) ? d1 : Array.isArray(d1?.chats) ? d1.chats : Array.isArray(d1?.records) ? d1.records : []
+      const byType = { s: 0, lid: 0, group: 0, other: 0 }
+      for (const c of arr1) {
+        const jid = String(c.remoteJid ?? c.id ?? "")
+        if (jid.endsWith("@s.whatsapp.net")) byType.s++
+        else if (jid.endsWith("@lid")) byType.lid++
+        else if (jid.endsWith("@g.us")) byType.group++
+        else byType.other++
+      }
+      // Sample one of each type
+      const sampleLid = arr1.find(c => String(c.remoteJid ?? c.id ?? "").endsWith("@lid"))
+      const sampleS   = arr1.find(c => String(c.remoteJid ?? c.id ?? "").endsWith("@s.whatsapp.net"))
       evoFindChats = {
         format1_skipLimit: {
           status: fc1.status,
-          isArray: Array.isArray(d1),
-          topKeys: typeof d1 === "object" && d1 !== null ? Object.keys(d1) : [],
-          count: arr1?.length ?? "not array",
-          sample: JSON.stringify(arr1?.[0]).slice(0, 300),
+          count: arr1.length,
+          byType,
+          sampleLid: JSON.stringify(sampleLid).slice(0, 600),
+          sampleS: JSON.stringify(sampleS).slice(0, 400),
         }
       }
 
