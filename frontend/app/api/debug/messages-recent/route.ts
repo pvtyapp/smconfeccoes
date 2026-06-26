@@ -108,13 +108,37 @@ export async function GET() {
       // Sample one of each type
       const sampleLid = arr1.find(c => String(c.remoteJid ?? c.id ?? "").endsWith("@lid"))
       const sampleS   = arr1.find(c => String(c.remoteJid ?? c.id ?? "").endsWith("@s.whatsapp.net"))
+      // Test: fetch messages for a @lid contact to confirm query works and check remoteJidAlt
+      let lidMsgTest: unknown = null
+      if (sampleLid) {
+        const lidJid = String(sampleLid.remoteJid ?? sampleLid.id)
+        try {
+          const fmLid = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
+            method: "POST",
+            headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ where: { key: { remoteJid: lidJid } }, skip: 0, limit: 3 }),
+            signal: AbortSignal.timeout(8000),
+          })
+          const fmD = await fmLid.json()
+          const msgs: Record<string,unknown>[] = Array.isArray(fmD) ? fmD
+            : Array.isArray(fmD?.messages?.records) ? fmD.messages.records
+            : Array.isArray(fmD?.records) ? fmD.records : []
+          lidMsgTest = {
+            lidJid,
+            status: fmLid.status,
+            count: msgs.length,
+            sampleMsg: JSON.stringify(msgs[0]).slice(0, 800),
+          }
+        } catch (e) { lidMsgTest = { error: String(e) } }
+      }
       evoFindChats = {
         format1_skipLimit: {
           status: fc1.status,
           count: arr1.length,
           byType,
-          sampleLid: JSON.stringify(sampleLid).slice(0, 600),
+          sampleLid: JSON.stringify(sampleLid),
           sampleS: JSON.stringify(sampleS).slice(0, 400),
+          lidMsgTest,
         }
       }
 
