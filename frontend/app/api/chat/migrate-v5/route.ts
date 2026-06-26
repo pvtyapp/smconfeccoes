@@ -31,9 +31,9 @@ export async function POST() {
       pool.query(`DELETE FROM wa_contacts`).catch(() => {})
     })
 
-    // Reset backfill cursors
+    // Reset all backfill cursors
     await pool.query(
-      `DELETE FROM app_settings WHERE key IN ('backfill_cursor_in', 'backfill_cursor_out')`
+      `DELETE FROM app_settings WHERE key LIKE 'backfill%'`
     ).catch(() => {})
 
     // ── Seed contacts from findChats (fast, no @lid issues) ──────────────────
