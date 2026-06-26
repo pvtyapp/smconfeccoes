@@ -85,16 +85,77 @@ export async function GET() {
       }
     }
 
+    // Test findChats with multiple formats to diagnose Evolution 2.3.7
+    let evoFindChats: unknown = null
+    try {
+      // Try format 1: {skip, limit}
+      const fc1 = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
+        method: "POST",
+        headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ skip: 0, limit: 200 }),
+        signal: AbortSignal.timeout(8000),
+      })
+      const d1 = await fc1.json()
+      const arr1 = Array.isArray(d1) ? d1 : Array.isArray(d1?.chats) ? d1.chats : Array.isArray(d1?.records) ? d1.records : null
+      evoFindChats = {
+        format1_skipLimit: {
+          status: fc1.status,
+          isArray: Array.isArray(d1),
+          topKeys: typeof d1 === "object" && d1 !== null ? Object.keys(d1) : [],
+          count: arr1?.length ?? "not array",
+          sample: JSON.stringify(arr1?.[0]).slice(0, 300),
+        }
+      }
+
+      // Try format 2: {offset, limit} (new format in some versions)
+      const fc2 = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
+        method: "POST",
+        headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ offset: 0, limit: 200 }),
+        signal: AbortSignal.timeout(8000),
+      })
+      const d2 = await fc2.json()
+      const arr2 = Array.isArray(d2) ? d2 : Array.isArray(d2?.chats) ? d2.chats : Array.isArray(d2?.records) ? d2.records : null;
+      (evoFindChats as Record<string, unknown>).format2_offsetLimit = {
+        status: fc2.status,
+        count: arr2?.length ?? "not array",
+        topKeys: typeof d2 === "object" && d2 !== null ? Object.keys(d2) : [],
+      }
+
+      // Try format 3: empty body GET
+      const fc3 = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
+        method: "GET",
+        headers: { apikey: EVO_KEY },
+        signal: AbortSignal.timeout(8000),
+      })
+      const d3 = await fc3.json()
+      const arr3 = Array.isArray(d3) ? d3 : Array.isArray(d3?.chats) ? d3.chats : Array.isArray(d3?.records) ? d3.records : null;
+      (evoFindChats as Record<string, unknown>).format3_GET = {
+        status: fc3.status,
+        count: arr3?.length ?? "not array",
+        topKeys: typeof d3 === "object" && d3 !== null ? Object.keys(d3) : [],
+      }
+    } catch (e) {
+      evoFindChats = { error: String(e) }
+    }
+
+    // Count contacts in DB
+    const { rows: dbContacts } = await pool.query(
+      `SELECT COUNT(*) AS total FROM wa_contacts`
+    )
+
     return NextResponse.json({
       ok: true,
       schema: { columns },
       totalMessages: cnt[0]?.total,
+      dbContacts: dbContacts[0]?.total,
       recentMessages: messages,
       lastWebhook,
       evoUrl: EVO_URL,
       evoInstance: EVO_INSTANCE,
       evoConnection,
       evoFindMessages,
+      evoFindChats,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
