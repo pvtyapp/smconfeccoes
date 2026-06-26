@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server"
-import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
-import { syncMessagesFromEvolution, downloadSyncedMedia, type PendingMedia } from "@/lib/whatsapp/syncMessages"
 
-// Throttle Evolution sync — 30s per contact (in-memory, resets on cold start — acceptable)
-const syncThrottle = new Map<number, number>()
-const SYNC_INTERVAL_MS = 30 * 1000
+export const dynamic = "force-dynamic"
 
 const PAGE_SIZE = 60
 
@@ -17,12 +13,9 @@ export async function GET(req: Request) {
 
     const since   = searchParams.get("since")
     const afterId = searchParams.get("afterId")
-    const noSync  = searchParams.get("noSync") === "1"
     const offset  = parseInt(searchParams.get("offset") ?? "0") || 0
 
-    // Incremental poll — no sync, no pagination.
-    // afterId (preferred): queries by DB id so synced historical messages are never missed.
-    // since (legacy): queries by created_at, kept for backward compat only.
+    // Incremental poll — afterId preferred (pk-based, never misses synced historical msgs)
     if (afterId !== null || since) {
       const SEL = `
         SELECT
@@ -39,35 +32,22 @@ export async function GET(req: Request) {
           created_at        AS "createdAt"
         FROM wa_messages`
 
-      let rows: unknown[]
       if (afterId !== null) {
-        const { rows: r } = await pool.query(
+        const { rows } = await pool.query(
           `${SEL} WHERE contact_id = $1 AND id > $2 ORDER BY id ASC`,
           [contactId, parseInt(afterId) || 0]
         )
-        rows = r
+        return NextResponse.json(rows)
       } else {
-        const { rows: r } = await pool.query(
+        const { rows } = await pool.query(
           `${SEL} WHERE contact_id = $1 AND created_at > $2 ORDER BY created_at ASC`,
           [contactId, since]
         )
-        rows = r
+        return NextResponse.json(rows)
       }
-      return NextResponse.json(rows)
     }
 
-    // Full load — sync on first page only (unless noSync=1), throttled to once per 5min per contact
-    const contactRes = await pool.query("SELECT jid FROM wa_contacts WHERE id = $1", [contactId])
-    const jid: string | undefined = contactRes.rows[0]?.jid
-    let pending: PendingMedia[] = []
-    const cid = Number(contactId)
-    const now = Date.now()
-    const lastSync = syncThrottle.get(cid) ?? 0
-    if (jid && offset === 0 && !noSync && (now - lastSync) > SYNC_INTERVAL_MS) {
-      syncThrottle.set(cid, now)
-      pending = await syncMessagesFromEvolution(jid, cid)
-    }
-
+    // Full load — paginated from DB only (cursor backfill populates the data)
     const { rows } = await pool.query(`
       SELECT
         id, message_id AS "messageId", direction, content,
@@ -92,13 +72,8 @@ export async function GET(req: Request) {
       ORDER BY created_at ASC
     `, [contactId, PAGE_SIZE + 1, offset])
 
-    const hasMore = rows.length > PAGE_SIZE
+    const hasMore  = rows.length > PAGE_SIZE
     const messages = hasMore ? rows.slice(0, PAGE_SIZE) : rows
-
-    // Background: download full media for synced messages that don't have blob URLs yet
-    if (pending.length > 0) {
-      waitUntil(downloadSyncedMedia(pending, Number(contactId)))
-    }
 
     return NextResponse.json({ messages, hasMore })
   } catch (err) {
