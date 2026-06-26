@@ -113,11 +113,20 @@ export async function POST() {
     })
 
     // Upsert all contacts from findChats
+    // Skip @s.whatsapp.net if a @lid contact with the same phone already exists
     for (const c of individualChats) {
       const jid   = ((c.remoteJid ?? c.id) as string) || ""
       const name  = (c.name as string) || (c.pushName as string) || ""
       const phone = extractPhone(c)
       const pic   = (c.profilePicUrl as string) || null
+
+      if (jid.endsWith("@s.whatsapp.net") && phone.match(/^[0-9]{8,15}$/)) {
+        const { rows: lidExists } = await pool.query(
+          `SELECT 1 FROM wa_contacts WHERE phone = $1 AND jid LIKE '%@lid' LIMIT 1`, [phone]
+        ).catch(() => ({ rows: [] }))
+        if (lidExists.length > 0) continue  // @lid version already owns this contact
+      }
+
       await pool.query(
         `INSERT INTO wa_contacts (jid, name, phone, profile_pic)
          VALUES ($1, $2, $3, $4)
