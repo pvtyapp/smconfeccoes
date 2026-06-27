@@ -87,6 +87,7 @@ type Message = {
   mediaType: string | null
   mediaUrl: string | null
   mediaThumb: string | null
+  mediaData: string | null
   mediaCategory: string | null
   fileName: string | null
   caption: string | null
@@ -226,9 +227,6 @@ function formatMsgPreview(content: string | null): string {
   return content
 }
 
-function isBlobUrl(url: string | null): boolean {
-  return !!url && url.startsWith("https://")
-}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -604,9 +602,9 @@ export default function PedidosPage() {
       if (!pendingIds.has(m.id)) return m
       const updated = byId.get(m.id)
       // Permanently failed — stop retrying, mark as unavailable
-      if (updated?.mediaFailed) return { ...m, mediaUrl: "" }
-      if (!updated?.mediaUrl) { stillPending.add(m.id); return m }
-      return { ...m, mediaUrl: updated.mediaUrl, mediaThumb: updated.mediaThumb, mediaCategory: updated.mediaCategory }
+      if (updated?.mediaFailed) return { ...m, mediaFailed: true }
+      if (!updated?.mediaData) { stillPending.add(m.id); return m }
+      return { ...m, mediaData: updated.mediaData, mediaThumb: updated.mediaThumb, mediaCategory: updated.mediaCategory }
     }))
     // Retry with backoff: 8s, 16s, 30s — para dar tempo ao waitUntil de terminar
     const delays = [8_000, 16_000, 30_000]
@@ -615,7 +613,7 @@ export default function PedidosPage() {
     } else if (stillPending.size > 0) {
       // Retries esgotados — marca como indisponível
       setMessages(prev => prev.map(m =>
-        stillPending.has(m.id) ? { ...m, mediaUrl: "" } : m
+        stillPending.has(m.id) ? { ...m, mediaFailed: true } : m
       ))
     }
   }, [])
@@ -634,7 +632,7 @@ export default function PedidosPage() {
       const newMax = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
       if (newMax > lastSeenId.current) lastSeenId.current = newMax
 
-      const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null && !m.mediaFailed).map(m => m.id))
+      const pendingIds = new Set(msgs.filter(m => m.mediaType && !m.mediaData && !m.mediaFailed).map(m => m.id))
       if (pendingIds.size > 0) {
         setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
       }
@@ -782,7 +780,7 @@ export default function PedidosPage() {
       messageId: null,
       direction: "out" as const,
       content: text,
-      mediaType: null, mediaUrl: null, mediaThumb: null, mediaCategory: null,
+      mediaType: null, mediaUrl: null, mediaThumb: null, mediaData: null, mediaCategory: null,
       fileName: null, caption: null,
       status: "sent" as const,
       quotedId: quoted?.messageId ?? null,
@@ -859,7 +857,7 @@ export default function PedidosPage() {
   }
 
   async function linkDtfFile(m: Message) {
-    if (!chatContact || !m.mediaUrl) return
+    if (!chatContact || !m.mediaData) return
     setLinkingDtfMsg(m.id)
     setDtfLinkToast(null)
     try {
@@ -869,7 +867,7 @@ export default function PedidosPage() {
         body: JSON.stringify({
           contactId: chatContact.id,
           waMessageId: m.id,
-          fileUrl: m.mediaUrl,
+          fileUrl: m.mediaData,
           fileName: m.fileName,
           mimeType: null,
         }),
@@ -1372,9 +1370,9 @@ export default function PedidosPage() {
                                   </span>
                                 )
 
-                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && (m.mediaUrl || m.mediaThumb)) {
-                                  const displaySrc = m.mediaUrl || m.mediaThumb
-                                  const isReady = isBlobUrl(m.mediaUrl)
+                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && (m.mediaData || m.mediaThumb)) {
+                                  const displaySrc = m.mediaData || m.mediaThumb
+                                  const isReady = !!m.mediaData
                                   return (
                                   <div>
                                     <div className="relative">
@@ -1412,19 +1410,19 @@ export default function PedidosPage() {
                                           {m.fileName || (m.mediaCategory === "pix" ? "Comprovante PIX" : m.mediaCategory === "dtf" ? "Arte DTF" : "Documento")}
                                         </p>
                                         {m.caption && <p className="text-[11px] mt-0.5" style={{ color: "#667781" }}>{m.caption}</p>}
-                                        {isBlobUrl(m.mediaUrl)
-                                          ? <button onClick={() => downloadChatFile(m.id, m.mediaUrl!, m.fileName)}
+                                        {m.mediaData
+                                          ? <button onClick={() => downloadChatFile(m.id, m.mediaData!, m.fileName)}
                                               disabled={downloadingMsgId === m.id}
                                               className="text-[10px] underline disabled:opacity-50" style={{ color: "#00A884" }}>
                                               {downloadingMsgId === m.id ? "Baixando..." : "Baixar arquivo"}
                                             </button>
-                                          : m.mediaUrl === ""
+                                          : m.mediaFailed
                                             ? <span className="text-[10px]" style={{ color: "#8696A0" }}>Arquivo não disponível</span>
                                             : <span className="text-[10px]" style={{ color: "#8696A0" }}>Carregando...</span>
                                         }
                                       </div>
                                     </div>
-                                    {!isOut && (m.mediaCategory === "dtf" || m.mediaCategory === "documento") && isBlobUrl(m.mediaUrl) && (
+                                    {!isOut && (m.mediaCategory === "dtf" || m.mediaCategory === "documento") && !!m.mediaData && (
                                       <button onClick={() => linkDtfFile(m)} disabled={linkingDtfMsg === m.id}
                                         className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-[10px] font-bold transition-colors disabled:opacity-50"
                                         style={{ background: "rgba(124,58,237,0.08)", borderColor: "rgba(124,58,237,0.3)", color: "#7C3AED" }}>
@@ -1439,9 +1437,9 @@ export default function PedidosPage() {
 
                                 if (m.mediaType === "audio") return (
                                   <div className="px-3 py-2">
-                                    {isBlobUrl(m.mediaUrl)
+                                    {m.mediaData
                                       // eslint-disable-next-line jsx-a11y/media-has-caption
-                                      ? <audio controls src={m.mediaUrl!} className="w-full max-w-[220px]" style={{ height: "32px" }} />
+                                      ? <audio controls src={m.mediaData} className="w-full max-w-[220px]" style={{ height: "32px" }} />
                                       : <span className="text-[12px]" style={{ color: "#667781" }}>🎤 Áudio</span>
                                     }
                                     {timeEl("mt-1")}
@@ -1450,7 +1448,7 @@ export default function PedidosPage() {
 
                                 return (
                                   <div className="px-3 py-1.5 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>
-                                    {m.mediaType && !m.mediaUrl && !m.mediaThumb
+                                    {m.mediaType && !m.mediaData && !m.mediaThumb
                                       ? <span style={{ color: "#667781" }}>{MEDIA_EMOJI[m.mediaType] ?? formatMsgPreview(m.content)}</span>
                                       : formatMsgPreview(m.content)
                                     }
@@ -2000,11 +1998,11 @@ export default function PedidosPage() {
       )}
 
       {/* ── LIGHTBOX ── */}
-      {lightboxMsg?.mediaUrl && (
+      {lightboxMsg?.mediaData && (
         <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
           onClick={() => setLightboxMsg(null)}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightboxMsg.mediaUrl} alt="Imagem ampliada"
+          <img src={lightboxMsg.mediaData} alt="Imagem ampliada"
             className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
             onClick={e => e.stopPropagation()} />
 
@@ -2013,7 +2011,7 @@ export default function PedidosPage() {
             <span className="text-white/50 text-xs">
               {lightboxMsg.direction === "out" ? "Você" : (chatContact?.name || chatContact?.phone)} · {fmtTime(lightboxMsg.createdAt)}
             </span>
-            <a href={lightboxMsg.mediaUrl} download
+            <a href={lightboxMsg.mediaData} download
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors">
               <Download size={13} /> Salvar
             </a>

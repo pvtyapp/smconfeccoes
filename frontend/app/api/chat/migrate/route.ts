@@ -87,12 +87,13 @@ export async function POST() {
       WHERE needs_attention = true
     `)
 
-    // ── wa_messages v2: separação de thumbnail vs URL real, novos nomes ──────────
-    // media_thumb: base64 do thumbnail recebido do Evolution (preview imediato)
-    // media_url:   URL real do Vercel Blob (só preenchida após download completo)
+    // ── wa_messages v2: separação de thumbnail vs mídia completa ────────────────
+    // media_thumb: base64 pequeno (preview imediato, recebido junto com a mensagem)
+    // media_data:  base64 completo da mídia — armazenado direto no PostgreSQL/Railway
     // media_failed: download permanentemente falhou (mídia expirou no Evolution)
     // quoted_id / quoted_text: substitui quoted_message_id / quoted_content
     await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_thumb  TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_data   TEXT`)
     await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_failed BOOLEAN DEFAULT FALSE`)
     await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS quoted_id    TEXT`)
     await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS quoted_text  TEXT`)

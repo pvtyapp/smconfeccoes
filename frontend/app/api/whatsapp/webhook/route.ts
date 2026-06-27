@@ -5,7 +5,7 @@ import { parseOrder } from "@/lib/ai/parseOrder"
 import { classifyIntent } from "@/lib/ai/classifyIntent"
 import { classifyAndParse } from "@/lib/ai/classifyAndParse"
 import { classifyMedia } from "@/lib/ai/classifyMedia"
-import { downloadEvolutionMedia, uploadToBlob, classifyMediaCategory, type MediaCategory } from "@/lib/whatsapp/media"
+import { downloadEvolutionMedia, classifyMediaCategory, type MediaCategory } from "@/lib/whatsapp/media"
 import { matchVariants, type MatchedItem } from "@/lib/whatsapp/matchVariant"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
@@ -33,7 +33,7 @@ function replyWA(jid: string, text: string): void {
   )
 }
 
-// Downloads full media, uploads to Vercel Blob, updates wa_messages — runs fire-and-forget
+// Downloads full media from Evolution, saves base64 in media_data (PostgreSQL/Railway).
 async function saveMediaBackground(
   msg: unknown,
   contactId: number,
@@ -45,7 +45,6 @@ async function saveMediaBackground(
     if (mediaType === "sticker") return
     const media = await downloadEvolutionMedia(msg)
     if (!media) {
-      console.error("[saveMedia] downloadEvolutionMedia returned null — messageId:", messageId, "mediaType:", mediaType)
       if (messageId) {
         await pool.query(
           `UPDATE wa_messages SET media_failed = TRUE WHERE message_id = $1`,
@@ -56,31 +55,18 @@ async function saveMediaBackground(
     }
 
     const category: MediaCategory = classifyMediaCategory(mediaType, media.mimeType, contactState)
-
-    const folderMap: Record<MediaCategory, "dtf" | "pix" | "media" | "audio" | "docs"> = {
-      foto:      "media",
-      video:     "media",
-      audio:     "audio",
-      pix:       "pix",
-      dtf:       "dtf",
-      documento: "docs",
-      sticker:   "media",
-    }
-
-    const url = await uploadToBlob(media.base64, media.mimeType, media.filename, folderMap[category])
-    if (!url) return
+    const dataUrl = `data:${media.mimeType};base64,${media.base64}`
 
     if (messageId) {
       await pool.query(
-        `UPDATE wa_messages SET media_url = $1, media_category = $2 WHERE message_id = $3`,
-        [url, category, messageId]
+        `UPDATE wa_messages SET media_data = $1, media_category = $2, media_failed = FALSE WHERE message_id = $3`,
+        [dataUrl, category, messageId]
       ).catch(() => {})
     } else {
-      // Fallback: update most recent media message without url from this contact
       await pool.query(
-        `UPDATE wa_messages SET media_url = $1, media_category = $2
-         WHERE id = (SELECT id FROM wa_messages WHERE contact_id = $3 AND media_type IS NOT NULL AND media_url IS NULL ORDER BY created_at DESC LIMIT 1)`,
-        [url, category, contactId]
+        `UPDATE wa_messages SET media_data = $1, media_category = $2, media_failed = FALSE
+         WHERE id = (SELECT id FROM wa_messages WHERE contact_id = $3 AND media_type IS NOT NULL AND media_data IS NULL ORDER BY created_at DESC LIMIT 1)`,
+        [dataUrl, category, contactId]
       ).catch(() => {})
     }
   } catch { /* silent — never crashes webhook */ }
@@ -888,12 +874,12 @@ async function handleMedia(
   const order = await getMostRecentOrder(contactId)
 
   if (mediaType === "pix") {
-    const url = await uploadToBlob(media.base64, media.mimeType, media.filename, "pix")
+    const dataUrl = `data:${media.mimeType};base64,${media.base64}`
     if (order) {
       await pool.query(`
         INSERT INTO order_attachments (order_id, type, blob_url, filename, mime_type)
         VALUES ($1, 'pix_comprovante', $2, $3, $4)
-      `, [order.id, url, media.filename, media.mimeType])
+      `, [order.id, dataUrl, media.filename, media.mimeType])
       await pool.query(`UPDATE orders SET has_attachment = true WHERE id = $1`, [order.id])
       await pool.query(`
         INSERT INTO order_events (order_id, status, actor, note)

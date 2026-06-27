@@ -1,5 +1,5 @@
 import { pool } from "@/lib/db"
-import { downloadEvolutionMedia, uploadToBlob, classifyMediaCategory } from "@/lib/whatsapp/media"
+import { downloadEvolutionMedia, classifyMediaCategory } from "@/lib/whatsapp/media"
 import { waitUntil } from "@vercel/functions"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
@@ -19,17 +19,7 @@ function b64(raw: unknown): string | null {
   return null
 }
 
-const folderMap: Record<string, "dtf" | "pix" | "media" | "audio" | "docs"> = {
-  foto:      "media",
-  video:     "media",
-  audio:     "audio",
-  pix:       "pix",
-  dtf:       "dtf",
-  documento: "docs",
-  sticker:   "media",
-}
-
-// Downloads full media from Evolution, uploads to Blob, updates media_url.
+// Downloads full media from Evolution, saves base64 directly in media_data (PostgreSQL/Railway).
 // Sets media_failed = TRUE if Evolution returns null (expired after ~30 days).
 export async function downloadSyncedMedia(pending: PendingMedia[], contactId: number): Promise<void> {
   for (const { rec, msgId, mediaType } of pending) {
@@ -42,14 +32,12 @@ export async function downloadSyncedMedia(pending: PendingMedia[], contactId: nu
         ).catch(() => {})
         continue
       }
-      const category = classifyMediaCategory(mediaType, media.mimeType, "idle")
-      const folder   = folderMap[category] ?? "media"
-      const url      = await uploadToBlob(media.base64, media.mimeType, media.filename, folder)
-      if (!url) continue
+      const category  = classifyMediaCategory(mediaType, media.mimeType, "idle")
+      const dataUrl   = `data:${media.mimeType};base64,${media.base64}`
       await pool.query(
-        `UPDATE wa_messages SET media_url = $1, media_category = $2, media_failed = FALSE
+        `UPDATE wa_messages SET media_data = $1, media_category = $2, media_failed = FALSE
          WHERE contact_id = $3 AND message_id = $4`,
-        [url, category, contactId, msgId]
+        [dataUrl, category, contactId, msgId]
       ).catch(() => {})
     } catch { /* individual failure is non-fatal */ }
   }
@@ -179,14 +167,14 @@ export async function syncMessagesFromEvolution(
          createdAt, quotedId, quotedText, readAt]
       ).catch(() => ({ rowCount: 0 }))
 
-      // Queue for blob download if this message has media and no real URL yet
+      // Queue for full media download if this message has media and no data yet
       if (mediaType && rowCount) {
         const { rows: existing } = await pool.query(
-          `SELECT media_url, media_failed FROM wa_messages WHERE message_id = $1`, [msgId]
-        ).catch(() => ({ rows: [] as { media_url: string | null; media_failed: boolean }[] }))
-        const existingUrl   = existing[0]?.media_url ?? null
-        const alreadyFailed = existing[0]?.media_failed ?? false
-        if (!alreadyFailed && (!existingUrl || !existingUrl.startsWith("https://"))) {
+          `SELECT media_data, media_failed FROM wa_messages WHERE message_id = $1`, [msgId]
+        ).catch(() => ({ rows: [] as { media_data: string | null; media_failed: boolean }[] }))
+        const alreadyHasData = !!existing[0]?.media_data
+        const alreadyFailed  = existing[0]?.media_failed ?? false
+        if (!alreadyFailed && !alreadyHasData) {
           pending.push({ rec, msgId, mediaType })
         }
       }
