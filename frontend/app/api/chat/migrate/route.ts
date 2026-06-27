@@ -87,8 +87,63 @@ export async function POST() {
       WHERE needs_attention = true
     `)
 
+    // ── wa_messages v2: separação de thumbnail vs URL real, novos nomes ──────────
+    // media_thumb: base64 do thumbnail recebido do Evolution (preview imediato)
+    // media_url:   URL real do Vercel Blob (só preenchida após download completo)
+    // media_failed: download permanentemente falhou (mídia expirou no Evolution)
+    // quoted_id / quoted_text: substitui quoted_message_id / quoted_content
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_thumb  TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_failed BOOLEAN DEFAULT FALSE`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS quoted_id    TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS quoted_text  TEXT`)
+
+    // Colunas que vieram via sync/route.ts mas estão fora do migrate original
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_category TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS file_name      TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS caption        TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS status         TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS quoted_message_id TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS quoted_content    TEXT`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS updated_at        TIMESTAMPTZ`)
+    await client.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_download_failed BOOLEAN DEFAULT FALSE`)
+
+    // wa_contacts: phone_jid para mapeamento @lid → @s.whatsapp.net
+    await client.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS phone_jid          TEXT`)
+    await client.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_message_synced_at TIMESTAMPTZ`)
+    await client.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS profile_pic         TEXT`)
+
+    // ── Migração de dados: base64 em media_url → media_thumb ─────────────────────
+    // media_url que começa com "data:" é thumbnail base64 — mover para media_thumb
+    await client.query(`
+      UPDATE wa_messages
+      SET media_thumb = media_url, media_url = NULL
+      WHERE media_url IS NOT NULL AND media_url LIKE 'data:%'
+        AND media_thumb IS NULL
+    `)
+
+    // Migra media_download_failed → media_failed
+    await client.query(`
+      UPDATE wa_messages
+      SET media_failed = TRUE
+      WHERE media_download_failed = TRUE AND (media_failed IS NULL OR media_failed = FALSE)
+    `)
+
+    // Migra quoted_message_id → quoted_id
+    await client.query(`
+      UPDATE wa_messages
+      SET quoted_id = quoted_message_id
+      WHERE quoted_message_id IS NOT NULL AND quoted_id IS NULL
+    `)
+
+    // Migra quoted_content → quoted_text
+    await client.query(`
+      UPDATE wa_messages
+      SET quoted_text = quoted_content
+      WHERE quoted_content IS NOT NULL AND quoted_text IS NULL
+    `)
+
     await client.query("COMMIT")
-    return NextResponse.json({ ok: true, msg: "Migration completa" })
+    return NextResponse.json({ ok: true, msg: "Migration v2 completa" })
   } catch (err) {
     await client.query("ROLLBACK")
     return NextResponse.json({ error: String(err) }, { status: 500 })

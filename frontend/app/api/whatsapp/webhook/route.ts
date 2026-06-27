@@ -46,6 +46,12 @@ async function saveMediaBackground(
     const media = await downloadEvolutionMedia(msg)
     if (!media) {
       console.error("[saveMedia] downloadEvolutionMedia returned null — messageId:", messageId, "mediaType:", mediaType)
+      if (messageId) {
+        await pool.query(
+          `UPDATE wa_messages SET media_failed = TRUE WHERE message_id = $1`,
+          [messageId]
+        ).catch(() => {})
+      }
       return
     }
 
@@ -120,7 +126,7 @@ export async function POST(req: Request) {
             await pool.query(
               `UPDATE wa_messages SET read_at = NOW()
                WHERE read_at IS NULL AND direction = 'in'
-                 AND contact_id = (SELECT id FROM wa_contacts WHERE jid = $1)`,
+                 AND contact_id = (SELECT id FROM wa_contacts WHERE jid = $1 OR phone_jid = $1 LIMIT 1)`,
               [chatJid]
             ).catch(() => {})
           }
@@ -187,6 +193,11 @@ export async function POST(req: Request) {
     const jid: string = (key?.remoteJid as string) || ""
     if (!jid) return NextResponse.json({ ok: true })
 
+    // Resolve real @s.whatsapp.net JID for @lid contacts (Evolution 2.3.7 privacy mode)
+    const remoteJidAlt = (key?.remoteJidAlt as string) || ""
+    const phoneJid: string | null = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net")
+      ? remoteJidAlt : null
+
     // Save messages sent from our own WhatsApp (phone / WA Desktop) to chat history
     if (key?.fromMe) {
       if (!jid.endsWith("@g.us")) {
@@ -217,9 +228,18 @@ export async function POST(req: Request) {
         if (text0) {
           const outMsgId: string | null = (key?.id as string) ?? null
           const ts = key?.timestamp ? new Date(Number(key.timestamp) * 1000) : null
-          // await — Vercel terminava a função antes do INSERT completar (era fire-and-forget .then())
+          const outPhone = phoneJid
+          ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+          : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+          // Upsert so outgoing messages to contacts never seen before are never lost
           const { rows: cRows } = await pool.query(
-            `SELECT id FROM wa_contacts WHERE jid = $1`, [jid]
+            `INSERT INTO wa_contacts (jid, name, phone, phone_jid)
+             VALUES ($1, NULL, $2, $3)
+             ON CONFLICT (jid) DO UPDATE SET
+               phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
+               updated_at = NOW()
+             RETURNING id`,
+            [jid, outPhone, phoneJid]
           ).catch(() => ({ rows: [] as { id: number }[] }))
           if (cRows[0]) {
             const contactId0 = cRows[0].id as number
@@ -307,23 +327,30 @@ export async function POST(req: Request) {
 
     if (!text.trim() && !hasMedia) return NextResponse.json({ ok: true })
 
-    const phone = jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+    const phone = phoneJid
+      ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+      : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
     const rawPushName = (msg.pushName as string) || ""
-    const pushName: string = (() => {
-      const lower = rawPushName.toLowerCase().trim()
-      if (!rawPushName || lower === "você" || lower === "voce") return phone
-      return rawPushName
+    const pushName: string | null = (() => {
+      const trimmed = rawPushName.trim()
+      if (!trimmed) return null
+      const lower = trimmed.toLowerCase()
+      if (lower === "você" || lower === "voce") return null
+      if (/^\d+$/.test(trimmed)) return null
+      return trimmed
     })()
 
     const contactRes = await pool.query(`
-      INSERT INTO wa_contacts (jid, name, phone)
-      VALUES ($1, $2, $3)
+      INSERT INTO wa_contacts (jid, name, phone, phone_jid)
+      VALUES ($1, $2, $3, $4)
       ON CONFLICT (jid) DO UPDATE SET
-        name = CASE WHEN EXCLUDED.name ~ '^[0-9]+$' THEN wa_contacts.name ELSE EXCLUDED.name END,
+        name      = CASE WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN wa_contacts.name ELSE EXCLUDED.name END,
+        phone     = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
+        phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
         updated_at = NOW()
       RETURNING id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
                 updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
-    `, [jid, pushName, phone])
+    `, [jid, pushName, phone, phoneJid])
 
     const contact = contactRes.rows[0]
     let state: string = contact.state ?? "idle"
@@ -388,32 +415,34 @@ export async function POST(req: Request) {
         || "[mídia]"
     })()
 
-    // Save to chat history — use waitUntil so Vercel doesn't kill the query before it completes.
-    // Two-step insert: base columns always exist; extra columns added by migrations (resilient).
+    // Save incoming message — await garante que o INSERT completa antes do 200
     const incomingMsgId: string | null = (key?.id as string) ?? null
     const msgContent = text || (hasMedia ? "[mídia]" : "")
-    waitUntil(
+    // Usa o timestamp real do WhatsApp para que o horário mostrado no dashboard
+    // bata com o WhatsApp mesmo quando o webhook chega com atraso.
+    const incomingTs = (msg.messageTimestamp as number | undefined)
+    const incomingCreatedAt = incomingTs ? new Date(incomingTs * 1000).toISOString() : null
+    await pool.query(
+      `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, file_name, caption, quoted_id, quoted_text, created_at)
+       VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, NOW()))
+       ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+      [
+        contact.id, incomingMsgId, msgContent,
+        mediaMeta.mediaType,
+        mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
+        mediaMeta.fileName, mediaMeta.caption,
+        quotedMsgId, quotedContent,
+        incomingCreatedAt,
+      ]
+    ).catch(() =>
       pool.query(
-        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_url, file_name, caption, quoted_message_id, quoted_content)
-         VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, created_at)
+         VALUES ($1, $2, 'in', $3, $4, $5, COALESCE($6::timestamptz, NOW()))
          ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-        [
-          contact.id, incomingMsgId, msgContent,
-          mediaMeta.mediaType,
-          mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
-          mediaMeta.fileName, mediaMeta.caption,
-          quotedMsgId, quotedContent,
-        ]
-      ).catch(() =>
-        // Fallback: columns from newer migrations might not exist — save base fields only
-        pool.query(
-          `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_url)
-           VALUES ($1, $2, 'in', $3, $4, $5)
-           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-          [contact.id, incomingMsgId, msgContent, mediaMeta.mediaType,
-           mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null]
-        ).catch(e => console.error("[webhook] wa_messages INSERT falhou:", e instanceof Error ? e.message : e))
-      )
+        [contact.id, incomingMsgId, msgContent, mediaMeta.mediaType,
+         mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
+         incomingCreatedAt]
+      ).catch(e => console.error("[webhook] wa_messages INSERT falhou:", e instanceof Error ? e.message : e))
     )
 
     // Register background media download — waitUntil keeps function alive after response
@@ -460,7 +489,7 @@ export async function POST(req: Request) {
       await handleMedia(jid, contact.id, msg, text, lifecycle, state, chatbotDtfEnabled, chatbotProdutoEnabled, produtoStatus, dtfStatus, globalSettings)
     } else {
       await handleText(
-        jid, contact.id, state, stateData, text.trim(), lifecycle, pushName,
+        jid, contact.id, state, stateData, text.trim(), lifecycle, pushName ?? "",
         chatbotProdutoEnabled, chatbotDtfEnabled, chatbotObs, lastOrderAt,
         produtoStatus, dtfStatus, globalSettings
       )

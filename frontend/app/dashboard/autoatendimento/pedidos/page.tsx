@@ -86,13 +86,15 @@ type Message = {
   content: string | null
   mediaType: string | null
   mediaUrl: string | null
+  mediaThumb: string | null
   mediaCategory: string | null
   fileName: string | null
   caption: string | null
   status: "sent" | "delivered" | "read" | "played" | null
-  quotedMessageId: string | null
-  quotedContent: string | null
+  quotedId: string | null
+  quotedText: string | null
   createdAt: string
+  mediaFailed?: boolean
 }
 
 // ─── Group types (Evolution-direct) ──────────────────────────────────────────
@@ -187,7 +189,10 @@ const LIFECYCLE_LABEL: Record<string, string> = {
 
 function fmtPhone(phone: string) {
   const p = phone.replace(/\D/g, "")
-  if (p.length === 11) return `(${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}`
+  // Strip Brazil country code if present (55 + 11 digits = 13, or 55 + 10 digits = 12)
+  const local = (p.startsWith("55") && (p.length === 13 || p.length === 12)) ? p.slice(2) : p
+  if (local.length === 11) return `(${local.slice(0,2)}) ${local.slice(2,7)}-${local.slice(7)}`
+  if (local.length === 10) return `(${local.slice(0,2)}) ${local.slice(2,6)}-${local.slice(6)}`
   return phone
 }
 
@@ -505,7 +510,7 @@ export default function PedidosPage() {
   }, [])
 
   useEffect(() => {
-    fetch("/api/chat/sync", { method: "POST" }).then(() => loadConvs())
+    loadConvs()
   }, [loadConvs])
 
   // Sync chatContactRef with state so pollMessages can access jid without stale closure
@@ -517,15 +522,11 @@ export default function PedidosPage() {
     return () => clearInterval(t)
   }, [loadConvs])
 
-  // Re-sync with Evolution every 30s — syncs contacts + messages for top 20 active contacts.
-  // Acts as fallback when Evolution webhooks are not configured or miss events.
+  // Reload conversations when user returns to this tab
   useEffect(() => {
-    const sync = () => fetch("/api/chat/sync", { method: "POST" }).catch(() => {})
-    const t = setInterval(sync, 30_000)
-    // Sync immediately when user returns to this tab after being away
-    const onVisible = () => { if (document.visibilityState === "visible") { sync().then(() => loadConvs()) } }
+    const onVisible = () => { if (document.visibilityState === "visible") loadConvs() }
     document.addEventListener("visibilitychange", onVisible)
-    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible) }
+    return () => document.removeEventListener("visibilitychange", onVisible)
   }, [loadConvs])
 
   // ── Load groups (Evolution-direct) ────────────────────────────────────────
@@ -602,15 +603,17 @@ export default function PedidosPage() {
     setMessages(prev => prev.map(m => {
       if (!pendingIds.has(m.id)) return m
       const updated = byId.get(m.id)
+      // Permanently failed — stop retrying, mark as unavailable
+      if (updated?.mediaFailed) return { ...m, mediaUrl: "" }
       if (!updated?.mediaUrl) { stillPending.add(m.id); return m }
-      return { ...m, mediaUrl: updated.mediaUrl, mediaCategory: updated.mediaCategory }
+      return { ...m, mediaUrl: updated.mediaUrl, mediaThumb: updated.mediaThumb, mediaCategory: updated.mediaCategory }
     }))
     // Retry with backoff: 8s, 16s, 30s — para dar tempo ao waitUntil de terminar
     const delays = [8_000, 16_000, 30_000]
     if (stillPending.size > 0 && attempt < delays.length) {
       setTimeout(() => refreshMediaUrls(contactId, stillPending, attempt + 1), delays[attempt])
     } else if (stillPending.size > 0) {
-      // Retries esgotados — marca como indisponível para parar o "carregando..."
+      // Retries esgotados — marca como indisponível
       setMessages(prev => prev.map(m =>
         stillPending.has(m.id) ? { ...m, mediaUrl: "" } : m
       ))
@@ -628,9 +631,10 @@ export default function PedidosPage() {
       setHasMoreMsgs(more)
       setMsgOffset(0)
       latestMsgAt.current = msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null
-      lastSeenId.current  = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
+      const newMax = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
+      if (newMax > lastSeenId.current) lastSeenId.current = newMax
 
-      const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null).map(m => m.id))
+      const pendingIds = new Set(msgs.filter(m => m.mediaType && m.mediaUrl === null && !m.mediaFailed).map(m => m.id))
       if (pendingIds.size > 0) {
         setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
       }
@@ -658,11 +662,9 @@ export default function PedidosPage() {
   }, [])
 
   const pollMessages = useCallback(async (contactId: number) => {
-    // Aguarda loadMessages concluir — isFirstLoad fica true até o finally do loadMessages
     if (isFirstLoad.current) return
-    // Usa afterId (baseado em pk auto-increment) para não perder mensagens sincronizadas
-    // com timestamp histórico (createdAt < since mas id > lastSeenId)
-    const r = await fetch(`/api/chat/messages?contactId=${contactId}&afterId=${lastSeenId.current}`)
+    if (!latestMsgAt.current) return
+    const r = await fetch(`/api/chat/messages?contactId=${contactId}&since=${encodeURIComponent(latestMsgAt.current)}`)
     if (!r.ok) return
     const newMsgs: Message[] = await r.json()
     if (newMsgs.length === 0) return
@@ -717,21 +719,8 @@ export default function PedidosPage() {
   useEffect(() => {
     if (!chatContact) return
     const t = setInterval(() => pollMessages(chatContact.id), 2_000)
-    // A cada 30s: sync de saídas (mensagens que PIV enviou pelo celular) + sync de entrada
-    // O sync de entrada tem throttle de 60s no servidor — garante que mensagens chegam
-    // mesmo que o webhook do Evolution não esteja disparando
-    const s = setInterval(() => {
-      const cid = chatContact.id
-      const jid = chatContact.jid
-      // Sync incoming: full load sem paginação — servidor fará sync com Evolution (throttle 30s)
-      fetch(`/api/chat/messages?contactId=${cid}`)
-        .then(() => pollMessages(cid))
-        .catch(() => {})
-      // Sync outgoing em paralelo
-      syncOutgoing(cid, jid).catch(() => {})
-    }, 10_000)
-    return () => { clearInterval(t); clearInterval(s) }
-  }, [chatContact, pollMessages, syncOutgoing])
+    return () => clearInterval(t)
+  }, [chatContact, pollMessages])
 
   // Atualiza status dos ticks (sent/delivered/read) nas mensagens existentes a cada 30s
   // sem fazer sync com Evolution — só lê do DB local
@@ -793,11 +782,11 @@ export default function PedidosPage() {
       messageId: null,
       direction: "out" as const,
       content: text,
-      mediaType: null, mediaUrl: null, mediaCategory: null,
+      mediaType: null, mediaUrl: null, mediaThumb: null, mediaCategory: null,
       fileName: null, caption: null,
       status: "sent" as const,
-      quotedMessageId: quoted?.messageId ?? null,
-      quotedContent: quoted?.content ?? null,
+      quotedId: quoted?.messageId ?? null,
+      quotedText: quoted?.content ?? null,
       createdAt: new Date().toISOString(),
     }])
     chatInputRef.current?.focus()
@@ -1362,10 +1351,10 @@ export default function PedidosPage() {
                                 </div>
                               )}
 
-                              {m.quotedContent && (
+                              {m.quotedText && (
                                 <div className="mx-2 mt-2 px-3 py-1.5 rounded-lg border-l-[3px] text-[11px]"
                                   style={{ background: "rgba(0,0,0,0.05)", borderColor: "#00A884", color: "#667781" }}>
-                                  <p className="truncate">{m.quotedContent}</p>
+                                  <p className="truncate">{m.quotedText}</p>
                                 </div>
                               )}
 
@@ -1383,33 +1372,36 @@ export default function PedidosPage() {
                                   </span>
                                 )
 
-                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && m.mediaUrl) return (
+                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && (m.mediaUrl || m.mediaThumb)) {
+                                  const displaySrc = m.mediaUrl || m.mediaThumb
+                                  const isReady = isBlobUrl(m.mediaUrl)
+                                  return (
                                   <div>
                                     <div className="relative">
-                                      {m.mediaType === "video" && isBlobUrl(m.mediaUrl) ? (
+                                      {m.mediaType === "video" && isReady ? (
                                         // eslint-disable-next-line jsx-a11y/media-has-caption
-                                        <video controls src={m.mediaUrl} className="w-full max-w-[240px] object-cover rounded" />
+                                        <video controls src={m.mediaUrl!} className="w-full max-w-[240px] object-cover rounded" />
                                       ) : (
                                         <>
                                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                                          <img src={m.mediaUrl} alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
-                                            className={`w-full max-w-[240px] object-cover ${isBlobUrl(m.mediaUrl) ? "cursor-zoom-in" : "opacity-70"}`}
-                                            onClick={() => isBlobUrl(m.mediaUrl) && setLightboxMsg(m)} />
-                                          {m.mediaType === "video" && !isBlobUrl(m.mediaUrl) && (
+                                          <img src={displaySrc!} alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
+                                            className={`w-full max-w-[240px] object-cover ${isReady ? "cursor-zoom-in" : "opacity-70"}`}
+                                            onClick={() => isReady && setLightboxMsg(m)} />
+                                          {m.mediaType === "video" && !isReady && (
                                             <div className="absolute inset-0 flex items-center justify-center">
                                               <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm" style={{ background: "rgba(0,0,0,0.5)" }}>▶</div>
                                             </div>
                                           )}
                                         </>
                                       )}
-                                      {!isBlobUrl(m.mediaUrl) && (
+                                      {!isReady && (
                                         <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.4)" }}>carregando...</div>
                                       )}
                                     </div>
                                     {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>{m.caption}</p>}
                                     {timeEl("px-3 pb-1.5")}
                                   </div>
-                                )
+                                )}
 
                                 if (m.mediaType === "document" || m.mediaCategory === "dtf" || m.mediaCategory === "pix") return (
                                   <div className="px-3 py-2">
@@ -1458,7 +1450,7 @@ export default function PedidosPage() {
 
                                 return (
                                   <div className="px-3 py-1.5 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>
-                                    {m.mediaType && !m.mediaUrl
+                                    {m.mediaType && !m.mediaUrl && !m.mediaThumb
                                       ? <span style={{ color: "#667781" }}>{MEDIA_EMOJI[m.mediaType] ?? formatMsgPreview(m.content)}</span>
                                       : formatMsgPreview(m.content)
                                     }

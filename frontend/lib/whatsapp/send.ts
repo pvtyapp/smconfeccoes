@@ -9,10 +9,27 @@ export type QuotedMsg = {
   content: string
 }
 
+// Throws if Evolution is not connected — prevents Baileys from queuing a message
+// that will loop forever in retry when the socket is broken.
+async function assertEvolutionOpen(): Promise<void> {
+  const res = await fetch(`${EVO_URL}/instance/connectionState/${EVO_INSTANCE}`, {
+    headers: { apikey: EVO_KEY },
+    signal: AbortSignal.timeout(4_000),
+  })
+  if (!res.ok) throw new Error(`Evolution status check falhou (${res.status})`)
+  const data = await res.json() as { instance?: { state?: string }; state?: string }
+  const state = data?.instance?.state ?? data?.state
+  if (state !== "open") {
+    throw new Error(`WhatsApp desconectado (state=${state ?? "unknown"}) — tente novamente em instantes`)
+  }
+}
+
 export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg) {
   if (!EVO_URL || !EVO_KEY || !EVO_INSTANCE) {
     throw new Error("Evolution API não configurada (vars ausentes)")
   }
+
+  await assertEvolutionOpen()
 
   const number = jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 

@@ -20,16 +20,18 @@ export async function GET(req: Request) {
       const SEL = `
         SELECT
           id, message_id AS "messageId", direction, content,
-          media_type        AS "mediaType",
-          media_url         AS "mediaUrl",
-          media_category    AS "mediaCategory",
-          file_name         AS "fileName",
+          media_type             AS "mediaType",
+          media_url              AS "mediaUrl",
+          media_thumb            AS "mediaThumb",
+          media_category         AS "mediaCategory",
+          file_name              AS "fileName",
           caption,
           status,
-          quoted_message_id AS "quotedMessageId",
-          quoted_content    AS "quotedContent",
-          read_at           AS "readAt",
-          created_at        AS "createdAt"
+          quoted_id              AS "quotedId",
+          quoted_text            AS "quotedText",
+          read_at                AS "readAt",
+          created_at             AS "createdAt",
+          COALESCE(media_failed, FALSE) AS "mediaFailed"
         FROM wa_messages`
 
       if (afterId !== null) {
@@ -47,23 +49,26 @@ export async function GET(req: Request) {
       }
     }
 
-    // Full load — paginated from DB only (cursor backfill populates the data)
+    // Full load — paginated from DB only
     const { rows } = await pool.query(`
       SELECT
         id, message_id AS "messageId", direction, content,
         media_type        AS "mediaType",
         media_url         AS "mediaUrl",
+        media_thumb       AS "mediaThumb",
         media_category    AS "mediaCategory",
         file_name         AS "fileName",
         caption,
         status,
-        quoted_message_id AS "quotedMessageId",
-        quoted_content    AS "quotedContent",
+        quoted_id         AS "quotedId",
+        quoted_text       AS "quotedText",
         read_at           AS "readAt",
-        created_at        AS "createdAt"
+        created_at        AS "createdAt",
+        COALESCE(media_failed, FALSE) AS "mediaFailed"
       FROM (
-        SELECT id, message_id, direction, content, media_type, media_url, media_category,
-               file_name, caption, status, quoted_message_id, quoted_content, read_at, created_at
+        SELECT id, message_id, direction, content, media_type, media_url, media_thumb,
+               media_category, file_name, caption, status, quoted_id, quoted_text,
+               read_at, created_at, media_failed
         FROM wa_messages
         WHERE contact_id = $1
         ORDER BY created_at DESC

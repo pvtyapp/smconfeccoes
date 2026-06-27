@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { waitUntil } from "@vercel/functions"
+import { syncMessagesFromEvolution, downloadSyncedMedia } from "@/lib/whatsapp/syncMessages"
 
 export const dynamic = "force-dynamic"
 
@@ -8,25 +10,9 @@ const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
 const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
 const CONTACTS_PER_CYCLE = 5
-const MSGS_PER_CONTACT   = 200
 
 function sig(ms: number) {
   return AbortSignal.timeout ? AbortSignal.timeout(ms) : new AbortController().signal
-}
-
-async function getSetting(key: string): Promise<string | null> {
-  const { rows } = await pool.query(
-    `SELECT value FROM app_settings WHERE key = $1`, [key]
-  ).catch(() => ({ rows: [] as { value: string }[] }))
-  return rows[0]?.value ?? null
-}
-
-async function setSetting(key: string, value: string) {
-  await pool.query(
-    `INSERT INTO app_settings (key, value) VALUES ($1, $2)
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    [key, value]
-  ).catch(() => {})
 }
 
 async function fetchChats(): Promise<Record<string, unknown>[]> {
@@ -46,100 +32,180 @@ async function fetchChats(): Promise<Record<string, unknown>[]> {
   } catch { return [] }
 }
 
-async function fetchMessagesForJid(jid: string, skip = 0): Promise<unknown[]> {
-  try {
-    const r = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where: { key: { remoteJid: jid } }, skip, limit: MSGS_PER_CONTACT }),
-      signal: sig(8_000),
-    })
-    if (!r.ok) return []
-    const d = await r.json()
-    return Array.isArray(d) ? d
-      : Array.isArray(d?.messages?.records) ? d.messages.records
-      : Array.isArray(d?.records) ? d.records
-      : []
-  } catch { return [] }
-}
-
-function extractText(msgObj: Record<string, unknown> | undefined): string {
-  if (!msgObj) return ""
-  return (msgObj.conversation as string)
-    || ((msgObj.extendedTextMessage as Record<string, unknown>)?.text as string)
-    || ""
-}
-
-function hasMedia(msgObj: Record<string, unknown> | undefined): boolean {
-  if (!msgObj) return false
-  return !!(msgObj.imageMessage || msgObj.videoMessage || msgObj.audioMessage ||
-            msgObj.documentMessage || msgObj.stickerMessage)
-}
-
-// Accepts @s.whatsapp.net and @lid JIDs (individual contacts in both addressing modes)
 function isIndividual(jid: string): boolean {
   return jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")
 }
 
-// Extract phone: for @lid use lastMessage.key.remoteJidAlt, for @s use the jid itself
 function extractPhone(c: Record<string, unknown>): string {
   const jid = ((c.remoteJid ?? c.id) as string) || ""
   if (jid.endsWith("@s.whatsapp.net")) {
     return jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
   }
-  // @lid: phone is in lastMessage.key.remoteJidAlt
   const lastMsg = c.lastMessage as Record<string, unknown> | undefined
   const lastKey = lastMsg?.key as Record<string, unknown> | undefined
   const alt = (lastKey?.remoteJidAlt as string) || ""
   if (alt.endsWith("@s.whatsapp.net")) {
     return alt.replace("@s.whatsapp.net", "").replace(/\D/g, "")
   }
-  // fallback: strip @lid suffix (numeric lid, not a phone but better than nothing)
   return jid.replace("@lid", "").replace(/\D/g, "")
 }
 
 export async function POST() {
   try {
+    // ── Migrations ──────────────────────────────────────────────────────────────
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS phone_jid TEXT`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_message_synced_at TIMESTAMPTZ`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_download_failed BOOLEAN DEFAULT FALSE`).catch(() => {})
+
+    // Clear any numeric-only names — name must be a real human name or NULL
+    await pool.query(`UPDATE wa_contacts SET name = NULL WHERE name ~ '^[0-9]+$'`).catch(() => {})
+
+    // ── Fix @lid contacts whose phone column stores the opaque @lid hash ─────────
+    // phone_jid stores the real @s.whatsapp.net JID → derive real phone from it
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)
+      UPDATE wa_contacts
+      SET phone = REPLACE(phone_jid, '@s.whatsapp.net', '')
+      WHERE jid LIKE '%@lid'
+        AND phone_jid LIKE '%@s.whatsapp.net'
+        AND (phone IS NULL OR phone = REPLACE(jid, '@lid', ''))
     `).catch(() => {})
 
-    // ── 1. fetchChats: build full contact list (individual only) ──────────────
-    const chats = await fetchChats()
+    // ── Merge duplicate contacts (@s.whatsapp.net + @lid for same person) ───────
+    const mergeLog: string[] = []
 
+    // 1. Copy name from @s to @lid twin if @lid has no name yet
+    await pool.query(`
+      UPDATE wa_contacts lid SET name = s.name
+      FROM wa_contacts s
+      WHERE s.jid LIKE '%@s.whatsapp.net' AND lid.jid LIKE '%@lid'
+        AND (lid.phone_jid = s.jid OR lid.phone = s.phone)
+        AND lid.name IS NULL AND s.name IS NOT NULL
+    `).then(r => mergeLog.push(`name_copy:${r.rowCount}`)).catch(e => mergeLog.push(`name_copy_err:${e}`))
+
+    // 2. Remove exact-duplicate messages already present in the @lid contact
+    await pool.query(`
+      DELETE FROM wa_messages m
+      USING wa_contacts s, wa_contacts lid
+      WHERE m.contact_id = s.id
+        AND s.jid LIKE '%@s.whatsapp.net' AND lid.jid LIKE '%@lid'
+        AND (lid.phone_jid = s.jid OR lid.phone = s.phone)
+        AND m.message_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM wa_messages m2
+          WHERE m2.contact_id = lid.id AND m2.message_id = m.message_id
+        )
+    `).then(r => mergeLog.push(`dup_del:${r.rowCount}`)).catch(e => mergeLog.push(`dup_del_err:${e}`))
+
+    // 3. Move remaining messages from @s to @lid (subquery to avoid ambiguous join)
+    await pool.query(`
+      UPDATE wa_messages m SET contact_id = (
+        SELECT lid.id FROM wa_contacts lid
+        WHERE lid.jid LIKE '%@lid'
+          AND lid.id IN (
+            SELECT lid2.id FROM wa_contacts s2
+            JOIN wa_contacts lid2 ON lid2.jid LIKE '%@lid'
+              AND (lid2.phone_jid = s2.jid OR lid2.phone = s2.phone)
+            WHERE s2.id = m.contact_id AND s2.jid LIKE '%@s.whatsapp.net'
+          )
+        LIMIT 1
+      )
+      WHERE contact_id IN (
+        SELECT s.id FROM wa_contacts s WHERE s.jid LIKE '%@s.whatsapp.net'
+          AND EXISTS (SELECT 1 FROM wa_contacts lid WHERE lid.jid LIKE '%@lid'
+            AND (lid.phone_jid = s.jid OR lid.phone = s.phone))
+      )
+    `).then(r => mergeLog.push(`msg_move:${r.rowCount}`)).catch(e => mergeLog.push(`msg_move_err:${e}`))
+
+    // 4a. Move orders from @s to @lid (orders has FK without CASCADE)
+    await pool.query(`
+      UPDATE orders o SET contact_id = (
+        SELECT lid.id FROM wa_contacts s2
+        JOIN wa_contacts lid ON lid.jid LIKE '%@lid'
+          AND (lid.phone_jid = s2.jid OR lid.phone = s2.phone)
+        WHERE s2.id = o.contact_id AND s2.jid LIKE '%@s.whatsapp.net'
+        LIMIT 1
+      )
+      WHERE contact_id IN (
+        SELECT s.id FROM wa_contacts s WHERE s.jid LIKE '%@s.whatsapp.net'
+          AND EXISTS (SELECT 1 FROM wa_contacts lid WHERE lid.jid LIKE '%@lid'
+            AND (lid.phone_jid = s.jid OR lid.phone = s.phone))
+      )
+    `).then(r => mergeLog.push(`orders_move:${r.rowCount}`)).catch(e => mergeLog.push(`orders_move_err:${e}`))
+
+    // 4b. Move dtf_pedidos from @s to @lid (also no CASCADE)
+    await pool.query(`
+      UPDATE dtf_pedidos dp SET contact_id = (
+        SELECT lid.id FROM wa_contacts s2
+        JOIN wa_contacts lid ON lid.jid LIKE '%@lid'
+          AND (lid.phone_jid = s2.jid OR lid.phone = s2.phone)
+        WHERE s2.id = dp.contact_id AND s2.jid LIKE '%@s.whatsapp.net'
+        LIMIT 1
+      )
+      WHERE contact_id IN (
+        SELECT s.id FROM wa_contacts s WHERE s.jid LIKE '%@s.whatsapp.net'
+          AND EXISTS (SELECT 1 FROM wa_contacts lid WHERE lid.jid LIKE '%@lid'
+            AND (lid.phone_jid = s.jid OR lid.phone = s.phone))
+      )
+    `).then(r => mergeLog.push(`dtf_move:${r.rowCount}`)).catch(e => mergeLog.push(`dtf_move_err:${e}`))
+
+    // 4c. Delete the now-merged @s.whatsapp.net contacts (skip system contact 0@s)
+    await pool.query(`
+      DELETE FROM wa_contacts
+      WHERE jid LIKE '%@s.whatsapp.net'
+        AND jid != '0@s.whatsapp.net'
+        AND EXISTS (
+          SELECT 1 FROM wa_contacts lid
+          WHERE lid.jid LIKE '%@lid'
+            AND (lid.phone_jid = wa_contacts.jid OR lid.phone = wa_contacts.phone)
+        )
+    `).then(r => mergeLog.push(`contact_del:${r.rowCount}`)).catch(e => mergeLog.push(`contact_del_err:${e}`))
+
+    // ── 1. fetchChats: upsert all contacts ──────────────────────────────────────
+    const chats = await fetchChats()
     const individualChats = chats.filter(c => {
       const jid = ((c.remoteJid ?? c.id) as string) || ""
       return isIndividual(jid)
     })
 
-    // Upsert all contacts from findChats
-    // Skip @s.whatsapp.net if a @lid contact with the same phone already exists
     for (const c of individualChats) {
-      const jid   = ((c.remoteJid ?? c.id) as string) || ""
-      const name  = (c.name as string) || (c.pushName as string) || ""
-      const phone = extractPhone(c)
-      const pic   = (c.profilePicUrl as string) || null
+      const jid     = ((c.remoteJid ?? c.id) as string) || ""
+      const rawName = (c.name as string) || (c.pushName as string) || ""
+      const name    = /^\d+$/.test(rawName.trim()) ? "" : rawName
+      const phone   = extractPhone(c)
+      const pic     = (c.profilePicUrl as string) || null
+      const phoneJid: string | null = (() => {
+        if (!jid.endsWith("@lid")) return null
+        const lastMsg = c.lastMessage as Record<string, unknown> | undefined
+        const lastKey = lastMsg?.key as Record<string, unknown> | undefined
+        const alt = (lastKey?.remoteJidAlt as string) || ""
+        return alt.endsWith("@s.whatsapp.net") ? alt : null
+      })()
 
-      if (jid.endsWith("@s.whatsapp.net") && phone.match(/^[0-9]{8,15}$/)) {
+      // Skip @s.whatsapp.net contact if a @lid version already owns this JID (via phone_jid) or phone
+      if (jid.endsWith("@s.whatsapp.net") && /^[0-9]{8,15}$/.test(phone)) {
         const { rows: lidExists } = await pool.query(
-          `SELECT 1 FROM wa_contacts WHERE phone = $1 AND jid LIKE '%@lid' LIMIT 1`, [phone]
+          `SELECT 1 FROM wa_contacts WHERE jid LIKE '%@lid' AND (phone = $1 OR phone_jid = $2) LIMIT 1`,
+          [phone, jid]
         ).catch(() => ({ rows: [] }))
-        if (lidExists.length > 0) continue  // @lid version already owns this contact
+        if (lidExists.length > 0) continue
       }
 
       await pool.query(
-        `INSERT INTO wa_contacts (jid, name, phone, profile_pic)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO wa_contacts (jid, name, phone, profile_pic, phone_jid)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (jid) DO UPDATE SET
-           name        = CASE WHEN EXCLUDED.name ~ '^[0-9]+$' THEN wa_contacts.name ELSE EXCLUDED.name END,
+           name        = CASE WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN wa_contacts.name ELSE EXCLUDED.name END,
            phone       = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
            profile_pic = COALESCE(EXCLUDED.profile_pic, wa_contacts.profile_pic),
+           phone_jid   = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
            updated_at  = NOW()`,
-        [jid, name || phone, phone, pic]
+        [jid, name || null, phone, pic, phoneJid]
       ).catch(() => {})
     }
 
-    // ── 2. Read-sync: mark PIV-read contacts as read in DB ────────────────────
+    // ── 2. Read-sync: mark PIV-read conversations as read in DB ─────────────────
     for (const c of individualChats) {
       const jid    = ((c.remoteJid ?? c.id) as string) || ""
       const unread = (c.unreadCount as number) ?? -1
@@ -153,95 +219,84 @@ export async function POST() {
       }
     }
 
-    // ── 3. Per-contact backfill cursor ────────────────────────────────────────
-    const sortedJids = individualChats
-      .map(c => ((c.remoteJid ?? c.id) as string) || "")
-      .filter(Boolean)
-      .sort()
+    // ── 3. Delta sync — per-contact last_message_synced_at ─────────────────────
+    // Never-synced contacts first (full fetch), then stale ones (delta fetch)
+    const { rows: batch } = await pool.query(`
+      SELECT id, jid, last_message_synced_at
+      FROM wa_contacts
+      WHERE jid LIKE '%@s.whatsapp.net' OR jid LIKE '%@lid'
+      ORDER BY
+        CASE WHEN last_message_synced_at IS NULL THEN 0 ELSE 1 END,
+        last_message_synced_at ASC NULLS FIRST
+      LIMIT $1
+    `, [CONTACTS_PER_CYCLE])
 
-    const cursorRaw   = await getSetting("backfill_contact_idx")
-    const allDone     = cursorRaw === "done"
-    const cursorIdx   = allDone ? 0 : (parseInt(cursorRaw ?? "0") || 0)
+    let totalSaved = 0
 
-    let backfillStatus = "skip"
+    for (const contact of batch) {
+      const contactId  = contact.id as number
+      const jid        = contact.jid as string
+      const lastSynced = contact.last_message_synced_at as Date | null
+      const afterTs    = lastSynced ? Math.floor(lastSynced.getTime() / 1000) : undefined
 
-    if (!allDone && sortedJids.length > 0) {
-      const batch = sortedJids.slice(cursorIdx, cursorIdx + CONTACTS_PER_CYCLE)
-      let totalSaved = 0
+      // syncMessagesFromEvolution handles: fetch, INSERT with thumbnail, quoted msg, all media fields
+      const { pending, processedCount } = await syncMessagesFromEvolution(jid, contactId, { afterTs })
+      totalSaved += processedCount
 
-      for (const jid of batch) {
-        const { rows: cr } = await pool.query(
-          `SELECT id FROM wa_contacts WHERE jid = $1 LIMIT 1`, [jid]
-        ).catch(() => ({ rows: [] as { id: number }[] }))
-        if (!cr.length) continue
-        const contactId = cr[0].id
-
-        let skip = 0
-        let page: unknown[]
-        let phoneUpdated = false
-        do {
-          page = await fetchMessagesForJid(jid, skip)
-          for (const raw of page) {
-            const m   = raw as Record<string, unknown>
-            const k   = m.key as Record<string, unknown> | undefined
-            if (!k) continue
-            const msgObj = m.message as Record<string, unknown> | undefined
-            const text   = extractText(msgObj)
-            const media  = hasMedia(msgObj)
-            if (!text && !media) continue
-            const msgId     = k.id as string | undefined
-            const fromMe    = Boolean(k.fromMe)
-            const ts        = m.messageTimestamp as number | undefined
-            const createdAt = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString()
-            const isOld     = ts ? (Date.now() - ts * 1000 > 60 * 60 * 1000) : true
-            const readAt    = (!fromMe && isOld) ? createdAt : null
-
-            await pool.query(
-              `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at, read_at, status)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
-                 read_at = COALESCE(wa_messages.read_at, EXCLUDED.read_at)`,
-              [contactId, msgId ?? null, fromMe ? "out" : "in", text || "[mídia]",
-               createdAt, readAt, fromMe ? "sent" : null]
-            ).catch(() => {})
-            totalSaved++
-
-            // For @lid contacts: update phone from remoteJidAlt once
-            if (!phoneUpdated && jid.endsWith("@lid")) {
-              const alt = k.remoteJidAlt as string | undefined
-              if (alt?.endsWith("@s.whatsapp.net")) {
-                const realPhone = alt.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-                if (realPhone.length >= 8 && realPhone.length <= 15) {
-                  pool.query(
-                    `UPDATE wa_contacts SET phone = $1, updated_at = NOW()
-                     WHERE id = $2 AND (phone IS NULL OR phone !~ '^[0-9]{8,15}$')`,
-                    [realPhone, contactId]
-                  ).catch(() => {})
-                  phoneUpdated = true
-                }
-              }
-            }
-          }
-          skip += MSGS_PER_CONTACT
-        } while (page.length === MSGS_PER_CONTACT)
+      // Background blob download for any media without a full URL yet
+      if (pending.length > 0) {
+        waitUntil(downloadSyncedMedia(pending, contactId))
       }
 
-      const nextIdx = cursorIdx + batch.length
-      const isDone  = nextIdx >= sortedJids.length
-      await setSetting("backfill_contact_idx", isDone ? "done" : String(nextIdx))
-      backfillStatus = isDone
-        ? `done (${sortedJids.length} contacts)`
-        : `contacts ${cursorIdx}–${nextIdx - 1} of ${sortedJids.length} (${totalSaved} saved)`
-    } else if (allDone) {
-      backfillStatus = "done"
-    } else {
-      backfillStatus = "no contacts"
+      // For full sync (first time): only mark as synced if Evolution returned records.
+      // For delta: always mark — 0 new messages is a valid result meaning no updates.
+      const shouldMark = afterTs !== undefined || processedCount > 0
+      if (shouldMark) {
+        await pool.query(
+          `UPDATE wa_contacts SET last_message_synced_at = NOW() WHERE id = $1`,
+          [contactId]
+        ).catch(() => {})
+      }
     }
+
+    // ── Post-upsert merge: clean up any @s contacts re-created by the upsert loop ─
+    await pool.query(`
+      UPDATE wa_contacts SET phone = REPLACE(phone_jid, '@s.whatsapp.net', '')
+      WHERE jid LIKE '%@lid' AND phone_jid LIKE '%@s.whatsapp.net'
+        AND (phone IS NULL OR phone = REPLACE(jid, '@lid', ''))
+    `).catch(() => {})
+
+    await pool.query(`
+      UPDATE orders o SET contact_id = (
+        SELECT lid.id FROM wa_contacts s2
+        JOIN wa_contacts lid ON lid.jid LIKE '%@lid'
+          AND (lid.phone_jid = s2.jid OR lid.phone = s2.phone)
+        WHERE s2.id = o.contact_id AND s2.jid LIKE '%@s.whatsapp.net' LIMIT 1
+      )
+      WHERE contact_id IN (
+        SELECT s.id FROM wa_contacts s WHERE s.jid LIKE '%@s.whatsapp.net'
+          AND EXISTS (SELECT 1 FROM wa_contacts lid WHERE lid.jid LIKE '%@lid'
+            AND (lid.phone_jid = s.jid OR lid.phone = s.phone))
+      )
+    `).catch(() => {})
+
+    const { rowCount: postMergeDeleted } = await pool.query(`
+      DELETE FROM wa_contacts
+      WHERE jid LIKE '%@s.whatsapp.net' AND jid != '0@s.whatsapp.net'
+        AND NOT EXISTS (SELECT 1 FROM wa_messages WHERE contact_id = wa_contacts.id)
+        AND EXISTS (
+          SELECT 1 FROM wa_contacts lid WHERE lid.jid LIKE '%@lid'
+            AND (lid.phone_jid = wa_contacts.jid OR lid.phone = wa_contacts.phone)
+        )
+    `).catch(() => ({ rowCount: 0 }))
 
     return NextResponse.json({
       ok: true,
       contacts: individualChats.length,
-      backfill: backfillStatus,
+      synced: batch.length,
+      saved: totalSaved,
+      mergeLog,
+      postMergeDeleted,
     })
 
   } catch (err) {

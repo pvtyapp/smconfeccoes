@@ -29,54 +29,63 @@ const folderMap: Record<string, "dtf" | "pix" | "media" | "audio" | "docs"> = {
   sticker:   "media",
 }
 
+// Downloads full media from Evolution, uploads to Blob, updates media_url.
+// Sets media_failed = TRUE if Evolution returns null (expired after ~30 days).
 export async function downloadSyncedMedia(pending: PendingMedia[], contactId: number): Promise<void> {
   for (const { rec, msgId, mediaType } of pending) {
     try {
       const media = await downloadEvolutionMedia(rec)
-      if (!media) continue
+      if (!media) {
+        await pool.query(
+          `UPDATE wa_messages SET media_failed = TRUE WHERE contact_id = $1 AND message_id = $2`,
+          [contactId, msgId]
+        ).catch(() => {})
+        continue
+      }
       const category = classifyMediaCategory(mediaType, media.mimeType, "idle")
       const folder   = folderMap[category] ?? "media"
       const url      = await uploadToBlob(media.base64, media.mimeType, media.filename, folder)
       if (!url) continue
       await pool.query(
-        `UPDATE wa_messages SET media_url = $1, media_category = $2 WHERE contact_id = $3 AND message_id = $4`,
+        `UPDATE wa_messages SET media_url = $1, media_category = $2, media_failed = FALSE
+         WHERE contact_id = $3 AND message_id = $4`,
         [url, category, contactId, msgId]
       ).catch(() => {})
     } catch { /* individual failure is non-fatal */ }
   }
 }
 
-// Fetches last 80 messages from Evolution for a JID, upserts to wa_messages.
-// Returns pending media items for background blob upload.
-export async function syncMessagesFromEvolution(jid: string, contactId: number): Promise<PendingMedia[]> {
+// Fetches messages from Evolution for a JID, upserts into wa_messages.
+// Stores thumbnail in media_thumb (base64) and leaves media_url NULL until blob download.
+// Returns pending media items for background blob upload + count of records processed.
+export async function syncMessagesFromEvolution(
+  jid: string,
+  contactId: number,
+  options: { afterTs?: number } = {}
+): Promise<{ pending: PendingMedia[]; processedCount: number }> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 6_000)
   const pending: PendingMedia[] = []
+  let records: unknown[] = []
   try {
+    const where: Record<string, unknown> = { key: { remoteJid: jid } }
+    if (options.afterTs) where.messageTimestamp = { $gt: options.afterTs }
     const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
       method: "POST",
       headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: 80 }),
+      body: JSON.stringify({ where, limit: 200 }),
       signal: ctrl.signal,
     })
-    if (!res.ok) {
-      console.error(`[syncMessages] Evolution findMessages não-ok ${res.status} para ${jid}`)
-      return pending
-    }
+    if (!res.ok) return { pending, processedCount: 0 }
 
     const data = await res.json()
-    // Evolution v2 retorna em vários formatos dependendo da versão — tenta todos
-    const records: unknown[] =
+    records =
       Array.isArray(data) ? data :
       Array.isArray(data?.messages?.records) ? data.messages.records :
       Array.isArray(data?.records) ? data.records :
       Array.isArray(data?.data) ? data.data :
       Array.isArray(data?.messages) ? data.messages :
       []
-
-    if (records.length === 0) {
-      console.error(`[syncMessages] Evolution retornou 0 mensagens para ${jid}. Raw:`, JSON.stringify(data).slice(0, 200))
-    }
 
     for (const r of records) {
       const rec = r as Record<string, unknown>
@@ -93,38 +102,41 @@ export async function syncMessagesFromEvolution(jid: string, contactId: number):
         ((msgObj?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
         ""
 
-      let mediaType: string | null = null
-      let mediaUrl: string | null  = null
-      let fileName: string | null  = null
-      let caption: string | null   = null
+      // Extract media metadata — thumbnail goes to media_thumb, NOT media_url
+      let mediaType:  string | null = null
+      let mediaThumb: string | null = null   // base64 preview only
+      let fileName:   string | null = null
+      let caption:    string | null = null
+
       if (msgObj) {
         if (msgObj.imageMessage) {
           const m = msgObj.imageMessage as Record<string, unknown>
-          mediaType = "image"
-          const thumb = b64(m.jpegThumbnail)
-          if (thumb) mediaUrl = `data:image/jpeg;base64,${thumb}`
+          mediaType  = "image"
+          const t = b64(m.jpegThumbnail)
+          if (t) mediaThumb = `data:image/jpeg;base64,${t}`
           caption = (m.caption as string) ?? null
         } else if (msgObj.videoMessage) {
           const m = msgObj.videoMessage as Record<string, unknown>
-          mediaType = "video"
-          const thumb = b64(m.jpegThumbnail)
-          if (thumb) mediaUrl = `data:image/jpeg;base64,${thumb}`
+          mediaType  = "video"
+          const t = b64(m.jpegThumbnail)
+          if (t) mediaThumb = `data:image/jpeg;base64,${t}`
           caption = (m.caption as string) ?? null
         } else if (msgObj.audioMessage) {
           mediaType = "audio"
         } else if (msgObj.documentMessage) {
           const m = msgObj.documentMessage as Record<string, unknown>
           mediaType = "document"
-          fileName = (m.fileName as string) ?? null
-          caption  = (m.caption as string) ?? null
+          fileName  = (m.fileName as string) ?? null
+          caption   = (m.caption as string) ?? null
         } else if (msgObj.stickerMessage) {
           const m = msgObj.stickerMessage as Record<string, unknown>
           mediaType = "sticker"
-          const thumb = b64(m.jpegThumbnail)
-          if (thumb) mediaUrl = `data:image/jpeg;base64,${thumb}`
+          const t = b64(m.jpegThumbnail)
+          if (t) mediaThumb = `data:image/jpeg;base64,${t}`
         }
       }
 
+      // Extract quoted message context
       const ctxInfo = (() => {
         if (!msgObj) return null
         for (const src of [msgObj.extendedTextMessage, msgObj.imageMessage, msgObj.videoMessage, msgObj.audioMessage, msgObj.documentMessage]) {
@@ -133,8 +145,8 @@ export async function syncMessagesFromEvolution(jid: string, contactId: number):
         }
         return null
       })()
-      const quotedMsgId: string | null    = (ctxInfo?.stanzaId as string) ?? null
-      const quotedContent: string | null  = (() => {
+      const quotedId: string | null   = (ctxInfo?.stanzaId as string) ?? null
+      const quotedText: string | null = (() => {
         const qm = ctxInfo?.quotedMessage as Record<string, unknown> | undefined
         if (!qm) return null
         return (qm.conversation as string) || ((qm.extendedTextMessage as Record<string, unknown>)?.text as string) || "[mídia]"
@@ -144,47 +156,49 @@ export async function syncMessagesFromEvolution(jid: string, contactId: number):
       const ts        = rec.messageTimestamp as number | undefined
       const createdAt = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString()
 
-      // Mensagens de entrada com mais de 24h são auto-marcadas como lidas no sync.
-      // Isso evita que o histórico antigo gere badges de "não lido" enganosos.
-      // COALESCE no DO UPDATE preserva read_at existente e aplica o auto-mark em re-syncs.
+      // Mensagens inbound com mais de 24h → auto-mark como lidas (evita badges enganosos)
       const isOldMsg = ts ? (Date.now() - ts * 1000 > 24 * 60 * 60 * 1000) : false
-      const readAt   = (direction === 'in' && isOldMsg) ? createdAt : null
+      const readAt   = (direction === "in" && isOldMsg) ? createdAt : null
 
       const { rowCount } = await pool.query(
-        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_url, file_name, caption, created_at, quoted_message_id, quoted_content, read_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `INSERT INTO wa_messages
+           (contact_id, message_id, direction, content,
+            media_type, media_thumb, file_name, caption,
+            created_at, quoted_id, quoted_text, read_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
-           media_type        = COALESCE(wa_messages.media_type,        EXCLUDED.media_type),
-           media_url         = COALESCE(wa_messages.media_url,         EXCLUDED.media_url),
-           file_name         = COALESCE(wa_messages.file_name,         EXCLUDED.file_name),
-           caption           = COALESCE(wa_messages.caption,           EXCLUDED.caption),
-           quoted_message_id = COALESCE(wa_messages.quoted_message_id, EXCLUDED.quoted_message_id),
-           quoted_content    = COALESCE(wa_messages.quoted_content,    EXCLUDED.quoted_content),
-           read_at           = COALESCE(wa_messages.read_at,           EXCLUDED.read_at)
-         RETURNING (xmax = 0) AS inserted`,
-        [contactId, msgId, direction, content, mediaType, mediaUrl, fileName, caption, createdAt, quotedMsgId, quotedContent, readAt]
+           media_type  = COALESCE(wa_messages.media_type,  EXCLUDED.media_type),
+           media_thumb = COALESCE(wa_messages.media_thumb, EXCLUDED.media_thumb),
+           file_name   = COALESCE(wa_messages.file_name,   EXCLUDED.file_name),
+           caption     = COALESCE(wa_messages.caption,     EXCLUDED.caption),
+           quoted_id   = COALESCE(wa_messages.quoted_id,   EXCLUDED.quoted_id),
+           quoted_text = COALESCE(wa_messages.quoted_text, EXCLUDED.quoted_text),
+           read_at     = COALESCE(wa_messages.read_at,     EXCLUDED.read_at)`,
+        [contactId, msgId, direction, content,
+         mediaType, mediaThumb, fileName, caption,
+         createdAt, quotedId, quotedText, readAt]
       ).catch(() => ({ rowCount: 0 }))
 
+      // Queue for blob download if this message has media and no real URL yet
       if (mediaType && rowCount) {
-        const existing = await pool.query(
-          `SELECT media_url FROM wa_messages WHERE message_id = $1`, [msgId]
-        ).catch(() => ({ rows: [] as { media_url: string | null }[] }))
-        const existingUrl = existing.rows[0]?.media_url ?? null
-        if (!existingUrl || !existingUrl.startsWith("https://")) {
+        const { rows: existing } = await pool.query(
+          `SELECT media_url, media_failed FROM wa_messages WHERE message_id = $1`, [msgId]
+        ).catch(() => ({ rows: [] as { media_url: string | null; media_failed: boolean }[] }))
+        const existingUrl   = existing[0]?.media_url ?? null
+        const alreadyFailed = existing[0]?.media_failed ?? false
+        if (!alreadyFailed && (!existingUrl || !existingUrl.startsWith("https://"))) {
           pending.push({ rec, msgId, mediaType })
         }
       }
     }
   } catch { /* timeout or Evolution offline */ }
   finally { clearTimeout(timer) }
-  return pending
+  return { pending, processedCount: records.length }
 }
 
-// Syncs messages for a contact and queues background media downloads.
-// Safe to call fire-and-forget — all errors are caught internally.
 export async function syncContactMessages(jid: string, contactId: number): Promise<void> {
   try {
-    const pending = await syncMessagesFromEvolution(jid, contactId)
+    const { pending } = await syncMessagesFromEvolution(jid, contactId)
     if (pending.length > 0) {
       waitUntil(downloadSyncedMedia(pending, contactId))
     }
