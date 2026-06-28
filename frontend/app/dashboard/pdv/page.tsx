@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   Search, RefreshCw, ShoppingCart, X, Plus, Minus,
   Loader2, UserPlus, Store, Check, Receipt,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Printer,
 } from "lucide-react"
 import { todayBR, dateBR } from "@/lib/tz"
 import PdvReceiptModal, { type SaleReceipt } from "./PdvReceiptModal"
@@ -93,7 +93,10 @@ const PAY_OPTIONS: { value: PayMethod; label: string }[] = [
   { value: "prazo",    label: "Prazo"    },
 ]
 
-// G5/G6 — variant button color by stock level
+const PAY_LABEL: Record<string, string> = {
+  dinheiro: "Dinheiro", pix: "Pix", debito: "Débito", credito: "Crédito", prazo: "Prazo",
+}
+
 function variantBtnClass(v: Variant, inCart: CartItem | undefined): string {
   const base = "relative flex flex-col items-center px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all min-w-[48px]"
   if (v.currentStock < 0)  return `${base} border-red-300 bg-red-50 text-red-400 cursor-not-allowed`
@@ -120,7 +123,6 @@ export default function PDVPage() {
   const [search, setSearch] = useState("")
   const [cart,   setCart]   = useState<CartItem[]>([])
 
-  // G1 — collapsible product blocks (default: all collapsed, expand on demand)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   function toggleGroup(productId: string) {
     setExpandedGroups(prev => {
@@ -138,8 +140,8 @@ export default function PDVPage() {
   const [newMode,         setNewMode]         = useState(false)
   const [newName,         setNewName]         = useState("")
   const [newPhone,        setNewPhone]        = useState("")
-  // G3 — duplicate detection
   const [duplicateFound,  setDuplicateFound]  = useState<Contact | null>(null)
+  const [isBalcao,        setIsBalcao]        = useState(false)
   const dropRef = useRef<HTMLDivElement>(null)
 
   // Preço Exclusivo
@@ -156,8 +158,9 @@ export default function PDVPage() {
   // Metro inputs
   const [metroValues, setMetroValues] = useState<Record<string, string>>({})
 
-  // Sale / G7+G8
+  // Sale
   const [saving,    setSaving]    = useState(false)
+  const [autoPrint, setAutoPrint] = useState(false)
   const [lastSale,  setLastSale]  = useState<{ number: string; total: number } | null>(null)
   const [saleError, setSaleError] = useState("")
   const [receipt,   setReceipt]   = useState<SaleReceipt | null>(null)
@@ -277,7 +280,6 @@ export default function PDVPage() {
     )
   }
 
-  // G2 — type quantity directly
   function setQtyDirect(key: string, val: number) {
     if (isNaN(val) || val < 1) return
     setCart(prev => prev.map(i =>
@@ -343,6 +345,7 @@ export default function PDVPage() {
     setShowDrop(false)
     setNewMode(false)
     setDuplicateFound(null)
+    setIsBalcao(false)
   }
 
   function resetExclusivo() {
@@ -359,6 +362,7 @@ export default function PDVPage() {
     setNewName("")
     setNewPhone("")
     setDuplicateFound(null)
+    setIsBalcao(false)
     resetExclusivo()
     setPayMethod("pix")
     setDueDate("")
@@ -369,7 +373,20 @@ export default function PDVPage() {
     pickContact(c)
   }
 
-  // G3 — check for duplicate on phone blur
+  function selectBalcao() {
+    setSelectedContact(null)
+    setContactSearch("")
+    setNewMode(false)
+    setNewName("")
+    setNewPhone("")
+    setDuplicateFound(null)
+    resetExclusivo()
+    setPayMethod("pix")
+    setDueDate("")
+    setIsBalcao(true)
+    setShowDrop(false)
+  }
+
   function handlePhoneBlur() {
     if (!newPhone.trim()) { setDuplicateFound(null); return }
     const normalized = normalizePhoneLocal(newPhone)
@@ -377,13 +394,15 @@ export default function PDVPage() {
     setDuplicateFound(found ?? null)
   }
 
+  const activeContact = selectedContact ?? duplicateFound
+  const hasClientOrBalcao = isBalcao || !!activeContact || (newMode && !!newPhone.trim())
+
   // ── Finalize ───────────────────────────────────────────────────────────────
 
-  async function doSale(pm: PayMethod, dd: string) {
+  async function doSale(pm: PayMethod, dd: string, printAfter = false) {
     setSaleError("")
     setSaving(true)
     try {
-      // G3 — if duplicate found in newMode, use existing contact
       const effectiveContact = duplicateFound ?? selectedContact
 
       const contactData: Record<string, unknown> = {}
@@ -392,6 +411,7 @@ export default function PDVPage() {
       } else if (newMode && newPhone.trim()) {
         contactData.newContact = { name: newName.trim() || null, phone: newPhone.trim() }
       }
+      // isBalcao: no contactData → backend uses/creates Balcão contact
 
       const cartSnapshot = [...cart]
 
@@ -417,7 +437,27 @@ export default function PDVPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Erro ao finalizar venda")
 
-      // G7+G8 — build receipt before clearing state
+      // fire-and-forget WA (skip for Balcão, silent failure)
+      if (!isBalcao && effectiveContact && effectiveContact.phone !== "00000000000") {
+        const p = effectiveContact.phone.replace(/\D/g, "")
+        const withCC = p.startsWith("55") && p.length >= 12 ? p : `55${p}`
+        const jid = `${withCC}@s.whatsapp.net`
+        const lines = [
+          `✅ *Venda ${data.number} concluída!*`,
+          `Total: ${fmtR(total)}`,
+          `Pagamento: ${PAY_LABEL[pm] ?? pm}`,
+          pm === "prazo" && dd
+            ? `Vencimento: ${new Date(dd + "T12:00:00").toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}`
+            : null,
+          `Obrigado pela compra! 🧡`,
+        ].filter(Boolean).join("\n")
+        fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jid, text: lines }),
+        }).catch(() => {})
+      }
+
       const receiptContact = effectiveContact
         ? { name: effectiveContact.name, phone: effectiveContact.phone }
         : newMode && newPhone.trim()
@@ -445,6 +485,7 @@ export default function PDVPage() {
       }
 
       setLastSale({ number: data.number, total })
+      setAutoPrint(printAfter)
       setReceipt(saleReceipt)
       setCart([])
       clearContact()
@@ -459,22 +500,29 @@ export default function PDVPage() {
     }
   }
 
-  async function finalizeSale() {
+  async function finalizeSale(printAfter = false) {
     if (cart.length === 0) return
+    if (!hasClientOrBalcao) {
+      setSaleError("Selecione um cliente ou Balcão antes de finalizar.")
+      return
+    }
     if (payMethod === "prazo" && !dueDate) {
       setSaleError("Informe o vencimento para venda a prazo.")
       return
     }
-    const hasClient = selectedContact || duplicateFound || (newMode && newPhone.trim())
-    if (payMethod === "prazo" && !hasClient) {
+    if (payMethod === "prazo" && !activeContact) {
       setSaleError("Venda a prazo exige um cliente identificado.")
       return
     }
-    await doSale(payMethod, dueDate)
+    await doSale(payMethod, dueDate, printAfter)
   }
 
   async function finalizeAsPrazo() {
     if (cart.length === 0) return
+    if (!hasClientOrBalcao) {
+      setSaleError("Selecione um cliente ou Balcão antes de finalizar.")
+      return
+    }
     const c = selectedContact ?? duplicateFound
     let dd = ""
     if (c?.paymentTermType === "days" && c.paymentTermDays) {
@@ -490,8 +538,6 @@ export default function PDVPage() {
     }
     await doSale("prazo", dd)
   }
-
-  const activeContact = selectedContact ?? duplicateFound
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -524,7 +570,7 @@ export default function PDVPage() {
             </div>
           )}
 
-          {/* G1 — collapsible stock product cards */}
+          {/* Collapsible stock product cards */}
           {!loading && filteredStock.length > 0 && (
             <div className="space-y-3">
               {filteredStock.map(g => {
@@ -711,7 +757,7 @@ export default function PDVPage() {
               )}
             </div>
 
-            {/* Success banner (só quando não há modal aberto) */}
+            {/* Success banner */}
             {lastSale && !receipt && (
               <div className="flex-shrink-0 mx-3 mt-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl">
                 <div className="flex items-center justify-between">
@@ -740,7 +786,6 @@ export default function PDVPage() {
                     const ep        = effectiveUnitPrice(item)
                     const hasAdjust = ep !== item.unitPrice
 
-                    // Metro product (DTF etc.)
                     if (item.precoPorMetro) {
                       return (
                         <div key={item.key} className="flex items-center gap-3 px-4 py-3">
@@ -771,7 +816,6 @@ export default function PDVPage() {
                       )
                     }
 
-                    // Non-stock service (qty can be decimal)
                     if (!item.variantId) {
                       return (
                         <div key={item.key} className="flex items-center gap-3 px-4 py-3">
@@ -818,7 +862,6 @@ export default function PDVPage() {
                       )
                     }
 
-                    // G2 — stock variant with editable qty input
                     return (
                       <div key={item.key} className="flex items-center gap-3 px-4 py-3">
                         <div className="flex-1 min-w-0">
@@ -875,24 +918,46 @@ export default function PDVPage() {
             {/* Footer */}
             <div className="flex-shrink-0 border-t border-[#0F1E3C]/8 p-4 space-y-3">
 
-              {/* Customer */}
+              {/* ── Cliente ── */}
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Cliente</p>
-                {activeContact ? (
-                  <div className={`flex items-center justify-between px-3 py-2 rounded-xl ${activeContact.precoExclusivo ? "bg-amber-50 border border-amber-200" : "bg-[#F4F6FB]"}`}>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-bold text-[#0F1E3C]">{activeContact.name || "Sem nome"}</p>
-                        {activeContact.precoExclusivo && (
-                          <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">★ Preço Exclusivo</span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-[#0F1E3C]/40">{fmtPhone(activeContact.phone)}</p>
+
+                {/* Balcão chip */}
+                {isBalcao ? (
+                  <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#F4F6FB]">
+                    <div className="flex items-center gap-2">
+                      <Store size={13} className="text-[#0F1E3C]/40 flex-shrink-0" />
+                      <p className="text-xs font-bold text-[#0F1E3C]">Balcão</p>
+                      <span className="text-[9px] text-[#0F1E3C]/35 bg-[#0F1E3C]/8 px-1.5 py-0.5 rounded-full">Sem cliente</span>
                     </div>
                     <button onClick={clearContact} className="text-[#0F1E3C]/25 hover:text-red-400 transition-colors">
                       <X size={13} />
                     </button>
                   </div>
+
+                /* Contact chip */
+                ) : activeContact ? (
+                  <div className={`flex items-center justify-between px-3 py-2 rounded-xl ${activeContact.precoExclusivo ? "bg-amber-50 border border-amber-200" : "bg-[#F4F6FB]"}`}>
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-xs font-bold text-[#0F1E3C]">{activeContact.name || "Sem nome"}</p>
+                        {activeContact.precoExclusivo && (
+                          <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">★ Preço Esp.</span>
+                        )}
+                        {activeContact.paymentTermEnabled && (
+                          <span className="text-[9px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-full">
+                            {activeContact.paymentTermDays ? `Prazo ${activeContact.paymentTermDays}d` : "Prazo"}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-[#0F1E3C]/40">{fmtPhone(activeContact.phone)}</p>
+                    </div>
+                    <button onClick={clearContact} className="text-[#0F1E3C]/25 hover:text-red-400 transition-colors flex-shrink-0">
+                      <X size={13} />
+                    </button>
+                  </div>
+
+                /* New contact form */
                 ) : newMode ? (
                   <div className="space-y-1.5">
                     <input
@@ -913,7 +978,6 @@ export default function PDVPage() {
                         <X size={13} />
                       </button>
                     </div>
-                    {/* G3 — duplicate warning */}
                     {duplicateFound && (
                       <div className="flex items-center justify-between px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
                         <p className="text-[10px] text-amber-800 flex-1 min-w-0 truncate">
@@ -928,6 +992,8 @@ export default function PDVPage() {
                       </div>
                     )}
                   </div>
+
+                /* Search dropdown */
                 ) : (
                   <div className="relative" ref={dropRef}>
                     <div className="relative">
@@ -936,10 +1002,19 @@ export default function PDVPage() {
                         value={contactSearch}
                         onChange={e => { setContactSearch(e.target.value); setShowDrop(true) }}
                         onFocus={() => setShowDrop(true)}
-                        placeholder="Buscar ou deixar vazio (Balcão)"
+                        placeholder="Buscar cliente..."
                         className="w-full pl-7 pr-3 py-2 rounded-xl border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                       />
                     </div>
+                    {/* Quick Balcão button below search */}
+                    {!showDrop && (
+                      <button
+                        onClick={selectBalcao}
+                        className="mt-1 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-[#0F1E3C]/15 text-[10px] font-semibold text-[#0F1E3C]/40 hover:text-[#0F1E3C]/70 hover:border-[#0F1E3C]/30 transition-colors"
+                      >
+                        <Store size={11} /> Venda Balcão (sem cliente)
+                      </button>
+                    )}
                     {showDrop && (
                       <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-[#0F1E3C]/10 rounded-xl shadow-lg z-20 overflow-hidden max-h-48 overflow-y-auto">
                         {contactSuggestions.map(c => (
@@ -951,20 +1026,28 @@ export default function PDVPage() {
                             </div>
                           </button>
                         ))}
-                        <button
-                          onClick={() => { setNewMode(true); setShowDrop(false); setContactSearch("") }}
-                          className="w-full flex items-center gap-2 px-3 py-2.5 border-t border-[#0F1E3C]/6 text-xs font-semibold text-[#4361EE] hover:bg-[#F4F6FB] transition-colors"
-                        >
-                          <UserPlus size={12} /> Cadastrar novo cliente
-                        </button>
+                        <div className="flex border-t border-[#0F1E3C]/6">
+                          <button
+                            onClick={() => { setNewMode(true); setShowDrop(false); setContactSearch("") }}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-[#4361EE] hover:bg-[#F4F6FB] transition-colors border-r border-[#0F1E3C]/6"
+                          >
+                            <UserPlus size={12} /> Cadastrar novo
+                          </button>
+                          <button
+                            onClick={selectBalcao}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-[#0F1E3C]/50 hover:bg-[#F4F6FB] transition-colors"
+                          >
+                            <Store size={12} /> Balcão
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* Preço Exclusivo */}
-              {activeContact?.precoExclusivo && cart.length > 0 && (
+              {/* ── Skeleton Preço Exclusivo ── always visible */}
+              {activeContact?.precoExclusivo && cart.length > 0 ? (
                 <div className="border border-amber-200 bg-amber-50 rounded-xl p-3 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">★ Preço Exclusivo</p>
@@ -1032,20 +1115,44 @@ export default function PDVPage() {
                     </div>
                   )}
                 </div>
+              ) : (
+                /* Skeleton inativo */
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6">
+                  <span className="text-[10px] text-[#0F1E3C]/30 font-semibold">★ Preço Exclusivo</span>
+                  <span className="text-[9px] text-[#0F1E3C]/20">
+                    {!activeContact
+                      ? "— selecione um cliente"
+                      : !activeContact.precoExclusivo
+                      ? "— sem permissão"
+                      : "— adicione itens"}
+                  </span>
+                </div>
               )}
 
-              {/* Payment method */}
+              {/* ── Pagamento ── */}
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Pagamento</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {PAY_OPTIONS
-                    .filter(opt => opt.value !== "prazo" || !!activeContact)
-                    .map(opt => (
+                  {PAY_OPTIONS.map(opt => {
+                    const isPrazo = opt.value === "prazo"
+                    const prazoNoClient = isPrazo && !activeContact
+                    const prazoNoPermission = isPrazo && !!activeContact && !activeContact.paymentTermEnabled
+                    const prazoDisabled = prazoNoClient || prazoNoPermission
+                    const prazoTitle = prazoNoClient
+                      ? "Selecione um cliente para habilitar prazo"
+                      : prazoNoPermission
+                      ? "Cliente sem permissão de prazo"
+                      : undefined
+                    return (
                       <button
                         key={opt.value}
-                        onClick={() => setPayMethod(opt.value)}
+                        onClick={() => { if (!prazoDisabled) setPayMethod(opt.value) }}
+                        disabled={prazoDisabled}
+                        title={prazoTitle}
                         className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                          payMethod === opt.value
+                          prazoDisabled
+                            ? "bg-[#F4F6FB] text-[#0F1E3C]/20 cursor-not-allowed"
+                            : payMethod === opt.value
                             ? opt.value === "prazo"
                               ? "bg-amber-500 text-white"
                               : "bg-[#0F1E3C] text-white"
@@ -1054,7 +1161,8 @@ export default function PDVPage() {
                       >
                         {opt.label}
                       </button>
-                    ))}
+                    )
+                  })}
                 </div>
               </div>
 
@@ -1099,11 +1207,18 @@ export default function PDVPage() {
                 className="w-full px-3 py-2 rounded-xl border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
               />
 
+              {/* Aviso: sem cliente/balcão selecionado */}
+              {!hasClientOrBalcao && cart.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+                  <span className="text-[11px] text-amber-700 font-semibold">Selecione um cliente ou Balcão para finalizar</span>
+                </div>
+              )}
+
               {saleError && (
                 <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{saleError}</p>
               )}
 
-              {/* Total + Finalize */}
+              {/* ── Total + botões de finalizar ── */}
               <div className="space-y-2 pt-1">
                 {activeContact?.precoExclusivo && exclusivoMode === "desconto" && discountAmount > 0 ? (
                   <div className="space-y-1">
@@ -1122,14 +1237,28 @@ export default function PDVPage() {
                     <span className="text-2xl font-black text-[#0F1E3C]">{fmtR(total)}</span>
                   </div>
                 )}
-                <button
-                  onClick={finalizeSale}
-                  disabled={cart.length === 0 || saving}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-black rounded-xl disabled:opacity-40 transition-colors"
-                >
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />}
-                  {saving ? "Finalizando..." : "Finalizar Venda"}
-                </button>
+
+                {/* Dois botões: Finalizar | Imprimir */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => finalizeSale(false)}
+                    disabled={cart.length === 0 || saving || !hasClientOrBalcao}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-black rounded-xl disabled:opacity-40 transition-colors"
+                  >
+                    {saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />}
+                    {saving ? "Finalizando..." : "Finalizar Venda"}
+                  </button>
+                  <button
+                    onClick={() => finalizeSale(true)}
+                    disabled={cart.length === 0 || saving || !hasClientOrBalcao}
+                    title="Finalizar e imprimir comprovante"
+                    className="flex items-center justify-center px-4 py-3 bg-[#0F1E3C]/8 hover:bg-[#0F1E3C]/15 text-[#0F1E3C] rounded-xl disabled:opacity-40 transition-colors flex-shrink-0"
+                  >
+                    <Printer size={15} />
+                  </button>
+                </div>
+
+                {/* Finalizar a Prazo (quando cliente com permissão) */}
                 {activeContact?.paymentTermEnabled && (
                   <button
                     onClick={finalizeAsPrazo}
@@ -1148,11 +1277,12 @@ export default function PDVPage() {
         </div>
       </div>
 
-      {/* G7+G8 — Receipt modal */}
+      {/* Receipt modal */}
       {receipt && (
         <PdvReceiptModal
           receipt={receipt}
-          onClose={() => { setReceipt(null); setLastSale(null) }}
+          autoPrint={autoPrint}
+          onClose={() => { setReceipt(null); setLastSale(null); setAutoPrint(false) }}
         />
       )}
     </>

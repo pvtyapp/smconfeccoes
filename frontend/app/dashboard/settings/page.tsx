@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Save, RefreshCw, HardDrive } from "lucide-react"
+import { Save, RefreshCw, HardDrive, Printer } from "lucide-react"
 
 const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 transition-colors"
 
@@ -18,6 +18,26 @@ export default function SettingsPage() {
   const [saved,    setSaved]    = useState(false)
   const [blobUsage, setBlobUsage] = useState<BlobUsage | null>(null)
   const [loadingBlob, setLoadingBlob] = useState(false)
+
+  // PDV print prefs (localStorage only, per device)
+  const [pdvPrintFormat, setPdvPrintFormat] = useState<"A4" | "termica">("A4")
+  const [pdvPrintName,   setPdvPrintName]   = useState("")
+
+  useEffect(() => {
+    try {
+      const fmt = localStorage.getItem("pdv_print_format")
+      if (fmt === "A4" || fmt === "termica") setPdvPrintFormat(fmt)
+      const name = localStorage.getItem("pdv_print_name")
+      if (name) setPdvPrintName(name)
+    } catch { /* ignora */ }
+  }, [])
+
+  function savePdvPrint(fmt: "A4" | "termica", name: string) {
+    try {
+      localStorage.setItem("pdv_print_format", fmt)
+      localStorage.setItem("pdv_print_name", name)
+    } catch { /* ignora */ }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -270,6 +290,44 @@ export default function SettingsPage() {
             <p className="text-[10px] text-[#0F1E3C]/35 leading-relaxed">
               URL do Webhook: <code className="bg-[#F4F6FB] px-1.5 py-0.5 rounded font-mono text-[10px]">{typeof window !== "undefined" ? window.location.origin : ""}/api/whatsapp/webhook</code>
             </p>
+          </section>
+
+          {/* Impressão PDV */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-2">
+              <Printer size={14} className="text-[#4361EE]" />
+              Impressão PDV
+            </h2>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2 block">Formato do comprovante</label>
+              <div className="flex gap-2">
+                {(["A4", "termica"] as const).map(fmt => (
+                  <button
+                    key={fmt}
+                    onClick={() => { setPdvPrintFormat(fmt); savePdvPrint(fmt, pdvPrintName) }}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${
+                      pdvPrintFormat === fmt
+                        ? "bg-[#4361EE] text-white border-[#4361EE]"
+                        : "bg-[#F4F6FB] text-[#0F1E3C]/50 border-transparent hover:text-[#0F1E3C]"
+                    }`}
+                  >
+                    {fmt === "A4" ? "A4 (padrão)" : "Térmica 80mm"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Nome da impressora (informativo)</label>
+              <input
+                className={inputCls}
+                value={pdvPrintName}
+                onChange={e => { setPdvPrintName(e.target.value); savePdvPrint(pdvPrintFormat, e.target.value) }}
+                placeholder="Ex: HP LaserJet Pro"
+              />
+              <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5 leading-relaxed">
+                Configure a impressora padrão no Windows (Configurações → Bluetooth e dispositivos → Impressoras). O navegador usará a impressora definida como padrão no sistema.
+              </p>
+            </div>
           </section>
 
           {/* Save */}

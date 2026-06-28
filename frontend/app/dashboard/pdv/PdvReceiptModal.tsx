@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { X, Printer, Check } from "lucide-react"
 
 export type ReceiptItem = {
@@ -28,6 +28,7 @@ export type SaleReceipt = {
 type Props = {
   receipt: SaleReceipt
   onClose: () => void
+  autoPrint?: boolean
 }
 
 const PAY_LABEL: Record<string, string> = {
@@ -52,8 +53,23 @@ function fmtPhone(phone: string) {
   return phone
 }
 
-export default function PdvReceiptModal({ receipt, onClose }: Props) {
+export default function PdvReceiptModal({ receipt, onClose, autoPrint }: Props) {
   const [showPrint, setShowPrint] = useState(false)
+  const [printFormat, setPrintFormat] = useState<"A4" | "termica">("A4")
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("pdv_print_format")
+      if (saved === "termica" || saved === "A4") setPrintFormat(saved)
+    } catch { /* ignora */ }
+  }, [])
+
+  useEffect(() => {
+    if (autoPrint) {
+      setShowPrint(true)
+      setTimeout(() => window.print(), 300)
+    }
+  }, [autoPrint])
 
   const clientName  = receipt.contact?.name || "Balcão"
   const clientPhone = receipt.contact?.phone && receipt.contact.phone !== "00000000000"
@@ -69,6 +85,8 @@ export default function PdvReceiptModal({ receipt, onClose }: Props) {
     setShowPrint(true)
     setTimeout(() => window.print(), 300)
   }
+
+  const isTermica = printFormat === "termica"
 
   return (
     <>
@@ -177,6 +195,7 @@ export default function PdvReceiptModal({ receipt, onClose }: Props) {
           clientPhone={clientPhone}
           printDate={printDate}
           printTime={printTime}
+          isTermica={isTermica}
           onDone={() => setShowPrint(false)}
         />
       )}
@@ -186,12 +205,13 @@ export default function PdvReceiptModal({ receipt, onClose }: Props) {
 
 // ─── Print Sheet ──────────────────────────────────────────────────────────────
 
-function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printTime, onDone }: {
+function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printTime, isTermica, onDone }: {
   receipt: SaleReceipt
   clientName: string
   clientPhone: string
   printDate: string
   printTime: string
+  isTermica: boolean
   onDone: () => void
 }) {
   const PAY_LABEL_PRINT: Record<string, string> = {
@@ -205,7 +225,7 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
           body * { visibility: hidden; }
           .print-receipt, .print-receipt * { visibility: visible !important; }
           .print-receipt { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
-          @page { size: A4 portrait; margin: 0; }
+          @page { size: ${isTermica ? "80mm 297mm" : "A4"} portrait; margin: 0; }
         }
       `}</style>
       <div className="print-receipt" style={{ fontFamily: "'Arial', sans-serif", padding: "14mm 16mm", color: NAVY }}>
