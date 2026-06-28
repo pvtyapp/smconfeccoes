@@ -8,19 +8,23 @@ export async function GET(req: Request) {
     const from = searchParams.get("from")
     const to   = searchParams.get("to")
 
-    const dateCond = from && to ? `WHERE data BETWEEN $1 AND $2` : ""
-    const params   = from && to ? [from, to] : []
+    const dateCond = from && to
+      ? `WHERE status != 'cancelado' AND data BETWEEN $1 AND $2`
+      : `WHERE status != 'cancelado'`
+    const params = from && to ? [from, to] : []
 
-    // Pedidos no período
+    // Pedidos no período — excluindo cancelados
     const { rows: pedidos } = await pool.query(`
-      SELECT id, data, cliente, metros, preco_cobrado AS "precoCobrado", observacao
+      SELECT id, data, cliente, metros, metros_finais AS "metrosFinais",
+             preco_cobrado AS "precoCobrado", observacao, status
       FROM dtf_pedidos
       ${dateCond}
       ORDER BY data DESC, id DESC
     `, params)
 
-    const totalMetros   = pedidos.reduce((s, p) => s + Number(p.metros), 0)
-    const totalReceita  = pedidos.reduce((s, p) => s + (p.precoCobrado ? Number(p.precoCobrado) : 0), 0)
+    // Usa metros_finais quando disponível (pronto/concluido), senão metros estimados
+    const totalMetros  = pedidos.reduce((s, p) => s + Number(p.metrosFinais ?? p.metros ?? 0), 0)
+    const totalReceita = pedidos.reduce((s, p) => s + (p.precoCobrado ? Number(p.precoCobrado) : 0), 0)
 
     // Custo por insumo — lotes fechados no período + lote ativo atual
     const today = todayBR()
@@ -52,9 +56,10 @@ export async function GET(req: Request) {
 
       if (ativo) {
         const { rows } = await pool.query(`
-          SELECT COALESCE(SUM(metros), 0) AS total
+          SELECT COALESCE(SUM(COALESCE(metros_finais, metros, 0)), 0) AS total
           FROM dtf_pedidos
-          WHERE data >= $1 AND data <= $2
+          WHERE status != 'cancelado'
+            AND data >= $1 AND data <= $2
         `, [ativo.abertoEm, today])
         metrosAcumulados = Number(rows[0].total)
         custoPorMetroAtual = metrosAcumulados > 0 ? Number(ativo.custo) / metrosAcumulados : null
