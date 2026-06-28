@@ -18,9 +18,9 @@ function Tip({ text }: { text: string }) {
   return (
     <div className="relative group/tip flex-shrink-0">
       <span className="text-[9px] text-[#0F1E3C]/25 cursor-default select-none group-hover/tip:text-[#0F1E3C]/50 transition-colors">ⓘ</span>
-      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-[#0F1E3C] text-white text-[9px] leading-relaxed rounded-xl px-3 py-2 text-center pointer-events-none z-50 opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-lg whitespace-normal">
+      <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 bg-[#0F1E3C] text-white text-[9px] leading-relaxed rounded-xl px-3 py-2 text-center pointer-events-none z-50 opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-lg whitespace-normal">
         {text}
-        <span className="absolute top-full left-1/2 -translate-x-1/2 border-[5px] border-transparent border-t-[#0F1E3C]" />
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 border-[5px] border-transparent border-b-[#0F1E3C]" />
       </div>
     </div>
   )
@@ -305,6 +305,7 @@ export default function PedidosPage() {
   const [pedidosAuto,   setPedidosAuto]   = useState(true)
   const [togglingBot,   setTogglingBot]   = useState(false)
   const [togglingPed,   setTogglingPed]   = useState(false)
+  const [resetting,     setResetting]     = useState(false)
 
   // Per-service toggles
   const [dtfAtivo,      setDtfAtivo]      = useState(true)
@@ -410,6 +411,14 @@ export default function PedidosPage() {
       body: JSON.stringify({ dtf_ativo: String(next) }),
     }).catch(() => setDtfAtivo(!next))
     setTogglingDtf(false)
+  }
+
+  async function resetWA() {
+    if (!confirm("Apagar todas as mensagens e resetar estados dos contatos?\n\nContatos, pedidos e dados de lifecycle são preservados.")) return
+    setResetting(true)
+    await fetch("/api/chat/reset", { method: "POST" }).catch(() => {})
+    setResetting(false)
+    alert("Limpo. Reconecte o WhatsApp para sincronizar.")
   }
 
   function toggleDia(set: React.Dispatch<React.SetStateAction<number[]>>, dias: number[], dia: number) {
@@ -1667,6 +1676,15 @@ export default function PedidosPage() {
             <button onClick={() => { loadOrders(); loadDtf() }}
               className="p-2 rounded-xl text-[#0F1E3C]/40 hover:bg-white hover:text-[#0F1E3C] transition-colors">
               <RefreshCw size={14} className={loadingOrders ? "animate-spin" : ""} />
+            </button>
+
+            <button
+              onClick={resetWA}
+              disabled={resetting}
+              title="Limpar histórico WA"
+              className="p-2 rounded-xl text-red-400/60 hover:bg-red-50 hover:text-red-500 transition-colors disabled:opacity-40"
+            >
+              <Trash2 size={14} className={resetting ? "animate-spin" : ""} />
             </button>
           </div>
         </div>
