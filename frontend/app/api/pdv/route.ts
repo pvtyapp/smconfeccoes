@@ -7,6 +7,24 @@ function normalizePhone(raw: string): { phone: string; jid: string } {
   return { phone: withCC, jid: `${withCC}@s.whatsapp.net` }
 }
 
+// GET /api/pdv — last 5 PDV orders
+export async function GET() {
+  try {
+    const { rows } = await pool.query(`
+      SELECT o.id, o.number, c.name AS "contactName"
+      FROM orders o
+      LEFT JOIN wa_contacts c ON c.id = o.contact_id
+      WHERE o.source = 'pdv'
+      ORDER BY o.id DESC
+      LIMIT 5
+    `)
+    return NextResponse.json(rows)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+
 // POST /api/pdv — atomic sale: create order + pay + stock movements
 export async function POST(req: Request) {
   const client = await pool.connect()

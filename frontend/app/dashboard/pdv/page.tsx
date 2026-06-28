@@ -43,6 +43,7 @@ type Contact = {
 type CartItem = {
   key: string
   variantId?: string
+  productId?: string
   productName: string
   color: string
   size: string
@@ -51,6 +52,19 @@ type CartItem = {
   precoPorMetro?: boolean
   unitPrice: number
   maxStock?: number
+}
+
+type CartGroup = {
+  groupKey: string
+  productName: string
+  unitPrice: number
+  items: CartItem[]
+}
+
+type RecentOrder = {
+  id: number
+  number: string
+  contactName: string | null
 }
 
 type PayMethod = "dinheiro" | "pix" | "debito" | "credito" | "prazo"
@@ -160,11 +174,12 @@ export default function PDVPage() {
   const [metroValues, setMetroValues] = useState<Record<string, string>>({})
 
   // Sale
-  const [saving,    setSaving]    = useState(false)
-  const [autoPrint, setAutoPrint] = useState(false)
-  const [lastSale,  setLastSale]  = useState<{ number: string; total: number } | null>(null)
-  const [saleError, setSaleError] = useState("")
-  const [receipt,   setReceipt]   = useState<SaleReceipt | null>(null)
+  const [saving,       setSaving]       = useState(false)
+  const [autoPrint,    setAutoPrint]    = useState(false)
+  const [lastSale,     setLastSale]     = useState<{ number: string; total: number } | null>(null)
+  const [saleError,    setSaleError]    = useState("")
+  const [receipt,      setReceipt]      = useState<SaleReceipt | null>(null)
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([])
 
   // Derived — declared early so price calculations can use activeContact
   const activeContact     = selectedContact ?? duplicateFound
@@ -197,7 +212,6 @@ export default function PDVPage() {
         fetch("/api/clientes"),
       ])
       if (bRes.ok) {
-        // pg returns NUMERIC as string — coerce to number
         const raw: Variant[] = await bRes.json()
         setBalance(raw.map(v => ({ ...v, salePrice: Number(v.salePrice) || 0 })))
       }
@@ -206,6 +220,8 @@ export default function PDVPage() {
         setProducts(raw.map(p => ({ ...p, salePrice: p.salePrice != null ? Number(p.salePrice) : null })))
       }
       if (cRes.ok) setContacts(await cRes.json())
+      const recRes = await fetch("/api/pdv")
+      if (recRes.ok) setRecentOrders(await recRes.json())
     } finally { setLoading(false) }
   }, [])
 
@@ -255,6 +271,7 @@ export default function PDVPage() {
       return [...prev, {
         key: v.variantId,
         variantId: v.variantId,
+        productId: v.productId,
         productName: v.productName,
         color: v.color,
         size: v.size,
@@ -314,6 +331,24 @@ export default function PDVPage() {
   }, 0)
   const cartCount = cart.reduce((s, i) => s + (i.precoPorMetro ? 1 : i.qty), 0)
 
+  const cartGroups = useMemo((): CartGroup[] => {
+    const groups: CartGroup[] = []
+    const idxMap = new Map<string, number>()
+    for (const item of cart) {
+      if (item.variantId && item.productId) {
+        if (idxMap.has(item.productId)) {
+          groups[idxMap.get(item.productId)!].items.push(item)
+        } else {
+          idxMap.set(item.productId, groups.length)
+          groups.push({ groupKey: item.productId, productName: item.productName, unitPrice: item.unitPrice, items: [item] })
+        }
+      } else {
+        groups.push({ groupKey: item.key, productName: item.productName, unitPrice: item.unitPrice, items: [item] })
+      }
+    }
+    return groups
+  }, [cart])
+
   const discountAmount = (() => {
     if (!activeContact?.precoExclusivo || exclusivoMode !== "desconto") return 0
     const dv = parseFloat(descontoValor.replace(",", "."))
@@ -327,7 +362,7 @@ export default function PDVPage() {
     if (!activeContact?.precoExclusivo) return baseTotal
     if (exclusivoMode === "item") {
       return cart.reduce((s, i) => {
-        const ov = priceOverrides[i.key]
+        const ov = priceOverrides[i.productId ?? i.key]
         const p = ov && ov.trim() ? parseFloat(ov.replace(",", ".")) : NaN
         const unitP = isNaN(p) || p < 0 ? i.unitPrice : p
         return s + (i.precoPorMetro ? (i.metros ?? 0) * unitP : i.qty * unitP)
@@ -339,7 +374,7 @@ export default function PDVPage() {
   function effectiveUnitPrice(item: CartItem): number {
     if (!activeContact?.precoExclusivo) return item.unitPrice
     if (exclusivoMode === "item") {
-      const ov = priceOverrides[item.key]
+      const ov = priceOverrides[item.productId ?? item.key]
       if (ov && ov.trim()) {
         const p = parseFloat(ov.replace(",", "."))
         if (!isNaN(p) && p >= 0) return p
@@ -810,138 +845,119 @@ export default function PDVPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-[#0F1E3C]/4">
-                  {cart.map(item => {
-                    const ep        = effectiveUnitPrice(item)
-                    const hasAdjust = ep !== item.unitPrice
+                  {cartGroups.map(group => {
+                    const singleItem = group.items[0]
+                    const isVariantGroup = !!singleItem.variantId
+                    const ep = effectiveUnitPrice(singleItem)
+                    const hasAdjust = ep !== group.unitPrice
 
-                    if (item.precoPorMetro) {
+                    // ── precoPorMetro item ──────────────────────────────────
+                    if (singleItem.precoPorMetro) {
                       return (
-                        <div key={item.key} className="flex items-center gap-3 px-4 py-3">
+                        <div key={group.groupKey} className="flex items-center gap-3 px-4 py-3">
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-[#0F1E3C] truncate">{item.productName}</p>
-                            <p className={`text-[10px] font-semibold ${hasAdjust ? "text-amber-600" : "text-[#7C3AED]"}`}>
-                              {fmtR(ep)}/m
-                            </p>
+                            <p className="text-xs font-bold text-[#0F1E3C] truncate">{group.productName}</p>
+                            <p className={`text-[10px] font-semibold ${hasAdjust ? "text-amber-600" : "text-[#7C3AED]"}`}>{fmtR(ep)}/m</p>
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             <input
-                              type="number"
-                              step="0.01"
-                              min="0.01"
-                              value={item.metros ?? ""}
-                              onChange={e => updateMetros(item.key, parseFloat(e.target.value))}
+                              type="number" step="0.01" min="0.01"
+                              value={singleItem.metros ?? ""}
+                              onChange={e => updateMetros(singleItem.key, parseFloat(e.target.value))}
                               className="w-16 px-2 py-1 rounded-lg border border-[#7C3AED]/30 text-xs text-center font-bold text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#7C3AED]/40"
                             />
                             <span className="text-[10px] text-[#0F1E3C]/40">m</span>
                           </div>
-                          <p className="text-sm font-black text-[#0F1E3C] flex-shrink-0 min-w-[56px] text-right">
-                            {fmtR((item.metros ?? 0) * ep)}
-                          </p>
-                          <button onClick={() => setCart(prev => prev.filter(i => i.key !== item.key))} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors flex-shrink-0">
-                            <X size={13} />
-                          </button>
+                          <p className="text-sm font-black text-[#0F1E3C] flex-shrink-0 min-w-[56px] text-right">{fmtR((singleItem.metros ?? 0) * ep)}</p>
+                          <button onClick={() => setCart(prev => prev.filter(i => i.key !== singleItem.key))} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors flex-shrink-0"><X size={13} /></button>
                         </div>
                       )
                     }
 
-                    if (!item.variantId) {
+                    // ── Non-stock single item ───────────────────────────────
+                    if (!isVariantGroup) {
                       return (
-                        <div key={item.key} className="flex items-center gap-3 px-4 py-3">
+                        <div key={group.groupKey} className="flex items-center gap-3 px-4 py-3">
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-[#0F1E3C] truncate">{item.productName}</p>
+                            <p className="text-xs font-bold text-[#0F1E3C] truncate">{group.productName}</p>
                             <div className="flex items-center gap-1.5">
-                              {hasAdjust && <span className="text-[10px] text-[#0F1E3C]/30 line-through">{fmtR(item.unitPrice)}</span>}
-                              <p className={`text-[10px] font-semibold ${hasAdjust ? "text-amber-600" : "text-[#7C3AED]"}`}>
-                                {fmtR(ep)}/un
-                              </p>
+                              {hasAdjust && <span className="text-[10px] text-[#0F1E3C]/30 line-through">{fmtR(group.unitPrice)}</span>}
+                              <p className={`text-[10px] font-semibold ${hasAdjust ? "text-amber-600" : "text-[#7C3AED]"}`}>{fmtR(ep)}/un</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
-                            <button onClick={() => updateQty(item.key, -1)} className="w-6 h-6 rounded-lg bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors">
-                              <Minus size={10} />
-                            </button>
+                            <button onClick={() => updateQty(singleItem.key, -1)} className="w-6 h-6 rounded-lg bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors"><Minus size={10} /></button>
                             <input
-                              type="number"
-                              step="0.01"
-                              min="0.01"
-                              value={item.qty || ""}
-                              onChange={e => {
-                                const v = parseFloat(e.target.value)
-                                if (!isNaN(v) && v > 0)
-                                  setCart(prev => prev.map(i => i.key === item.key ? { ...i, qty: v } : i))
-                              }}
-                              onBlur={e => {
-                                if (!e.target.value || parseFloat(e.target.value) <= 0)
-                                  setCart(prev => prev.filter(i => i.key !== item.key))
-                              }}
+                              type="number" step="0.01" min="0.01"
+                              value={singleItem.qty || ""}
+                              onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0) setCart(prev => prev.map(i => i.key === singleItem.key ? { ...i, qty: v } : i)) }}
+                              onBlur={e => { if (!e.target.value || parseFloat(e.target.value) <= 0) setCart(prev => prev.filter(i => i.key !== singleItem.key)) }}
                               className="w-10 text-center text-sm font-black text-[#0F1E3C] bg-transparent focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30 rounded"
                             />
-                            <button onClick={() => updateQty(item.key, 1)} className="w-6 h-6 rounded-lg bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors">
-                              <Plus size={10} />
-                            </button>
+                            <button onClick={() => updateQty(singleItem.key, 1)} className="w-6 h-6 rounded-lg bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors"><Plus size={10} /></button>
                           </div>
-                          <p className="text-sm font-black text-[#0F1E3C] flex-shrink-0 min-w-[56px] text-right">
-                            {fmtR(item.qty * ep)}
-                          </p>
-                          <button onClick={() => setCart(prev => prev.filter(i => i.key !== item.key))} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors flex-shrink-0">
-                            <X size={13} />
-                          </button>
+                          <p className="text-sm font-black text-[#0F1E3C] flex-shrink-0 min-w-[56px] text-right">{fmtR(singleItem.qty * ep)}</p>
+                          <button onClick={() => setCart(prev => prev.filter(i => i.key !== singleItem.key))} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors flex-shrink-0"><X size={13} /></button>
                         </div>
                       )
                     }
 
+                    // ── Variant product group ───────────────────────────────
                     return (
-                      <div key={item.key} className="flex items-center gap-3 px-4 py-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-[#0F1E3C] truncate">{item.productName}</p>
-                          {(item.color || item.size) && (
-                            <p className="text-[10px] text-[#0F1E3C]/40">{[item.color, item.size].filter(Boolean).join(" · ")}</p>
-                          )}
-                          <div className="flex items-center gap-1.5">
-                            {hasAdjust && (
-                              <span className="text-[10px] text-[#0F1E3C]/30 line-through">{fmtR(item.unitPrice)}</span>
-                            )}
-                            <p className={`text-[10px] font-semibold ${hasAdjust ? "text-amber-600" : "text-[#4361EE]"}`}>
-                              {fmtR(ep)}/un
-                            </p>
+                      <div key={group.groupKey}>
+                        {/* Product header */}
+                        <div className="flex items-center justify-between px-4 py-2 bg-[#F4F6FB]">
+                          <p className="text-xs font-black text-[#0F1E3C] truncate flex-1 min-w-0">{group.productName}</p>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                            {hasAdjust && <span className="text-[10px] text-[#0F1E3C]/30 line-through">{fmtR(group.unitPrice)}</span>}
+                            <span className={`text-[10px] font-bold ${hasAdjust ? "text-amber-600" : "text-[#4361EE]"}`}>{fmtR(ep)}/un</span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button onClick={() => updateQty(item.key, -1)} className="w-6 h-6 rounded-lg bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors">
-                            <Minus size={10} />
-                          </button>
-                          <input
-                            type="number"
-                            min={1}
-                            max={item.maxStock}
-                            value={item.qty}
-                            onChange={e => setQtyDirect(item.key, parseInt(e.target.value))}
-                            onBlur={e => {
-                              if (!e.target.value || parseInt(e.target.value) < 1)
-                                setCart(prev => prev.filter(i => i.key !== item.key))
-                            }}
-                            className="w-10 text-center text-sm font-black text-[#0F1E3C] bg-transparent focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30 rounded"
-                          />
-                          <button
-                            onClick={() => updateQty(item.key, 1)}
-                            disabled={item.maxStock !== undefined && item.qty >= item.maxStock}
-                            className="w-6 h-6 rounded-lg bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors disabled:opacity-30"
-                          >
-                            <Plus size={10} />
-                          </button>
-                        </div>
-                        <p className="text-sm font-black text-[#0F1E3C] flex-shrink-0 min-w-[56px] text-right">
-                          {fmtR(item.qty * ep)}
-                        </p>
-                        <button onClick={() => setCart(prev => prev.filter(i => i.key !== item.key))} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors flex-shrink-0">
-                          <X size={13} />
-                        </button>
+                        {/* Variant rows */}
+                        {group.items.map(variant => (
+                          <div key={variant.key} className="flex items-center gap-2 px-4 py-2 border-t border-[#0F1E3C]/4">
+                            <p className="text-[10px] font-semibold text-[#0F1E3C]/50 flex-1 min-w-0 truncate">
+                              {[variant.color, variant.size].filter(Boolean).join(" / ")}
+                            </p>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button onClick={() => updateQty(variant.key, -1)} className="w-5 h-5 rounded bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors"><Minus size={9} /></button>
+                              <input
+                                type="number" min={1} max={variant.maxStock}
+                                value={variant.qty}
+                                onChange={e => setQtyDirect(variant.key, parseInt(e.target.value))}
+                                onBlur={e => { if (!e.target.value || parseInt(e.target.value) < 1) setCart(prev => prev.filter(i => i.key !== variant.key)) }}
+                                className="w-9 text-center text-xs font-black text-[#0F1E3C] bg-transparent focus:outline-none"
+                              />
+                              <button onClick={() => updateQty(variant.key, 1)} disabled={variant.maxStock !== undefined && variant.qty >= variant.maxStock} className="w-5 h-5 rounded bg-[#0F1E3C]/6 hover:bg-[#0F1E3C]/12 flex items-center justify-center transition-colors disabled:opacity-30"><Plus size={9} /></button>
+                            </div>
+                            <p className="text-sm font-black text-[#0F1E3C] flex-shrink-0 min-w-[52px] text-right">{fmtR(variant.qty * ep)}</p>
+                            <button onClick={() => setCart(prev => prev.filter(i => i.key !== variant.key))} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors flex-shrink-0"><X size={12} /></button>
+                          </div>
+                        ))}
                       </div>
                     )
                   })}
                 </div>
               )}
             </div>
+
+            {/* ── Últimos pedidos ── */}
+            {recentOrders.length > 0 && (
+              <div className="flex-shrink-0 border-t border-[#0F1E3C]/8 px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Últimos pedidos</p>
+                  <a href="/dashboard/relatorio-vendas" className="text-[10px] font-semibold text-[#4361EE] hover:underline">Ver mais</a>
+                </div>
+                <div className="space-y-1">
+                  {recentOrders.map(order => (
+                    <div key={order.id} className="flex items-center gap-2">
+                      <span className="text-[10px] font-black text-[#0F1E3C]/60 flex-shrink-0">{order.number}</span>
+                      <span className="text-[10px] text-[#0F1E3C]/40 truncate">{order.contactName ?? "Balcão"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Footer */}
             <div className="flex-shrink-0 border-t border-[#0F1E3C]/8 p-4 space-y-3">
@@ -1093,19 +1109,20 @@ export default function PDVPage() {
 
                   {exclusivoMode === "item" ? (
                     <div className="space-y-1.5">
-                      {cart.map(item => (
-                        <div key={item.key} className="flex items-center gap-2">
+                      {cartGroups.map(group => (
+                        <div key={group.groupKey} className="flex items-center gap-2">
                           <span className="text-[10px] text-amber-800 flex-1 min-w-0 truncate">
-                            {item.productName}{item.size ? ` · ${item.size}` : ""}{item.color ? ` · ${item.color}` : ""}
+                            {group.productName}
+                            {group.items.length > 1 && <span className="text-amber-500 ml-1">({group.items.length} var.)</span>}
                           </span>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             <span className="text-[9px] text-amber-500 font-semibold">R$</span>
                             <input
                               type="text"
                               inputMode="decimal"
-                              value={priceOverrides[item.key] ?? ""}
-                              placeholder={Number(item.unitPrice).toFixed(2)}
-                              onChange={e => setPriceOverrides(prev => ({ ...prev, [item.key]: e.target.value }))}
+                              value={priceOverrides[group.groupKey] ?? ""}
+                              placeholder={Number(group.unitPrice).toFixed(2)}
+                              onChange={e => setPriceOverrides(prev => ({ ...prev, [group.groupKey]: e.target.value }))}
                               className="w-20 px-2 py-1 rounded-lg border border-amber-300 bg-white text-xs font-semibold text-amber-900 focus:outline-none focus:ring-1 focus:ring-amber-400 text-right"
                             />
                           </div>
