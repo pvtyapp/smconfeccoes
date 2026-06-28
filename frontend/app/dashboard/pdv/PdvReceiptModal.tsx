@@ -283,10 +283,11 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
           </thead>
           <tbody>
             {receipt.items.map((item, i) => {
-              const lineTotal   = item.precoPorMetro ? (item.metros ?? 0) * item.unitPrice : item.qty * item.unitPrice
+              const up          = Number(item.unitPrice) || 0
+              const lineTotal   = item.precoPorMetro ? (item.metros ?? 0) * up : item.qty * up
               const qtyLabel    = item.precoPorMetro ? `${(item.metros ?? 0).toFixed(2)}m` : String(item.qty)
               const colorSize   = [item.color, item.size].filter(Boolean).join(" / ") || "—"
-              const unitLabel   = item.precoPorMetro ? `R$ ${item.unitPrice.toFixed(2).replace(".", ",")}/m` : `R$ ${item.unitPrice.toFixed(2).replace(".", ",")}`
+              const unitLabel   = item.precoPorMetro ? `R$ ${up.toFixed(2).replace(".", ",")}/m` : `R$ ${up.toFixed(2).replace(".", ",")}`
               return (
                 <tr key={i} style={{ background: i % 2 === 0 ? "white" : NAVY_LIGHT, borderBottom: "1px solid #e0e4ec" }}>
                   <td style={{ padding: "4px 6px", fontSize: "9px", fontWeight: "600" }}>{item.productName}</td>
@@ -294,7 +295,7 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
                   <td style={{ padding: "4px 6px", textAlign: "center", fontSize: "10px", fontWeight: "900" }}>{qtyLabel}</td>
                   <td style={{ padding: "4px 6px", textAlign: "right", fontSize: "8.5px" }}>{unitLabel}</td>
                   <td style={{ padding: "4px 6px", textAlign: "right", fontSize: "9px", fontWeight: "700" }}>
-                    {`R$ ${lineTotal.toFixed(2).replace(".", ",")}`}
+                    {`R$ ${Number(lineTotal).toFixed(2).replace(".", ",")}`}
                   </td>
                 </tr>
               )
