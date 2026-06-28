@@ -1019,9 +1019,14 @@ async function handleText(
       await handleDtfSemArquivo(jid, contactId, text)
       break
 
-    case "dtf_coletando":
-      replyWA(jid, "Pode mandar sua arte aqui! 🖨️")
+    case "dtf_coletando": {
+      const reminded = Number(stateData.dtfReminderCount ?? 0)
+      if (reminded === 0) {
+        replyWA(jid, "Pode mandar sua arte aqui! 🖨️")
+        await setState(contactId, "dtf_coletando", { ...stateData, dtfReminderCount: 1 })
+      }
       break
+    }
 
     case "cross_sell_dtf":
       await handleCrossSellDtf(jid, contactId, stateData, text, chatbotDtfEnabled, dtfStatus)
