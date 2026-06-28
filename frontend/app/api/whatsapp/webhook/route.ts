@@ -330,7 +330,11 @@ export async function POST(req: Request) {
       INSERT INTO wa_contacts (jid, name, phone, phone_jid)
       VALUES ($1, $2, $3, $4)
       ON CONFLICT (jid) DO UPDATE SET
-        name      = CASE WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN wa_contacts.name ELSE EXCLUDED.name END,
+        name      = CASE
+                      WHEN wa_contacts.name IS NOT NULL THEN wa_contacts.name
+                      WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN NULL
+                      ELSE EXCLUDED.name
+                    END,
         phone     = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
         phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
         updated_at = NOW()
@@ -491,7 +495,8 @@ export async function POST(req: Request) {
 // ─── helpers gerais ──────────────────────────────────────────────────────────
 
 function semNome(pushName: string): boolean {
-  return /^\d+$/.test(pushName.trim())
+  const t = pushName.trim()
+  return t === "" || /^\d+$/.test(t)
 }
 
 async function setState(contactId: number, state: string, data: Record<string, unknown> = {}) {
@@ -669,7 +674,7 @@ async function hasProdutoDisponivel(): Promise<boolean> {
 function getServiceStatus(service: "produto" | "dtf", s: Record<string, string>): ServiceStatus {
   const p = service
 
-  if (service === "dtf" && s[`${p}_ativo`] === "false") return { available: false, reason: "desativado" }
+  if (s[`${p}_ativo`] === "false") return { available: false, reason: "desativado" }
 
   const fechadoAte = s[`${p}_fechado_ate`]
   if (fechadoAte) {
@@ -2151,8 +2156,8 @@ async function handleAguardandoSeparacaoResposta(
     // Parcial: remove itens faltantes, avança para separação
     if (availableItemIds.length > 0) {
       await pool.query(`
-        DELETE FROM order_items WHERE order_id = $1 AND id NOT IN (${availableItemIds.join(",")})
-      `, [orderId])
+        DELETE FROM order_items WHERE order_id = $1 AND id != ALL($2::int[])
+      `, [orderId, availableItemIds])
       await pool.query(
         `UPDATE orders SET total_value = (
            SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
@@ -2304,8 +2309,8 @@ async function handleAguardandoReservaResposta(
     `, [number, contactId, totalValue])
 
     await pool.query(`
-      INSERT INTO order_items (order_id, product_name, variant_id, qty, unit_price)
-      SELECT $1, p.name, pv.id, $2, pv.sale_price
+      INSERT INTO order_items (order_id, product_name, color, size, variant_id, qty, unit_price)
+      SELECT $1, p.name, pv.color, pv.size, pv.id, $2, pv.sale_price
       FROM product_variants pv JOIN products p ON p.id = pv.product_id
       WHERE pv.id = $3
     `, [newOrder.id, qty, variantId])
@@ -2332,7 +2337,8 @@ async function handleAguardandoReservaResposta(
 
     // Notifica o próximo da fila imediatamente (sem esperar o cron)
     const { rows: nextRes } = await pool.query(`
-      SELECT pr.id, pr.contact_id, pr.qty, pv.color, pv.size, p.name AS product_name, c.jid
+      SELECT pr.id, pr.contact_id, pr.qty, pv.color, pv.size, p.name AS product_name,
+             COALESCE(c.phone_jid, c.jid) AS send_jid
       FROM product_reservations pr
       JOIN product_variants pv ON pv.id = pr.variant_id
       JOIN products p          ON p.id  = pv.product_id
@@ -2341,7 +2347,7 @@ async function handleAguardandoReservaResposta(
       ORDER BY pr.created_at ASC LIMIT 1
     `, [variantId])
 
-    if (nextRes[0]?.jid) {
+    if (nextRes[0]?.send_jid) {
       const next = nextRes[0]
       const { rows: cfgRows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'reserva_expiry_hours'`)
       const expiryHours = Number(cfgRows[0]?.value ?? 4)
@@ -2358,7 +2364,7 @@ async function handleAguardandoReservaResposta(
         WHERE id = $2
       `, [JSON.stringify({ reservationId: next.id, variantId, variantName: nextName, qty: next.qty }), next.contact_id])
 
-      sendWhatsApp(next.jid, `🎉 Boa notícia! A *${nextName}* que você reservou chegou!\n\nAinda precisa? Responde *SIM* ou *NÃO*.`).catch(() => {})
+      sendWhatsApp(next.send_jid, `🎉 Boa notícia! A *${nextName}* que você reservou chegou!\n\nAinda precisa? Responde *SIM* ou *NÃO*.`).catch(() => {})
     }
 
     await setState(contactId, "idle")
@@ -2459,10 +2465,25 @@ async function handleDtfMedia(
     )
     const number = numRes.rows[0].num
 
-    await pool.query(`
+    const pedidoRes = await pool.query(`
       INSERT INTO dtf_pedidos (number, data, contact_id, status, source, largura_cm)
       VALUES ($1, $2, $3, 'triagem', 'whatsapp', $4)
+      RETURNING id
     `, [number, today, contactId, stateData.larguraCm ?? null])
+    const pedidoId = pedidoRes.rows[0].id
+
+    // Auto-link the triggering wa_message to this order
+    const { rows: msgRows } = await pool.query(`
+      SELECT id, file_name FROM wa_messages
+      WHERE contact_id = $1 AND media_type IN ('document', 'image') AND direction = 'in'
+      ORDER BY id DESC LIMIT 1
+    `, [contactId])
+    if (msgRows[0]) {
+      await pool.query(`
+        INSERT INTO dtf_order_attachments (pedido_id, wa_message_id, filename)
+        VALUES ($1, $2, $3)
+      `, [pedidoId, msgRows[0].id, msgRows[0].file_name]).catch(() => {})
+    }
 
     await pool.query(
       `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,

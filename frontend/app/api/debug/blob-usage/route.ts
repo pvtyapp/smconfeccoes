@@ -22,12 +22,12 @@ export async function GET() {
       cursor = next
     } while (cursor)
 
-    // wa_messages with blob vs base64 vs null
+    // wa_messages with blob vs base64 vs null (media_data column)
     const { rows: dbStats } = await pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE media_url LIKE 'https://%') AS blob_count,
-        COUNT(*) FILTER (WHERE media_url LIKE 'data:%')   AS base64_count,
-        COUNT(*) FILTER (WHERE media_url IS NULL AND media_type IS NOT NULL) AS missing_count
+        COUNT(*) FILTER (WHERE media_data LIKE 'https://%') AS blob_count,
+        COUNT(*) FILTER (WHERE media_data LIKE 'data:%')   AS base64_count,
+        COUNT(*) FILTER (WHERE media_data IS NULL AND media_type IS NOT NULL) AS missing_count
       FROM wa_messages
     `)
 

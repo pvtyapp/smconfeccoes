@@ -21,13 +21,19 @@ export async function GET(
         c.payment_term_days    AS "paymentTermDays",
         COALESCE(
           json_agg(
-            json_build_object('id', a.id, 'blobUrl', a.blob_url, 'filename', a.filename, 'mimeType', a.mime_type)
+            json_build_object(
+              'id',       a.id,
+              'blobUrl',  COALESCE(a.blob_url, wm.media_data),
+              'filename', COALESCE(a.filename, wm.file_name),
+              'mimeType', a.mime_type
+            )
             ORDER BY a.id
           ) FILTER (WHERE a.id IS NOT NULL), '[]'
         ) AS attachments
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       LEFT JOIN dtf_order_attachments a ON a.pedido_id = p.id
+      LEFT JOIN wa_messages wm ON wm.id = a.wa_message_id
       WHERE p.id = $1
       GROUP BY p.id, c.id
     `, [id])

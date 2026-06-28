@@ -1001,9 +1001,18 @@ export default function PedidosPage() {
   async function downloadChatFile(msgId: number, url: string, filename: string | null) {
     setDownloadingMsgId(msgId)
     try {
-      const r = await fetch(url)
-      if (!r.ok) return
-      const blob   = await r.blob()
+      let blob: Blob
+      if (url.startsWith("data:")) {
+        const comma  = url.indexOf(",")
+        const mime   = url.slice(5, comma).split(";")[0]
+        const b64    = url.slice(comma + 1)
+        const bytes  = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+        blob = new Blob([bytes], { type: mime })
+      } else {
+        const r = await fetch(url)
+        if (!r.ok) return
+        blob = await r.blob()
+      }
       const objUrl = URL.createObjectURL(blob)
       const a      = document.createElement("a")
       a.href       = objUrl
@@ -1452,7 +1461,7 @@ export default function PedidosPage() {
                                     <div className="relative">
                                       {m.mediaType === "video" && isReady ? (
                                         // eslint-disable-next-line jsx-a11y/media-has-caption
-                                        <video controls src={m.mediaUrl!} className="w-full max-w-[240px] object-cover rounded" />
+                                        <video controls src={m.mediaData!} className="w-full max-w-[240px] object-cover rounded" />
                                       ) : (
                                         <>
                                           {/* eslint-disable-next-line @next/next/no-img-element */}

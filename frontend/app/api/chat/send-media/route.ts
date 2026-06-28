@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { uploadToBlob } from "@/lib/whatsapp/media"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -78,19 +77,16 @@ export async function POST(req: Request) {
       }
     } catch { /* non-blocking */ }
 
-    // Upload to Blob for our storage
-    const folder = mediatype === "image" ? "media" : mediatype === "audio" ? "audio" : "docs"
-    const blobUrl = await uploadToBlob(base64, mimeType, fileName, folder).catch(() => null)
-
-    // Save to DB — media sent by us: media_url gets the real blob URL directly (no thumbnail needed)
+    // Save to DB — store base64 directly in media_data (PostgreSQL storage)
     if (contactId) {
       const text     = caption || `[${mediatype}]`
       const mediaExt = mediatype === "document" ? "document" : mediatype === "image" ? "image" : mediatype
+      const dataUrl  = `data:${mimeType};base64,${base64}`
       await pool.query(
-        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_url, file_name, caption)
+        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_data, file_name, caption)
          VALUES ($1, $2, 'out', $3, $4, $5, $6, $7)
          ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-        [Number(contactId), evoMsgId, text, mediaExt, blobUrl, fileName, caption ?? null]
+        [Number(contactId), evoMsgId, text, mediaExt, dataUrl, fileName, caption ?? null]
       ).catch(() => {})
     }
 

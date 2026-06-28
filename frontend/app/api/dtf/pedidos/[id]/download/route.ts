@@ -70,10 +70,14 @@ export async function GET(
     const pedido = pedidoRes.rows[0]
 
     const attRes = await pool.query(`
-      SELECT id, blob_url AS "blobUrl", filename, mime_type AS "mimeType"
-      FROM dtf_order_attachments
-      WHERE pedido_id = $1
-      ORDER BY id ASC
+      SELECT a.id,
+             COALESCE(a.blob_url, wm.media_data) AS "blobUrl",
+             COALESCE(a.filename, wm.file_name)  AS filename,
+             a.mime_type                          AS "mimeType"
+      FROM dtf_order_attachments a
+      LEFT JOIN wa_messages wm ON wm.id = a.wa_message_id
+      WHERE a.pedido_id = $1
+      ORDER BY a.id ASC
     `, [id])
 
     const attachments = attRes.rows
