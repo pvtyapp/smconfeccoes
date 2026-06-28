@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { deleteBlobs } from "@/lib/blob-cleanup"
 
 export async function GET(
   _req: Request,
@@ -43,6 +44,11 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
+    const { rows } = await pool.query<{ blob_url: string }>(
+      `SELECT blob_url FROM dtf_order_attachments WHERE pedido_id = $1 AND blob_url LIKE 'https://%'`,
+      [id]
+    )
+    if (rows.length) await deleteBlobs(rows.map(r => r.blob_url))
     await pool.query(`DELETE FROM dtf_pedidos WHERE id = $1`, [id])
     return NextResponse.json({ ok: true })
   } catch (err) {

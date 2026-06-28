@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 
+export const dynamic = "force-dynamic"
+
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
 const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
@@ -45,7 +47,7 @@ export async function GET() {
         lm.created_at            AS "lastAt",
         COALESCE(ur.unread, 0)   AS unread
       FROM wa_contacts c
-      LEFT JOIN LATERAL (
+      JOIN LATERAL (
         SELECT content, direction, created_at
         FROM wa_messages
         WHERE contact_id = c.id
@@ -58,7 +60,7 @@ export async function GET() {
         WHERE direction = 'in' AND read_at IS NULL
         GROUP BY contact_id
       ) ur ON ur.contact_id = c.id
-      ORDER BY COALESCE(lm.created_at, c.created_at) DESC
+      ORDER BY lm.created_at DESC
       LIMIT 100
     `)
     return NextResponse.json(rows)

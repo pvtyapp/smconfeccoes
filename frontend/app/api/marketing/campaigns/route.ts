@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { campaignSend } from "@/lib/whatsapp/campaignSend"
 
 export async function GET() {
   try {
@@ -41,15 +40,20 @@ export async function POST(req: Request) {
 
     const sendNow = !scheduledAt
 
-    // Build recipient list to know total_count
+    // Build recipient list — stored as queue in DB, processed 1 per tick at 30s intervals
     const contacts = await resolveContacts(audienceType, audienceLifecycle ?? null, audienceGroupJids ?? [])
-    const totalCount = contacts.length + (audienceGroupJids?.length ?? 0)
+    const groupRecipients = (audienceGroupJids ?? []).map(jid => ({ jid, name: jid.split("@")[0], isGroup: true }))
+    const recipients = [
+      ...contacts.map(c => ({ jid: c.jid, id: c.id, name: c.name })),
+      ...groupRecipients,
+    ]
+    const totalCount = recipients.length
 
     const { rows } = await pool.query(`
       INSERT INTO marketing_campaigns
         (title, content, media_url, audience_type, audience_lifecycle, audience_group_jids,
-         scheduled_at, status, total_count)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         scheduled_at, status, total_count, recipients_json)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       RETURNING id
     `, [
       title ?? "",
@@ -61,14 +65,10 @@ export async function POST(req: Request) {
       scheduledAt ? new Date(scheduledAt) : null,
       sendNow ? "sending" : "scheduled",
       totalCount,
+      JSON.stringify(recipients),
     ])
 
     const campaignId = rows[0].id
-
-    if (sendNow) {
-      // Fire-and-forget execution
-      executeCampaign(campaignId, content, mediaUrl ?? null, contacts, audienceGroupJids ?? []).catch(() => {})
-    }
 
     return NextResponse.json({ id: campaignId, sendNow })
   } catch (err) {
@@ -95,39 +95,3 @@ async function resolveContacts(
   return rows
 }
 
-async function executeCampaign(
-  campaignId: number,
-  content: string,
-  mediaUrl: string | null,
-  contacts: Array<{ id: number; jid: string; name: string }>,
-  groupJids: string[]
-) {
-  let sent = 0, errors = 0
-
-  for (const c of contacts) {
-    try {
-      const msg = content.replace(/\{nome\}/g, (c.name ?? "").split(" ")[0])
-      await campaignSend(c.jid, msg, mediaUrl)
-      await pool.query(
-        `INSERT INTO wa_messages (contact_id, direction, content) VALUES ($1,'out',$2)`,
-        [c.id, msg]
-      ).catch(() => {})
-      sent++
-    } catch { errors++ }
-    await new Promise(r => setTimeout(r, 350))
-  }
-
-  for (const jid of groupJids) {
-    try {
-      await campaignSend(jid, content, mediaUrl)
-      sent++
-    } catch { errors++ }
-    await new Promise(r => setTimeout(r, 350))
-  }
-
-  await pool.query(`
-    UPDATE marketing_campaigns
-    SET status = $1, sent_count = $2, error_count = $3, executed_at = NOW()
-    WHERE id = $4
-  `, [errors > 0 && sent === 0 ? "failed" : "sent", sent, errors, campaignId])
-}

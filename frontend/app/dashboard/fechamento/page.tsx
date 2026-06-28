@@ -38,27 +38,31 @@ type Closure = {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-function fmtR(v: number) { return `R$ ${v.toFixed(2).replace(".", ",")}` }
+function fmtR(v: number) { return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function fmtDate(s: string) {
   const [y, m, d] = s.split("-")
   return `${d}/${m}/${y}`
 }
-function todayISO()   { return todayBR() }
+function todayISO() { return todayBR() }
 function monthStart() {
-  const d = new Date(); d.setDate(1)
-  return d.toISOString().slice(0, 10)
+  const [y, m] = todayBR().split("-")
+  return `${y}-${m}-01`
 }
 function prevMonthRange(): [string, string] {
-  const now = new Date()
-  const first = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-  const last  = new Date(now.getFullYear(), now.getMonth(), 0)
-  return [first.toISOString().slice(0, 10), last.toISOString().slice(0, 10)]
+  const [y, m] = todayBR().split("-").map(Number)
+  const prevM = m === 1 ? 12 : m - 1
+  const prevY = m === 1 ? y - 1 : y
+  const lastDay = new Date(prevY, prevM, 0).getDate()
+  const mm = String(prevM).padStart(2, "0")
+  return [`${prevY}-${mm}-01`, `${prevY}-${mm}-${String(lastDay).padStart(2, "0")}`]
 }
 function weekStart() {
-  const d = new Date()
-  const day = d.getDay()
-  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
-  return d.toISOString().slice(0, 10)
+  const t = todayBR()
+  const d = new Date(t + "T12:00:00Z")
+  const dow = d.getUTCDay()
+  const diff = dow === 0 ? 6 : dow - 1
+  const mon = new Date(d.getTime() - diff * 86_400_000)
+  return mon.toISOString().slice(0, 10)
 }
 
 // ─── NovoFechamentoModal ────────────────────────────────────────────────────────

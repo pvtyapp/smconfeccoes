@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
-import { todayBR, subDaysBR } from "@/lib/tz"
+import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 type PeriodKey = "hoje" | "7d" | "30d" | "90d" | "range"
@@ -62,9 +62,7 @@ function fmtCpm(v: number | null | undefined) {
   if (v == null) return "—"
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`
 }
-function fmtData(s: string) {
-  return new Date(s + "T12:00:00").toLocaleDateString("pt-BR")
-}
+function fmtData(s: string) { return fmtDateBR(s) }
 
 const INSUMO_COLOR: Record<string, { bg: string; text: string; border: string }> = {
   Tinta:     { bg: "bg-blue-50",   text: "text-blue-700",   border: "border-blue-200"   },
@@ -128,7 +126,7 @@ export default function DTFDashboardPage() {
       }),
     })
     if (r.ok) {
-      setForm({ data: new Date().toISOString().slice(0, 10), cliente: "", metros: "", precoCobrado: "", observacao: "" })
+      setForm({ data: todayBR(), cliente: "", metros: "", precoCobrado: "", observacao: "" })
       setShowForm(false)
       loadRelatorio()
     }
@@ -219,8 +217,8 @@ export default function DTFDashboardPage() {
             <div className="space-y-0.5">
               {insumos.filter(i => i.lowStock).map(i => (
                 <p key={i.id} className="text-xs text-red-600">
-                  {i.nome}: {Number(i.saldoAtual).toFixed(3)} {i.unidade} restantes
-                  {i.alarmeQtd != null && ` (alarme: ${Number(i.alarmeQtd).toFixed(3)} ${i.unidade})`}
+                  {i.nome}: {parseFloat(Number(i.saldoAtual).toFixed(3))} {i.unidade} restantes
+                  {i.alarmeQtd != null && ` (alarme: ${parseFloat(Number(i.alarmeQtd).toFixed(3))} ${i.unidade})`}
                   {i.diasRestantes != null && ` · ~${i.diasRestantes} dias`}
                 </p>
               ))}
@@ -251,11 +249,11 @@ export default function DTFDashboardPage() {
                   </div>
                 </div>
                 <p className={`text-2xl font-black ${ins.lowStock ? "text-red-600" : clr.text}`}>
-                  {Number(ins.saldoAtual).toFixed(3)} {ins.unidade}
+                  {parseFloat(Number(ins.saldoAtual).toFixed(3))} {ins.unidade}
                 </p>
                 <p className={`text-xs mt-2 opacity-60 ${ins.lowStock ? "text-red-600" : clr.text}`}>
                   {ins.consumoMedioPorMetro != null
-                    ? `${Number(ins.consumoMedioPorMetro).toFixed(4)} ${ins.unidade}/m impresso`
+                    ? `${parseFloat(Number(ins.consumoMedioPorMetro).toFixed(4))} ${ins.unidade}/m impresso`
                     : "Sem dados de consumo"}
                 </p>
                 {ins.diasRestantes != null && (

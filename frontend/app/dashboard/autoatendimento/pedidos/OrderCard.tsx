@@ -1,6 +1,6 @@
 "use client"
 
-import { Phone, Clock, AlertTriangle } from "lucide-react"
+import { Phone, Clock, AlertTriangle, Printer } from "lucide-react"
 import type { Order } from "./page"
 
 const STATUS_LABEL: Record<string, string> = {
@@ -31,10 +31,21 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(hrs / 24)}d`
 }
 
-type Props = { order: Order; onClick: () => void }
+type Props = {
+  order: Order
+  onClick: () => void
+  onTogglePay?: (orderId: number, currentlyPaid: boolean) => void
+}
 
-export default function OrderCard({ order, onClick }: Props) {
+export default function OrderCard({ order, onClick, onTogglePay }: Props) {
   const totalQty = order.items.reduce((s, i) => s + i.qty, 0)
+  const isPago   = Boolean(order.paidAt)
+  const isPromo  = order.status === "pronto"
+
+  function handlePayToggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    onTogglePay?.(order.id, isPago)
+  }
 
   return (
     <button
@@ -42,14 +53,31 @@ export default function OrderCard({ order, onClick }: Props) {
       className={`w-full text-left bg-white rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${
         order.needsAttention
           ? "border-amber-300 hover:border-amber-400"
+          : order.needsPrint
+          ? "border-blue-400 hover:border-blue-500 ring-2 ring-blue-200"
           : "border-[#0F1E3C]/8 hover:border-[#4361EE]/30"
       }`}
     >
+      {/* Print indicator */}
+      {order.needsPrint && (
+        <div className="flex items-center gap-1.5 mb-3 px-2 py-1.5 bg-blue-50 border border-blue-200 rounded-xl animate-pulse">
+          <Printer size={11} className="text-blue-500 flex-shrink-0" />
+          <p className="text-[10px] font-semibold text-blue-700">Imprimindo ficha...</p>
+        </div>
+      )}
+
       {/* Attention banner */}
-      {order.needsAttention && (
+      {order.needsAttention && !order.needsPrint && (
         <div className="flex items-center gap-1.5 mb-3 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-xl">
           <AlertTriangle size={11} className="text-amber-500 flex-shrink-0" />
           <p className="text-[10px] font-semibold text-amber-700">Cliente pediu ajuste — chatbot em contato</p>
+        </div>
+      )}
+
+      {/* Partial indicator */}
+      {order.isPartial && (
+        <div className="mb-2 px-2 py-0.5 bg-orange-50 border border-orange-200 rounded-lg inline-block">
+          <p className="text-[9px] font-bold text-orange-600">PARCIAL</p>
         </div>
       )}
 
@@ -95,7 +123,22 @@ export default function OrderCard({ order, onClick }: Props) {
       {/* Footer */}
       <div className="mt-3 pt-3 border-t border-[#0F1E3C]/6 flex justify-between items-center text-xs text-[#0F1E3C]/40">
         <span>{order.items.length} iten{order.items.length !== 1 ? "s" : ""}</span>
-        <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
+          {/* PAGO / NÃO PAGO badge — só aparece em Pronto */}
+          {isPromo && (
+            <button
+              onClick={handlePayToggle}
+              className={`text-[9px] font-black px-2 py-0.5 rounded-full border transition-colors ${
+                isPago
+                  ? "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200"
+                  : "bg-red-100 text-red-600 border-red-200 hover:bg-red-200"
+              }`}
+            >
+              {isPago ? "✓ PAGO" : "NÃO PAGO"}
+            </button>
+          )}
+        </div>
       </div>
     </button>
   )

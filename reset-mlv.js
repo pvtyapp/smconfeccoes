@@ -1,0 +1,6 @@
+const { Pool } = require("pg")
+require("dotenv").config({ path: "./frontend/.env.local" })
+const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+pool.query("UPDATE wa_contacts SET state = $1, state_data = $2 WHERE name = $3", ["idle","{}","MLV"])
+  .then(r => { console.log("reset:", r.rowCount, "rows"); pool.end(); })
+  .catch(e => { console.error(e.message); pool.end(); })

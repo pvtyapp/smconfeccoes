@@ -13,11 +13,24 @@ export type DownloadedMedia = {
 
 export type MediaCategory = "foto" | "video" | "audio" | "pix" | "dtf" | "documento" | "sticker"
 
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024 // 50 MB
+
 /**
  * Downloads media from Evolution API given a full message object from the webhook.
  */
 export async function downloadEvolutionMedia(message: unknown): Promise<DownloadedMedia | null> {
   try {
+    // Check fileLength before downloading to avoid memory exhaustion
+    const msgBody = (message as Record<string, unknown>)?.message as Record<string, unknown> | undefined
+    if (msgBody) {
+      const inner = (msgBody.imageMessage ?? msgBody.videoMessage ?? msgBody.audioMessage ?? msgBody.documentMessage) as Record<string, unknown> | undefined
+      const fileLength = Number(inner?.fileLength ?? 0)
+      if (fileLength > MAX_DOWNLOAD_BYTES) {
+        console.warn("[downloadEvolutionMedia] skipping — fileLength", fileLength, "> 50 MB")
+        return null
+      }
+    }
+
     const res = await fetch(
       `${EVO_URL}/chat/getBase64FromMediaMessage/${EVO_INSTANCE}`,
       {

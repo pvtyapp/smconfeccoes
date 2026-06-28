@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import {
   Search, X, RefreshCw, ChevronRight,
   Calendar, ShoppingBag, CheckCircle, Save, User, Bot,
-  Printer, Download, Tag, Plus, Trash2, UserPlus, Phone,
+  Printer, Download, Tag, Plus, Trash2, UserPlus, Phone, Pencil,
 } from "lucide-react"
 
 type Contact = {
@@ -510,13 +510,16 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
               <User size={14} className="text-[#4361EE]" />
             </div>
             <div className="flex-1 min-w-0">
-              <input
-                value={editName}
-                onChange={e => setEditName(e.target.value)}
-                placeholder="Nome do cliente"
-                className="w-full font-bold text-[#0F1E3C] text-sm bg-transparent border-b border-transparent hover:border-[#0F1E3C]/15 focus:border-[#4361EE] focus:outline-none pb-0.5 transition-colors"
-              />
-              <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{fmtPhone(contact.phone)}</p>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  placeholder="Nome do cliente"
+                  className="flex-1 font-bold text-[#0F1E3C] text-sm bg-[#F4F6FB] border border-[#0F1E3C]/12 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/25 focus:border-[#4361EE] transition-colors"
+                />
+                <Pencil size={12} className="text-[#0F1E3C]/25 flex-shrink-0" />
+              </div>
+              <p className="text-xs text-[#0F1E3C]/40 mt-1">{fmtPhone(contact.phone)}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 mt-2 ml-10">

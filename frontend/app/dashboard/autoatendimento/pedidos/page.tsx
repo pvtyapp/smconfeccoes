@@ -59,6 +59,9 @@ export type Order = {
   paymentTermEnabled: boolean
   paymentTermType: string | null
   paymentTermDays: number | null
+  paidAt: string | null
+  needsPrint: boolean
+  isPartial: boolean
   items: OrderItem[]
 }
 
@@ -301,15 +304,25 @@ export default function PedidosPage() {
   const [isDragging, setIsDragging] = useState(false)
 
   // Global bot settings
-  const [chatbotAtivo,  setChatbotAtivo]  = useState(true)
-  const [pedidosAuto,   setPedidosAuto]   = useState(true)
-  const [togglingBot,   setTogglingBot]   = useState(false)
-  const [togglingPed,   setTogglingPed]   = useState(false)
-  const [resetting,     setResetting]     = useState(false)
+  const [chatbotAtivo,      setChatbotAtivo]      = useState(true)
+  const [pedidosAuto,       setPedidosAuto]        = useState(true)
+  const [togglingBot,       setTogglingBot]        = useState(false)
+  const [togglingPed,       setTogglingPed]        = useState(false)
+  const [resetting,         setResetting]          = useState(false)
+  const [controleEstoque,   setControleEstoque]    = useState(false)
+  const [togglingEstoque,   setTogglingEstoque]    = useState(false)
 
   // Per-service toggles
-  const [dtfAtivo,      setDtfAtivo]      = useState(true)
-  const [togglingDtf,   setTogglingDtf]   = useState(false)
+  const [dtfAtivo,          setDtfAtivo]           = useState(true)
+  const [togglingDtf,       setTogglingDtf]        = useState(false)
+
+  // Print tracking — IDs já enviados para impressão nesta sessão
+  const printedOrderIds = useRef<Set<number>>(new Set())
+
+  // Reservas
+  type Reservation = { id: number; productName: string; color: string; size: string; qty: number; contactName: string; contactPhone: string; status: string; createdAt: string }
+  const [reservations,    setReservations]    = useState<Reservation[]>([])
+  const [showReservations,setShowReservations]= useState(false)
 
   // Per-product list
   type ProdConfig = { id: number; name: string; disponivel: boolean; ativoNoCadastro: boolean }
@@ -346,9 +359,10 @@ export default function PedidosPage() {
     fetch("/api/settings")
       .then(r => r.json())
       .then((s: Record<string, string>) => {
-        if (s.chatbot_ativo   !== undefined) setChatbotAtivo(s.chatbot_ativo  !== "false")
-        if (s.pedidos_auto    !== undefined) setPedidosAuto(s.pedidos_auto    !== "false")
-        if (s.dtf_ativo       !== undefined) setDtfAtivo(s.dtf_ativo          !== "false")
+        if (s.chatbot_ativo           !== undefined) setChatbotAtivo(s.chatbot_ativo         !== "false")
+        if (s.pedidos_auto            !== undefined) setPedidosAuto(s.pedidos_auto           !== "false")
+        if (s.dtf_ativo               !== undefined) setDtfAtivo(s.dtf_ativo                !== "false")
+        if (s.controle_estoque_ativo  !== undefined) setControleEstoque(s.controle_estoque_ativo === "true")
         if (s.produto_horario_dias)   setProdDias(s.produto_horario_dias.split(",").map(Number))
         if (s.produto_horario_inicio) setProdInicio(s.produto_horario_inicio)
         if (s.produto_horario_fim)    setProdFim(s.produto_horario_fim)
@@ -413,6 +427,18 @@ export default function PedidosPage() {
     setTogglingDtf(false)
   }
 
+  async function toggleEstoque() {
+    setTogglingEstoque(true)
+    const next = !controleEstoque
+    setControleEstoque(next)
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ controle_estoque_ativo: String(next) }),
+    }).catch(() => setControleEstoque(!next))
+    setTogglingEstoque(false)
+  }
+
   async function resetWA() {
     if (!confirm("Apagar todas as mensagens e resetar estados dos contatos?\n\nContatos, pedidos e dados de lifecycle são preservados.")) return
     setResetting(true)
@@ -469,11 +495,50 @@ export default function PedidosPage() {
     } finally { setLoadingOrders(false) }
   }, [])
 
-  useEffect(() => { loadOrders() }, [loadOrders])
+  const loadReservations = useCallback(async () => {
+    const r = await fetch("/api/orders/reservations")
+    if (r.ok) setReservations(await r.json())
+  }, [])
+
+  useEffect(() => { loadOrders(); loadReservations() }, [loadOrders, loadReservations])
   useEffect(() => {
-    const t = setInterval(loadOrders, 30_000)
+    const t = setInterval(() => { loadOrders(); loadReservations() }, 30_000)
     return () => clearInterval(t)
-  }, [loadOrders])
+  }, [loadOrders, loadReservations])
+
+  // Auto-print: dispara impressão quando needs_print = true
+  useEffect(() => {
+    const toPrint = orders.filter(o => o.needsPrint && !printedOrderIds.current.has(o.id))
+    if (toPrint.length === 0) return
+    for (const order of toPrint) {
+      printedOrderIds.current.add(order.id)
+      // Aguarda 800ms para garantir que o DOM renderizou
+      setTimeout(() => {
+        const printWin = window.open("", "_blank", "width=600,height=800")
+        if (!printWin) return
+        const items = order.items
+          .map(i => `<tr><td>${i.productName} ${i.color ?? ""} ${i.size ?? ""}</td><td>${i.qty} un</td></tr>`)
+          .join("")
+        const valor = order.totalValue
+          ? `<p><strong>Valor: R$ ${Number(order.totalValue).toFixed(2).replace(".", ",")}</strong></p>`
+          : ""
+        printWin.document.write(`<!DOCTYPE html><html><head><title>Pedido ${order.number}</title>
+          <style>body{font-family:sans-serif;padding:16px;font-size:14px}
+          table{width:100%;border-collapse:collapse}
+          td{padding:4px 8px;border-bottom:1px solid #eee}</style></head><body>
+          <h2>Pedido ${order.number}</h2>
+          <p>${order.contactName} · ${order.contactPhone}</p>
+          <table>${items}</table>${valor}
+          <script>window.onload=function(){window.print();window.close()}</script>
+          </body></html>`)
+        printWin.document.close()
+        // Ack ao servidor
+        fetch(`/api/orders/${order.id}/ack-print`, { method: "POST" }).catch(() => {})
+        // Atualiza localmente
+        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, needsPrint: false } : o))
+      }, 800)
+    }
+  }, [orders])
 
   // ── Load DTF orders ─────────────────────────────────────────────────────────
 
@@ -1648,6 +1713,16 @@ export default function PedidosPage() {
               </button>
             </div>
 
+            {/* Toggle Controle Estoque */}
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-bold text-[#0F1E3C]/50">Estoque</p>
+              <Tip text="Controle de estoque ON: chatbot verifica saldo na hora do pedido, avança para separação automaticamente se tiver estoque e imprime. OFF: operador confirma manualmente." />
+              <button onClick={toggleEstoque} disabled={togglingEstoque}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${controleEstoque ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}>
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${controleEstoque ? "translate-x-4" : "translate-x-0.5"}`} />
+              </button>
+            </div>
+
             {/* Toggle DTF */}
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] font-bold text-[#0F1E3C]/50">DTF</p>
@@ -1852,9 +1927,14 @@ export default function PedidosPage() {
                     <div key={col.key} className="w-64 flex-shrink-0">
                       <div className={`flex items-center justify-between mb-2 px-3 py-2 rounded-xl border ${col.hdr}`}>
                         <p className={`text-xs font-bold ${col.txt}`}>{col.label}</p>
-                        {colOrders.length > 0 && (
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${col.badge}`}>{colOrders.length}</span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {col.key === "triagem" && reservations.length > 0 && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">{reservations.length} res.</span>
+                          )}
+                          {colOrders.length > 0 && (
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${col.badge}`}>{colOrders.length}</span>
+                          )}
+                        </div>
                       </div>
                       <div className="space-y-2">
                         {colOrders.length === 0 ? (
@@ -1862,8 +1942,40 @@ export default function PedidosPage() {
                             <p className="text-[10px] text-[#0F1E3C]/20">vazio</p>
                           </div>
                         ) : colOrders.map(order => (
-                          <OrderCard key={order.id} order={order} onClick={() => { selectedIdRef.current = order.id; setSelected(order) }} />
+                          <OrderCard key={order.id} order={order}
+                            onClick={() => { selectedIdRef.current = order.id; setSelected(order) }}
+                            onTogglePay={async (id, currentlyPaid) => {
+                              if (currentlyPaid) return
+                              await fetch(`/api/orders/${id}/pay`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method: "pix" }) })
+                              setOrders(prev => prev.map(o => o.id === id ? { ...o, paidAt: new Date().toISOString() } : o))
+                            }}
+                          />
                         ))}
+                        {/* Reservas — seção colapsável na Triagem */}
+                        {col.key === "triagem" && reservations.length > 0 && (
+                          <div className="mt-2">
+                            <button
+                              onClick={() => setShowReservations(v => !v)}
+                              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-orange-50 border border-orange-200 text-[10px] font-bold text-orange-700"
+                            >
+                              <span>Reservas aguardando ({reservations.length})</span>
+                              <ChevronDown size={11} className={showReservations ? "rotate-180" : ""} />
+                            </button>
+                            {showReservations && (
+                              <div className="mt-1 space-y-1">
+                                {reservations.map(r => (
+                                  <div key={r.id} className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-xs">
+                                    <p className="font-bold text-orange-800">{r.productName} {r.color} {r.size} · {r.qty} un</p>
+                                    <p className="text-orange-600 mt-0.5">{r.contactName} · {r.contactPhone}</p>
+                                    <p className="text-orange-500 text-[9px] mt-1">
+                                      {r.status === "notified" ? "⏳ Aguardando resposta" : "🕐 Na fila"}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )

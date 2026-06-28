@@ -49,16 +49,30 @@ export async function POST(req: Request) {
     let hasError = false
     const mediaUrl = camp.media_url as string | null
 
+    // Resolve real send JID — recipients_json may have stale @lid JIDs
+    let sendJid = recipient.jid as string
+    if (recipient.id && !recipient.isGroup) {
+      const { rows: jr } = await pool.query(
+        `SELECT COALESCE(phone_jid,
+           CASE WHEN jid NOT LIKE '%@lid' THEN jid
+                ELSE CONCAT(phone, '@s.whatsapp.net')
+           END
+         ) AS send_jid FROM wa_contacts WHERE id = $1`,
+        [recipient.id]
+      ).catch(() => ({ rows: [] as { send_jid: string }[] }))
+      if (jr[0]?.send_jid) sendJid = jr[0].send_jid
+    }
+
     try {
-      const firstName = (recipient.name ?? "").split(" ")[0]
+      const firstName = ((recipient.name as string | null) ?? "").split(" ")[0]
       const msg = recipient.isGroup
         ? (camp.content as string)
         : (camp.content as string).replace(/\{nome\}/g, firstName)
 
       try {
-        await campaignSend(recipient.jid, msg, mediaUrl)
+        await campaignSend(sendJid, msg, mediaUrl)
       } catch (mediaErr) {
-        console.error("[campaign-tick] sendMedia falhou para", recipient.jid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
+        console.error("[campaign-tick] sendMedia falhou para", sendJid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
         if (mediaUrl) {
           // Fallback: enviar só o texto para o destinatário não ficar no vácuo
           try {

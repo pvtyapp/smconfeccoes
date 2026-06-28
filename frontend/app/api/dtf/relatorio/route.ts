@@ -33,7 +33,8 @@ export async function GET(req: Request) {
             'abertoEm',        l.aberto_em,
             'fechadoEm',       l.fechado_em,
             'metrosNoPeriodo', l.metros_no_periodo,
-            'custoPorMetro',   l.custo_por_metro
+            'custoPorMetro',   l.custo_por_metro,
+            'metrosInicial',   l.quantidade
           ) ORDER BY l.aberto_em DESC
         ) FILTER (WHERE l.id IS NOT NULL) AS lotes
       FROM dtf_insumos i
@@ -59,10 +60,32 @@ export async function GET(req: Request) {
         custoPorMetroAtual = metrosAcumulados > 0 ? Number(ativo.custo) / metrosAcumulados : null
       }
 
-      // Ciclos fechados no período
-      const ciclosFechados = lotes.filter((l: { fechadoEm: string | null; custoPorMetro: number | null }) =>
-        l.fechadoEm && l.custoPorMetro !== null
-      )
+      // Ciclos fechados
+      type LoteRaw = {
+        id: number; abertoEm: string; fechadoEm: string | null
+        custo: number; metrosNoPeriodo: number | null; custoPorMetro: number | null
+        metrosInicial: number | null
+      }
+      const ciclosFechadosRaw = (lotes as LoteRaw[]).filter(l => l.fechadoEm && l.custoPorMetro !== null)
+
+      const ciclosFechados = ciclosFechadosRaw.map(l => {
+        if (ins.unidade !== "metro" || !l.metrosInicial) return l
+        const mi = Number(l.metrosInicial)
+        const mn = Number(l.metrosNoPeriodo ?? 0)
+        const desperdicio = mi > 0 ? Math.max(0, mi - mn) : null
+        const pctDesperdicio = mi > 0 && desperdicio !== null ? (desperdicio / mi) * 100 : null
+        return { ...l, desperdicio, pctDesperdicio }
+      })
+
+      // % desperdício médio ponderado — só para insumos em metro (Film)
+      let pctDesperdicioMedio: number | null = null
+      if (ins.unidade === "metro") {
+        type CicloComDesp = { metrosInicial?: number | null; desperdicio?: number | null }
+        const comDados = (ciclosFechados as CicloComDesp[]).filter(c => Number(c.metrosInicial ?? 0) > 0)
+        const totalInicial = comDados.reduce((s, c) => s + Number(c.metrosInicial ?? 0), 0)
+        const totalDesp    = comDados.reduce((s, c) => s + Number(c.desperdicio   ?? 0), 0)
+        pctDesperdicioMedio = totalInicial > 0 ? (totalDesp / totalInicial) * 100 : null
+      }
 
       return {
         id: ins.id,
@@ -72,6 +95,7 @@ export async function GET(req: Request) {
         metrosAcumulados,
         ciclosFechados,
         loteAtivo: ativo || null,
+        pctDesperdicioMedio,
       }
     }))
 

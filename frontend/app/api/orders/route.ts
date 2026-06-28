@@ -27,6 +27,9 @@ export async function GET(req: Request) {
         o.due_date             AS "dueDate",
         o.created_at           AS "createdAt",
         o.updated_at           AS "updatedAt",
+        o.paid_at              AS "paidAt",
+        o.needs_print          AS "needsPrint",
+        o.is_partial           AS "isPartial",
         (
           SELECT oe2.note LIKE '%ajuste%'
           FROM order_events oe2

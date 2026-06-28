@@ -83,7 +83,7 @@ function filterLabel(f: FilterMode): string {
 }
 
 function fmtCurrency(v: number) {
-  return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+  return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function fmtDate(s: string) {

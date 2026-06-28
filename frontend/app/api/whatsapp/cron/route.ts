@@ -303,11 +303,75 @@ export async function GET(req: Request) {
       UPDATE wa_contacts
       SET state = 'idle', state_data = '{}', updated_at = NOW()
       WHERE state IN ('aguardando_menu','dtf_coletando','dtf_sem_arquivo','cross_sell_produto',
-                      'cross_sell_dtf','aguardando_cliente_1','confirmando')
+                      'cross_sell_dtf','aguardando_cliente_1','confirmando',
+                      'aguardando_separacao_resposta','aguardando_cancelamento_resposta')
         AND updated_at < NOW() - INTERVAL '6 hours'
     `)
     results.stuck = rowCount ?? 0
   } catch { results.errors++ }
+
+  // ── 9b. Expira reservas sem resposta (>= reserva_expiry_hours) ───────────────
+  try {
+    const expiryHours = Number(s.reserva_expiry_hours ?? 4)
+
+    // Expira reservas vencidas
+    const { rows: expiredRes } = await pool.query(`
+      UPDATE product_reservations
+      SET status = 'expired'
+      WHERE status = 'notified'
+        AND notified_at < NOW() - ($1 || ' hours')::INTERVAL
+      RETURNING id, variant_id, contact_id
+    `, [expiryHours])
+
+    // Para cada variante que expirou, notifica próximo da fila (FIFO)
+    for (const expired of expiredRes) {
+      // Reseta estado do contato que expirou
+      await pool.query(`
+        UPDATE wa_contacts SET state = 'idle', state_data = '{}', updated_at = NOW()
+        WHERE id = $1 AND state = 'aguardando_reserva_resposta'
+      `, [expired.contact_id]).catch(() => {})
+
+      // Próximo pending para a mesma variante
+      const { rows: nextRes } = await pool.query(`
+        SELECT pr.id, pr.contact_id, pr.qty,
+               pv.color, pv.size, p.name AS product_name,
+               c.jid
+        FROM product_reservations pr
+        JOIN product_variants pv ON pv.id = pr.variant_id
+        JOIN products p          ON p.id  = pv.product_id
+        JOIN wa_contacts c       ON c.id  = pr.contact_id
+        WHERE pr.variant_id = $1 AND pr.status = 'pending'
+        ORDER BY pr.created_at ASC LIMIT 1
+      `, [expired.variant_id])
+
+      if (nextRes[0]?.jid) {
+        const next = nextRes[0]
+        const variantName = [next.product_name, next.color, next.size].filter(Boolean).join(" ")
+        const newExpiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString()
+
+        await pool.query(`
+          UPDATE product_reservations SET status = 'notified', notified_at = NOW(), expires_at = $1
+          WHERE id = $2
+        `, [newExpiresAt, next.id])
+
+        await pool.query(`
+          UPDATE wa_contacts SET state = 'aguardando_reserva_resposta',
+            state_data = $1, updated_at = NOW()
+          WHERE id = $2
+        `, [JSON.stringify({
+          reservationId: next.id,
+          variantId:     next.variant_id ?? expired.variant_id,
+          variantName,
+          qty:           next.qty,
+        }), next.contact_id])
+
+        sendWhatsApp(
+          next.jid,
+          `🎉 *${variantName}* disponível! Você estava na lista de espera.\n\nAinda precisa? Responde *SIM* ou *NÃO*. (Você tem ${expiryHours}h para responder)`
+        ).catch(() => {})
+      }
+    }
+  } catch (e) { console.error("[cron] reserva expiry falhou:", e instanceof Error ? e.message : e); results.errors++ }
 
   // ── 10. Limpeza TTL de blobs de mídia ────────────────────────────────────────
   const blobCleanup = await runBlobTtlCleanup().catch(() => ({ deleted: 0 }))

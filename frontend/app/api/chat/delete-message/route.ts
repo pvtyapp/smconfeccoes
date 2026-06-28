@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { deleteBlobs } from "@/lib/blob-cleanup"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -27,6 +28,12 @@ export async function POST(req: Request) {
     }
 
     if (messageDbId) {
+      const { rows } = await pool.query<{ media_url: string }>(
+        "SELECT media_url FROM wa_messages WHERE id = $1",
+        [messageDbId]
+      ).catch(() => ({ rows: [] }))
+      const blobUrl = rows[0]?.media_url
+      if (blobUrl?.startsWith("https://")) await deleteBlobs([blobUrl])
       await pool.query("DELETE FROM wa_messages WHERE id = $1", [messageDbId]).catch(() => {})
     }
 

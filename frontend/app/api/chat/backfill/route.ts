@@ -95,68 +95,40 @@ export async function POST() {
     `).catch(() => {})
 
     // ── 2. Backfill individual (non-group) messages ───────────────────────────
-    // Get all non-group messages, excluding fromMe=false messages to self
-    const allIndividual = await fetchMessages(
-      { key: { remoteJid: { contains: "@s.whatsapp.net" } } }, 0
+    // Iterate per contact already in wa_contacts — paginate their full history from Evolution
+    const { rows: existingContacts } = await pool.query(
+      `SELECT id, jid, name, phone FROM wa_contacts WHERE jid LIKE '%@s.whatsapp.net'`
     )
 
-    const byContact = new Map<string, unknown[]>()
-    for (const raw of allIndividual) {
-      const m   = raw as Record<string, unknown>
-      const key = m.key as Record<string, unknown> | undefined
-      const jid = key?.remoteJid as string | undefined
-      if (!jid || !jid.endsWith("@s.whatsapp.net")) continue
-      if (!byContact.has(jid)) byContact.set(jid, [])
-      byContact.get(jid)!.push(m)
-    }
+    for (const contact of existingContacts) {
+      const { id: contactId, jid } = contact as { id: number; jid: string; name: string; phone: string }
+      let skip = 0
+      let page: unknown[]
+      do {
+        page = await fetchMessages({ key: { remoteJid: jid } }, skip)
+        for (const raw of page) {
+          const m   = raw as Record<string, unknown>
+          const key = m.key as Record<string, unknown> | undefined
+          if (!key) continue
+          const content = extractText(m)
+          if (!content) continue
+          const msgId     = key.id as string | undefined
+          const fromMe    = Boolean(key.fromMe)
+          const direction = fromMe ? "out" : "in"
+          const ts        = m.messageTimestamp as number | undefined
+          const createdAt = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString()
 
-    for (const [jid, msgs] of byContact) {
-      const phone = jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-      // Skip the instance's own number
-      if (phone === EVO_INSTANCE.replace(/\D/g, "")) continue
-
-      // Upsert contact
-      const anyMsg = msgs.find(raw => {
-        const m = raw as Record<string, unknown>
-        const k = m.key as Record<string, unknown>
-        return !k?.fromMe && (m.pushName as string)
-      }) as Record<string, unknown> | undefined
-
-      const name = (anyMsg?.pushName as string) || phone
-      const { rows: cr } = await pool.query(
-        `INSERT INTO wa_contacts (jid, name, phone)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (jid) DO UPDATE SET
-           name = CASE WHEN EXCLUDED.name != EXCLUDED.phone THEN EXCLUDED.name ELSE wa_contacts.name END,
-           updated_at = NOW()
-         RETURNING id`,
-        [jid, name, phone]
-      )
-      const contactId = cr[0]?.id
-      if (!contactId) continue
+          await pool.query(
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [contactId, msgId ?? null, direction, content, createdAt]
+          ).catch(() => {})
+          savedMsgs++
+        }
+        skip += BATCH
+      } while (page.length === BATCH)
       savedContacts++
-
-      // Save messages
-      for (const raw of msgs) {
-        const m   = raw as Record<string, unknown>
-        const key = m.key as Record<string, unknown> | undefined
-        if (!key) continue
-        const content = extractText(m)
-        if (!content) continue
-        const msgId    = key.id as string | undefined
-        const fromMe   = Boolean(key.fromMe)
-        const direction = fromMe ? "out" : "in"
-        const ts        = m.messageTimestamp as number | undefined
-        const createdAt = ts ? new Date(ts * 1000).toISOString() : new Date().toISOString()
-
-        await pool.query(
-          `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-          [contactId, msgId ?? null, direction, content, createdAt]
-        ).catch(() => {})
-        savedMsgs++
-      }
     }
 
     // ── 3. Delete fake/test contacts ─────────────────────────────────────────

@@ -999,7 +999,7 @@ async function handleText(
       break
 
     case "coletando":
-      await handleColetando(jid, contactId, stateData, text, chatbotDtfEnabled)
+      await handleColetando(jid, contactId, stateData, text, chatbotDtfEnabled, globalSettings)
       break
 
     case "aguardando_cliente_1":
@@ -1030,9 +1030,21 @@ async function handleText(
       await handleAguardandoNome(jid, contactId, text)
       break
 
+    case "aguardando_separacao_resposta":
+      await handleAguardandoSeparacaoResposta(jid, contactId, stateData, text)
+      break
+
+    case "aguardando_cancelamento_resposta":
+      await handleAguardandoCancelamentoResposta(jid, contactId, stateData, text)
+      break
+
+    case "aguardando_reserva_resposta":
+      await handleAguardandoReservaResposta(jid, contactId, stateData, text)
+      break
+
     default:
       // triagem / confirmando / em_separacao / pronto — pedido ativo
-      await handleActiveOrder(jid, contactId, state, stateData, text, pushName, chatbotDtfEnabled)
+      await handleActiveOrder(jid, contactId, state, stateData, text, pushName, chatbotDtfEnabled, globalSettings)
   }
 }
 
@@ -1076,7 +1088,7 @@ async function handleIdle(
       }
       const _raceOk = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
       if (!_raceOk) return
-      await createOrderDirect(jid, contactId, [text], chatbotObs, preParsed, chatbotDtfEnabled)
+      await createOrderDirect(jid, contactId, [text], chatbotObs, preParsed, chatbotDtfEnabled, globalSettings)
 
     } else if (intent === "dtf") {
       if (!chatbotDtfEnabled || !dtfStatus.available) {
@@ -1144,7 +1156,7 @@ async function handleIdle(
   const { intent: newIntent, items: newParsed } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
   if (newIntent === "pedido" && chatbotProdutoEnabled && produtoStatus.available) {
     const ok = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
-    if (ok) { await createOrderDirect(jid, contactId, [text], chatbotObs, newParsed, chatbotDtfEnabled); return }
+    if (ok) { await createOrderDirect(jid, contactId, [text], chatbotObs, newParsed, chatbotDtfEnabled, globalSettings); return }
   }
   if (newIntent === "dtf" && chatbotDtfEnabled && dtfStatus.available) {
     await tagContact(contactId, "interessado_dtf")
@@ -1348,7 +1360,8 @@ async function handleColetando(
   contactId: number,
   stateData: Record<string, unknown>,
   text: string,
-  chatbotDtfEnabled = false
+  chatbotDtfEnabled = false,
+  globalSettings: Record<string, string> = {}
 ) {
   const rawMessages  = (stateData.rawMessages as string[] ?? []).concat(text)
   const chatbotObs   = stateData.chatbotObs as string | null ?? null
@@ -1398,7 +1411,7 @@ async function handleColetando(
   }
 
   await setState(contactId, "coletando", { rawMessages, chatbotObs })
-  await createOrderDirect(jid, contactId, rawMessages, chatbotObs, undefined, chatbotDtfEnabled)
+  await createOrderDirect(jid, contactId, rawMessages, chatbotObs, undefined, chatbotDtfEnabled, globalSettings)
 }
 
 async function createOrderDirect(
@@ -1407,7 +1420,8 @@ async function createOrderDirect(
   rawMessages: string[],
   chatbotObs: string | null = null,
   preParsed?: import("@/lib/ai/parseOrder").ParsedItem[],
-  chatbotDtfEnabled = false
+  chatbotDtfEnabled = false,
+  globalSettings: Record<string, string> = {}
 ) {
   const fullText = rawMessages.join("\n")
 
@@ -1583,6 +1597,121 @@ async function createOrderDirect(
   if (hasUnmatched)  reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
   if (hasStockIssue) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
 
+  // ── Controle de estoque automático ─────────────────────────────────────────
+  const controleAtivo = globalSettings.controle_estoque_ativo === "true"
+
+  if (controleAtivo && isNewOrder) {
+    const outOfStock   = matched.filter(m => m.matched && !m.stockOk)
+    const inStockItems = matched.filter(m => !m.matched || m.stockOk)
+
+    if (outOfStock.length === 0) {
+      // Tudo em estoque → avança direto para separação
+      const orderCli = await pool.connect()
+      try {
+        await orderCli.query("BEGIN")
+        await orderCli.query(
+          `UPDATE orders SET status = 'em_separacao', needs_print = true WHERE id = $1`, [orderId]
+        )
+        await orderCli.query(`
+          INSERT INTO order_events (order_id, status, actor, note)
+          VALUES ($1, 'em_separacao', 'chatbot', 'Avançado automaticamente — estoque OK')
+        `, [orderId])
+        for (const item of matched) {
+          if (item.variantId) {
+            await orderCli.query(`
+              INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+              VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
+            `, [item.variantId, item.qty, `Pedido ${orderNumber}`])
+          }
+        }
+        await orderCli.query("COMMIT")
+      } catch (e) {
+        await orderCli.query("ROLLBACK").catch(() => {})
+        throw e
+      } finally {
+        orderCli.release()
+      }
+      await setState(contactId, "em_separacao", { orderId, orderNumber })
+      replyWA(jid, `✅ Pedido *${orderNumber}* recebido! Já estamos separando. Avisamos quando pronto para retirada!`)
+      return
+    }
+
+    // Há itens faltando
+    const missingNames = outOfStock.map(m =>
+      [m.productName, m.color, m.size].filter(Boolean).join(" ")
+    )
+
+    // Verifica se existem prod_orders em_andamento para os produtos faltantes
+    const missingVarIds = outOfStock.filter(m => m.variantId).map(m => m.variantId as string)
+    let hasProdOrders = false
+    const variantProdOrderMap: Record<string, boolean> = {}
+    if (missingVarIds.length > 0) {
+      const { rows: prodOrds } = await pool.query(`
+        SELECT DISTINCT pv.id AS variant_id
+        FROM prod_orders po
+        JOIN prod_order_items poi ON poi.order_id = po.id
+        JOIN product_variants pv ON pv.product_id = poi.product_id
+        WHERE po.status = 'em_andamento' AND pv.id::text = ANY($1::text[])
+      `, [missingVarIds])
+      hasProdOrders = prodOrds.length > 0
+      for (const r of prodOrds) variantProdOrderMap[String(r.variant_id)] = true
+    }
+
+    // Busca os order_item IDs dos itens disponíveis para preservar
+    const { rows: allOrderItems } = await pool.query(
+      `SELECT id, variant_id FROM order_items WHERE order_id = $1`, [orderId]
+    )
+    const availableItemIds: number[] = allOrderItems
+      .filter((oi: { id: number; variant_id: string }) =>
+        !outOfStock.some(m => String(m.variantId) === String(oi.variant_id))
+      )
+      .map((oi: { id: number }) => oi.id)
+
+    const missingItems = outOfStock.map(m => ({
+      variantId: m.variantId ? Number(m.variantId) : null,
+      name: [m.productName, m.color, m.size].filter(Boolean).join(" "),
+      qty: m.qty,
+      withReserva: m.variantId ? Boolean(variantProdOrderMap[String(m.variantId)]) : false,
+    }))
+
+    // Cenário D: TUDO faltando
+    if (inStockItems.length === 0) {
+      if (hasProdOrders) {
+        await setState(contactId, "aguardando_separacao_resposta", {
+          orderId, orderNumber, missingItems, availableItemIds: [], allMissing: true,
+        })
+        replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas os itens estão em produção e chegam em breve.\n\nPosso te avisar quando estiver disponível para separar?`)
+      } else {
+        await pool.query(
+          `UPDATE wa_contacts SET needs_attention = true WHERE id = $1`, [contactId]
+        )
+        await setState(contactId, "triagem", { orderId, orderNumber })
+        replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas infelizmente não temos os itens em estoque no momento. Nossa equipe entra em contato para te ajudar!`)
+      }
+      return
+    }
+
+    // Cenário parcial: alguns disponíveis, alguns faltando
+    const missingStr = missingNames.length === 1
+      ? `*${missingNames[0]}*`
+      : missingNames.map(n => `• *${n}*`).join("\n")
+
+    const introMissing = missingNames.length === 1
+      ? `a ${missingStr} não temos em estoque agora`
+      : `esses itens não temos em estoque agora:\n${missingStr}`
+
+    const reservaHint = hasProdOrders
+      ? ` (está em produção e chega em breve)`
+      : ""
+
+    await setState(contactId, "aguardando_separacao_resposta", {
+      orderId, orderNumber, missingItems, availableItemIds,
+    })
+    replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas ${introMissing}${reservaHint}.\n\nPosso separar o restante?`)
+    return
+  }
+
+  // Fluxo normal sem controle de estoque ativo
   const offeredDtf = await wasOfferedRecently(contactId, "cross_sell_dtf", 7)
   if (chatbotDtfEnabled && !offeredDtf) {
     await setState(contactId, "cross_sell_dtf", { orderId, orderNumber })
@@ -1627,7 +1756,8 @@ async function handleActiveOrder(
   stateData: Record<string, unknown>,
   text: string,
   pushName: string,
-  chatbotDtfEnabled = false
+  chatbotDtfEnabled = false,
+  globalSettings: Record<string, string> = {}
 ) {
   const lower = text.toLowerCase().trim()
 
@@ -1924,7 +2054,7 @@ async function handleActiveOrder(
     // Sem pedido aberto em triagem, ou estado é em_separacao/pronto — cria novo
     const _raceOk = await setStateIf(contactId, "coletando", { rawMessages: [text] }, ["triagem", "em_separacao", "pronto"])
     if (!_raceOk) return
-    await createOrderDirect(jid, contactId, [text], null, undefined, chatbotDtfEnabled)
+    await createOrderDirect(jid, contactId, [text], null, undefined, chatbotDtfEnabled, globalSettings)
     return
   }
 
@@ -1958,6 +2088,213 @@ async function handleActiveOrder(
 
   const firstName = pushName.split(" ")[0]
   replyWA(jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida é só chamar.`)
+}
+
+// ─── Reserva: resposta do cliente ao "posso separar o restante?" ─────────────
+
+async function handleAguardandoSeparacaoResposta(
+  jid: string,
+  contactId: number,
+  stateData: Record<string, unknown>,
+  text: string
+) {
+  const lower   = text.toLowerCase().trim()
+  const isSim   = ["sim", "s", "yes", "pode", "claro", "manda", "vai", "ok", "pode sim"].some(w => lower === w || lower.startsWith(w + " "))
+  const isNao   = ["não", "nao", "n", "no", "nao quero", "não quero"].includes(lower)
+
+  const orderId     = stateData.orderId     as number
+  const orderNumber = stateData.orderNumber as string
+  const missingItems= (stateData.missingItems as Array<{ variantId: number | null; name: string; qty: number; withReserva?: boolean }>) ?? []
+  const availableItemIds = (stateData.availableItemIds as number[]) ?? []
+  const allMissing  = Boolean(stateData.allMissing)
+
+  if (isSim) {
+    if (allMissing) {
+      // Todos os itens em produção — cria reservas, mantém pedido em triagem
+      for (const mi of missingItems) {
+        if (mi.variantId) {
+          await pool.query(`
+            INSERT INTO product_reservations (contact_id, variant_id, qty, prod_order_id, order_id)
+            VALUES ($1, $2, $3,
+              (SELECT po.id FROM prod_orders po JOIN prod_order_items poi ON poi.order_id = po.id
+               JOIN product_variants pv ON pv.product_id = poi.product_id
+               WHERE po.status = 'em_andamento' AND pv.id = $2 LIMIT 1),
+              $4)
+          `, [contactId, mi.variantId, mi.qty, orderId])
+        }
+      }
+      await setState(contactId, "triagem", { orderId, orderNumber })
+      replyWA(jid, `✅ Reserva feita! Assim que ${missingItems.length === 1 ? "o item chegar" : "os itens chegarem"} te avisamos aqui.`)
+      return
+    }
+
+    // Parcial: remove itens faltantes, avança para separação
+    if (availableItemIds.length > 0) {
+      await pool.query(`
+        DELETE FROM order_items WHERE order_id = $1 AND id NOT IN (${availableItemIds.join(",")})
+      `, [orderId])
+      await pool.query(
+        `UPDATE orders SET total_value = (
+           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
+         ), is_partial = true, status = 'em_separacao', needs_print = true WHERE id = $1`,
+        [orderId]
+      )
+      await pool.query(`
+        INSERT INTO order_events (order_id, status, actor, note)
+        VALUES ($1, 'em_separacao', 'chatbot', 'Cliente confirmou separação parcial')
+      `, [orderId])
+      // Baixa estoque dos itens disponíveis
+      const { rows: items } = await pool.query(
+        `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
+      )
+      for (const item of items) {
+        await pool.query(`
+          INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+          VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
+        `, [item.variant_id, item.qty, `Pedido ${orderNumber}`])
+      }
+    }
+
+    // Cria reservas para itens com prod_order ativo
+    for (const mi of missingItems) {
+      if (mi.variantId && mi.withReserva) {
+        await pool.query(`
+          INSERT INTO product_reservations (contact_id, variant_id, qty, prod_order_id, order_id)
+          VALUES ($1, $2, $3,
+            (SELECT po.id FROM prod_orders po JOIN prod_order_items poi ON poi.order_id = po.id
+             JOIN product_variants pv ON pv.product_id = poi.product_id
+             WHERE po.status = 'em_andamento' AND pv.id = $2 LIMIT 1),
+            $4)
+        `, [contactId, mi.variantId, mi.qty, orderId])
+      }
+    }
+
+    const hasReserva = missingItems.some(m => m.withReserva)
+    await setState(contactId, "em_separacao", { orderId, orderNumber })
+
+    let msg = `✅ Perfeito! Já estamos separando o que tem.`
+    if (hasReserva) msg += ` E já anotei a reserva dos itens em produção — te aviso quando chegar!`
+    msg += ` Avisamos quando pronto para retirada!`
+    replyWA(jid, msg)
+    return
+  }
+
+  if (isNao) {
+    await setState(contactId, "aguardando_cancelamento_resposta", { orderId, orderNumber })
+    replyWA(jid, `Sem problema! Deseja cancelar o pedido *${orderNumber}*? Responde *SIM* ou *NÃO*.`)
+    return
+  }
+
+  // Não entendeu
+  replyWA(jid, `Responde *SIM* para separar o que tem ou *NÃO* se preferir aguardar.`)
+}
+
+async function handleAguardandoCancelamentoResposta(
+  jid: string,
+  contactId: number,
+  stateData: Record<string, unknown>,
+  text: string
+) {
+  const lower = text.toLowerCase().trim()
+  const isSim = ["sim", "s", "yes", "pode cancelar", "cancela"].some(w => lower === w || lower.startsWith(w + " "))
+  const isNao = ["não", "nao", "n", "no"].includes(lower)
+
+  const orderId     = stateData.orderId     as number
+  const orderNumber = stateData.orderNumber as string
+
+  if (isSim) {
+    await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [orderId])
+    await pool.query(`
+      INSERT INTO order_events (order_id, status, actor, note)
+      VALUES ($1, 'cancelado', 'chatbot', 'Cliente cancelou via WhatsApp')
+    `, [orderId])
+    await setState(contactId, "idle")
+    replyWA(jid, `Ok, pedido *${orderNumber}* cancelado. Quando precisar é só chamar!`)
+    return
+  }
+
+  if (isNao) {
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
+    await setState(contactId, "triagem", { orderId, orderNumber })
+    replyWA(jid, `Certo! Pedido *${orderNumber}* continua aguardando. Nossa equipe entra em contato.`)
+    return
+  }
+
+  replyWA(jid, `Responde *SIM* para cancelar ou *NÃO* para manter o pedido.`)
+}
+
+async function handleAguardandoReservaResposta(
+  jid: string,
+  contactId: number,
+  stateData: Record<string, unknown>,
+  text: string
+) {
+  const lower = text.toLowerCase().trim()
+  const isSim = ["sim", "s", "yes", "quero", "preciso", "pode", "manda"].some(w => lower === w || lower.startsWith(w + " "))
+  const isNao = ["não", "nao", "n", "no", "nao preciso", "não preciso", "cancelar", "cancela"].some(w => lower === w || lower.startsWith(w + " "))
+
+  const reservationId = stateData.reservationId as number
+  const variantId     = stateData.variantId     as number
+  const variantName   = stateData.variantName   as string
+  const qty           = stateData.qty           as number
+
+  if (isSim) {
+    // Confirma reserva → cria novo pedido
+    const numRes  = await pool.query("SELECT nextval('order_number_seq') AS n")
+    const number  = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
+    const { rows: vRows } = await pool.query(
+      `SELECT sale_price FROM product_variants WHERE id = $1`, [variantId]
+    )
+    const unitPrice = vRows[0]?.sale_price ? Number(vRows[0].sale_price) : null
+    const totalValue = unitPrice ? unitPrice * qty : null
+
+    const { rows: [newOrder] } = await pool.query(`
+      INSERT INTO orders (number, contact_id, status, total_value, source)
+      VALUES ($1, $2, 'em_separacao', $3, 'whatsapp')
+      RETURNING id, number
+    `, [number, contactId, totalValue])
+
+    await pool.query(`
+      INSERT INTO order_items (order_id, product_name, variant_id, qty, unit_price)
+      SELECT $1, p.name, pv.id, $2, pv.sale_price
+      FROM product_variants pv JOIN products p ON p.id = pv.product_id
+      WHERE pv.id = $3
+    `, [newOrder.id, qty, variantId])
+
+    // Baixa estoque
+    await pool.query(`
+      INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+      VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
+    `, [variantId, qty, `Pedido ${number} (reserva)`])
+
+    // Seta needs_print
+    await pool.query(`UPDATE orders SET needs_print = true WHERE id = $1`, [newOrder.id])
+
+    await pool.query(`
+      UPDATE product_reservations SET status = 'confirmed' WHERE id = $1
+    `, [reservationId])
+
+    await pool.query(`
+      INSERT INTO order_events (order_id, status, actor, note)
+      VALUES ($1, 'em_separacao', 'chatbot', 'Pedido criado a partir de reserva confirmada')
+    `, [newOrder.id])
+
+    await setState(contactId, "em_separacao", { orderId: newOrder.id, orderNumber: number })
+    replyWA(jid, `✅ Perfeito! Separando as *${qty} ${variantName}* para você. Pedido *${number}* em separação — avisamos quando pronto!`)
+    return
+  }
+
+  if (isNao) {
+    await pool.query(`UPDATE product_reservations SET status = 'cancelled' WHERE id = $1`, [reservationId])
+    await setState(contactId, "idle")
+    replyWA(jid, `Tudo bem! Reserva cancelada. Quando precisar é só chamar.`)
+    return
+  }
+
+  replyWA(jid, `A *${variantName}* que você reservou chegou! Ainda precisa? Responde *SIM* ou *NÃO*.`)
 }
 
 // ─── Silent order create (chatbot mudo + pedidos_auto on) ───────────────────

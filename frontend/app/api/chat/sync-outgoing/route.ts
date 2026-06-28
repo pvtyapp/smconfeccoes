@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 
-const EVO_URL  = process.env.EVOLUTION_API_URL!
-const EVO_KEY  = process.env.EVOLUTION_API_KEY!
-const EVO_INST = process.env.EVOLUTION_INSTANCE!
+const EVO_URL  = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
+const EVO_KEY  = (process.env.EVOLUTION_API_KEY  ?? "").trim()
+const EVO_INST = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
@@ -29,7 +29,10 @@ export async function GET(req: Request) {
     if (!resp.ok) return NextResponse.json({ synced: 0 })
 
     const data    = await resp.json()
-    const records = (data?.messages?.records ?? []) as Record<string, unknown>[]
+    const records = (Array.isArray(data) ? data
+      : Array.isArray(data?.messages?.records) ? data.messages.records
+      : Array.isArray(data?.records) ? data.records
+      : []) as Record<string, unknown>[]
 
     let synced = 0
     for (const rec of records) {
@@ -57,21 +60,18 @@ export async function GET(req: Request) {
         ? new Date(Number(rec.messageTimestamp) * 1000)
         : null
 
-      await pool.query(
+      // RETURNING id → só conta inserções reais (ON CONFLICT DO NOTHING não retorna nada)
+      const result = await pool.query(
         `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, created_at)
          VALUES ($1, $2, 'out', $3, 'sent', COALESCE($4, NOW()))
-         ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+         ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING
+         RETURNING id`,
         [contactId, msgId, content, ts]
-      ).catch(() => {})
+      ).catch(() => ({ rows: [] as { id: number }[] }))
 
-      synced++
-    }
-
-    if (synced > 0) {
-      await pool.query(
-        `UPDATE wa_contacts SET chatbot_paused_until = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $1`,
-        [contactId]
-      ).catch(() => {})
+      if ((result as { rows: { id: number }[] }).rows.length > 0) {
+        synced++
+      }
     }
 
     return NextResponse.json({ synced })

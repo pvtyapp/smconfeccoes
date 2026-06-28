@@ -37,22 +37,34 @@ export async function POST(
 
     const order = orderRes.rows[0]
 
-    if (status === "pronto") {
-      // Baixa estoque para cada item com variante vinculada
+    if (status === "em_separacao") {
+      // Baixa estoque quando entra em separação (não mais no pronto)
       const itemsRes = await client.query(`
         SELECT variant_id, qty, product_name
         FROM order_items
         WHERE order_id = $1 AND variant_id IS NOT NULL
       `, [id])
 
-      for (const item of itemsRes.rows) {
-        await client.query(`
-          INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-          VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
-        `, [item.variant_id, item.qty, `Pedido ${order.number}`])
+      // Evita baixa dupla se já foi baixado (is_partial já baixou no chatbot auto-advance)
+      const { rows: alreadyDeducted } = await client.query(`
+        SELECT 1 FROM stock_movements
+        WHERE channel = 'chatbot' AND notes = $1 LIMIT 1
+      `, [`Pedido ${order.number}`])
+
+      if (!alreadyDeducted.length) {
+        for (const item of itemsRes.rows) {
+          await client.query(`
+            INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+            VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
+          `, [item.variant_id, item.qty, `Pedido ${order.number}`])
+        }
       }
 
-      // Atualiza lifecycle do contato
+      await client.query(`
+        UPDATE orders SET status = $1, needs_print = true WHERE id = $2
+      `, [status, id])
+    } else if (status === "pronto") {
+      // Atualiza lifecycle do contato ao concluir
       await client.query(`
         UPDATE wa_contacts
         SET last_order_at        = NOW(),
@@ -75,6 +87,14 @@ export async function POST(
     `, [id, status, actor ?? "dashboard", note ?? null])
 
     await client.query("COMMIT")
+
+    // Avisa o cliente que entrou em separação
+    if (status === "em_separacao" && order.jid) {
+      sendWhatsApp(
+        order.jid,
+        `📦 Seu pedido *${order.number}* está em separação! Avisamos quando pronto para retirada.`
+      ).catch(() => {})
+    }
 
     // Atualização de estoque em separação → volta pra triagem com WA contextual
     if (status === "triagem" && Array.isArray(changes) && changes.length > 0 && order.jid) {

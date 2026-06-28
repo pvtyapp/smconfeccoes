@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { RefreshCw, AlertTriangle, CheckCircle2, Package } from "lucide-react"
 
 // ─── Mock (remover quando houver dados reais) ─────────────────────────────────
-const USE_MOCK = true
+const USE_MOCK = false
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

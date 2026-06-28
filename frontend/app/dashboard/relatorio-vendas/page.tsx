@@ -19,6 +19,7 @@ type OrderRecord = {
   id: number
   number: string
   source: string
+  status: string
   totalValue: string | null
   dueDate: string | null
   paidAt: string | null
@@ -70,6 +71,13 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   whatsapp: { label: "WhatsApp", cls: "bg-green-100 text-green-700" },
   manual:   { label: "Manual",   cls: "bg-gray-100 text-gray-600"   },
   avaria:   { label: "Avaria",   cls: "bg-amber-100 text-amber-700" },
+}
+
+const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
+  triagem:       { label: "Triagem",    cls: "bg-slate-100 text-slate-500"   },
+  em_separacao:  { label: "Separando",  cls: "bg-blue-100 text-blue-600"     },
+  pronto:        { label: "Pronto",     cls: "bg-purple-100 text-purple-700" },
+  concluido:     { label: "Concluído",  cls: "bg-emerald-100 text-emerald-700" },
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -177,19 +185,21 @@ export default function RelatorioVendasPage() {
     return list
   }, [orders, avarias, sourceFilter])
 
-  // Stats (only orders carry monetary value)
+  // Stats — counts include all orders shown; monetary values only from concluído
   const stats = useMemo(() => {
-    const ords = entries.filter(e => e.kind === "order").map(e => (e as { kind: "order"; data: OrderRecord }).data)
-    const avars = entries.filter(e => e.kind === "avaria").map(e => (e as { kind: "avaria"; data: AvariaRecord }).data)
-    const totalR = ords.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
-    const pecas  = ords.reduce((s, o) => s + (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
-    const metros = ords.reduce((s, o) => s + (o.items ?? []).filter(i => isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
+    const ords    = entries.filter(e => e.kind === "order").map(e => (e as { kind: "order"; data: OrderRecord }).data)
+    const avars   = entries.filter(e => e.kind === "avaria").map(e => (e as { kind: "avaria"; data: AvariaRecord }).data)
+    const concluded = ords.filter(o => o.status === "concluido")
+
+    const totalR    = concluded.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    const pecas     = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
+    const metros    = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
     const avarPecas = avars.reduce((s, a) => s + a.qty, 0)
-    const ticket = ords.length > 0 ? totalR / ords.length : 0
+    const ticket    = concluded.length > 0 ? totalR / concluded.length : 0
 
     let custoTotal = 0
     let custoKnown = false
-    for (const o of ords) {
+    for (const o of concluded) {
       for (const item of (o.items ?? [])) {
         if (item.costPrice != null) {
           custoTotal += item.costPrice * item.qty
@@ -197,10 +207,10 @@ export default function RelatorioVendasPage() {
         }
       }
     }
-    const lucroTotal = custoKnown ? totalR - custoTotal : null
+    const lucroTotal  = custoKnown ? totalR - custoTotal : null
     const margemMedia = (custoKnown && totalR > 0) ? ((totalR - custoTotal) / totalR) * 100 : null
 
-    return { totalR, pedidos: ords.length, pecas, metros, avarPecas, ticket, lucroTotal, margemMedia }
+    return { totalR, pedidos: ords.length, concludedCount: concluded.length, pecas, metros, avarPecas, ticket, lucroTotal, margemMedia }
   }, [entries])
 
   function toggle(key: string) {
@@ -266,24 +276,26 @@ export default function RelatorioVendasPage() {
         )}
       </div>
 
-      {/* Stats */}
+      {/* Stats — monetary KPIs only count concluído orders */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <StatCard
-          label="Total Vendido" value={fmtR(stats.totalR)}
+          label="Receita Confirmada" value={fmtR(stats.totalR)}
+          sub={`${stats.concludedCount} concluído${stats.concludedCount !== 1 ? "s" : ""}`}
           icon={DollarSign}  color="bg-green-100 text-green-700"
         />
         <StatCard
-          label="Pedidos" value={String(stats.pedidos)}
+          label="Pedidos no Período" value={String(stats.pedidos)}
           sub={stats.avarPecas > 0 ? `+ ${stats.avarPecas} peça${stats.avarPecas !== 1 ? "s" : ""} avaria` : undefined}
           icon={ShoppingBag} color="bg-blue-100 text-blue-700"
         />
         <StatCard
-          label="Peças" value={String(stats.pecas)}
+          label="Peças Concluídas" value={String(stats.pecas)}
           sub={stats.metros > 0 ? `+ ${stats.metros}m DTF` : undefined}
           icon={Package}    color="bg-purple-100 text-purple-700"
         />
         <StatCard
-          label="Ticket Médio" value={stats.pedidos > 0 ? fmtR(stats.ticket) : "—"}
+          label="Ticket Médio" value={stats.concludedCount > 0 ? fmtR(stats.ticket) : "—"}
+          sub="pedidos concluídos"
           icon={TrendingUp}  color="bg-amber-100 text-amber-700"
         />
         <StatCard
@@ -362,6 +374,7 @@ export default function RelatorioVendasPage() {
                       <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                       <td className="px-4 py-3.5">
                         <p className="text-xs font-bold text-[#0F1E3C]">{o.number}</p>
+                        {(() => { const sb = STATUS_BADGE[o.status]; return sb ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${sb.cls}`}>{sb.label}</span> : null })()}
                       </td>
                       <td className="px-4 py-3.5">
                         <p className="text-xs font-semibold text-[#0F1E3C]">{o.contactName || "Balcão"}</p>

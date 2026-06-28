@@ -171,7 +171,7 @@ export default function SemaforoPage() {
       if (!res.ok) return
       const json: SemaforoData = await res.json()
       setData(json)
-      setLastUpdate(new Date(json.updatedAt).toLocaleTimeString("pt-BR"))
+      setLastUpdate(new Date(json.updatedAt).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" }))
     } catch { /* ignore */ } finally {
       setLoading(false)
     }

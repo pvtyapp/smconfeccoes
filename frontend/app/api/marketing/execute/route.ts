@@ -2,7 +2,10 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { campaignSend } from "@/lib/whatsapp/campaignSend"
 
-const SEND_DELAY_MS = 2_000 // 2s between messages in cron-fired campaigns
+function sendDelay() {
+  // Random 3–8s to avoid deterministic patterns that trigger WhatsApp anti-spam
+  return Math.floor(Math.random() * 5_000 + 3_000)
+}
 
 const TZ = "America/Sao_Paulo"
 
@@ -41,13 +44,14 @@ export async function POST(req: Request) {
 
         for (const ct of contacts) {
           try {
-            const msg = (c.content as string).replace(/\{nome\}/g, ((ct.name as string) ?? "").split(" ")[0])
+            const firstName = ((ct.name as string | null) ?? "").split(" ")[0]
+            const msg = (c.content as string).replace(/\{nome\}/g, firstName)
             const mUrl = c.mediaUrl as string | null
             try {
-              await campaignSend(ct.jid as string, msg, mUrl)
+              await campaignSend(ct.sendJid as string, msg, mUrl)
             } catch (mediaErr) {
-              console.error("[campaign-execute] sendMedia falhou para", ct.jid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
-              if (mUrl) await campaignSend(ct.jid as string, msg, null) // fallback texto
+              console.error("[campaign-execute] sendMedia falhou para", ct.sendJid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
+              if (mUrl) await campaignSend(ct.sendJid as string, msg, null) // fallback texto
               else throw mediaErr
             }
             await pool.query(
@@ -57,10 +61,10 @@ export async function POST(req: Request) {
             ).catch(() => {})
             sent++
           } catch (e) {
-            console.error("[campaign-execute] falhou para", ct.jid, "—", e instanceof Error ? e.message : e)
+            console.error("[campaign-execute] falhou para", ct.sendJid, "—", e instanceof Error ? e.message : e)
             errors++
           }
-          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
+          await new Promise(r => setTimeout(r, sendDelay()))
         }
 
         for (const jid of (c.audienceGroupJids as string[])) {
@@ -68,7 +72,7 @@ export async function POST(req: Request) {
             await campaignSend(jid, c.content as string, c.mediaUrl as string | null)
             sent++
           } catch { errors++ }
-          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
+          await new Promise(r => setTimeout(r, sendDelay()))
         }
 
         results.campaigns++
@@ -132,24 +136,25 @@ export async function POST(req: Request) {
 
         for (const ct of contacts) {
           try {
-            const msg = (item.content as string).replace(/\{nome\}/g, ((ct.name as string) ?? "").split(" ")[0])
+            const firstName = ((ct.name as string | null) ?? "").split(" ")[0]
+            const msg = (item.content as string).replace(/\{nome\}/g, firstName)
             const mUrl = item.mediaUrl as string | null
             try {
-              await campaignSend(ct.jid as string, msg, mUrl)
+              await campaignSend(ct.sendJid as string, msg, mUrl)
             } catch (mediaErr) {
-              console.error("[schedule-execute] sendMedia falhou para", ct.jid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
-              if (mUrl) await campaignSend(ct.jid as string, msg, null).catch(() => {})
+              console.error("[schedule-execute] sendMedia falhou para", ct.sendJid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
+              if (mUrl) await campaignSend(ct.sendJid as string, msg, null).catch(() => {})
             }
           } catch (e) {
-            console.error("[schedule-execute] falhou para", ct.jid, "—", e instanceof Error ? e.message : e)
+            console.error("[schedule-execute] falhou para", ct.sendJid, "—", e instanceof Error ? e.message : e)
           }
-          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
+          await new Promise(r => setTimeout(r, sendDelay()))
         }
 
         for (const jid of (s.audienceGroupJids as string[])) {
           try { await campaignSend(jid, item.content as string, item.mediaUrl as string | null) }
           catch { /* silent */ }
-          await new Promise(r => setTimeout(r, SEND_DELAY_MS))
+          await new Promise(r => setTimeout(r, sendDelay()))
         }
 
         // Mark item as sent + rotate
@@ -184,11 +189,23 @@ async function resolveContacts(
   audienceType: string,
   lifecycle: string | null,
   groupJids: string[]
-): Promise<Array<{ id: number; jid: string; name: string }>> {
+): Promise<Array<{ id: number; sendJid: string; name: string | null }>> {
   void groupJids
   if (audienceType === "groups") return []
 
-  let q = `SELECT id, jid, name FROM wa_contacts WHERE jid IS NOT NULL`
+  // Use phone_jid (real @s.whatsapp.net) for @lid contacts.
+  // Fallback chain: phone_jid → jid (if not @lid) → phone column + @s.whatsapp.net
+  let q = `
+    SELECT id,
+      COALESCE(
+        phone_jid,
+        CASE WHEN jid NOT LIKE '%@lid' THEN jid
+             ELSE CONCAT(phone, '@s.whatsapp.net')
+        END
+      ) AS "sendJid",
+      CASE WHEN name ~ '^[0-9]+$' THEN NULL ELSE name END AS name
+    FROM wa_contacts
+    WHERE jid IS NOT NULL`
   const params: (string | null)[] = []
 
   if ((audienceType === "lifecycle" || audienceType === "mixed") && lifecycle && lifecycle !== "all") {

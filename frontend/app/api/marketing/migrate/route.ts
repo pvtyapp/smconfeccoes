@@ -81,6 +81,38 @@ export async function POST() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_lce_sent_at  ON lifecycle_executions(sent_at DESC)`)
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_lce_contact  ON lifecycle_executions(contact_id)`)
 
+    // ── Order flow ──────────────────────────────────────────────────────────────
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_partial BOOLEAN NOT NULL DEFAULT false`)
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS needs_print BOOLEAN NOT NULL DEFAULT false`)
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`)
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS product_reservations (
+        id            SERIAL PRIMARY KEY,
+        contact_id    INT NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
+        variant_id    INT NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
+        qty           INT NOT NULL DEFAULT 1,
+        prod_order_id INT REFERENCES prod_orders(id) ON DELETE SET NULL,
+        order_id      INT REFERENCES orders(id) ON DELETE SET NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        notified_at   TIMESTAMPTZ,
+        expires_at    TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pr_variant  ON product_reservations(variant_id)`)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pr_contact  ON product_reservations(contact_id)`)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pr_status   ON product_reservations(status)`)
+
+    // ── Settings defaults ───────────────────────────────────────────────────────
+    await pool.query(`
+      INSERT INTO app_settings (key, value) VALUES
+        ('controle_estoque_ativo', 'false'),
+        ('reserva_expiry_hours',   '4'),
+        ('print_receipt_printer',  '')
+      ON CONFLICT (key) DO NOTHING
+    `)
+
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
