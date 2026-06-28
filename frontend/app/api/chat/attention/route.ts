@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     if (action === "dismiss") {
       await pool.query(`
         UPDATE wa_contacts
-        SET needs_attention = false, state = 'idle', state_data = '{}', updated_at = NOW()
+        SET needs_attention = false, attention_reason = NULL, state = 'idle', state_data = '{}', updated_at = NOW()
         WHERE id = $1
       `, [contactId])
 

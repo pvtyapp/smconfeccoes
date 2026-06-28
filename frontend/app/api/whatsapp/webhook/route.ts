@@ -240,6 +240,15 @@ export async function POST(req: Request) {
             if (outMediaType && outMediaType !== "sticker" && outMsgId) {
               waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
             }
+            // Operator sent manual message → extend chatbot pause by configured minutes
+            pool.query(`
+              UPDATE wa_contacts
+              SET chatbot_paused_until = NOW() + (
+                    COALESCE((SELECT value FROM app_settings WHERE key = 'chatbot_idle_return_minutes'), '30')
+                    || ' minutes')::INTERVAL,
+                  updated_at = NOW()
+              WHERE id = $1
+            `, [contactId0]).catch(() => {})
           }
         }
       }
@@ -535,41 +544,7 @@ async function tagContact(contactId: number, tag: string, value = "") {
   } catch (e) { console.error("[tagContact] falhou — migration wa_contact_tags não rodou?", e) }
 }
 
-async function recordOffer(contactId: number, offerType: string) {
-  try {
-    await pool.query(
-      `INSERT INTO wa_contact_offers (contact_id, offer_type) VALUES ($1, $2)`,
-      [contactId, offerType]
-    )
-  } catch (e) { console.error("[recordOffer] falhou — migration wa_contact_offers não rodou?", e) }
-}
 
-async function wasOfferedRecently(contactId: number, offerType: string, days = 7): Promise<boolean> {
-  try {
-    const { rows } = await pool.query(`
-      SELECT 1 FROM wa_contact_offers
-      WHERE contact_id = $1 AND offer_type = $2
-        AND offered_at > NOW() - ($3 || ' days')::INTERVAL
-      LIMIT 1
-    `, [contactId, offerType, days])
-    return rows.length > 0
-  } catch {
-    return false
-  }
-}
-
-async function getTopProduct(contactId: number): Promise<string | null> {
-  const { rows } = await pool.query(`
-    SELECT LOWER(oi.product_name) AS product_name, COUNT(*) AS cnt
-    FROM order_items oi
-    JOIN orders o ON o.id = oi.order_id
-    WHERE o.contact_id = $1 AND o.status = 'concluido'
-    GROUP BY LOWER(oi.product_name)
-    ORDER BY cnt DESC
-    LIMIT 1
-  `, [contactId])
-  return rows[0]?.product_name ?? null
-}
 
 async function getCatalog(): Promise<Array<{ name: string; sale_price: number | null }>> {
   const { rows } = await pool.query(`
@@ -643,15 +618,6 @@ function statusLabel(status: string): string {
   return map[status] ?? status
 }
 
-const DTF_TIPS = `Pra preparar seu arquivo, use essas ferramentas gratuitas:
-
-• *Remover fundo* → remove.bg
-• *Vetorizar* → vectorizer.ai
-• *Montar o metro com encaixe* → pvty.com.br _(economiza muito material)_
-
-PNG ou JPG com fundo transparente, resolução mínima 150dpi, largura máx. *57cm*.
-
-Quando estiver pronto é só mandar aqui que eu registro na hora! 🖨️`
 
 // ─── service availability ─────────────────────────────────────────────────────
 
@@ -818,26 +784,6 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
   replyWA(jid, msg)
 }
 
-// ─── menu ────────────────────────────────────────────────────────────────────
-
-async function sendMenuMessage(jid: string, pushName: string) {
-  const firstName = pushName.split(" ")[0]
-  const greeting  = getGreeting()
-
-  const { rows: cfg } = await pool.query(
-    `SELECT key, value FROM app_settings WHERE key IN ('dtf_ativo', 'produto_ativo')`
-  )
-  const s: Record<string, string> = {}
-  for (const r of cfg) s[r.key] = r.value
-
-  const temProduto = s.produto_ativo !== "false" && await hasProdutoDisponivel()
-  const temDtf     = s.dtf_ativo !== "false"
-
-  const opt1 = temProduto ? "1️⃣ Fazer um pedido" : "1️⃣ Fazer um pedido (indisponível)"
-  const opt2 = temDtf     ? "2️⃣ Impressão DTF"   : "2️⃣ Impressão DTF (indisponível)"
-
-  replyWA(jid, `${greeting}, ${firstName}! 👋\n\nSou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nComo posso te ajudar?\n${opt1}\n${opt2}\n3️⃣ Falar com atendimento`)
-}
 
 // ─── media ───────────────────────────────────────────────────────────────────
 
@@ -925,7 +871,7 @@ async function handleText(
 
   if (lower === "cancelar" || lower === "cancel" || lower === "sair" || lower === "voltar") {
     // Estados DTF e cross-sell: apenas reseta para idle sem buscar pedido
-    if (["dtf_verificando", "dtf_sem_arquivo", "dtf_coletando", "cross_sell_dtf", "cross_sell_produto", "aguardando_menu"].includes(state)) {
+    if (state === "dtf_coletando") {
       await setState(contactId, "idle")
       replyWA(jid, "Ok! Me chama quando precisar. 😊")
       return
@@ -989,18 +935,30 @@ async function handleText(
       replyWA(jid, "Oi! Como posso te chamar?")
       return
     }
-    await sendMenuMessage(jid, pushName)
-    await setState(contactId, "aguardando_menu")
+    const greetingFrio = getGreeting()
+    const firstNameFrio = pushName.split(" ")[0]
+    await setState(contactId, "coletando", { rawMessages: [] })
+    replyWA(jid, `${greetingFrio}, ${firstNameFrio}! Que bom te ver de volta. Me manda o pedido direto ou responde *catálogo* para ver os produtos.`)
     return
+  }
+
+  // Auto-correct state mismatch: state=idle but active order exists (e.g. bot resumed from pause)
+  if (state === "idle") {
+    const { rows: activeRows } = await pool.query(`
+      SELECT id, number, status FROM orders
+      WHERE contact_id = $1 AND status IN ('triagem', 'em_separacao', 'pronto') AND paid_at IS NULL
+      AND created_at > NOW() - INTERVAL '14 days'
+      ORDER BY created_at DESC LIMIT 1
+    `, [contactId])
+    if (activeRows[0]) {
+      state = activeRows[0].status as string
+      stateData = { orderId: activeRows[0].id, orderNumber: activeRows[0].number }
+    }
   }
 
   switch (state) {
     case "idle":
       await handleIdle(jid, contactId, text, lifecycle, pushName, chatbotProdutoEnabled, chatbotDtfEnabled, chatbotObs, lastOrderAt, produtoStatus, dtfStatus, globalSettings)
-      break
-
-    case "aguardando_menu":
-      await handleMenuSelection(jid, contactId, text, pushName, chatbotProdutoEnabled, chatbotDtfEnabled, produtoStatus, dtfStatus, globalSettings)
       break
 
     case "coletando":
@@ -1011,14 +969,6 @@ async function handleText(
       await handleAguardandoCliente1(jid, contactId, stateData, text, chatbotDtfEnabled)
       break
 
-    case "dtf_verificando":
-      await handleDtfVerificando(jid, contactId, text, chatbotDtfEnabled)
-      break
-
-    case "dtf_sem_arquivo":
-      await handleDtfSemArquivo(jid, contactId, text)
-      break
-
     case "dtf_coletando": {
       const reminded = Number(stateData.dtfReminderCount ?? 0)
       if (reminded === 0) {
@@ -1027,14 +977,6 @@ async function handleText(
       }
       break
     }
-
-    case "cross_sell_dtf":
-      await handleCrossSellDtf(jid, contactId, stateData, text, chatbotDtfEnabled, dtfStatus)
-      break
-
-    case "cross_sell_produto":
-      await handleCrossSellProduto(jid, contactId, text, chatbotProdutoEnabled, produtoStatus)
-      break
 
     case "aguardando_nome":
       await handleAguardandoNome(jid, contactId, text)
@@ -1065,8 +1007,10 @@ async function handleAguardandoNome(jid: string, contactId: number, text: string
     return
   }
   await pool.query("UPDATE wa_contacts SET name = $1, updated_at = NOW() WHERE id = $2", [nome, contactId])
-  await sendMenuMessage(jid, nome)
-  await setState(contactId, "aguardando_menu")
+  const firstName = nome.split(" ")[0]
+  const greeting = getGreeting()
+  await setState(contactId, "coletando", { rawMessages: [] })
+  replyWA(jid, `${greeting}, ${firstName}! 👋 Em breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
 }
 
 async function handleIdle(
@@ -1083,76 +1027,59 @@ async function handleIdle(
   dtfStatus: ServiceStatus     = { available: true, reason: null },
   globalSettings: Record<string, string> = {}
 ) {
-  const firstName = pushName.split(" ")[0]
   void lifecycle
+  const firstName = pushName.split(" ")[0] || pushName
+  const greeting = getGreeting()
 
-  // Returning client — simplified direct flow
+  // Returning client — direct flow
   if (lastOrderAt) {
     const { intent, items: preParsed } = await classifyAndParse(text, chatbotObs)
 
     if (intent === "pedido") {
       if (!chatbotProdutoEnabled || !produtoStatus.available) {
         replyWA(jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
-        if (!produtoStatus.available && dtfStatus.available) await setState(contactId, "cross_sell_dtf")
         return
       }
-      const _raceOk = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
-      if (!_raceOk) return
+      const ok = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
+      if (!ok) return
+      replyWA(jid, `${greeting}, ${firstName}! Já vou organizar seu pedido. 📋`)
       await createOrderDirect(jid, contactId, [text], chatbotObs, preParsed, chatbotDtfEnabled, globalSettings)
+      return
+    }
 
-    } else if (intent === "dtf") {
-      if (!chatbotDtfEnabled || !dtfStatus.available) {
-        replyWA(jid, buildUnavailableMsg("dtf", dtfStatus, produtoStatus, globalSettings))
-        if (!dtfStatus.available && produtoStatus.available) await setState(contactId, "cross_sell_produto")
-        return
-      }
-      await tagContact(contactId, "interessado_dtf")
-      await setState(contactId, "dtf_verificando")
-      replyWA(jid, "Você já tem o arquivo pronto pra impressão?")
+    if (intent === "dtf") {
+      replyWA(jid, "Aqui a gente só faz a impressão — manda o arquivo direto aqui quando tiver pronto! 🖨️")
+      return
+    }
 
-    } else if (intent === "preco") {
+    if (intent === "preco") {
       await sendCatalog(jid, contactId)
+      return
+    }
 
-    } else if (intent === "variacao") {
+    if (intent === "variacao") {
       await handleVariacao(jid, contactId, text)
+      return
+    }
 
-    } else if (intent === "status") {
-      const { rows: dtfActive } = await pool.query(
-        `SELECT number FROM dtf_pedidos WHERE contact_id = $1 AND status = 'em_producao' LIMIT 1`,
-        [contactId]
-      )
-      if (dtfActive[0]) {
-        await pool.query(
-          `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
-          [contactId]
-        )
-        replyWA(jid, "Vou acionar a equipe agora!")
-      } else {
-        const res = await pool.query(`
-          SELECT number, status FROM orders
-          WHERE contact_id = $1
-          ORDER BY created_at DESC LIMIT 1
-        `, [contactId])
-        if (res.rows[0]) {
-          replyWA(jid, `Seu último pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
-        } else {
-          await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-          replyWA(jid, `${getGreeting()}, ${firstName}! Me passa o pedido.`)
-        }
-      }
-
-    } else {
-      // saudacao ou outro — smart greeting com produto mais pedido
-      const topProduct = await getTopProduct(contactId)
-      const greeting = getGreeting()
-      if (topProduct) {
-        await setState(contactId, "coletando", { rawMessages: [], chatbotObs, smartGreeted: true })
-        replyWA(jid, `${greeting}, ${firstName}! Vai precisar de ${topProduct} hoje? Manda o pedido que a gente separa pra você.`)
+    if (intent === "status") {
+      const res = await pool.query(`
+        SELECT number, status FROM orders
+        WHERE contact_id = $1
+        ORDER BY created_at DESC LIMIT 1
+      `, [contactId])
+      if (res.rows[0]) {
+        replyWA(jid, `Seu pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
       } else {
         await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-        replyWA(jid, `${greeting}, ${firstName}! Me passa o pedido.`)
+        replyWA(jid, `${greeting}, ${firstName}! Qual o pedido de hoje?`)
       }
+      return
     }
+
+    // saudacao ou outro — retornando
+    await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
+    replyWA(jid, `${greeting}, ${firstName}! Qual o pedido de hoje?`)
     return
   }
 
@@ -1162,207 +1089,39 @@ async function handleIdle(
     replyWA(jid, "Oi! Como posso te chamar?")
     return
   }
-  // Client knows what they want → skip menu
+
+  // New client with name — detect intent
   const { intent: newIntent, items: newParsed } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
+
   if (newIntent === "pedido" && chatbotProdutoEnabled && produtoStatus.available) {
     const ok = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
-    if (ok) { await createOrderDirect(jid, contactId, [text], chatbotObs, newParsed, chatbotDtfEnabled, globalSettings); return }
+    if (ok) {
+      replyWA(jid, `${greeting}, ${firstName}! Já vou organizar seu pedido. 📋`)
+      await createOrderDirect(jid, contactId, [text], chatbotObs, newParsed, chatbotDtfEnabled, globalSettings)
+      return
+    }
   }
-  if (newIntent === "dtf" && chatbotDtfEnabled && dtfStatus.available) {
-    await tagContact(contactId, "interessado_dtf")
-    await setState(contactId, "dtf_verificando")
-    replyWA(jid, "Você já tem o arquivo pronto pra impressão? (PNG, JPG ou PDF — largura máx. 57cm)")
+
+  if (newIntent === "dtf") {
+    replyWA(jid, "Aqui a gente só faz a impressão — precisa do arquivo pronto pra rodar na máquina. Quando tiver, manda direto aqui! 🖨️")
     return
   }
-  if (newIntent === "variacao") {
-    await handleVariacao(jid, contactId, text)
-    await setState(contactId, "aguardando_menu")
-    return
-  }
+
   if (newIntent === "preco") {
     await sendCatalog(jid, contactId)
-    await setState(contactId, "aguardando_menu")
-    return
-  }
-  await sendMenuMessage(jid, pushName)
-  await setState(contactId, "aguardando_menu")
-}
-
-async function handleMenuSelection(
-  jid: string,
-  contactId: number,
-  text: string,
-  pushName: string,
-  chatbotProdutoEnabled = true,
-  chatbotDtfEnabled = false,
-  produtoStatus: ServiceStatus = { available: true, reason: null },
-  dtfStatus: ServiceStatus     = { available: true, reason: null },
-  globalSettings: Record<string, string> = {}
-) {
-  const lower = text.toLowerCase().trim()
-
-  // Detecta intenção antes de checar 1/2/3 — responde perguntas sem forçar re-seleção
-  if (!["1","2","3","produto","produtos","fazer um pedido","pedido","dtf","impressão dtf",
-        "impressao dtf","impressao","impressão","atendimento","atendente","humano","pessoa"].includes(lower)) {
-    const menuMsgIntent = await classifyIntent(text).catch(() => "outro" as const)
-    if (menuMsgIntent === "variacao") {
-      await handleVariacao(jid, contactId, text)
-      return
-    }
-    if (menuMsgIntent === "preco") {
-      await sendCatalog(jid, contactId)
-      return
-    }
-  }
-
-  const isProduto     = ["1", "produto", "produtos", "fazer um pedido", "pedido"].includes(lower)
-  const isDtf         = ["2", "dtf", "impressão dtf", "impressao dtf", "impressao", "impressão"].includes(lower)
-  const isAtendimento = ["3", "atendimento", "atendente", "humano", "pessoa"].includes(lower)
-
-  if (isProduto) {
-    if (!chatbotProdutoEnabled || !produtoStatus.available) {
-      await setState(contactId, !produtoStatus.available && dtfStatus.available ? "cross_sell_dtf" : "idle")
-      replyWA(jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
-      return
-    }
-    await setState(contactId, "coletando", { rawMessages: [] })
-    await sendCatalog(jid, contactId)
-
-  } else if (isDtf) {
-    if (!chatbotDtfEnabled || !dtfStatus.available) {
-      await setState(contactId, !dtfStatus.available && produtoStatus.available ? "cross_sell_produto" : "idle")
-      replyWA(jid, buildUnavailableMsg("dtf", dtfStatus, produtoStatus, globalSettings))
-      return
-    }
-    await tagContact(contactId, "interessado_dtf")
-    await setState(contactId, "dtf_verificando")
-    replyWA(jid, "Você já tem o arquivo pronto pra impressão?")
-
-  } else if (isAtendimento) {
-    await pool.query(`
-      UPDATE wa_contacts
-      SET state = 'atendimento', needs_attention = true, state_data = '{}', updated_at = NOW()
-      WHERE id = $1
-    `, [contactId])
-    replyWA(jid, "Certo! Nossa equipe entra em contato em breve durante o horário comercial. ⏰")
-
-  } else {
-    const firstName = pushName.split(" ")[0]
-    replyWA(jid, `${firstName}, responde com:\n1️⃣ Fazer um pedido\n2️⃣ Impressão DTF\n3️⃣ Falar com atendimento`)
-  }
-}
-
-async function handleDtfVerificando(
-  jid: string,
-  contactId: number,
-  text: string,
-  chatbotDtfEnabled = true
-) {
-  void chatbotDtfEnabled
-  const lower = text.toLowerCase().trim()
-
-  // Cliente quer que criemos a arte ou pergunta se temos estampa pronta
-  const wantsCreation = ["cria", "criação", "criacao", "criar", "faz a arte", "fazer arte",
-    "fazer arquivo", "montar arte", "montar arquivo", "estampa pronta", "estampas prontas",
-    "tem estampa", "tem design", "design pronto", "vocês fazem", "voces fazem",
-    "vocês criam", "voces criam", "pode fazer", "pode criar"].some(k => lower.includes(k))
-
-  if (wantsCreation) {
-    await setState(contactId, "dtf_sem_arquivo")
-    replyWA(jid, "Trabalho só com impressão — recebo o arquivo pronto e rodo direto na máquina.\n\nNão fazemos criação de arte nem temos estampas prontas, mas posso te passar dicas rápidas de como preparar seu arquivo. Quer? 📋")
+    await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
     return
   }
 
-  const hasSim = ["sim", "s", "yes", "tenho", "ja tenho", "já tenho"].some(w => lower.includes(w))
-  const hasNao = ["não", "nao", "n", "no", "não tenho", "nao tenho", "ainda não", "ainda nao"].some(w => lower.includes(w))
-
-  if (hasSim) {
-    await setState(contactId, "dtf_coletando", { larguraCm: null })
-    replyWA(jid, "Pode mandar o arquivo aqui! 🖨️ Aceito imagem com largura de até 57cm.")
-  } else if (hasNao) {
-    await setState(contactId, "dtf_sem_arquivo")
-    replyWA(jid, "A gente trabalha só com impressão — precisa do arquivo pronto pra rodar na máquina.\n\nPosso te passar dicas rápidas de como preparar. Quer? 📋")
-  } else {
-    replyWA(jid, "Você já tem o arquivo pronto pra impressão? Me fala *SIM* ou *NÃO*.")
+  if (newIntent === "variacao") {
+    await handleVariacao(jid, contactId, text)
+    await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
+    return
   }
-}
 
-async function handleDtfSemArquivo(jid: string, contactId: number, text: string) {
-  const lower = text.toLowerCase().trim()
-  const wantsTip = ["sim", "s", "quero", "pode", "manda", "claro", "vai", "ok", "dica", "quer"].some(w => lower.includes(w))
-  const noThanks = lower === "não" || lower === "nao" || lower === "n" || lower === "no"
-
-  if (wantsTip) {
-    await setState(contactId, "idle")
-    replyWA(jid, DTF_TIPS)
-  } else if (noThanks) {
-    await setState(contactId, "idle")
-    replyWA(jid, "Ok! Quando tiver o arquivo pronto é só chamar. 🖨️")
-  } else {
-    replyWA(jid, "Quer que eu te passe as dicas de como preparar o arquivo? Responde *SIM* ou *NÃO*.")
-  }
-}
-
-async function handleCrossSellDtf(
-  jid: string,
-  contactId: number,
-  stateData: Record<string, unknown>,
-  text: string,
-  chatbotDtfEnabled = false,
-  dtfStatus: ServiceStatus = { available: true, reason: null }
-) {
-  const lower = text.toLowerCase().trim()
-  const hasSim = ["sim", "s", "yes"].includes(lower)
-  const hasNao = ["não", "nao", "n", "no"].includes(lower)
-
-  if (hasSim) {
-    if (!chatbotDtfEnabled || !dtfStatus.available) {
-      await setState(contactId, "idle")
-      replyWA(jid, "Para impressão DTF fala diretamente com a gente.")
-      return
-    }
-    await setState(contactId, "dtf_verificando")
-    replyWA(jid, "Você já tem o arquivo pronto pra rodar?")
-  } else if (hasNao) {
-    const orderId     = stateData.orderId     as number | undefined
-    const orderNumber = stateData.orderNumber as string | undefined
-    if (orderId && orderNumber) {
-      await setState(contactId, "triagem", { orderId, orderNumber })
-      replyWA(jid, `Ok! Pode me mandar mais itens do pedido *${orderNumber}* se precisar. Nossa equipe confirma e avisa quando estiver pronto.`)
-    } else {
-      await setState(contactId, "idle")
-      replyWA(jid, "Ok! Qualquer coisa é só chamar.")
-    }
-  } else {
-    replyWA(jid, "Você precisa de impressão DTF também? Responde *SIM* ou *NÃO*.")
-  }
-}
-
-async function handleCrossSellProduto(
-  jid: string,
-  contactId: number,
-  text: string,
-  chatbotProdutoEnabled = true,
-  produtoStatus: ServiceStatus = { available: true, reason: null }
-) {
-  const lower = text.toLowerCase().trim()
-  const hasSim = ["sim", "s", "yes"].includes(lower)
-  const hasNao = ["não", "nao", "n", "no"].includes(lower)
-
-  if (hasSim) {
-    if (!chatbotProdutoEnabled || !produtoStatus.available) {
-      await setState(contactId, "idle")
-      replyWA(jid, "Para pedidos de produto fala diretamente com a gente.")
-      return
-    }
-    await setState(contactId, "coletando", { rawMessages: [] })
-    await sendCatalog(jid, contactId)
-  } else if (hasNao) {
-    await setState(contactId, "idle")
-    replyWA(jid, "Ok! Qualquer coisa é só chamar.")
-  } else {
-    replyWA(jid, "Você precisa de algum produto também? Responde *SIM* ou *NÃO*.")
-  }
+  // Generic greeting → intro message
+  await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
+  replyWA(jid, `${greeting}, ${firstName}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
 }
 
 async function handleColetando(
@@ -1412,11 +1171,10 @@ async function handleColetando(
     return
   }
 
-  // DTF intent dentro de coletando → muda de fluxo
+  // DTF intent dentro de coletando → resposta direta (não fazemos criação de arte)
   const dtfTriggers = ["dtf", "impressão", "impressao", "imprimir", "metro de dtf", "arte dtf", "arquivo dtf", "arquivo pronto"]
-  if (chatbotDtfEnabled && dtfTriggers.some(k => lower.includes(k))) {
-    await setState(contactId, "dtf_verificando")
-    replyWA(jid, "Você já tem o arquivo pronto pra impressão? (PNG, JPG ou PDF — largura máx. 57cm)")
+  if (dtfTriggers.some(k => lower.includes(k))) {
+    replyWA(jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
     return
   }
 
@@ -1431,8 +1189,10 @@ async function createOrderDirect(
   chatbotObs: string | null = null,
   preParsed?: import("@/lib/ai/parseOrder").ParsedItem[],
   chatbotDtfEnabled = false,
-  globalSettings: Record<string, string> = {}
+  globalSettings: Record<string, string> = {},
+  parentOrderId?: number
 ) {
+  void chatbotDtfEnabled
   const fullText = rawMessages.join("\n")
 
   let parsed
@@ -1543,10 +1303,10 @@ async function createOrderDirect(
       const numRes = await cli.query("SELECT nextval('order_number_seq') AS n")
       const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
       const orderRes = await cli.query(`
-        INSERT INTO orders (number, contact_id, status, total_value, source)
-        VALUES ($1, $2, 'triagem', $3, 'whatsapp')
+        INSERT INTO orders (number, contact_id, status, total_value, source, parent_order_id)
+        VALUES ($1, $2, 'triagem', $3, 'whatsapp', $4)
         RETURNING id, number
-      `, [number, contactId, totalValue > 0 ? totalValue : null])
+      `, [number, contactId, totalValue > 0 ? totalValue : null, parentOrderId ?? null])
       orderId     = orderRes.rows[0].id as number
       orderNumber = orderRes.rows[0].number as string
       for (const item of matched) {
@@ -1722,15 +1482,8 @@ async function createOrderDirect(
   }
 
   // Fluxo normal sem controle de estoque ativo
-  const offeredDtf = await wasOfferedRecently(contactId, "cross_sell_dtf", 7)
-  if (chatbotDtfEnabled && !offeredDtf) {
-    await setState(contactId, "cross_sell_dtf", { orderId, orderNumber })
-    reply += `\n\nVocê também precisa de impressão DTF?`
-    await recordOffer(contactId, "cross_sell_dtf")
-  } else {
-    await setState(contactId, "triagem", { orderId, orderNumber })
-    reply += `\n\nPode me mandar mais itens se precisar. Nossa equipe confirma e avisa quando estiver pronto!`
-  }
+  await setState(contactId, "triagem", { orderId, orderNumber })
+  reply += `\n\nPode me mandar mais itens se precisar. Nossa equipe confirma e avisa quando estiver pronto!`
 
   replyWA(jid, reply)
 
@@ -1890,10 +1643,10 @@ async function handleActiveOrder(
       "ta pronto", "tá pronto", "ficou pronto", "status", "meu pedido"]
     if (prazoKw.some(k => lower.includes(k))) {
       await pool.query(
-        `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+        `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'prazo', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
-      replyWA(jid, "Vou acionar a equipe agora!")
+      replyWA(jid, "Vou acionar a equipe agora! ⏰")
       return
     }
   }
@@ -2081,16 +1834,22 @@ async function handleActiveOrder(
         }
       }
     }
-    // Sem pedido aberto em triagem, ou estado é em_separacao/pronto — cria novo
+    // em_separacao ou pronto → novo pedido vinculado ao anterior
+    const parentOrderId = stateData?.orderId as number | undefined
     const _raceOk = await setStateIf(contactId, "coletando", { rawMessages: [text] }, ["triagem", "em_separacao", "pronto"])
     if (!_raceOk) return
-    await createOrderDirect(jid, contactId, [text], null, undefined, chatbotDtfEnabled, globalSettings)
+    if (parentOrderId) {
+      await pool.query(
+        `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'novo_pedido', updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      )
+    }
+    await createOrderDirect(jid, contactId, [text], null, undefined, chatbotDtfEnabled, globalSettings, parentOrderId)
     return
   }
 
   if (intent === "dtf") {
-    await setState(contactId, "dtf_verificando")
-    replyWA(jid, "Você já tem o arquivo pronto pra rodar?")
+    replyWA(jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
     return
   }
 
@@ -2245,7 +2004,7 @@ async function handleAguardandoCancelamentoResposta(
 
   if (isNao) {
     await pool.query(
-      `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
       [contactId]
     )
     await setState(contactId, "triagem", { orderId, orderNumber })

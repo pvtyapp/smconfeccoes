@@ -14,6 +14,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/chat/cleanup-dupes",
   "/api/dtf/pedidos/migrate2",
   "/api/dtf/pedidos/migrate3",
+  "/api/dtf/pedidos/migrate4",
   "/api/debug/",
 ]
 

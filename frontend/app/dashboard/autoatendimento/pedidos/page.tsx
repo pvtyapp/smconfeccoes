@@ -75,6 +75,8 @@ type Conversation = {
   profilePic: string | null
   lifecycleState: string | null
   needsAttention: boolean
+  attentionReason: string | null
+  state: string | null
   chatbotPausedUntil: string | null
   lastMessage: string | null
   lastDirection: "in" | "out" | null
@@ -1173,8 +1175,8 @@ export default function PedidosPage() {
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ contactId: c.id, action: "dismiss" }),
                     }).then(() => {
-                      setConvs(prev => prev.map(x => x.id === c.id ? { ...x, needsAttention: false } : x))
-                      setChatContact(prev => prev?.id === c.id ? { ...prev, needsAttention: false } : prev)
+                      setConvs(prev => prev.map(x => x.id === c.id ? { ...x, needsAttention: false, attentionReason: null } : x))
+                      setChatContact(prev => prev?.id === c.id ? { ...prev, needsAttention: false, attentionReason: null } : prev)
                     }).catch(() => {})
                   }
                 }}
@@ -1199,12 +1201,26 @@ export default function PedidosPage() {
                           {initials(c.name, c.phone)}
                         </div>
                       )}
-                      {c.needsAttention && (
-                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center"
-                          style={{ background: "#F97316", borderColor: "#111B21" }}>
-                          <span className="text-white text-[7px] font-black leading-none">!</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const isBotPaused = c.chatbotPausedUntil && new Date(c.chatbotPausedUntil) > new Date()
+                        if (c.needsAttention) {
+                          const bg = c.attentionReason === 'remover' ? '#EF4444'
+                            : c.attentionReason === 'novo_pedido' ? '#3B82F6'
+                            : '#F97316'
+                          return (
+                            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center"
+                              style={{ background: bg, borderColor: '#111B21' }}>
+                              <span className="text-white text-[7px] font-black leading-none">!</span>
+                            </div>
+                          )
+                        }
+                        return (
+                          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] leading-none select-none"
+                            style={{ background: '#111B21', borderColor: '#111B21' }}>
+                            {isBotPaused ? '👤' : '🤖'}
+                          </div>
+                        )
+                      })()}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
@@ -1212,10 +1228,25 @@ export default function PedidosPage() {
                         <p className="text-[11px] flex-shrink-0 ml-2" style={{ color: "#8696A0" }}>{fmtTime(c.lastAt)}</p>
                       </div>
                       <div className="flex items-center justify-between mt-0.5">
-                        <p className="text-[12px] truncate flex-1" style={{ color: c.unread > 0 ? "#E9EDEF" : "#8696A0" }}>
-                          {c.lastDirection === "out" && <span style={{ color: "#8696A0" }}>✓ </span>}
-                          {formatMsgPreview(c.lastMessage)}
-                        </p>
+                        {c.needsAttention ? (
+                          <p className="text-[12px] truncate flex-1 font-medium" style={{
+                            color: c.attentionReason === 'remover' ? '#EF4444'
+                              : c.attentionReason === 'novo_pedido' ? '#60A5FA'
+                              : '#F97316'
+                          }}>
+                            {c.attentionReason === 'prazo' ? '⏰ Perguntou prazo'
+                              : c.attentionReason === 'remover' ? '✂️ Remover item'
+                              : c.attentionReason === 'novo_pedido' ? '➕ Novo pedido'
+                              : c.attentionReason === 'cancelamento' ? '🚫 Cancelamento'
+                              : c.attentionReason === 'estoque' ? '📦 Estoque esgotado'
+                              : '💬 Quer atendimento'}
+                          </p>
+                        ) : (
+                          <p className="text-[12px] truncate flex-1" style={{ color: c.unread > 0 ? "#E9EDEF" : "#8696A0" }}>
+                            {c.lastDirection === "out" && <span style={{ color: "#8696A0" }}>✓ </span>}
+                            {formatMsgPreview(c.lastMessage)}
+                          </p>
+                        )}
                         {c.unread > 0 && (
                           <span className="text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ml-1" style={{ background: "#00A884", color: "#fff" }}>
                             {c.unread > 9 ? "9+" : c.unread}
@@ -1316,9 +1347,30 @@ export default function PedidosPage() {
                       {LIFECYCLE_LABEL[chatContact.lifecycleState] ?? chatContact.lifecycleState}
                     </span>
                   )}
+                  {(() => {
+                    const isBotPausedHeader = chatContact.chatbotPausedUntil && new Date(chatContact.chatbotPausedUntil) > new Date()
+                    return (
+                      <span className="text-[9px] px-1 py-0.5 rounded font-medium" style={{
+                        background: isBotPausedHeader ? 'rgba(107,114,128,0.2)' : 'rgba(0,168,132,0.15)',
+                        color: isBotPausedHeader ? '#9CA3AF' : '#00A884',
+                      }}>
+                        {isBotPausedHeader ? '👤 Manual' : '🤖 Bot'}
+                      </span>
+                    )
+                  })()}
                   {chatContact.needsAttention && (
-                    <span className="text-[9px] font-bold flex items-center gap-0.5" style={{ color: "#F97316" }}>
-                      <AlertCircle size={9} /> Quer atendimento
+                    <span className="text-[9px] font-bold flex items-center gap-0.5" style={{
+                      color: chatContact.attentionReason === 'remover' ? '#EF4444'
+                        : chatContact.attentionReason === 'novo_pedido' ? '#60A5FA'
+                        : '#F97316'
+                    }}>
+                      <AlertCircle size={9} />
+                      {chatContact.attentionReason === 'prazo' ? 'Perguntou prazo'
+                        : chatContact.attentionReason === 'remover' ? 'Remover item'
+                        : chatContact.attentionReason === 'novo_pedido' ? 'Novo pedido'
+                        : chatContact.attentionReason === 'cancelamento' ? 'Cancelamento'
+                        : chatContact.attentionReason === 'estoque' ? 'Estoque esgotado'
+                        : 'Quer atendimento'}
                     </span>
                   )}
                 </div>

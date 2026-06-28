@@ -41,6 +41,8 @@ export async function GET() {
         c.profile_pic            AS "profilePic",
         c.lifecycle_state        AS "lifecycleState",
         c.needs_attention        AS "needsAttention",
+        c.attention_reason       AS "attentionReason",
+        c.state                  AS "state",
         c.chatbot_paused_until   AS "chatbotPausedUntil",
         lm.content               AS "lastMessage",
         lm.direction             AS "lastDirection",
