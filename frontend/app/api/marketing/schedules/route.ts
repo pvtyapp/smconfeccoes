@@ -12,7 +12,10 @@ export async function GET() {
         s.audience_group_jids AS "audienceGroupJids",
         s.active, s.last_executed_at AS "lastExecutedAt",
         s.created_at AS "createdAt",
-        COUNT(i.id)::int AS "itemCount"
+        COUNT(i.id)::int AS "itemCount",
+        (SELECT media_url FROM marketing_schedule_items
+         WHERE schedule_id = s.id AND media_url IS NOT NULL
+         ORDER BY id ASC LIMIT 1) AS "firstItemMediaUrl"
       FROM marketing_schedules s
       LEFT JOIN marketing_schedule_items i ON i.schedule_id = s.id
       GROUP BY s.id

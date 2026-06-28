@@ -45,6 +45,7 @@ type Schedule = {
   lastExecutedAt: string | null
   itemCount: number
   createdAt: string
+  firstItemMediaUrl?: string | null
 }
 
 type ScheduleItem = {
@@ -530,7 +531,419 @@ function UnifiedDrawer({
   )
 }
 
-// ─── Schedule Row (expanded with queue) ───────────────────────────────────────
+// ─── Campaign Modal ───────────────────────────────────────────────────────────
+
+function CampaignModal({ campaign, onClose, onCancel }: {
+  campaign: Campaign
+  onClose: () => void
+  onCancel: (id: number) => Promise<void>
+}) {
+  const [cancelling, setCancelling] = useState(false)
+  const sm = STATUS_META[campaign.status] ?? { label: campaign.status, cls: "bg-slate-100 text-slate-500" }
+  const isCancellable = campaign.status === "scheduled" || campaign.status === "sending"
+
+  const statusLabel = (() => {
+    if (campaign.status === "cancelled" && campaign.executedAt) {
+      const d = new Date(campaign.executedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: TZ_BR })
+      return { text: `Cancelado em ${d}`, cls: "bg-slate-100 text-slate-500" }
+    }
+    return { text: sm.label, cls: sm.cls }
+  })()
+
+  async function handleCancel() {
+    if (!confirm("Cancelar este envio? Mensagens já enviadas não são desfeitas.")) return
+    setCancelling(true)
+    await onCancel(campaign.id)
+    onClose()
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto">
+          <div className="flex items-start justify-between px-5 py-4 border-b border-[#0F1E3C]/8">
+            <div className="flex-1 min-w-0 pr-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                {campaign.title && <p className="text-base font-black text-[#0F1E3C]">{campaign.title}</p>}
+                {campaign.status === "sending" ? (
+                  <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                    <Loader2 size={8} className="animate-spin" /> {campaign.sentCount}/{campaign.totalCount}
+                  </span>
+                ) : (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusLabel.cls}`}>{statusLabel.text}</span>
+                )}
+              </div>
+              {campaign.status === "sent" && (
+                <p className="text-xs text-emerald-600 mt-0.5">{campaign.sentCount} enviados{campaign.errorCount > 0 ? ` · ${campaign.errorCount} erros` : ""}</p>
+              )}
+            </div>
+            <button onClick={onClose} className="p-1 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40 flex-shrink-0"><X size={16} /></button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            {campaign.mediaUrl && (
+              <a href={campaign.mediaUrl} target="_blank" rel="noreferrer" className="block group">
+                <img src={campaign.mediaUrl} alt="" className="w-full max-h-64 object-cover rounded-xl border border-[#0F1E3C]/8 group-hover:opacity-90 transition-opacity" />
+                <p className="text-[10px] text-[#4361EE] mt-1 text-center">Toque para abrir em tamanho completo</p>
+              </a>
+            )}
+
+            <div>
+              <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Mensagem</p>
+              <div className="bg-[#F4F6FB] rounded-xl px-4 py-3">
+                <p className="text-sm text-[#0F1E3C] whitespace-pre-wrap">{campaign.content}</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Audiência</p>
+              <div className="bg-[#F4F6FB] rounded-xl px-4 py-2.5">
+                <p className="text-sm text-[#0F1E3C]">
+                  {campaign.audienceType === "groups" ? `${campaign.audienceGroupJids.length} grupo(s)`
+                    : campaign.audienceType === "lifecycle" ? (LIFECYCLE_OPTS.find(o => o.value === (campaign.audienceLifecycle ?? "all"))?.label ?? "—")
+                    : "Clientes + grupos"}
+                </p>
+                {campaign.totalCount > 0 && (
+                  <p className="text-[11px] text-[#0F1E3C]/40 mt-0.5">{campaign.totalCount} destinatário{campaign.totalCount !== 1 ? "s" : ""}</p>
+                )}
+              </div>
+            </div>
+
+            {campaign.scheduledAt && (
+              <div>
+                <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Agendado para</p>
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">
+                  <Clock size={13} className="text-amber-600 shrink-0" />
+                  <p className="text-sm font-semibold text-amber-800">{fmtBR(campaign.scheduledAt)}</p>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-[#0F1E3C]/25">Criado em {fmtBR(campaign.createdAt)}</p>
+          </div>
+
+          <div className="px-5 py-4 border-t border-[#0F1E3C]/8 flex gap-2">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#F4F6FB] transition-colors border border-[#0F1E3C]/8">
+              Fechar
+            </button>
+            {isCancellable && (
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold text-red-600 hover:bg-red-50 transition-colors border border-red-200 disabled:opacity-40"
+              >
+                {cancelling ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+                Cancelar envio
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Schedule Card ────────────────────────────────────────────────────────────
+
+function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick }: {
+  schedule: Schedule
+  groups: Group[]
+  onToggle: () => void
+  onDelete: () => void
+  onClick: () => void
+}) {
+  const [deleting, setDeleting] = useState(false)
+
+  const daysLabel = schedule.daysOfWeek.length === 7 ? "Todos os dias"
+    : schedule.daysOfWeek.length === 5 && !schedule.daysOfWeek.includes(0) && !schedule.daysOfWeek.includes(6)
+      ? "Seg–Sex"
+      : schedule.daysOfWeek.map(d => DAYS[d]).join(", ")
+
+  const audienceLabel = (() => {
+    const lc = LIFECYCLE_OPTS.find(o => o.value === (schedule.audienceLifecycle ?? "all"))?.label ?? "Todos"
+    const grps = schedule.audienceGroupJids.map(jid => groups.find(g => g.jid === jid)?.name ?? jid.split("@")[0]).join(", ")
+    if (schedule.audienceType === "groups") return grps || "Sem grupos"
+    if (schedule.audienceType === "lifecycle") return `Clientes — ${lc}`
+    return `${lc} + ${grps || "grupos"}`
+  })()
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm("Remover esta programação?")) return
+    setDeleting(true)
+    await fetch(`/api/marketing/schedules/${schedule.id}`, { method: "DELETE" })
+    onDelete()
+  }
+
+  return (
+    <div
+      onClick={onClick}
+      className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden cursor-pointer hover:border-[#4361EE]/30 transition-colors"
+    >
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        {schedule.firstItemMediaUrl && (
+          <img src={schedule.firstItemMediaUrl} alt="" className="h-11 w-11 rounded-xl object-cover border border-[#0F1E3C]/8 flex-shrink-0" />
+        )}
+
+        <button
+          onClick={e => { e.stopPropagation(); onToggle() }}
+          className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors flex-shrink-0"
+        >
+          {schedule.active
+            ? <ToggleRight size={22} className="text-[#4361EE]" />
+            : <ToggleLeft size={22} />}
+        </button>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-[#0F1E3C] truncate">{schedule.name}</p>
+            {!schedule.active && (
+              <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full flex-shrink-0">Pausado</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <span className="text-[11px] text-[#0F1E3C]/40 flex items-center gap-1">
+              <Clock size={9} /> {schedule.timeOfDay.slice(0,5)} · {daysLabel}
+            </span>
+            <span className="text-[11px] text-[#0F1E3C]/40 flex items-center gap-1">
+              <Layers size={9} /> {schedule.itemCount} item{schedule.itemCount !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <p className={`text-[10px] mt-0.5 truncate ${audienceLabel === "Sem grupos" ? "text-amber-500 font-semibold" : "text-[#0F1E3C]/30"}`}>
+            {audienceLabel}
+          </p>
+        </div>
+
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400 transition-colors flex-shrink-0 disabled:opacity-40"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Schedule Modal ───────────────────────────────────────────────────────────
+
+function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
+  schedule: Schedule
+  groups: Group[]
+  onClose: () => void
+  onToggle: () => void
+  onRefresh: () => void
+}) {
+  const [panel,      setPanel]     = useState<"fila" | "historico">("fila")
+  const [items,      setItems]     = useState<ScheduleItem[]>([])
+  const [executions, setExecutions] = useState<ScheduleExecution[]>([])
+  const [loadingQ,   setLoadingQ]  = useState(false)
+  const [loadingH,   setLoadingH]  = useState(false)
+  const [newContent, setNewContent] = useState("")
+  const [newMedia,   setNewMedia]  = useState<string | null>(null)
+  const [addingItem, setAddingItem] = useState(false)
+
+  const daysLabel = schedule.daysOfWeek.length === 7 ? "Todos os dias"
+    : schedule.daysOfWeek.length === 5 && !schedule.daysOfWeek.includes(0) && !schedule.daysOfWeek.includes(6)
+      ? "Seg–Sex"
+      : schedule.daysOfWeek.map(d => DAYS[d]).join(", ")
+
+  const audienceLabel = (() => {
+    const lc = LIFECYCLE_OPTS.find(o => o.value === (schedule.audienceLifecycle ?? "all"))?.label ?? "Todos"
+    const grps = schedule.audienceGroupJids.map(jid => groups.find(g => g.jid === jid)?.name ?? jid.split("@")[0]).join(", ")
+    if (schedule.audienceType === "groups") return grps || "Sem grupos definidos"
+    if (schedule.audienceType === "lifecycle") return `Clientes — ${lc}`
+    return `Clientes (${lc}) + ${grps || "sem grupos"}`
+  })()
+
+  async function loadItems() {
+    setLoadingQ(true)
+    const r = await fetch(`/api/marketing/schedules/${schedule.id}/items`)
+    if (r.ok) setItems(await r.json())
+    setLoadingQ(false)
+  }
+
+  async function loadHistory() {
+    setLoadingH(true)
+    const r = await fetch(`/api/marketing/schedules/${schedule.id}/history`)
+    if (r.ok) setExecutions(await r.json())
+    setLoadingH(false)
+  }
+
+  useEffect(() => {
+    loadItems()
+  }, [])
+
+  useEffect(() => {
+    if (panel === "fila") loadItems()
+    else loadHistory()
+  }, [panel])
+
+  async function addItem() {
+    if (!newContent.trim()) return
+    setAddingItem(true)
+    const r = await fetch(`/api/marketing/schedules/${schedule.id}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: newContent, mediaUrl: newMedia }),
+    })
+    if (r.ok) { setNewContent(""); setNewMedia(null); loadItems(); onRefresh() }
+    setAddingItem(false)
+  }
+
+  async function deleteItem(itemId: number) {
+    await fetch(`/api/marketing/schedules/${schedule.id}/items/${itemId}`, { method: "DELETE" })
+    loadItems()
+    onRefresh()
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto">
+          {/* Header */}
+          <div className="px-5 py-4 border-b border-[#0F1E3C]/8">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-base font-black text-[#0F1E3C] truncate">{schedule.name}</p>
+                  {!schedule.active && (
+                    <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full flex-shrink-0">Pausado</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-0.5 text-[11px] text-[#0F1E3C]/40 flex-wrap">
+                  <span className="flex items-center gap-1"><Clock size={9} /> {schedule.timeOfDay.slice(0,5)} · {daysLabel}</span>
+                  <span className={audienceLabel === "Sem grupos definidos" ? "text-amber-500 font-semibold" : ""}>{audienceLabel}</span>
+                  <span className="flex items-center gap-1"><Layers size={9} /> {schedule.itemCount} item{schedule.itemCount !== 1 ? "s" : ""}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button onClick={() => { onToggle(); onRefresh() }} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors">
+                  {schedule.active
+                    ? <ToggleRight size={24} className="text-[#4361EE]" />
+                    : <ToggleLeft size={24} />}
+                </button>
+                <button onClick={onClose} className="p-1 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
+              </div>
+            </div>
+
+            <div className="flex gap-1 mt-3">
+              {(["fila", "historico"] as const).map(p => (
+                <button key={p} onClick={() => setPanel(p)}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                    panel === p ? "bg-[#F4F6FB] text-[#4361EE] border border-[#0F1E3C]/8" : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
+                  }`}
+                >
+                  {p === "fila" ? `Fila (${items.length || schedule.itemCount})` : "Histórico"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto p-5">
+            {panel === "fila" && (
+              <div className="space-y-3">
+                <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">Rotaciona — próximo é o mais antigo</p>
+
+                {loadingQ ? (
+                  <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-[#4361EE]" /></div>
+                ) : items.length === 0 ? (
+                  <p className="text-xs text-[#0F1E3C]/30 text-center py-3">Fila vazia. Adicione conteúdo abaixo.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {items.map((item, idx) => (
+                      <div key={item.id} className="flex gap-2 items-start bg-[#F9FAFC] rounded-xl p-3 border border-[#0F1E3C]/6">
+                        <span className={`text-[10px] font-bold mt-0.5 w-4 shrink-0 ${idx === 0 ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}`}>
+                          {idx === 0 ? "→" : idx + 1}
+                        </span>
+                        {item.mediaUrl && (
+                          <a href={item.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0 group relative">
+                            <img src={item.mediaUrl} alt="" className="h-14 w-14 rounded-lg object-cover border border-[#0F1E3C]/8 group-hover:opacity-75 transition-opacity" />
+                          </a>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-[#0F1E3C] whitespace-pre-wrap break-words">{item.content}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {item.lastSentAt && <span className="text-[9px] text-[#0F1E3C]/30">Enviado {fmtBR(item.lastSentAt)}</span>}
+                            {item.sentCount > 0 && <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado</span>}
+                          </div>
+                        </div>
+                        <button onClick={() => deleteItem(item.id)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400 shrink-0">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-2 pt-2 border-t border-[#0F1E3C]/6">
+                  <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">Adicionar à fila</p>
+                  <textarea
+                    value={newContent} onChange={e => setNewContent(e.target.value)}
+                    rows={3} placeholder="Texto do próximo post..."
+                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                  />
+                  <ImageUpload value={newMedia} onChange={setNewMedia} />
+                  <button onClick={addItem} disabled={!newContent.trim() || addingItem}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 bg-[#4361EE] text-white text-xs font-bold rounded-xl hover:bg-[#3451d1] disabled:opacity-40 transition-colors">
+                    {addingItem ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                    Adicionar à fila
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {panel === "historico" && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider mb-1">Últimas 30 execuções</p>
+                {loadingH ? (
+                  <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-[#4361EE]" /></div>
+                ) : executions.length === 0 ? (
+                  <div className="text-center py-6">
+                    <Clock size={20} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+                    <p className="text-xs text-[#0F1E3C]/30">Nenhuma execução ainda.</p>
+                  </div>
+                ) : (
+                  executions.map(ex => (
+                    <div key={ex.id} className="bg-[#F9FAFC] rounded-xl border border-[#0F1E3C]/6 p-3 flex gap-3 items-start">
+                      {ex.mediaUrl && (
+                        <a href={ex.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0">
+                          <img src={ex.mediaUrl} alt="" className="h-10 w-10 rounded-lg object-cover border border-[#0F1E3C]/8 hover:opacity-75 transition-opacity" />
+                        </a>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-[#0F1E3C] whitespace-pre-wrap line-clamp-2">{ex.content}</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <span className="text-[10px] text-[#0F1E3C]/40">{fmtBR(ex.executedAt)}</span>
+                          <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                            <CheckCircle size={9} /> {ex.sentCount} enviados
+                          </span>
+                          {ex.errorCount > 0 && <span className="text-[10px] text-red-500">{ex.errorCount} erros</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="px-5 py-4 border-t border-[#0F1E3C]/8">
+            <button onClick={onClose} className="w-full py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#F4F6FB] transition-colors border border-[#0F1E3C]/8">
+              Fechar
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Schedule Row (expanded with queue) — LEGACY placeholder ─────────────────
 
 function ScheduleRow({
   schedule, groups, onToggle, onDelete, onRefresh,
@@ -1115,13 +1528,15 @@ function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MarketingPage() {
-  const [tab,           setTab]          = useState<"campanhas" | "lifecycle">("campanhas")
-  const [stats,         setStats]        = useState<Stats | null>(null)
-  const [groups,        setGroups]       = useState<Group[]>([])
-  const [campaigns,     setCampaigns]    = useState<Campaign[]>([])
-  const [schedules,     setSchedules]    = useState<Schedule[]>([])
-  const [loading,       setLoading]      = useState(true)
-  const [createDrawer,  setCreateDrawer] = useState(false)
+  const [tab,              setTab]             = useState<"campanhas" | "lifecycle">("campanhas")
+  const [stats,            setStats]           = useState<Stats | null>(null)
+  const [groups,           setGroups]          = useState<Group[]>([])
+  const [campaigns,        setCampaigns]       = useState<Campaign[]>([])
+  const [schedules,        setSchedules]       = useState<Schedule[]>([])
+  const [loading,          setLoading]         = useState(true)
+  const [createDrawer,     setCreateDrawer]    = useState(false)
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
+  const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
 
   const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollingIdRef = useRef<number | null>(null)
@@ -1179,6 +1594,21 @@ export default function MarketingPage() {
 
   useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
 
+  // Sync open modals when list refreshes
+  useEffect(() => {
+    if (selectedCampaign) {
+      const updated = campaigns.find(c => c.id === selectedCampaign.id)
+      setSelectedCampaign(updated ?? null)
+    }
+  }, [campaigns])
+
+  useEffect(() => {
+    if (selectedSchedule) {
+      const updated = schedules.find(s => s.id === selectedSchedule.id)
+      setSelectedSchedule(updated ?? null)
+    }
+  }, [schedules])
+
   useEffect(() => {
     fetch("/api/marketing/migrate", { method: "POST" }).then(() => loadAll())
   }, [loadAll])
@@ -1190,7 +1620,7 @@ export default function MarketingPage() {
   async function cancelCampaign(id: number) {
     if (pollingIdRef.current === id) stopPolling()
     await fetch(`/api/marketing/campaigns/${id}`, { method: "DELETE" })
-    loadAll()
+    await loadAll()
   }
 
   async function toggleSchedule(s: Schedule) {
@@ -1202,13 +1632,28 @@ export default function MarketingPage() {
     loadAll()
   }
 
-  // ─── Campaign card (reutilizado na coluna esquerda) ───────────────────────
+  // ─── Campaign card (coluna esquerda) ─────────────────────────────────────
   function CampaignCard({ c }: { c: Campaign }) {
     const sm = STATUS_META[c.status] ?? { label: c.status, cls: "bg-slate-100 text-slate-500" }
     const isSending = c.status === "sending"
+
+    const statusLabel = (() => {
+      if (c.status === "cancelled" && c.executedAt) {
+        const d = new Date(c.executedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: TZ_BR })
+        return { text: `Cancelado em ${d}`, cls: "bg-slate-100 text-slate-500" }
+      }
+      return { text: sm.label, cls: sm.cls }
+    })()
+
     return (
-      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm px-4 py-3.5">
-        <div className="flex items-start justify-between gap-3">
+      <div
+        onClick={() => setSelectedCampaign(c)}
+        className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm px-4 py-3.5 cursor-pointer hover:border-[#4361EE]/30 transition-colors"
+      >
+        <div className="flex items-start gap-3">
+          {c.mediaUrl && (
+            <img src={c.mediaUrl} alt="" className="h-12 w-12 rounded-xl object-cover border border-[#0F1E3C]/8 flex-shrink-0" />
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               {c.title && <p className="text-sm font-bold text-[#0F1E3C]">{c.title}</p>}
@@ -1217,39 +1662,27 @@ export default function MarketingPage() {
                   <Loader2 size={8} className="animate-spin" /> {c.sentCount}/{c.totalCount}
                 </span>
               ) : (
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sm.cls}`}>{sm.label}</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusLabel.cls}`}>{statusLabel.text}</span>
               )}
-              {c.mediaUrl && <span className="text-[10px] text-[#0F1E3C]/30 flex items-center gap-0.5"><Image size={9} /> foto</span>}
             </div>
             <p className="text-xs text-[#0F1E3C]/50 mt-1 truncate">{c.content}</p>
-            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className="text-[11px] text-[#0F1E3C]/35">
                 {c.audienceType === "groups" ? `${c.audienceGroupJids.length} grupo(s)`
                   : c.audienceType === "lifecycle" ? (LIFECYCLE_OPTS.find(o => o.value === (c.audienceLifecycle ?? "all"))?.label ?? "—")
                   : "Clientes + grupos"}
               </span>
               {c.scheduledAt && (
-                <span className="text-[11px] text-[#0F1E3C]/35 flex items-center gap-1">
-                  <Clock size={9} /> {fmtBR(c.scheduledAt)}
-                </span>
+                <span className="text-[11px] text-[#0F1E3C]/35 flex items-center gap-1"><Clock size={9} /> {fmtBR(c.scheduledAt)}</span>
               )}
               {c.status === "sent" && (
                 <span className="text-[11px] text-emerald-600 flex items-center gap-1">
-                  <CheckCircle size={9} /> {c.sentCount} enviados{c.errorCount > 0 && ` · ${c.errorCount} erros`}
+                  <CheckCircle size={9} /> {c.sentCount} enviados{c.errorCount > 0 ? ` · ${c.errorCount} erros` : ""}
                 </span>
               )}
-              {isSending && <span className="text-[11px] text-blue-500">próxima mensagem em ~30s</span>}
+              {isSending && <span className="text-[11px] text-blue-500">~30s</span>}
             </div>
           </div>
-          {(c.status === "scheduled" || c.status === "sending") && (
-            <button
-              onClick={() => cancelCampaign(c.id)}
-              className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/30 hover:text-red-500 transition-colors shrink-0"
-              title="Cancelar"
-            >
-              <X size={14} />
-            </button>
-          )}
         </div>
       </div>
     )
@@ -1359,13 +1792,13 @@ export default function MarketingPage() {
                 ) : (
                   <div className="space-y-2.5">
                     {schedules.map(s => (
-                      <ScheduleRow
+                      <ScheduleCard
                         key={s.id}
                         schedule={s}
                         groups={groups}
                         onToggle={() => toggleSchedule(s)}
                         onDelete={loadAll}
-                        onRefresh={loadAll}
+                        onClick={() => setSelectedSchedule(s)}
                       />
                     ))}
                   </div>
@@ -1389,6 +1822,26 @@ export default function MarketingPage() {
         onCampaignCreated={handleCampaignCreated}
         onScheduleCreated={loadAll}
       />
+
+      {/* Modal de campanha */}
+      {selectedCampaign && (
+        <CampaignModal
+          campaign={selectedCampaign}
+          onClose={() => setSelectedCampaign(null)}
+          onCancel={cancelCampaign}
+        />
+      )}
+
+      {/* Modal de programação */}
+      {selectedSchedule && (
+        <ScheduleModal
+          schedule={selectedSchedule}
+          groups={groups}
+          onClose={() => setSelectedSchedule(null)}
+          onToggle={() => toggleSchedule(selectedSchedule)}
+          onRefresh={loadAll}
+        />
+      )}
     </div>
   )
 }

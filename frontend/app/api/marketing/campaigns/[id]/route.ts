@@ -8,7 +8,9 @@ export async function DELETE(
   try {
     const { id } = await params
     await pool.query(
-      `UPDATE marketing_campaigns SET status = 'cancelled' WHERE id = $1 AND status = 'scheduled'`,
+      `UPDATE marketing_campaigns
+       SET status = 'cancelled', executed_at = NOW()
+       WHERE id = $1 AND status IN ('scheduled', 'sending')`,
       [id]
     )
     return NextResponse.json({ ok: true })
