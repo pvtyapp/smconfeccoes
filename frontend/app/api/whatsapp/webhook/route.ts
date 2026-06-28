@@ -881,7 +881,7 @@ async function handleText(
 
     if (order?.status === "pronto") {
       await pool.query(
-        `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+        `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
       replyWA(jid, `Seu pedido *${order.number}* já está separado. Preciso acionar a equipe — eles entram em contato agora.`)
@@ -895,7 +895,7 @@ async function handleText(
         VALUES ($1, 'cancelado', 'chatbot', 'Cliente solicitou cancelamento durante separação')
       `, [order.id])
       await pool.query(
-        `UPDATE wa_contacts SET needs_attention = true, state = 'idle', state_data = '{}', updated_at = NOW() WHERE id = $1`,
+        `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', state = 'idle', state_data = '{}', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
       replyWA(jid, `Ok! Avisamos a equipe para parar a separação do pedido *${order.number}*.`)
@@ -1037,7 +1037,7 @@ async function handleIdle(
 
     if (intent === "pedido") {
       if (!chatbotProdutoEnabled || !produtoStatus.available) {
-        replyWA(jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
+        replyWA(jid, buildUnavailableMsg("produto", produtoStatus, { available: false, reason: null }, globalSettings))
         return
       }
       const ok = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
@@ -1453,7 +1453,7 @@ async function createOrderDirect(
         replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas os itens estão em produção e chegam em breve.\n\nPosso te avisar quando estiver disponível para separar?`)
       } else {
         await pool.query(
-          `UPDATE wa_contacts SET needs_attention = true WHERE id = $1`, [contactId]
+          `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'estoque' WHERE id = $1`, [contactId]
         )
         await setState(contactId, "triagem", { orderId, orderNumber })
         replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas infelizmente não temos os itens em estoque no momento. Nossa equipe entra em contato para te ajudar!`)
