@@ -14,6 +14,8 @@ export type BalanceRow = {
   costPrice: number   // material_cost do produto
   currentStock: number
   salesLast30Days: number
+  qtyReservedPending: number
+  qtyReservedNotified: number
 }
 
 export function calcInventoryMetrics(

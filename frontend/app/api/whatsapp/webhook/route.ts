@@ -1769,11 +1769,31 @@ async function handleActiveOrder(
     const isNao = ["não", "nao", "n", "no"].includes(lower)
 
     if (isSim && orderId) {
-      await pool.query(`UPDATE orders SET status = 'em_separacao' WHERE id = $1`, [orderId])
+      await pool.query(
+        `UPDATE orders SET status = 'em_separacao', needs_print = true WHERE id = $1`, [orderId]
+      )
       await pool.query(`
         INSERT INTO order_events (order_id, status, actor, note)
         VALUES ($1, 'em_separacao', 'chatbot', 'Confirmado pelo cliente via WhatsApp')
       `, [orderId])
+
+      // Baixa estoque (guard contra dupla-baixa)
+      const { rows: already } = await pool.query(`
+        SELECT 1 FROM stock_movements WHERE channel = 'chatbot' AND notes = $1 LIMIT 1
+      `, [`Pedido ${orderNumber}`])
+      if (!already.length) {
+        const { rows: items } = await pool.query(
+          `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
+        )
+        for (const item of items) {
+          await pool.query(
+            `INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+             VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)`,
+            [item.variant_id, item.qty, `Pedido ${orderNumber}`]
+          )
+        }
+      }
+
       await setState(contactId, "em_separacao", { orderId, orderNumber })
       replyWA(jid, `✅ Perfeito! Pedido *${orderNumber}* confirmado e em separação. Avisaremos quando estiver pronto para retirada!`)
       return
@@ -2242,18 +2262,44 @@ async function handleAguardandoReservaResposta(
   const qty           = stateData.qty           as number
 
   if (isSim) {
+    // Verifica saldo disponível (descontando reservas notificadas de outros clientes)
+    const { rows: stockRows } = await pool.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN sm.type = 'in' THEN sm.quantity ELSE -sm.quantity END), 0) AS balance,
+        COALESCE(
+          (SELECT SUM(qty) FROM product_reservations
+           WHERE variant_id = $1 AND status = 'notified' AND id != $2),
+          0
+        ) AS other_notified
+      FROM stock_movements sm
+      WHERE sm.variant_id = $1
+    `, [variantId, reservationId])
+
+    const available = Math.max(
+      0,
+      Number(stockRows[0]?.balance ?? 0) - Number(stockRows[0]?.other_notified ?? 0)
+    )
+
+    if (available < qty) {
+      // Estoque insuficiente — cancela e avisa
+      await pool.query(`UPDATE product_reservations SET status = 'cancelled' WHERE id = $1`, [reservationId])
+      await setState(contactId, "idle")
+      replyWA(jid, `😔 Lamentamos! As unidades de *${variantName}* foram reservadas por outros clientes. Assim que tiver disponível novamente, te avisamos!`)
+      return
+    }
+
     // Confirma reserva → cria novo pedido
     const numRes  = await pool.query("SELECT nextval('order_number_seq') AS n")
     const number  = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
     const { rows: vRows } = await pool.query(
       `SELECT sale_price FROM product_variants WHERE id = $1`, [variantId]
     )
-    const unitPrice = vRows[0]?.sale_price ? Number(vRows[0].sale_price) : null
+    const unitPrice  = vRows[0]?.sale_price ? Number(vRows[0].sale_price) : null
     const totalValue = unitPrice ? unitPrice * qty : null
 
     const { rows: [newOrder] } = await pool.query(`
-      INSERT INTO orders (number, contact_id, status, total_value, source)
-      VALUES ($1, $2, 'em_separacao', $3, 'whatsapp')
+      INSERT INTO orders (number, contact_id, status, total_value, source, needs_print)
+      VALUES ($1, $2, 'em_separacao', $3, 'whatsapp', true)
       RETURNING id, number
     `, [number, contactId, totalValue])
 
@@ -2264,18 +2310,12 @@ async function handleAguardandoReservaResposta(
       WHERE pv.id = $3
     `, [newOrder.id, qty, variantId])
 
-    // Baixa estoque
     await pool.query(`
       INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
       VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
     `, [variantId, qty, `Pedido ${number} (reserva)`])
 
-    // Seta needs_print
-    await pool.query(`UPDATE orders SET needs_print = true WHERE id = $1`, [newOrder.id])
-
-    await pool.query(`
-      UPDATE product_reservations SET status = 'confirmed' WHERE id = $1
-    `, [reservationId])
+    await pool.query(`UPDATE product_reservations SET status = 'confirmed' WHERE id = $1`, [reservationId])
 
     await pool.query(`
       INSERT INTO order_events (order_id, status, actor, note)
@@ -2289,6 +2329,38 @@ async function handleAguardandoReservaResposta(
 
   if (isNao) {
     await pool.query(`UPDATE product_reservations SET status = 'cancelled' WHERE id = $1`, [reservationId])
+
+    // Notifica o próximo da fila imediatamente (sem esperar o cron)
+    const { rows: nextRes } = await pool.query(`
+      SELECT pr.id, pr.contact_id, pr.qty, pv.color, pv.size, p.name AS product_name, c.jid
+      FROM product_reservations pr
+      JOIN product_variants pv ON pv.id = pr.variant_id
+      JOIN products p          ON p.id  = pv.product_id
+      JOIN wa_contacts c       ON c.id  = pr.contact_id
+      WHERE pr.variant_id = $1 AND pr.status = 'pending'
+      ORDER BY pr.created_at ASC LIMIT 1
+    `, [variantId])
+
+    if (nextRes[0]?.jid) {
+      const next = nextRes[0]
+      const { rows: cfgRows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'reserva_expiry_hours'`)
+      const expiryHours = Number(cfgRows[0]?.value ?? 4)
+      const expiresAt   = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString()
+      const nextName    = [next.product_name, next.color, next.size].filter(Boolean).join(" ")
+
+      await pool.query(`
+        UPDATE product_reservations SET status = 'notified', notified_at = NOW(), expires_at = $1
+        WHERE id = $2
+      `, [expiresAt, next.id])
+
+      await pool.query(`
+        UPDATE wa_contacts SET state = 'aguardando_reserva_resposta', state_data = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [JSON.stringify({ reservationId: next.id, variantId, variantName: nextName, qty: next.qty }), next.contact_id])
+
+      sendWhatsApp(next.jid, `🎉 Boa notícia! A *${nextName}* que você reservou chegou!\n\nAinda precisa? Responde *SIM* ou *NÃO*.`).catch(() => {})
+    }
+
     await setState(contactId, "idle")
     replyWA(jid, `Tudo bem! Reserva cancelada. Quando precisar é só chamar.`)
     return

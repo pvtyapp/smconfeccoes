@@ -53,7 +53,10 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
       pv.size,
       pv.sku,
       pv.sale_price   AS "salePrice",
-      COALESCE(bal.qty, 0)::int AS "currentStock"
+      GREATEST(
+        COALESCE(bal.qty, 0) - COALESCE(rsvd.qty_notified, 0),
+        0
+      )::int AS "currentStock"
     FROM product_variants pv
     JOIN products p ON p.id = pv.product_id
     LEFT JOIN (
@@ -62,6 +65,12 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
       FROM stock_movements
       GROUP BY variant_id
     ) bal ON bal.variant_id = pv.id
+    LEFT JOIN (
+      SELECT variant_id, SUM(qty) AS qty_notified
+      FROM product_reservations
+      WHERE status = 'notified'
+      GROUP BY variant_id
+    ) rsvd ON rsvd.variant_id = pv.id
     WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
   `)
 

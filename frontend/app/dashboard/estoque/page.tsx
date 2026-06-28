@@ -126,12 +126,19 @@ function ColorBlock({ color, variants }: { color: string; variants: BalanceRow[]
       </div>
       <div className="divide-y divide-[#0F1E3C]/6">
         {variants.map(v => {
-          const st = stockStatus(v)
+          const st       = stockStatus(v)
+          const reserved = (v.qtyReservedPending ?? 0) + (v.qtyReservedNotified ?? 0)
           return (
             <div key={v.variantId} className="px-3 py-2.5 flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-[#0F1E3C]">{v.size || "—"}</p>
                 <p className="text-[10px] font-mono text-[#0F1E3C]/30 truncate">{v.sku}</p>
+                {reserved > 0 && (
+                  <p className="text-[9px] font-bold text-amber-600 mt-0.5">
+                    {v.qtyReservedNotified > 0 ? `${v.qtyReservedNotified} aguard.` : ""}
+                    {v.qtyReservedPending > 0 ? ` ${v.qtyReservedPending} na fila` : ""}
+                  </p>
+                )}
               </div>
               <span className={`text-lg font-black flex-shrink-0 ${st === "zerado" ? "text-red-500" : st === "critico" ? "text-orange-500" : "text-[#0F1E3C]"}`}>
                 {v.currentStock}

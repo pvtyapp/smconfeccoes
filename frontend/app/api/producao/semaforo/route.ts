@@ -100,12 +100,21 @@ export async function GET() {
       FROM (
         SELECT
           pv.min_stock,
-          COALESCE(SUM(CASE WHEN sm.type = 'in' THEN sm.quantity ELSE -sm.quantity END), 0) AS bal
+          GREATEST(
+            COALESCE(SUM(CASE WHEN sm.type = 'in' THEN sm.quantity ELSE -sm.quantity END), 0)
+            - COALESCE(rsvd.qty_notified, 0),
+            0
+          ) AS bal
         FROM product_variants pv
         JOIN products p ON p.id = pv.product_id
         LEFT JOIN stock_movements sm ON sm.variant_id = pv.id
+        LEFT JOIN (
+          SELECT variant_id, SUM(qty) AS qty_notified
+          FROM product_reservations WHERE status = 'notified'
+          GROUP BY variant_id
+        ) rsvd ON rsvd.variant_id = pv.id
         WHERE pv.status = 'active' AND p.status = 'active'
-        GROUP BY pv.id, pv.min_stock
+        GROUP BY pv.id, pv.min_stock, rsvd.qty_notified
       ) sub
     `)
 

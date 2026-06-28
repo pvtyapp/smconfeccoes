@@ -96,13 +96,14 @@ export async function POST(
 
       await client.query("COMMIT")
 
-      // ── Notifica reservas pendentes (FIFO) para variantes que entraram em estoque ──
+      // ── Notifica reservas pendentes — FIFO por variante (só o 1º de cada fila) ──
       const approvedVariantIds = grade
         .filter((g: { aprovadas?: number }) => (g.aprovadas ?? 0) > 0)
         .map((g: { color: string; size: string }) => `${g.color}|||${g.size}`)
 
       if (approvedVariantIds.length > 0) {
-        const { rows: reservations } = await pool.query(`
+        // Busca todas as reservas pendentes desta prod_order, ordenadas por variante + criação
+        const { rows: allReservations } = await pool.query(`
           SELECT pr.id, pr.contact_id, pr.variant_id, pr.qty,
                  pv.color, pv.size, p.name AS product_name,
                  c.jid, c.name AS contact_name
@@ -112,15 +113,22 @@ export async function POST(
           JOIN wa_contacts c       ON c.id  = pr.contact_id
           WHERE pr.status = 'pending'
             AND pr.prod_order_id = $1
-          ORDER BY pr.created_at ASC
+          ORDER BY pr.variant_id, pr.created_at ASC
         `, [id])
+
+        // FIFO por variante: só notifica o PRIMEIRO de cada fila
+        const firstPerVariant = new Map<string, typeof allReservations[0]>()
+        for (const res of allReservations) {
+          const key = String(res.variant_id)
+          if (!firstPerVariant.has(key)) firstPerVariant.set(key, res)
+        }
 
         const { rows: cfg } = await pool.query(
           `SELECT value FROM app_settings WHERE key = 'reserva_expiry_hours'`
         )
         const expiryHours = Number(cfg[0]?.value ?? 4)
 
-        for (const res of reservations) {
+        for (const res of firstPerVariant.values()) {
           if (!res.jid) continue
           const variantName = [res.product_name, res.color, res.size].filter(Boolean).join(" ")
           const expiresAt   = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString()
