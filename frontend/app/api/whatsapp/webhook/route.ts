@@ -1604,8 +1604,8 @@ async function createOrderDirect(
     const outOfStock   = matched.filter(m => m.matched && !m.stockOk)
     const inStockItems = matched.filter(m => !m.matched || m.stockOk)
 
-    if (outOfStock.length === 0) {
-      // Tudo em estoque → avança direto para separação
+    if (outOfStock.length === 0 && !hasUnmatched) {
+      // Tudo em estoque e todos os itens foram encontrados → avança direto para separação
       const orderCli = await pool.connect()
       try {
         await orderCli.query("BEGIN")

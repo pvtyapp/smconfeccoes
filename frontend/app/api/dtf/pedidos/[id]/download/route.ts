@@ -27,6 +27,28 @@ function getExt(filename: string | null, mimeType: string | null): string {
   return "bin"
 }
 
+// Handles both https:// URLs (Vercel Blob legacy) and data: base64 strings (PostgreSQL)
+async function fetchFileBuffer(blobUrl: string): Promise<{ buffer: ArrayBuffer; mimeType: string } | null> {
+  if (blobUrl.startsWith("data:")) {
+    const comma = blobUrl.indexOf(",")
+    if (comma === -1) return null
+    const meta    = blobUrl.slice(5, comma)          // e.g. "image/png;base64"
+    const b64     = blobUrl.slice(comma + 1)
+    const mime    = meta.split(";")[0]
+    const bytes   = Buffer.from(b64, "base64")
+    return { buffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), mimeType: mime }
+  }
+  try {
+    const res = await fetch(blobUrl)
+    if (!res.ok) return null
+    const buffer = await res.arrayBuffer()
+    const mimeType = res.headers.get("content-type") ?? "application/octet-stream"
+    return { buffer, mimeType }
+  } catch {
+    return null
+  }
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -58,50 +80,39 @@ export async function GET(
     if (attachments.length === 0)
       return NextResponse.json({ error: "Nenhum arquivo no pedido" }, { status: 404 })
 
-    // Build rename prefix: {slug-nome}-{ddMM}
     const clienteSlug = slugify(pedido.contactName ?? "cliente")
     const dateStr: string = pedido.data
     const [year, month, day] = dateStr.split("-")
     void year
-    const ddMM = `${day}${month}`
+    const ddMM   = `${day}${month}`
     const prefix = `${clienteSlug}-${ddMM}`
 
     if (attachments.length === 1) {
-      // Single file: proxy with renamed Content-Disposition
-      const att = attachments[0]
-      const ext = getExt(att.filename, att.mimeType)
+      const att    = attachments[0]
+      const result = await fetchFileBuffer(att.blobUrl)
+      if (!result) return NextResponse.json({ error: "Falha ao ler arquivo" }, { status: 502 })
+      const ext             = getExt(att.filename, att.mimeType ?? result.mimeType)
       const renamedFilename = `${prefix}-1.${ext}`
-
-      const blob = await fetch(att.blobUrl)
-      if (!blob.ok) return NextResponse.json({ error: "Falha ao baixar arquivo" }, { status: 502 })
-
-      const buffer = await blob.arrayBuffer()
-      return new Response(buffer, {
+      return new Response(result.buffer, {
         headers: {
-          "Content-Type": att.mimeType ?? "application/octet-stream",
+          "Content-Type": att.mimeType ?? result.mimeType,
           "Content-Disposition": `attachment; filename="${renamedFilename}"`,
         },
       })
     }
 
-    // Multiple files: build ZIP
     const zip = new JSZip()
-
     for (let i = 0; i < attachments.length; i++) {
-      const att = attachments[i]
-      const ext = getExt(att.filename, att.mimeType)
+      const att    = attachments[i]
+      const result = await fetchFileBuffer(att.blobUrl)
+      if (!result) continue
+      const ext             = getExt(att.filename, att.mimeType ?? result.mimeType)
       const renamedFilename = `${prefix}-${i + 1}.${ext}`
-
-      try {
-        const blob = await fetch(att.blobUrl)
-        if (!blob.ok) continue
-        const buffer = await blob.arrayBuffer()
-        zip.file(renamedFilename, buffer)
-      } catch { /* skip failed file */ }
+      zip.file(renamedFilename, result.buffer)
     }
 
     const zipUint8 = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" })
-    const zipName = `${prefix}-artes.zip`
+    const zipName  = `${prefix}-artes.zip`
 
     return new Response(zipUint8, {
       headers: {

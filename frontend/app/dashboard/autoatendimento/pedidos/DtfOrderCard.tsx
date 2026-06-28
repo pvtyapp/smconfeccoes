@@ -1,6 +1,6 @@
 "use client"
 
-import { Clock, Download, Printer } from "lucide-react"
+import { AlertTriangle, Clock, Download, Printer } from "lucide-react"
 
 export type DtfAttachment = { id: number; blobUrl: string; filename: string | null; mimeType: string | null }
 
@@ -113,14 +113,21 @@ export default function DtfOrderCard({ order, onClick }: Props) {
         )}
       </div>
 
-      {order.attachments.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-[#0F1E3C]/6 flex items-center gap-1.5">
-          <Download size={10} className="text-[#7C3AED]" />
-          <span className="text-[10px] text-[#7C3AED] font-semibold">
-            {order.attachments.length} arquivo{order.attachments.length !== 1 ? "s" : ""}
-          </span>
-        </div>
-      )}
+      <div className="mt-3 pt-3 border-t border-[#0F1E3C]/6 flex items-center gap-1.5">
+        {order.attachments.length === 0 ? (
+          <>
+            <AlertTriangle size={10} className="text-amber-500" />
+            <span className="text-[10px] text-amber-600 font-semibold">Aguardando arquivo</span>
+          </>
+        ) : (
+          <>
+            <Download size={10} className="text-[#7C3AED]" />
+            <span className="text-[10px] text-[#7C3AED] font-semibold">
+              {order.attachments.length} arquivo{order.attachments.length !== 1 ? "s" : ""}
+            </span>
+          </>
+        )}
+      </div>
     </button>
   )
 }

@@ -3,12 +3,14 @@ import { pool } from "@/lib/db"
 import { cleanDtfBlobsOnConclude } from "@/lib/blob-cleanup"
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const client = await pool.connect()
   try {
-    const { id } = await params
+    const { id }    = await params
+    const body      = await req.json().catch(() => ({})) as { isPaid?: boolean }
+    const isPaid    = body.isPaid !== false  // default true
 
     await client.query("BEGIN")
 
@@ -28,9 +30,11 @@ export async function POST(
     await client.query(`
       UPDATE dtf_pedidos
       SET status       = 'concluido',
-          concluded_at = NOW()
+          concluded_at = NOW(),
+          is_paid      = $2,
+          paid_at      = CASE WHEN $2 THEN NOW() ELSE NULL END
       WHERE id = $1
-    `, [id])
+    `, [id, isPaid])
 
     if (pedido.contact_id) {
       await client.query(`
@@ -45,7 +49,6 @@ export async function POST(
 
     await client.query("COMMIT")
 
-    // Free DTF blobs (fire-and-forget)
     if (pedido.contact_id) {
       cleanDtfBlobsOnConclude(pedido.contact_id, new Date(pedido.pedido_created_at)).catch(() => {})
     }

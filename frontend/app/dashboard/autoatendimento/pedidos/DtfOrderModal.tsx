@@ -25,6 +25,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
   const [usePrazo,      setUsePrazo]      = useState(false)
   const [dueDate,       setDueDate]       = useState(order.dueDate ?? "")
   const [showConcluir,  setShowConcluir]  = useState(false)
+  const [isPaid,        setIsPaid]        = useState(true)
   const [error,         setError]         = useState("")
   const [showCancel,    setShowCancel]    = useState(false)
   const [notifyClient,  setNotifyClient]  = useState(true)
@@ -140,7 +141,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
       const r = await fetch(`/api/dtf/pedidos/${order.id}/conclude`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ isPaid }),
       })
       if (!r.ok) {
         const d = await r.json()
@@ -348,7 +349,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
           {/* Confirmação de conclusão */}
           {showConcluir && (
             <div className="border border-[#0F1E3C]/10 rounded-2xl p-4 space-y-4 bg-[#F4F6FB]">
-              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Confirmar pagamento recebido</p>
+              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Concluir pedido</p>
               <div className="bg-white border border-[#0F1E3C]/8 rounded-xl px-4 py-3 space-y-1.5">
                 {order.precoCobrado && (
                   <p className="text-sm text-[#0F1E3C]">Valor: <span className="font-bold text-emerald-700">R$ {Number(order.precoCobrado).toFixed(2).replace(".", ",")}</span></p>
@@ -359,11 +360,27 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
                   <p className="text-sm text-[#0F1E3C]">Forma: <span className="font-bold">À vista</span></p>
                 )}
               </div>
+
+              {/* Pago / Não Pago */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPaid(v => !v)}
+                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
+                  style={{ height: "22px" }}
+                >
+                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isPaid ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
+                </button>
+                <p className="text-sm font-semibold text-[#0F1E3C]">
+                  {isPaid ? "Pagamento recebido" : "Não pago (fiado / a prazo)"}
+                </p>
+              </div>
+
               {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
               <div className="flex gap-2">
                 <button onClick={concluir} disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
-                  <Check size={14} /> Confirmar Pagamento
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 ${isPaid ? "bg-emerald-600 hover:bg-emerald-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"}`}>
+                  <Check size={14} /> {isPaid ? "Confirmar Pagamento" : "Concluir sem Pagamento"}
                 </button>
                 <button onClick={() => { setShowConcluir(false); setError("") }}
                   className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">

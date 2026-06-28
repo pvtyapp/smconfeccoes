@@ -15,19 +15,32 @@ export async function cleanDtfBlobsOnConclude(
   pedidoCreatedAt: Date
 ): Promise<void> {
   const cutoff = new Date(pedidoCreatedAt.getTime() + 7 * 24 * 60 * 60 * 1000)
-  const { rows } = await pool.query<{ id: number; media_url: string }>(
-    `SELECT id, media_url FROM wa_messages
+
+  // Legacy Vercel Blob URLs
+  const { rows: blobRows } = await pool.query<{ id: number; media_data: string }>(
+    `SELECT id, media_data FROM wa_messages
      WHERE contact_id = $1
        AND media_category = 'dtf'
-       AND media_url LIKE 'https://%'
+       AND media_data LIKE 'https://%'
        AND created_at < $2`,
     [contactId, cutoff.toISOString()]
   )
-  if (!rows.length) return
-  await deleteBlobs(rows.map(r => r.media_url))
+  if (blobRows.length) {
+    await deleteBlobs(blobRows.map(r => r.media_data))
+    await pool.query(
+      `UPDATE wa_messages SET media_data = NULL WHERE id = ANY($1)`,
+      [blobRows.map(r => r.id)]
+    )
+  }
+
+  // Base64 PostgreSQL — nullify to free Railway storage
   await pool.query(
-    `UPDATE wa_messages SET media_url = NULL WHERE id = ANY($1)`,
-    [rows.map(r => r.id)]
+    `UPDATE wa_messages SET media_data = NULL
+     WHERE contact_id = $1
+       AND media_category = 'dtf'
+       AND media_data LIKE 'data:%'
+       AND created_at < $2`,
+    [contactId, cutoff.toISOString()]
   )
 }
 
@@ -75,20 +88,32 @@ export async function runBlobTtlCleanup(): Promise<{ deleted: number }> {
   ]
 
   for (const { category, ttlDays } of rules) {
-    const { rows } = await pool.query<{ id: number; media_url: string }>(
-      `SELECT id, media_url FROM wa_messages
+    // Legacy Vercel Blob URLs
+    const { rows } = await pool.query<{ id: number; media_data: string }>(
+      `SELECT id, media_data FROM wa_messages
        WHERE media_category = $1
-         AND media_url LIKE 'https://%'
+         AND media_data LIKE 'https://%'
          AND created_at < NOW() - make_interval(days => $2)`,
       [category, ttlDays]
     )
-    if (!rows.length) continue
-    await deleteBlobs(rows.map(r => r.media_url))
-    await pool.query(
-      `UPDATE wa_messages SET media_url = NULL WHERE id = ANY($1)`,
-      [rows.map(r => r.id)]
+    if (rows.length) {
+      await deleteBlobs(rows.map(r => r.media_data))
+      await pool.query(
+        `UPDATE wa_messages SET media_data = NULL WHERE id = ANY($1)`,
+        [rows.map(r => r.id)]
+      )
+      deleted += rows.length
+    }
+
+    // Base64 PostgreSQL — nullify expired entries to free Railway storage
+    const { rowCount } = await pool.query(
+      `UPDATE wa_messages SET media_data = NULL
+       WHERE media_category = $1
+         AND media_data LIKE 'data:%'
+         AND created_at < NOW() - make_interval(days => $2)`,
+      [category, ttlDays]
     )
-    deleted += rows.length
+    deleted += rowCount ?? 0
   }
 
   // ── 2. dtf_order_attachments em pedidos concluídos/cancelados há 30+ dias ────
@@ -130,21 +155,17 @@ export async function runBlobTtlCleanup(): Promise<{ deleted: number }> {
     } while (cursor)
   } catch (e) { console.error("[blobCleanup] marketing falhou:", e) }
 
-  // ── 4. Thumbnails base64 inline com 7+ dias (uploads que falharam) ───────────
+  // ── 4. Sticker base64 inline com 7+ dias ────────────────────────────────────
+  // (stickers não entram no loop de TTL acima pois não têm blob para deletar)
   try {
-    const { rows: b64Rows } = await pool.query<{ id: number }>(
-      `SELECT id FROM wa_messages
-       WHERE media_url LIKE 'data:%'
+    const { rowCount: stickerCount } = await pool.query(
+      `UPDATE wa_messages SET media_data = NULL
+       WHERE media_category = 'sticker'
+         AND media_data LIKE 'data:%'
          AND created_at < NOW() - INTERVAL '7 days'`
     )
-    if (b64Rows.length) {
-      await pool.query(
-        `UPDATE wa_messages SET media_url = NULL WHERE id = ANY($1)`,
-        [b64Rows.map(r => r.id)]
-      )
-      deleted += b64Rows.length
-    }
-  } catch (e) { console.error("[blobCleanup] base64 inline falhou:", e) }
+    deleted += stickerCount ?? 0
+  } catch (e) { console.error("[blobCleanup] sticker inline falhou:", e) }
 
   return { deleted }
 }
