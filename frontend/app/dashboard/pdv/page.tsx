@@ -120,10 +120,10 @@ export default function PDVPage() {
   const [search, setSearch] = useState("")
   const [cart,   setCart]   = useState<CartItem[]>([])
 
-  // G1 — collapsible product blocks
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  // G1 — collapsible product blocks (default: all collapsed, expand on demand)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   function toggleGroup(productId: string) {
-    setCollapsedGroups(prev => {
+    setExpandedGroups(prev => {
       const next = new Set(prev)
       if (next.has(productId)) next.delete(productId)
       else next.add(productId)
@@ -528,7 +528,7 @@ export default function PDVPage() {
           {!loading && filteredStock.length > 0 && (
             <div className="space-y-3">
               {filteredStock.map(g => {
-                const collapsed = collapsedGroups.has(g.productId)
+                const collapsed = !expandedGroups.has(g.productId)
                 const colorMap  = new Map<string, Variant[]>()
                 for (const v of g.variants) {
                   if (!colorMap.has(v.color)) colorMap.set(v.color, [])
