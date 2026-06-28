@@ -259,7 +259,7 @@ export default function PDVPage() {
         color: v.color,
         size: v.size,
         qty: 1,
-        unitPrice: v.salePrice ?? 0,
+        unitPrice: Number(v.salePrice) || 0,
         maxStock: v.currentStock,
       }]
     })
@@ -270,7 +270,7 @@ export default function PDVPage() {
     setCart(prev => {
       const ex = prev.find(i => i.key === key)
       if (ex) return prev.map(i => i.key === key ? { ...i, qty: i.qty + 1 } : i)
-      return [...prev, { key, productName: p.name, color: "", size: "", qty: 1, unitPrice: p.salePrice ?? 0 }]
+      return [...prev, { key, productName: p.name, color: "", size: "", qty: 1, unitPrice: Number(p.salePrice) || 0 }]
     })
   }
 
@@ -280,7 +280,7 @@ export default function PDVPage() {
     setCart(prev => {
       const ex = prev.find(i => i.key === key)
       if (ex) return prev.map(i => i.key === key ? { ...i, metros } : i)
-      return [...prev, { key, productName: p.name, color: "", size: "", qty: 1, metros, precoPorMetro: true, unitPrice: p.salePrice ?? 0 }]
+      return [...prev, { key, productName: p.name, color: "", size: "", qty: 1, metros, precoPorMetro: true, unitPrice: Number(p.salePrice) || 0 }]
     })
   }
 
