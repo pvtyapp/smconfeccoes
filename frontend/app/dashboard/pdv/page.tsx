@@ -452,7 +452,7 @@ export default function PDVPage() {
       if (!res.ok) throw new Error(data.error ?? "Erro ao finalizar venda")
 
       // fire-and-forget WA (skip for Balcão, silent failure)
-      if (!isBalcao && effectiveContact && effectiveContact.phone !== "00000000000") {
+      if (!isBalcao && effectiveContact && effectiveContact.phone && effectiveContact.phone !== "00000000000") {
         const p = effectiveContact.phone.replace(/\D/g, "")
         const withCC = p.startsWith("55") && p.length >= 12 ? p : `55${p}`
         const jid = `${withCC}@s.whatsapp.net`
@@ -473,7 +473,7 @@ export default function PDVPage() {
       }
 
       const receiptContact = effectiveContact
-        ? { name: effectiveContact.name, phone: effectiveContact.phone }
+        ? { name: effectiveContact.name, phone: effectiveContact.phone ?? null }
         : newMode && newPhone.trim()
         ? { name: newName.trim() || null, phone: newPhone.trim() }
         : null

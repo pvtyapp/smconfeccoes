@@ -21,7 +21,7 @@ export type SaleReceipt = {
   paymentMethod: string
   dueDate?: string
   notes?: string
-  contact: { name: string | null; phone: string } | null
+  contact: { name: string | null; phone: string | null } | null
   items: ReceiptItem[]
 }
 
@@ -46,7 +46,8 @@ function fmtR(v: number) {
   return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function fmtPhone(phone: string) {
+function fmtPhone(phone: string | null | undefined): string {
+  if (!phone) return "—"
   const p = phone.replace(/\D/g, "")
   if (p.length === 13) return `+${p.slice(0,2)} (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}`
   if (p.length === 11) return `(${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}`
