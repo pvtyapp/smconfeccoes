@@ -196,8 +196,15 @@ export default function PDVPage() {
         fetch("/api/products"),
         fetch("/api/clientes"),
       ])
-      if (bRes.ok) setBalance(await bRes.json())
-      if (pRes.ok) setProducts(await pRes.json())
+      if (bRes.ok) {
+        // pg returns NUMERIC as string — coerce to number
+        const raw: Variant[] = await bRes.json()
+        setBalance(raw.map(v => ({ ...v, salePrice: Number(v.salePrice) || 0 })))
+      }
+      if (pRes.ok) {
+        const raw: Product[] = await pRes.json()
+        setProducts(raw.map(p => ({ ...p, salePrice: p.salePrice != null ? Number(p.salePrice) : null })))
+      }
       if (cRes.ok) setContacts(await cRes.json())
     } finally { setLoading(false) }
   }, [])
@@ -1097,7 +1104,7 @@ export default function PDVPage() {
                               type="text"
                               inputMode="decimal"
                               value={priceOverrides[item.key] ?? ""}
-                              placeholder={item.unitPrice.toFixed(2)}
+                              placeholder={Number(item.unitPrice).toFixed(2)}
                               onChange={e => setPriceOverrides(prev => ({ ...prev, [item.key]: e.target.value }))}
                               className="w-20 px-2 py-1 rounded-lg border border-amber-300 bg-white text-xs font-semibold text-amber-900 focus:outline-none focus:ring-1 focus:ring-amber-400 text-right"
                             />
