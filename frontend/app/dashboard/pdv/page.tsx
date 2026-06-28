@@ -165,6 +165,10 @@ export default function PDVPage() {
   const [saleError, setSaleError] = useState("")
   const [receipt,   setReceipt]   = useState<SaleReceipt | null>(null)
 
+  // Derived — declared early so price calculations can use activeContact
+  const activeContact     = selectedContact ?? duplicateFound
+  const hasClientOrBalcao = isBalcao || !!activeContact || (newMode && !!newPhone.trim())
+
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (dropRef.current && !dropRef.current.contains(e.target as Node)) setShowDrop(false)
@@ -172,6 +176,16 @@ export default function PDVPage() {
     if (showDrop) document.addEventListener("mousedown", onClick)
     return () => document.removeEventListener("mousedown", onClick)
   }, [showDrop])
+
+  // Auto-compute dueDate when client with paymentTermType === "days" is selected
+  useEffect(() => {
+    const c = selectedContact ?? duplicateFound
+    if (c?.paymentTermEnabled && c.paymentTermType === "days" && c.paymentTermDays) {
+      const d = new Date()
+      d.setDate(d.getDate() + Number(c.paymentTermDays))
+      setDueDate(dateBR(d))
+    }
+  }, [selectedContact, duplicateFound])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -293,7 +307,7 @@ export default function PDVPage() {
   const cartCount = cart.reduce((s, i) => s + (i.precoPorMetro ? 1 : i.qty), 0)
 
   const discountAmount = (() => {
-    if (!selectedContact?.precoExclusivo || exclusivoMode !== "desconto") return 0
+    if (!activeContact?.precoExclusivo || exclusivoMode !== "desconto") return 0
     const dv = parseFloat(descontoValor.replace(",", "."))
     if (isNaN(dv) || dv <= 0) return 0
     return descontoTipo === "percent"
@@ -302,7 +316,7 @@ export default function PDVPage() {
   })()
 
   const total = (() => {
-    if (!selectedContact?.precoExclusivo) return baseTotal
+    if (!activeContact?.precoExclusivo) return baseTotal
     if (exclusivoMode === "item") {
       return cart.reduce((s, i) => {
         const ov = priceOverrides[i.key]
@@ -315,7 +329,7 @@ export default function PDVPage() {
   })()
 
   function effectiveUnitPrice(item: CartItem): number {
-    if (!selectedContact?.precoExclusivo) return item.unitPrice
+    if (!activeContact?.precoExclusivo) return item.unitPrice
     if (exclusivoMode === "item") {
       const ov = priceOverrides[item.key]
       if (ov && ov.trim()) {
@@ -370,6 +384,8 @@ export default function PDVPage() {
 
   function pickContactWithClear(c: Contact) {
     resetExclusivo()
+    setPayMethod("pix")
+    setDueDate("")
     pickContact(c)
   }
 
@@ -393,9 +409,6 @@ export default function PDVPage() {
     const found = contacts.find(c => normalizePhoneLocal(c.phone) === normalized)
     setDuplicateFound(found ?? null)
   }
-
-  const activeContact = selectedContact ?? duplicateFound
-  const hasClientOrBalcao = isBalcao || !!activeContact || (newMode && !!newPhone.trim())
 
   // ── Finalize ───────────────────────────────────────────────────────────────
 
@@ -506,15 +519,22 @@ export default function PDVPage() {
       setSaleError("Selecione um cliente ou Balcão antes de finalizar.")
       return
     }
-    if (payMethod === "prazo" && !dueDate) {
-      setSaleError("Informe o vencimento para venda a prazo.")
-      return
-    }
     if (payMethod === "prazo" && !activeContact) {
       setSaleError("Venda a prazo exige um cliente identificado.")
       return
     }
-    await doSale(payMethod, dueDate, printAfter)
+    // Auto-compute dueDate for clients with fixed payment term
+    let effectiveDueDate = dueDate
+    if (payMethod === "prazo" && !effectiveDueDate && activeContact?.paymentTermType === "days" && activeContact.paymentTermDays) {
+      const d = new Date()
+      d.setDate(d.getDate() + Number(activeContact.paymentTermDays))
+      effectiveDueDate = dateBR(d)
+    }
+    if (payMethod === "prazo" && !effectiveDueDate) {
+      setSaleError("Informe o vencimento para venda a prazo.")
+      return
+    }
+    await doSale(payMethod, effectiveDueDate, printAfter)
   }
 
   async function finalizeAsPrazo() {
@@ -1221,6 +1241,7 @@ export default function PDVPage() {
               {/* ── Total + botões de finalizar ── */}
               <div className="space-y-2 pt-1">
                 {activeContact?.precoExclusivo && exclusivoMode === "desconto" && discountAmount > 0 ? (
+
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] text-[#0F1E3C]/40">Subtotal</span>
