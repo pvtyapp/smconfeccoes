@@ -33,9 +33,9 @@ type Product = {
 type Contact = {
   id: number
   name: string | null
-  phone: string
-  precoExclusivo: boolean
-  paymentTermEnabled: boolean
+  phone: string | null
+  precoExclusivo: boolean | null
+  paymentTermEnabled: boolean | null
   paymentTermType: string | null
   paymentTermDays: number | null
 }
@@ -71,7 +71,8 @@ function fmtR(v: number) {
   return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function fmtPhone(phone: string) {
+function fmtPhone(phone: string | null | undefined): string {
+  if (!phone) return "—"
   const p = phone.replace(/\D/g, "")
   if (p.length === 13) return `+${p.slice(0,2)} (${p.slice(2,4)}) ${p.slice(4,9)}-${p.slice(9)}`
   if (p.length === 11) return `(${p.slice(0,2)}) ${p.slice(2,7)}-${p.slice(7)}`
@@ -349,13 +350,13 @@ export default function PDVPage() {
     const cq = contactSearch.toLowerCase()
     if (!cq) return contacts.slice(0, 6)
     return contacts.filter(c =>
-      (c.name ?? "").toLowerCase().includes(cq) || c.phone.includes(cq)
+      (c.name ?? "").toLowerCase().includes(cq) || (c.phone ?? "").includes(cq)
     ).slice(0, 6)
   }, [contacts, contactSearch])
 
   function pickContact(c: Contact) {
     setSelectedContact(c)
-    setContactSearch(c.name ?? c.phone)
+    setContactSearch(c.name ?? c.phone ?? "")
     setShowDrop(false)
     setNewMode(false)
     setDuplicateFound(null)
@@ -406,7 +407,7 @@ export default function PDVPage() {
   function handlePhoneBlur() {
     if (!newPhone.trim()) { setDuplicateFound(null); return }
     const normalized = normalizePhoneLocal(newPhone)
-    const found = contacts.find(c => normalizePhoneLocal(c.phone) === normalized)
+    const found = contacts.find(c => normalizePhoneLocal(c.phone ?? "") === normalized)
     setDuplicateFound(found ?? null)
   }
 
