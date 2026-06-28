@@ -89,11 +89,11 @@ export async function POST() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS product_reservations (
         id            SERIAL PRIMARY KEY,
-        contact_id    INT NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
-        variant_id    INT NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
-        qty           INT NOT NULL DEFAULT 1,
-        prod_order_id INT REFERENCES prod_orders(id) ON DELETE SET NULL,
-        order_id      INT REFERENCES orders(id) ON DELETE SET NULL,
+        contact_id    INT  NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
+        variant_id    UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
+        qty           INT  NOT NULL DEFAULT 1,
+        prod_order_id INT  REFERENCES prod_orders(id) ON DELETE SET NULL,
+        order_id      INT  REFERENCES orders(id) ON DELETE SET NULL,
         status        TEXT NOT NULL DEFAULT 'pending',
         notified_at   TIMESTAMPTZ,
         expires_at    TIMESTAMPTZ,

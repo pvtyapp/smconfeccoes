@@ -1668,7 +1668,7 @@ async function createOrderDirect(
       .map((oi: { id: number }) => oi.id)
 
     const missingItems = outOfStock.map(m => ({
-      variantId: m.variantId ? Number(m.variantId) : null,
+      variantId: m.variantId ?? null,
       name: [m.productName, m.color, m.size].filter(Boolean).join(" "),
       qty: m.qty,
       withReserva: m.variantId ? Boolean(variantProdOrderMap[String(m.variantId)]) : false,
@@ -2104,7 +2104,7 @@ async function handleAguardandoSeparacaoResposta(
 
   const orderId     = stateData.orderId     as number
   const orderNumber = stateData.orderNumber as string
-  const missingItems= (stateData.missingItems as Array<{ variantId: number | null; name: string; qty: number; withReserva?: boolean }>) ?? []
+  const missingItems= (stateData.missingItems as Array<{ variantId: string | null; name: string; qty: number; withReserva?: boolean }>) ?? []
   const availableItemIds = (stateData.availableItemIds as number[]) ?? []
   const allMissing  = Boolean(stateData.allMissing)
 
@@ -2237,7 +2237,7 @@ async function handleAguardandoReservaResposta(
   const isNao = ["não", "nao", "n", "no", "nao preciso", "não preciso", "cancelar", "cancela"].some(w => lower === w || lower.startsWith(w + " "))
 
   const reservationId = stateData.reservationId as number
-  const variantId     = stateData.variantId     as number
+  const variantId     = stateData.variantId     as string
   const variantName   = stateData.variantName   as string
   const qty           = stateData.qty           as number
 
