@@ -269,16 +269,17 @@ function AudiencePicker({
   )
 }
 
-// ─── Campaign Drawer ──────────────────────────────────────────────────────────
+// ─── Unified Create Drawer ────────────────────────────────────────────────────
 
-function CampaignDrawer({
-  open, onClose, groups, stats, onCreated,
+function UnifiedDrawer({
+  open, onClose, groups, stats, onCampaignCreated, onScheduleCreated,
 }: {
   open: boolean
   onClose: () => void
   groups: Group[]
   stats: Stats | null
-  onCreated: () => void
+  onCampaignCreated: (id: number, sendNow: boolean) => void
+  onScheduleCreated: () => void
 }) {
   const [title,        setTitle]        = useState("")
   const [content,      setContent]      = useState("")
@@ -286,47 +287,85 @@ function CampaignDrawer({
   const [audienceType, setAudienceType] = useState("lifecycle")
   const [lifecycle,    setLifecycle]    = useState("all")
   const [groupJids,    setGroupJids]    = useState<string[]>([])
-  const [mode,         setMode]         = useState<"now" | "schedule">("now")
+  const [daysOfWeek,   setDaysOfWeek]   = useState<number[]>([])
+  const [sendMode,     setSendMode]     = useState<"now" | "schedule">("now")
   const [schedDate,    setSchedDate]    = useState("")
   const [schedTime,    setSchedTime]    = useState("08:00")
-  const [sending,      setSending]      = useState(false)
+  const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState<string | null>(null)
+
+  const isRecurring = daysOfWeek.length > 0
 
   function reset() {
     setTitle(""); setContent(""); setMediaUrl(null)
     setAudienceType("lifecycle"); setLifecycle("all"); setGroupJids([])
-    setMode("now"); setSchedDate(""); setSchedTime("08:00")
-    setSending(false); setError(null)
+    setDaysOfWeek([]); setSendMode("now"); setSchedDate(""); setSchedTime("08:00")
+    setSaving(false); setError(null)
   }
-
   function close() { reset(); onClose() }
+
+  function toggleDay(d: number) {
+    setDaysOfWeek(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort())
+  }
 
   async function submit() {
     if (!content.trim()) { setError("Mensagem obrigatória"); return }
-    if (audienceType === "groups" && groupJids.length === 0) { setError("Selecione ao menos um grupo"); return }
-    if (mode === "schedule" && !schedDate) { setError("Data obrigatória"); return }
+    if (isRecurring && !title.trim()) { setError("Nome obrigatório para programação recorrente"); return }
+    if ((audienceType === "groups" || audienceType === "mixed") && groupJids.length === 0) {
+      setError("Selecione ao menos um grupo"); return
+    }
+    if (!isRecurring && sendMode === "schedule" && !schedDate) { setError("Data obrigatória"); return }
 
-    setSending(true); setError(null)
+    setSaving(true); setError(null)
 
-    const scheduledAt = mode === "schedule"
-      ? new Date(`${schedDate}T${schedTime}:00`).toISOString()
-      : null
-
-    const r = await fetch("/api/marketing/campaigns", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title, content, mediaUrl,
-        audienceType,
-        audienceLifecycle: audienceType !== "groups" ? lifecycle : null,
-        audienceGroupJids: groupJids,
-        scheduledAt,
-      }),
-    })
-
-    setSending(false)
-    if (r.ok) { onCreated(); close() }
-    else { const d = await r.json(); setError(d.error ?? "Erro ao criar campanha") }
+    if (isRecurring) {
+      const r = await fetch("/api/marketing/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: title,
+          daysOfWeek,
+          timeOfDay: schedTime,
+          audienceType,
+          audienceLifecycle: audienceType !== "groups" ? lifecycle : null,
+          audienceGroupJids: groupJids,
+        }),
+      })
+      if (r.ok) {
+        const { id } = await r.json()
+        await fetch(`/api/marketing/schedules/${id}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, mediaUrl }),
+        })
+        onScheduleCreated()
+        close()
+      } else {
+        const d = await r.json(); setError(d.error ?? "Erro ao criar programação")
+      }
+    } else {
+      const scheduledAt = sendMode === "schedule"
+        ? new Date(`${schedDate}T${schedTime}:00`).toISOString()
+        : null
+      const r = await fetch("/api/marketing/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title, content, mediaUrl, audienceType,
+          audienceLifecycle: audienceType !== "groups" ? lifecycle : null,
+          audienceGroupJids: groupJids,
+          scheduledAt,
+        }),
+      })
+      if (r.ok) {
+        const { id, sendNow: sn } = await r.json() as { id: number; sendNow: boolean }
+        onCampaignCreated(id, sn)
+        close()
+      } else {
+        const d = await r.json(); setError(d.error ?? "Erro ao criar campanha")
+      }
+    }
+    setSaving(false)
   }
 
   if (!open) return null
@@ -335,78 +374,128 @@ function CampaignDrawer({
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-black/30" onClick={close} />
       <div className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden">
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#0F1E3C]/8">
-          <h2 className="text-sm font-bold text-[#0F1E3C]">Nova Campanha</h2>
-          <button onClick={close} className="p-1 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40">
-            <X size={16} />
-          </button>
+          <div>
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Nova Mensagem</h2>
+            <p className="text-[10px] mt-0.5">
+              {isRecurring
+                ? <span className="text-[#4361EE] font-semibold">→ Programação recorrente</span>
+                : <span className="text-[#0F1E3C]/40">→ Mensagens Diretas (envio único)</span>}
+            </p>
+          </div>
+          <button onClick={close} className="p-1 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Title */}
+          {/* Nome */}
           <div>
-            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Nome da campanha (opcional)</label>
+            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">
+              Nome {isRecurring
+                ? <span className="text-red-400 font-bold">*</span>
+                : <span className="font-normal text-[#0F1E3C]/30">(opcional)</span>}
+            </label>
             <input
               value={title}
               onChange={e => setTitle(e.target.value)}
-              placeholder="Ex: Lançamento coleção inverno"
+              placeholder={isRecurring ? "Ex: Post semanal de novidades" : "Ex: Lançamento coleção inverno"}
               className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
             />
           </div>
 
-          {/* Content */}
+          {/* Mensagem */}
           <div>
-            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Mensagem</label>
+            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">
+              Mensagem {isRecurring && <span className="font-normal text-[#0F1E3C]/30">(entra na fila)</span>}
+            </label>
             <textarea
               value={content}
               onChange={e => setContent(e.target.value)}
               rows={4}
-              placeholder={"Oi {nome}, novidade chegando! 🔥"}
+              placeholder="Oi {nome}, novidade chegando! 🔥"
               className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
             />
-            <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Use <code className="bg-[#F4F6FB] px-1 rounded">{"{nome}"}</code> para personalizar</p>
+            <p className="text-[10px] text-[#0F1E3C]/30 mt-1">
+              Use <code className="bg-[#F4F6FB] px-1 rounded">{"{nome}"}</code> para personalizar
+            </p>
           </div>
 
-          {/* Image */}
+          {/* Foto */}
           <ImageUpload value={mediaUrl} onChange={setMediaUrl} />
 
-          {/* Audience */}
+          {/* Audiência */}
           <AudiencePicker
             audienceType={audienceType} lifecycle={lifecycle}
             groupJids={groupJids} groups={groups} stats={stats}
             onType={setAudienceType} onLifecycle={setLifecycle} onGroups={setGroupJids}
           />
 
-          {/* Schedule */}
-          <div>
-            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2 block">Envio</label>
-            <div className="flex gap-2 mb-3">
-              {[{ v: "now", l: "Agora" }, { v: "schedule", l: "Agendar" }].map(({ v, l }) => (
-                <button
-                  key={v}
-                  onClick={() => setMode(v as "now" | "schedule")}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors ${
-                    mode === v ? "bg-[#4361EE] text-white" : "bg-[#F4F6FB] text-[#0F1E3C]/60 hover:bg-[#4361EE]/10"
-                  }`}
-                >
-                  {l}
-                </button>
-              ))}
+          {/* Quando enviar */}
+          <div className="space-y-3">
+            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider block">Quando enviar</label>
+
+            {/* Dias — determina o modo */}
+            <div>
+              <p className="text-[11px] text-[#0F1E3C]/40 mb-2">
+                Repetir nos dias <span className="text-[#0F1E3C]/25">(deixe vazio para envio único)</span>
+              </p>
+              <div className="flex gap-1.5 flex-wrap">
+                {DAYS.map((d, i) => (
+                  <button
+                    key={i}
+                    onClick={() => toggleDay(i)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                      daysOfWeek.includes(i)
+                        ? "bg-[#4361EE] text-white"
+                        : "bg-[#F4F6FB] text-[#0F1E3C]/50 hover:bg-[#4361EE]/10"
+                    }`}
+                  >{d}</button>
+                ))}
+              </div>
             </div>
-            {mode === "schedule" && (
-              <div className="flex gap-2">
+
+            {isRecurring ? (
+              /* Modo programação — só horário */
+              <div className="flex items-center gap-2">
                 <input
-                  type="date"
-                  value={schedDate}
-                  onChange={e => setSchedDate(e.target.value)}
-                  className="flex-1 border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                />
-                <input
-                  type="time"
+                  type="time" step="3600"
                   value={schedTime}
-                  onChange={e => setSchedTime(e.target.value)}
-                  className="w-28 border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                  onChange={e => { const v = e.target.value; setSchedTime(v ? v.slice(0,3) + "00" : "08:00") }}
+                  className="border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                 />
+                <span className="text-[11px] text-[#0F1E3C]/35">disparo na hora exata</span>
+              </div>
+            ) : (
+              /* Modo campanha — agora ou agendar */
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  {[
+                    { v: "now",      l: "Enviar agora"   },
+                    { v: "schedule", l: "Agendar horário" },
+                  ].map(({ v, l }) => (
+                    <button
+                      key={v}
+                      onClick={() => setSendMode(v as "now" | "schedule")}
+                      className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                        sendMode === v ? "bg-[#4361EE] text-white" : "bg-[#F4F6FB] text-[#0F1E3C]/60 hover:bg-[#4361EE]/10"
+                      }`}
+                    >{l}</button>
+                  ))}
+                </div>
+                {sendMode === "schedule" && (
+                  <div className="flex gap-2">
+                    <input
+                      type="date" value={schedDate}
+                      onChange={e => setSchedDate(e.target.value)}
+                      className="flex-1 border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                    />
+                    <input
+                      type="time" value={schedTime}
+                      onChange={e => setSchedTime(e.target.value)}
+                      className="w-28 border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -422,135 +511,18 @@ function CampaignDrawer({
         <div className="px-5 py-4 border-t border-[#0F1E3C]/8">
           <button
             onClick={submit}
-            disabled={sending}
+            disabled={saving}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50"
           >
-            {sending
-              ? <><Loader2 size={14} className="animate-spin" /> Processando...</>
-              : mode === "now"
-                ? <><Send size={14} /> Enviar agora</>
-                : <><Calendar size={14} /> Agendar</>}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Schedule Drawer ──────────────────────────────────────────────────────────
-
-function ScheduleDrawer({
-  open, onClose, groups, stats, onCreated,
-}: {
-  open: boolean
-  onClose: () => void
-  groups: Group[]
-  stats: Stats | null
-  onCreated: () => void
-}) {
-  const [name,         setName]         = useState("")
-  const [daysOfWeek,   setDaysOfWeek]   = useState<number[]>([1,2,3,4,5])
-  const [timeOfDay,    setTimeOfDay]    = useState("08:00")
-  const [audienceType, setAudienceType] = useState("groups")
-  const [lifecycle,    setLifecycle]    = useState("all")
-  const [groupJids,    setGroupJids]    = useState<string[]>([])
-  const [saving,       setSaving]       = useState(false)
-  const [error,        setError]        = useState<string | null>(null)
-
-  function reset() {
-    setName(""); setDaysOfWeek([1,2,3,4,5]); setTimeOfDay("08:00")
-    setAudienceType("groups"); setLifecycle("all"); setGroupJids([])
-    setSaving(false); setError(null)
-  }
-  function close() { reset(); onClose() }
-
-  function toggleDay(d: number) {
-    setDaysOfWeek(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort())
-  }
-
-  async function submit() {
-    if (!name.trim()) { setError("Nome obrigatório"); return }
-    if (daysOfWeek.length === 0) { setError("Selecione ao menos um dia"); return }
-    if ((audienceType === "groups" || audienceType === "mixed") && groupJids.length === 0) {
-      setError("Selecione ao menos um grupo"); return
-    }
-    setSaving(true); setError(null)
-    const r = await fetch("/api/marketing/schedules", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name, daysOfWeek, timeOfDay, audienceType,
-        audienceLifecycle: audienceType !== "groups" ? lifecycle : null,
-        audienceGroupJids: groupJids,
-      }),
-    })
-    setSaving(false)
-    if (r.ok) { onCreated(); close() }
-    else { const d = await r.json(); setError(d.error ?? "Erro") }
-  }
-
-  if (!open) return null
-
-  return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/30" onClick={close} />
-      <div className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#0F1E3C]/8">
-          <h2 className="text-sm font-bold text-[#0F1E3C]">Nova Programação</h2>
-          <button onClick={close} className="p-1 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          <div>
-            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Nome</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: Post semanal de novidades"
-              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2 block">Dias da semana</label>
-            <div className="flex gap-1.5 flex-wrap">
-              {DAYS.map((d, i) => (
-                <button key={i} onClick={() => toggleDay(i)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                    daysOfWeek.includes(i) ? "bg-[#4361EE] text-white" : "bg-[#F4F6FB] text-[#0F1E3C]/50 hover:bg-[#4361EE]/10"
-                  }`}
-                >{d}</button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Horário</label>
-            <div className="flex items-center gap-2">
-              <input type="time" step="3600" value={timeOfDay}
-                onChange={e => {
-                  const v = e.target.value
-                  // Snap to :00 — cron fires on the hour
-                  setTimeOfDay(v ? v.slice(0, 3) + "00" : "08:00")
-                }}
-                className="border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-              <span className="text-[11px] text-[#0F1E3C]/35">disparo na hora exata</span>
-            </div>
-          </div>
-
-          <AudiencePicker
-            audienceType={audienceType} lifecycle={lifecycle}
-            groupJids={groupJids} groups={groups} stats={stats}
-            onType={setAudienceType} onLifecycle={setLifecycle} onGroups={setGroupJids}
-          />
-
-          {error && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
-              <AlertCircle size={14} className="text-red-500 shrink-0" />
-              <p className="text-xs text-red-600">{error}</p>
-            </div>
-          )}
-        </div>
-        <div className="px-5 py-4 border-t border-[#0F1E3C]/8">
-          <button onClick={submit} disabled={saving}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            {saving ? "Salvando..." : "Criar programação"}
+            {saving ? (
+              <><Loader2 size={14} className="animate-spin" /> Processando...</>
+            ) : isRecurring ? (
+              <><CalendarClock size={14} /> Criar Programação</>
+            ) : sendMode === "now" ? (
+              <><Send size={14} /> Enviar agora</>
+            ) : (
+              <><Calendar size={14} /> Agendar envio</>
+            )}
           </button>
         </div>
       </div>
@@ -1106,7 +1078,7 @@ function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-6 text-center">
             <CalendarClock size={20} className="mx-auto text-[#0F1E3C]/15 mb-2" />
             <p className="text-xs text-[#0F1E3C]/30">Nenhuma programação ativa</p>
-            <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Ative programações na aba Programação</p>
+            <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Crie programações na aba Campanhas</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -1143,14 +1115,16 @@ function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MarketingPage() {
-  const [tab,          setTab]          = useState<"campanhas" | "programacao" | "lifecycle">("campanhas")
-  const [stats,        setStats]        = useState<Stats | null>(null)
-  const [groups,       setGroups]       = useState<Group[]>([])
-  const [campaigns,    setCampaigns]    = useState<Campaign[]>([])
-  const [schedules,    setSchedules]    = useState<Schedule[]>([])
-  const [loading,      setLoading]      = useState(true)
-  const [campDrawer,   setCampDrawer]   = useState(false)
-  const [schedDrawer,  setSchedDrawer]  = useState(false)
+  const [tab,           setTab]          = useState<"campanhas" | "lifecycle">("campanhas")
+  const [stats,         setStats]        = useState<Stats | null>(null)
+  const [groups,        setGroups]       = useState<Group[]>([])
+  const [campaigns,     setCampaigns]    = useState<Campaign[]>([])
+  const [schedules,     setSchedules]    = useState<Schedule[]>([])
+  const [loading,       setLoading]      = useState(true)
+  const [createDrawer,  setCreateDrawer] = useState(false)
+
+  const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollingIdRef = useRef<number | null>(null)
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -1167,12 +1141,54 @@ export default function MarketingPage() {
     setLoading(false)
   }, [])
 
-  // Run migration on first load
+  function stopPolling() {
+    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null }
+    pollingIdRef.current = null
+  }
+
+  const tickCampaign = useCallback(async (campaignId: number) => {
+    try {
+      const r = await fetch("/api/marketing/tick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId }),
+      })
+      if (!r.ok) return
+      const d = await r.json() as { done: boolean; sentCount: number; totalCount: number }
+      setCampaigns(prev => prev.map(c =>
+        c.id === campaignId
+          ? { ...c, sentCount: d.sentCount, totalCount: d.totalCount, status: d.done ? "sent" : "sending" }
+          : c
+      ))
+      if (d.done) stopPolling()
+    } catch { /* retry next tick */ }
+  }, [])
+
+  function startPolling(campaignId: number) {
+    stopPolling()
+    pollingIdRef.current = campaignId
+    tickCampaign(campaignId)
+    tickRef.current = setInterval(() => tickCampaign(campaignId), 30_000)
+  }
+
+  useEffect(() => {
+    const sending = campaigns.find(c => c.status === "sending")
+    if (sending && pollingIdRef.current !== sending.id) startPolling(sending.id)
+    else if (!sending && pollingIdRef.current !== null) stopPolling()
+  }, [campaigns])
+
+  useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
+
   useEffect(() => {
     fetch("/api/marketing/migrate", { method: "POST" }).then(() => loadAll())
   }, [loadAll])
 
+  function handleCampaignCreated(campaignId: number, sendNow: boolean) {
+    loadAll().then(() => { if (sendNow) startPolling(campaignId) })
+  }
+
   async function cancelCampaign(id: number) {
+    if (pollingIdRef.current === id) stopPolling()
     await fetch(`/api/marketing/campaigns/${id}`, { method: "DELETE" })
     loadAll()
   }
@@ -1184,6 +1200,59 @@ export default function MarketingPage() {
       body: JSON.stringify({ active: !s.active }),
     })
     loadAll()
+  }
+
+  // ─── Campaign card (reutilizado na coluna esquerda) ───────────────────────
+  function CampaignCard({ c }: { c: Campaign }) {
+    const sm = STATUS_META[c.status] ?? { label: c.status, cls: "bg-slate-100 text-slate-500" }
+    const isSending = c.status === "sending"
+    return (
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm px-4 py-3.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {c.title && <p className="text-sm font-bold text-[#0F1E3C]">{c.title}</p>}
+              {isSending ? (
+                <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                  <Loader2 size={8} className="animate-spin" /> {c.sentCount}/{c.totalCount}
+                </span>
+              ) : (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sm.cls}`}>{sm.label}</span>
+              )}
+              {c.mediaUrl && <span className="text-[10px] text-[#0F1E3C]/30 flex items-center gap-0.5"><Image size={9} /> foto</span>}
+            </div>
+            <p className="text-xs text-[#0F1E3C]/50 mt-1 truncate">{c.content}</p>
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+              <span className="text-[11px] text-[#0F1E3C]/35">
+                {c.audienceType === "groups" ? `${c.audienceGroupJids.length} grupo(s)`
+                  : c.audienceType === "lifecycle" ? (LIFECYCLE_OPTS.find(o => o.value === (c.audienceLifecycle ?? "all"))?.label ?? "—")
+                  : "Clientes + grupos"}
+              </span>
+              {c.scheduledAt && (
+                <span className="text-[11px] text-[#0F1E3C]/35 flex items-center gap-1">
+                  <Clock size={9} /> {fmtBR(c.scheduledAt)}
+                </span>
+              )}
+              {c.status === "sent" && (
+                <span className="text-[11px] text-emerald-600 flex items-center gap-1">
+                  <CheckCircle size={9} /> {c.sentCount} enviados{c.errorCount > 0 && ` · ${c.errorCount} erros`}
+                </span>
+              )}
+              {isSending && <span className="text-[11px] text-blue-500">próxima mensagem em ~30s</span>}
+            </div>
+          </div>
+          {(c.status === "scheduled" || c.status === "sending") && (
+            <button
+              onClick={() => cancelCampaign(c.id)}
+              className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/30 hover:text-red-500 transition-colors shrink-0"
+              title="Cancelar"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -1222,12 +1291,11 @@ export default function MarketingPage() {
         })}
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — 2 apenas */}
       <div className="flex gap-1 bg-[#F4F6FB] p-1 rounded-xl w-fit">
         {([
-          { v: "campanhas",   l: "Campanhas",    Icon: Megaphone         },
-          { v: "programacao", l: "Programação",  Icon: CalendarClock     },
-          { v: "lifecycle",   l: "Lifecycle",    Icon: SlidersHorizontal },
+          { v: "campanhas", l: "Campanhas",  Icon: Megaphone         },
+          { v: "lifecycle", l: "Lifecycle",  Icon: SlidersHorizontal },
         ] as const).map(({ v, l, Icon }) => (
           <button
             key={v}
@@ -1247,123 +1315,79 @@ export default function MarketingPage() {
           <div className="flex items-center justify-between">
             <p className="text-sm font-bold text-[#0F1E3C]">Campanhas</p>
             <button
-              onClick={() => setCampDrawer(true)}
+              onClick={() => setCreateDrawer(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-[#4361EE] hover:bg-[#3451d1] text-white text-xs font-bold rounded-xl transition-colors"
             >
-              <Plus size={13} /> Nova campanha
+              <Plus size={13} /> Criar
             </button>
           </div>
 
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>
-          ) : campaigns.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-12 text-center">
-              <Megaphone size={28} className="mx-auto text-[#0F1E3C]/15 mb-3" />
-              <p className="text-sm font-bold text-[#0F1E3C]/30">Nenhuma campanha ainda</p>
-              <p className="text-xs text-[#0F1E3C]/20 mt-1">Crie sua primeira campanha para começar</p>
-            </div>
           ) : (
-            <div className="space-y-2.5">
-              {campaigns.map(c => {
-                const sm = STATUS_META[c.status] ?? { label: c.status, cls: "bg-slate-100 text-slate-500" }
-                return (
-                  <div key={c.id} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm px-4 py-3.5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {c.title && <p className="text-sm font-bold text-[#0F1E3C]">{c.title}</p>}
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sm.cls}`}>{sm.label}</span>
-                          {c.mediaUrl && <span className="text-[10px] text-[#0F1E3C]/30 flex items-center gap-0.5"><Image size={9} /> foto</span>}
-                        </div>
-                        <p className="text-xs text-[#0F1E3C]/50 mt-1 truncate">{c.content}</p>
-                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                          <span className="text-[11px] text-[#0F1E3C]/35">
-                            {c.audienceType === "groups" ? `${c.audienceGroupJids.length} grupo(s)`
-                              : c.audienceType === "lifecycle" ? (LIFECYCLE_OPTS.find(o => o.value === (c.audienceLifecycle ?? "all"))?.label ?? "—")
-                              : "Clientes + grupos"}
-                          </span>
-                          {c.scheduledAt && (
-                            <span className="text-[11px] text-[#0F1E3C]/35 flex items-center gap-1">
-                              <Clock size={9} /> {fmtBR(c.scheduledAt)}
-                            </span>
-                          )}
-                          {c.status === "sent" && (
-                            <span className="text-[11px] text-emerald-600 flex items-center gap-1">
-                              <CheckCircle size={9} /> {c.sentCount} enviados
-                              {c.errorCount > 0 && ` · ${c.errorCount} erros`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {c.status === "scheduled" && (
-                        <button
-                          onClick={() => cancelCampaign(c.id)}
-                          className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/30 hover:text-red-500 transition-colors shrink-0"
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+
+              {/* Coluna 1 — Mensagens Diretas */}
+              <div className="space-y-3">
+                <p className="text-[11px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider flex items-center gap-1.5">
+                  <Send size={11} /> Mensagens Diretas
+                </p>
+                {campaigns.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
+                    <Megaphone size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+                    <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhuma campanha</p>
+                    <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Envios únicos aparecem aqui</p>
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
+                ) : (
+                  <div className="space-y-2.5">
+                    {campaigns.map(c => <CampaignCard key={c.id} c={c} />)}
+                  </div>
+                )}
+              </div>
 
-      {/* ── Programação ── */}
-      {tab === "programacao" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-[#0F1E3C]">Programações recorrentes</p>
-            <button
-              onClick={() => setSchedDrawer(true)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-[#4361EE] hover:bg-[#3451d1] text-white text-xs font-bold rounded-xl transition-colors"
-            >
-              <Plus size={13} /> Nova programação
-            </button>
-          </div>
+              {/* Coluna 2 — Programação */}
+              <div className="space-y-3">
+                <p className="text-[11px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider flex items-center gap-1.5">
+                  <CalendarClock size={11} /> Programação
+                </p>
+                {schedules.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
+                    <CalendarClock size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+                    <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhuma programação</p>
+                    <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Mensagens recorrentes aparecem aqui</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {schedules.map(s => (
+                      <ScheduleRow
+                        key={s.id}
+                        schedule={s}
+                        groups={groups}
+                        onToggle={() => toggleSchedule(s)}
+                        onDelete={loadAll}
+                        onRefresh={loadAll}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
 
-
-          {loading ? (
-            <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>
-          ) : schedules.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-12 text-center">
-              <CalendarClock size={28} className="mx-auto text-[#0F1E3C]/15 mb-3" />
-              <p className="text-sm font-bold text-[#0F1E3C]/30">Nenhuma programação ainda</p>
-              <p className="text-xs text-[#0F1E3C]/20 mt-1">Crie slots recorrentes para divulgar fotos e novidades automaticamente</p>
-            </div>
-          ) : (
-            <div className="space-y-2.5">
-              {schedules.map(s => (
-                <ScheduleRow
-                  key={s.id}
-                  schedule={s}
-                  groups={groups}
-                  onToggle={() => toggleSchedule(s)}
-                  onDelete={loadAll}
-                  onRefresh={loadAll}
-                />
-              ))}
             </div>
           )}
         </div>
       )}
 
       {/* ── Lifecycle ── */}
-      {tab === "lifecycle" && (
-        <LifecycleTab schedules={schedules} />
-      )}
+      {tab === "lifecycle" && <LifecycleTab schedules={schedules} />}
 
-      {/* Drawers */}
-      <CampaignDrawer
-        open={campDrawer} onClose={() => setCampDrawer(false)}
-        groups={groups} stats={stats} onCreated={loadAll}
-      />
-      <ScheduleDrawer
-        open={schedDrawer} onClose={() => setSchedDrawer(false)}
-        groups={groups} stats={stats} onCreated={loadAll}
+      {/* Drawer unificado */}
+      <UnifiedDrawer
+        open={createDrawer}
+        onClose={() => setCreateDrawer(false)}
+        groups={groups}
+        stats={stats}
+        onCampaignCreated={handleCampaignCreated}
+        onScheduleCreated={loadAll}
       />
     </div>
   )
