@@ -67,6 +67,24 @@ type ScheduleExecution = {
   executedAt: string
 }
 
+type LifecycleTaskItem = {
+  contact_id: number
+  name: string | null
+  phone: string | null
+  stage: string
+  due_at: string
+  overdue: boolean
+}
+
+type LifecycleCompletedItem = {
+  id: number
+  stage: string
+  sentAt: string
+  status: string
+  contactName: string | null
+  phone: string | null
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
@@ -1270,18 +1288,45 @@ const LC_DEFAULTS: Record<string, string> = {
   ausente_d45_msg: "Oi {nome}! Uma última mensagem — quando precisar de estoque, pode contar comigo.",
 }
 
-function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
+function LifecycleTab() {
   const [settings,   setSettings]   = useState<Record<string, string>>({})
   const [loading,    setLoading]    = useState(true)
   const [saving,     setSaving]     = useState(false)
   const [saved,      setSaved]      = useState(false)
   const [togglingLC, setTogglingLC] = useState(false)
 
+  const [subTab, setSubTab] = useState<"mensagens" | "tarefas" | "concluidas">("mensagens")
+
+  const [tasks,        setTasks]        = useState<LifecycleTaskItem[]>([])
+  const [tasksLoading, setTasksLoading] = useState(false)
+
+  const [completed,        setCompleted]        = useState<LifecycleCompletedItem[]>([])
+  const [completedPeriod,  setCompletedPeriod]  = useState<"today" | "7d" | "30d">("7d")
+  const [completedLoading, setCompletedLoading] = useState(false)
+
   useEffect(() => {
     fetch("/api/settings")
       .then(r => r.json())
       .then((d: Record<string, string>) => { setSettings(d); setLoading(false) })
   }, [])
+
+  useEffect(() => {
+    if (subTab !== "tarefas") return
+    setTasksLoading(true)
+    fetch("/api/marketing/lifecycle?view=tasks")
+      .then(r => r.json())
+      .then((d: LifecycleTaskItem[]) => setTasks(Array.isArray(d) ? d : []))
+      .finally(() => setTasksLoading(false))
+  }, [subTab])
+
+  useEffect(() => {
+    if (subTab !== "concluidas") return
+    setCompletedLoading(true)
+    fetch(`/api/marketing/lifecycle?view=completed&period=${completedPeriod}`)
+      .then(r => r.json())
+      .then((d: LifecycleCompletedItem[]) => setCompleted(Array.isArray(d) ? d : []))
+      .finally(() => setCompletedLoading(false))
+  }, [subTab, completedPeriod])
 
   function setSetting(key: string, value: string) {
     setSettings(prev => ({ ...prev, [key]: value }))
@@ -1316,11 +1361,48 @@ function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
     setTimeout(() => setSaved(false), 2500)
   }
 
-  const lifecycleOn  = settings.lifecycle_ativo !== "false"
-  const activeScheds = schedules.filter(s => s.active)
+  const lifecycleOn = settings.lifecycle_ativo !== "false"
+
+  const STAGE_CLS: Record<string, string> = {
+    D2:  "bg-blue-100 text-blue-700",
+    D15: "bg-amber-100 text-amber-700",
+    D30: "bg-orange-100 text-orange-700",
+    D45: "bg-red-100 text-red-700",
+  }
+
+  function dueLabel(dueAt: string, overdue: boolean) {
+    const diff = Math.round((new Date(dueAt).getTime() - Date.now()) / 86_400_000)
+    if (overdue) return Math.abs(diff) <= 1 ? "hoje" : `${Math.abs(diff)}d atrasado`
+    if (diff <= 0) return "hoje"
+    if (diff === 1) return "amanhã"
+    return `em ${diff}d`
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+
+      {/* Sub-tabs */}
+      <div className="flex gap-1 bg-[#F4F6FB] p-1 rounded-xl w-fit">
+        {([
+          { v: "mensagens",  l: "Mensagens"  },
+          { v: "tarefas",    l: "Tarefas"    },
+          { v: "concluidas", l: "Concluídas" },
+        ] as const).map(({ v, l }) => (
+          <button
+            key={v}
+            onClick={() => setSubTab(v)}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
+              subTab === v ? "bg-white text-[#4361EE] shadow-sm" : "text-[#0F1E3C]/50 hover:text-[#0F1E3C]"
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Mensagens ── */}
+      {subTab === "mensagens" && (
+      <div className="space-y-6">
 
       {/* Master toggle */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
@@ -1479,48 +1561,135 @@ function LifecycleTab({ schedules }: { schedules: Schedule[] }) {
         </button>
       </div>
 
-      {/* Programações ativas */}
-      <div className="space-y-3 pt-3 border-t border-[#0F1E3C]/6">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">PROGRAMAÇÕES ATIVAS</p>
-          <span className="text-[10px] text-[#0F1E3C]/30">
-            {activeScheds.length} ativa{activeScheds.length !== 1 ? "s" : ""}
-          </span>
-        </div>
-        {activeScheds.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-6 text-center">
-            <CalendarClock size={20} className="mx-auto text-[#0F1E3C]/15 mb-2" />
-            <p className="text-xs text-[#0F1E3C]/30">Nenhuma programação ativa</p>
-            <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Crie programações na aba Campanhas</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {activeScheds.map(sched => {
-              const daysLabel =
-                sched.daysOfWeek.length === 7 ? "Todos os dias"
-                : sched.daysOfWeek.length === 5 && !sched.daysOfWeek.includes(0) && !sched.daysOfWeek.includes(6)
-                  ? "Seg–Sex"
-                  : sched.daysOfWeek.map(d => DAYS[d]).join(", ")
-              return (
-                <div key={sched.id} className="bg-white rounded-xl border border-[#0F1E3C]/8 px-4 py-3 flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-[#0F1E3C] truncate">{sched.name}</p>
-                    <p className="text-[11px] text-[#0F1E3C]/40 mt-0.5">
-                      {sched.timeOfDay.slice(0, 5)} · {daysLabel} · {sched.itemCount} item{sched.itemCount !== 1 ? "s" : ""}
-                    </p>
-                  </div>
-                  {sched.lastExecutedAt && (
-                    <span className="text-[10px] text-[#0F1E3C]/25 shrink-0 tabular-nums">
-                      {fmtBR(sched.lastExecutedAt)}
-                    </span>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
+      )} {/* end mensagens */}
+
+      {/* ── Tarefas ── */}
+      {subTab === "tarefas" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-[#0F1E3C]/40">Próximos disparos por cliente · ordenados por data</p>
+            <button
+              onClick={() => {
+                setTasksLoading(true)
+                fetch("/api/marketing/lifecycle?view=tasks")
+                  .then(r => r.json())
+                  .then((d: LifecycleTaskItem[]) => setTasks(Array.isArray(d) ? d : []))
+                  .finally(() => setTasksLoading(false))
+              }}
+              className="p-1.5 rounded-lg text-[#0F1E3C]/30 hover:text-[#0F1E3C] transition-colors"
+            >
+              <RefreshCw size={13} className={tasksLoading ? "animate-spin" : ""} />
+            </button>
+          </div>
+
+          {tasksLoading ? (
+            <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>
+          ) : tasks.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-10 text-center">
+              <CheckCircle size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+              <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhuma tarefa pendente</p>
+              <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Todos os clientes estão em dia</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {tasks.map((t, i) => {
+                const dueDateStr = new Date(t.due_at).toLocaleDateString("pt-BR", {
+                  day: "2-digit", month: "2-digit", timeZone: TZ_BR,
+                })
+                const isOverdue = t.overdue === true || String(t.overdue) === "t"
+                const relLabel  = dueLabel(t.due_at, isOverdue)
+                return (
+                  <div
+                    key={i}
+                    className={`bg-white rounded-xl border px-4 py-3 flex items-center gap-3 ${
+                      isOverdue ? "border-red-200" : "border-[#0F1E3C]/8"
+                    }`}
+                  >
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${STAGE_CLS[t.stage] ?? "bg-slate-100 text-slate-600"}`}>
+                      {t.stage}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-[#0F1E3C] truncate">{t.name ?? t.phone ?? "—"}</p>
+                      {t.name && t.phone && (
+                        <p className="text-[11px] text-[#0F1E3C]/35 truncate">{t.phone}</p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={`text-xs font-bold ${isOverdue ? "text-red-500" : "text-[#0F1E3C]/60"}`}>{dueDateStr}</p>
+                      <p className={`text-[10px] ${isOverdue ? "text-red-400" : "text-[#0F1E3C]/30"}`}>{relLabel}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Concluídas ── */}
+      {subTab === "concluidas" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            {(["today", "7d", "30d"] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setCompletedPeriod(p)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                  completedPeriod === p
+                    ? "bg-[#4361EE] text-white"
+                    : "bg-[#F4F6FB] text-[#0F1E3C]/50 hover:text-[#0F1E3C]"
+                }`}
+              >
+                {p === "today" ? "Hoje" : p === "7d" ? "7 dias" : "30 dias"}
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                setCompletedLoading(true)
+                fetch(`/api/marketing/lifecycle?view=completed&period=${completedPeriod}`)
+                  .then(r => r.json())
+                  .then((d: LifecycleCompletedItem[]) => setCompleted(Array.isArray(d) ? d : []))
+                  .finally(() => setCompletedLoading(false))
+              }}
+              className="ml-auto p-1.5 rounded-lg text-[#0F1E3C]/30 hover:text-[#0F1E3C] transition-colors"
+            >
+              <RefreshCw size={13} className={completedLoading ? "animate-spin" : ""} />
+            </button>
+          </div>
+
+          {completedLoading ? (
+            <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>
+          ) : completed.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-10 text-center">
+              <CheckCircle size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+              <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhum envio nesse período</p>
+              <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Mensagens enviadas pelo lifecycle aparecem aqui</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {completed.map(c => (
+                <div key={c.id} className="bg-white rounded-xl border border-[#0F1E3C]/8 px-4 py-3 flex items-center gap-3">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${STAGE_CLS[c.stage] ?? "bg-slate-100 text-slate-600"}`}>
+                    {c.stage}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#0F1E3C] truncate">{c.contactName ?? c.phone ?? "—"}</p>
+                    {c.contactName && c.phone && (
+                      <p className="text-[11px] text-[#0F1E3C]/35 truncate">{c.phone}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <CheckCircle size={12} className="text-emerald-500" />
+                    <span className="text-xs text-[#0F1E3C]/40 tabular-nums">{fmtBR(c.sentAt)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
@@ -1811,7 +1980,7 @@ export default function MarketingPage() {
       )}
 
       {/* ── Lifecycle ── */}
-      {tab === "lifecycle" && <LifecycleTab schedules={schedules} />}
+      {tab === "lifecycle" && <LifecycleTab />}
 
       {/* Drawer unificado */}
       <UnifiedDrawer

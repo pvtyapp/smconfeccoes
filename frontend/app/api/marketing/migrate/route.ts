@@ -62,6 +62,25 @@ export async function POST() {
       )
     `)
 
+    // Queue column for rate-limited sending
+    await pool.query(`
+      ALTER TABLE marketing_campaigns
+      ADD COLUMN IF NOT EXISTS recipients_json JSONB
+    `)
+
+    // Lifecycle execution log
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lifecycle_executions (
+        id         SERIAL PRIMARY KEY,
+        contact_id INT NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
+        stage      TEXT NOT NULL,
+        sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        status     TEXT NOT NULL DEFAULT 'sent'
+      )
+    `)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_lce_sent_at  ON lifecycle_executions(sent_at DESC)`)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_lce_contact  ON lifecycle_executions(contact_id)`)
+
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
