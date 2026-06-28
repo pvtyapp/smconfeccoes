@@ -521,10 +521,17 @@ function DispositionModal({
 }: {
   item:    AvariaItem
   onClose: () => void
-  onSave:  (id: number, disposition: Disposition, notes: string) => void
+  onSave:  (id: number, disposition: Disposition, notes: string) => Promise<void>
 }) {
   const [selected, setSelected] = useState<Disposition>(item.disposition === "pendente" ? "reaproveitado" : item.disposition)
   const [notes, setNotes]       = useState(item.notes ?? "")
+  const [saving, setSaving]     = useState(false)
+
+  async function handleConfirm() {
+    setSaving(true)
+    try { await onSave(item.id, selected, notes) }
+    finally { setSaving(false) }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -580,9 +587,11 @@ function DispositionModal({
             Cancelar
           </button>
           <button
-            onClick={() => onSave(item.id, selected, notes)}
-            className="flex-1 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451d1] transition-colors"
+            onClick={handleConfirm}
+            disabled={saving}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451d1] disabled:opacity-60 transition-colors"
           >
+            {saving && <Loader2 size={14} className="animate-spin" />}
             Confirmar
           </button>
         </div>

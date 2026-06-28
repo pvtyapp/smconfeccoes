@@ -580,12 +580,12 @@ function AjusteEstoqueModal({
     setSaving(true); setError("")
     const batchId = crypto.randomUUID()
     try {
-      for (const { row, newQty } of changes) {
-        const delta = newQty - row.currentStock
-        await fetch("/api/stock/movements", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const res = await fetch("/api/stock/movements/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(changes.map(({ row, newQty }) => {
+          const delta = newQty - row.currentStock
+          return {
             variantId: row.variantId,
             type:      delta > 0 ? "in" : "out",
             quantity:  Math.abs(delta),
@@ -593,9 +593,10 @@ function AjusteEstoqueModal({
             channel:   "manual",
             notes:     notes.trim(),
             batchId,
-          }),
-        }).then(async r => { if (!r.ok) throw new Error((await r.json()).error ?? "Erro") })
-      }
+          }
+        })),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? "Erro")
       await onSuccess()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar")
@@ -820,22 +821,20 @@ function OrdemEntradaModal({
     setSaving(true); setError("")
     const batchId = crypto.randomUUID()
     try {
-      for (const item of summaryItems) {
-        const res = await fetch("/api/stock/movements", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            variantId: item.variantId,
-            type: "in",
-            quantity: item.qty,
-            reason: "producao",
-            channel: "manual",
-            notes: notes || null,
-            batchId,
-          }),
-        })
-        if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
-      }
+      const res = await fetch("/api/stock/movements/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(summaryItems.map(item => ({
+          variantId: item.variantId,
+          type: "in",
+          quantity: item.qty,
+          reason: "producao",
+          channel: "manual",
+          notes: notes || null,
+          batchId,
+        }))),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
       await onSuccess()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao lançar")

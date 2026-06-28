@@ -15,7 +15,7 @@ export async function GET(req: Request) {
         ds.color, ds.size, ds.qty,
         ds.disposition, ds.notes,
         po.number AS "orderNumber",
-        ds.created_at::date::text AS "createdAt"
+        ds.created_at AS "createdAt"
       FROM defect_stock ds
       LEFT JOIN prod_orders po ON po.id = ds.order_id
       WHERE ($1 = 'all' OR ds.disposition = $1)

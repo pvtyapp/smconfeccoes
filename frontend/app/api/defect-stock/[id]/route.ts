@@ -9,16 +9,15 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params
-    const { disposition, notes, discountPrice } = await req.json()
+    const { disposition, notes } = await req.json()
 
     const valid = ["pendente", "reaproveitado", "vendido", "descartado"]
     if (disposition && !valid.includes(disposition)) {
       return NextResponse.json({ error: "disposition inválida" }, { status: 400 })
     }
 
-    // If vendido and discountPrice provided, create a stock_movement OUT to record the sale
     const { rows: cur } = await pool.query(
-      `SELECT variant_id, qty FROM defect_stock WHERE id=$1`, [id]
+      `SELECT variant_id, qty, disposition AS current_disposition FROM defect_stock WHERE id=$1`, [id]
     )
     if (!cur.length) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
@@ -26,7 +25,8 @@ export async function PATCH(
     try {
       await client.query("BEGIN")
 
-      if (disposition === "vendido" && cur[0].variant_id) {
+      // Só cria movimento de saída se está mudando PARA vendido (não se já era vendido)
+      if (disposition === "vendido" && cur[0].variant_id && cur[0].current_disposition !== "vendido") {
         await client.query(`
           INSERT INTO stock_movements
             (variant_id, type, quantity, reason, channel, notes)

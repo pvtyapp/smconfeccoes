@@ -29,6 +29,7 @@ export default function CategoriasPage() {
   const [editName, setEditName] = useState("")
 
   const [error, setError] = useState("")
+  const [deleting, setDeleting] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -89,11 +90,20 @@ export default function CategoriasPage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Apagar esta categoria e todas as filhas?")) return
+    setDeleting(id)
+    setError("")
     try {
-      await fetch(`/api/categories/${id}`, { method: "DELETE" })
+      const res = await fetch(`/api/categories/${id}`, { method: "DELETE" })
+      if (!res.ok) {
+        const d = await res.json()
+        setError(d.error ?? "Erro ao apagar. Verifique se há produtos vinculados.")
+        return
+      }
       await load()
     } catch {
-      alert("Erro ao apagar")
+      setError("Erro ao apagar")
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -175,7 +185,12 @@ export default function CategoriasPage() {
             </form>
           )}
           {error && <p className="mt-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+
         </div>
+      )}
+
+      {error && !addMode && !editing && (
+        <p className="text-sm text-red-600 bg-red-50 px-4 py-3 rounded-xl border border-red-200">{error}</p>
       )}
 
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
@@ -201,7 +216,9 @@ export default function CategoriasPage() {
                     + filha
                   </button>
                   <button onClick={() => { openEdit(root); setAddMode(null) }} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors"><Pencil size={14} /></button>
-                  <button onClick={() => handleDelete(root.id)} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
+                  <button onClick={() => handleDelete(root.id)} disabled={!!deleting} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-red-500 transition-colors disabled:opacity-40">
+                    {deleting === root.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  </button>
                 </div>
 
                 {/* Children */}
@@ -217,7 +234,9 @@ export default function CategoriasPage() {
                         + sub
                       </button>
                       <button onClick={() => { openEdit(child); setAddMode(null) }} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors"><Pencil size={14} /></button>
-                      <button onClick={() => handleDelete(child.id)} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
+                      <button onClick={() => handleDelete(child.id)} disabled={!!deleting} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-red-500 transition-colors disabled:opacity-40">
+                        {deleting === child.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      </button>
                     </div>
 
                     {/* Subcategories */}
@@ -227,7 +246,9 @@ export default function CategoriasPage() {
                         <ChevronRight size={10} className="text-[#0F1E3C]/20 flex-shrink-0 -ml-2.5" />
                         <span className="text-xs text-[#0F1E3C]/60 flex-1">{sub.name}</span>
                         <button onClick={() => { openEdit(sub); setAddMode(null) }} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors"><Pencil size={13} /></button>
-                        <button onClick={() => handleDelete(sub.id)} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+                        <button onClick={() => handleDelete(sub.id)} disabled={!!deleting} className="opacity-0 group-hover:opacity-100 text-[#0F1E3C]/30 hover:text-red-500 transition-colors disabled:opacity-40">
+                          {deleting === sub.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                        </button>
                       </div>
                     ))}
                   </div>

@@ -22,7 +22,7 @@ export async function GET() {
       JOIN product_variants pv ON pv.id = sm.variant_id
       JOIN products p ON p.id = pv.product_id
       ORDER BY sm.created_at DESC
-      LIMIT 500
+      LIMIT 2000
     `)
     return NextResponse.json(rows)
   } catch (err) {

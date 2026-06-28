@@ -196,11 +196,16 @@ export default function ProdutosPage() {
   }
 
   async function toggleStatus(p: Product) {
-    await fetch(`/api/products/${p.id}`, {
+    const res = await fetch(`/api/products/${p.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: p.status === "active" ? "inactive" : "active" }),
     })
+    if (!res.ok) {
+      const d = await res.json()
+      alert(d.error ?? "Erro ao alterar status")
+      return
+    }
     await load()
   }
 
@@ -306,7 +311,13 @@ export default function ProdutosPage() {
               <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
                 <button
                   type="button"
-                  onClick={() => set("stockEnabled", !form.stockEnabled)}
+                  onClick={() => {
+                    const next = !form.stockEnabled
+                    if (editing && form.stockEnabled && !next) {
+                      if (!confirm("Desativar o estoque vai inativar todas as variantes deste produto. Continuar?")) return
+                    }
+                    set("stockEnabled", next)
+                  }}
                   className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.stockEnabled ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}
                   style={{ height: "22px" }}
                 >
