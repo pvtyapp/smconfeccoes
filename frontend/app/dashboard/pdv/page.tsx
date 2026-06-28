@@ -941,24 +941,6 @@ export default function PDVPage() {
               )}
             </div>
 
-            {/* ── Últimos pedidos ── */}
-            {recentOrders.length > 0 && (
-              <div className="flex-shrink-0 border-t border-[#0F1E3C]/8 px-4 py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Últimos pedidos</p>
-                  <a href="/dashboard/relatorio-vendas" className="text-[10px] font-semibold text-[#4361EE] hover:underline">Ver mais</a>
-                </div>
-                <div className="space-y-1">
-                  {recentOrders.map(order => (
-                    <div key={order.id} className="flex items-center gap-2">
-                      <span className="text-[10px] font-black text-[#0F1E3C]/60 flex-shrink-0">{order.number}</span>
-                      <span className="text-[10px] text-[#0F1E3C]/40 truncate">{order.contactName ?? "Balcão"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Footer */}
             <div className="flex-shrink-0 border-t border-[#0F1E3C]/8 p-4 space-y-3">
 
@@ -1319,6 +1301,24 @@ export default function PDVPage() {
                 )}
               </div>
             </div>
+
+            {/* ── Últimos pedidos ── */}
+            {recentOrders.length > 0 && (
+              <div className="flex-shrink-0 border-t border-[#0F1E3C]/8 px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Últimos pedidos</p>
+                  <a href="/dashboard/relatorio-vendas" className="text-[10px] font-semibold text-[#4361EE] hover:underline">Ver mais</a>
+                </div>
+                <div className="space-y-1">
+                  {recentOrders.map(order => (
+                    <div key={order.id} className="flex items-center gap-2">
+                      <span className="text-[10px] font-black text-[#0F1E3C]/60 flex-shrink-0">{order.number}</span>
+                      <span className="text-[10px] text-[#0F1E3C]/40 truncate">{order.contactName ?? "Balcão"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
