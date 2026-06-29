@@ -33,7 +33,8 @@ export async function GET(req: Request) {
       LEFT JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN LATERAL (
         SELECT material_cost FROM products
-        WHERE TRIM(LOWER(name)) = TRIM(LOWER(oi.product_name)) AND status = 'active'
+        WHERE TRIM(LOWER(name)) = TRIM(LOWER(oi.product_name))
+        ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END
         LIMIT 1
       ) p ON true
       WHERE o.status != 'cancelado'
@@ -69,7 +70,7 @@ export async function GET(req: Request) {
         AND o.source IN ('pdv', 'whatsapp', 'manual')
         AND o.number NOT LIKE 'COB-%'
         AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
-        AND (p.id IS NULL OR p.material_cost IS NULL)
+        AND (p.id IS NULL OR p.material_cost IS NULL OR p.material_cost = 0)
       ORDER BY oi.product_name
     `, [from, to])
 
