@@ -33,7 +33,7 @@ export async function GET(req: Request) {
       LEFT JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN LATERAL (
         SELECT material_cost FROM products
-        WHERE LOWER(name) = LOWER(oi.product_name) AND status = 'active'
+        WHERE TRIM(LOWER(name)) = TRIM(LOWER(oi.product_name)) AND status = 'active'
         LIMIT 1
       ) p ON true
       WHERE o.status != 'cancelado'
@@ -58,7 +58,22 @@ export async function GET(req: Request) {
       WHERE cost_date BETWEEN $1 AND $2
     `, [from, to])
 
-    // 4. Entradas de matéria-prima compradas no período
+    // 4. Diagnóstico: produtos nos pedidos sem custo cadastrado
+    const { rows: semCustoRows } = await pool.query(`
+      SELECT DISTINCT oi.product_name
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      LEFT JOIN products p
+        ON TRIM(LOWER(p.name)) = TRIM(LOWER(oi.product_name)) AND p.status = 'active'
+      WHERE o.status != 'cancelado'
+        AND o.source IN ('pdv', 'whatsapp', 'manual')
+        AND o.number NOT LIKE 'COB-%'
+        AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+        AND (p.id IS NULL OR p.material_cost IS NULL)
+      ORDER BY oi.product_name
+    `, [from, to])
+
+    // 5. Entradas de matéria-prima compradas no período
     const { rows: matEntradas } = await pool.query(`
       SELECT
         COALESCE(SUM(total_qty * unit_price), 0)::float AS total,
@@ -167,6 +182,9 @@ export async function GET(req: Request) {
       materialFlow: {
         entradas: { total: Number(matEntradas[0]?.total ?? 0), count: Number(matEntradas[0]?.count ?? 0) },
         saidas:   { total: Number(matSaidas[0]?.total  ?? 0), count: Number(matSaidas[0]?.count  ?? 0) },
+      },
+      diagnostico: {
+        semCusto: semCustoRows.map(r => r.product_name as string),
       },
     })
   } catch (err) {

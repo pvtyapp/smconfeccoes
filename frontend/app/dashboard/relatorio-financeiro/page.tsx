@@ -48,6 +48,7 @@ type ReportData = {
   byChannel:      Record<string, number>
   productRanking: ProductRow[]
   materialFlow:   MaterialFlow
+  diagnostico:    { semCusto: string[] }
 }
 
 type StockItem = {
@@ -269,6 +270,21 @@ export default function RelatorioFinanceiroPage() {
         </div>
       ) : data && (
         <>
+
+          {/* Diagnóstico: produtos sem custo cadastrado */}
+          {data.diagnostico.semCusto.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <p className="text-xs font-bold text-amber-700 mb-1">
+                Lucro e margem indisponíveis — {data.diagnostico.semCusto.length} produto(s) sem custo cadastrado:
+              </p>
+              <p className="text-xs text-amber-600">
+                {data.diagnostico.semCusto.join(" · ")}
+              </p>
+              <p className="text-[10px] text-amber-500 mt-1">
+                Acesse Produtos, abra cada um e salve o campo "Preço de custo".
+              </p>
+            </div>
+          )}
 
           {/* ── 1. Receita por Canal — TOPO ─────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
