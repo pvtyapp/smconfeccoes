@@ -17,7 +17,6 @@ type Pedido = {
 type InsumoSummary = {
   id: number; nome: string; unidade: string
   saldoAtual: number; alarmeQtd: number | null; lowStock: boolean
-  consumoMedioPorMetro: number | null; diasRestantes: number | null
 }
 
 type ImpressoraInsumo = { insumoId: number; nome: string; unidade: string; quantidade: number; custo: number | null }
@@ -338,7 +337,6 @@ export default function DTFDashboardPage() {
                 <p key={i.id} className="text-xs text-red-600">
                   {i.nome}: {parseFloat(Number(i.saldoAtual).toFixed(3))} {i.unidade} restantes
                   {i.alarmeQtd != null && ` (alarme: ${parseFloat(Number(i.alarmeQtd).toFixed(3))} ${i.unidade})`}
-                  {i.diasRestantes != null && ` · ~${i.diasRestantes} dias`}
                 </p>
               ))}
             </div>
@@ -370,16 +368,18 @@ export default function DTFDashboardPage() {
                 <p className={`text-2xl font-black ${ins.lowStock ? "text-red-600" : clr.text}`}>
                   {parseFloat(Number(ins.saldoAtual).toFixed(3))} {ins.unidade}
                 </p>
-                <p className={`text-xs mt-2 opacity-60 ${ins.lowStock ? "text-red-600" : clr.text}`}>
-                  {ins.consumoMedioPorMetro != null
-                    ? `${parseFloat(Number(ins.consumoMedioPorMetro).toFixed(4))} ${ins.unidade}/m impresso`
-                    : "Sem dados de consumo"}
-                </p>
-                {ins.diasRestantes != null && (
-                  <p className={`text-[10px] mt-0.5 opacity-50 ${ins.lowStock ? "text-red-600" : clr.text}`}>
-                    ~{ins.diasRestantes} dias estimados
-                  </p>
-                )}
+                {(() => {
+                  const cpm = relatorio?.insumos.find(r => r.id === ins.id)?.custoPorMetroAtual
+                  return cpm != null ? (
+                    <p className={`text-xs mt-2 opacity-60 ${ins.lowStock ? "text-red-600" : clr.text}`}>
+                      R$ {Number(cpm).toFixed(4).replace(".", ",")} / m impresso
+                    </p>
+                  ) : (
+                    <p className={`text-xs mt-2 opacity-40 ${ins.lowStock ? "text-red-600" : clr.text}`}>
+                      Sem custo cadastrado
+                    </p>
+                  )
+                })()}
               </div>
             )
           })}
