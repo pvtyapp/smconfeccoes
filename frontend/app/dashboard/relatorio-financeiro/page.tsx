@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react"
 import {
-  RefreshCw, TrendingUp, TrendingDown, DollarSign, Package,
+  RefreshCw, TrendingUp, Package,
   ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Layers,
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
@@ -322,40 +322,116 @@ export default function RelatorioFinanceiroPage() {
             </div>
           </div>
 
-          {/* ── 2. KPI cards ────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KPICard
-              label="Receita Confirmada"
-              value={fmtR(dre?.receitaBruta ?? 0)}
-              sub={`${summary?.pedidosConcluidos ?? 0} pedidos · ${summary?.totalPecas ?? 0} peças`}
-              icon={DollarSign}
-              color="blue"
-            />
-            <KPICard
-              label="Resultado s/ Insumos"
-              value={fmtR(dre?.lucroBruto ?? null)}
-              sub={dre?.lucroBruto != null
-                ? `margem ${pct(summary?.margemBruta ?? null)} sobre receita`
-                : "Custo de material não cadastrado"}
-              icon={TrendingUp}
-              color={dre?.lucroBruto != null && dre.lucroBruto >= 0 ? "green" : "red"}
-            />
-            <KPICard
-              label="Resultado Operacional"
-              value={fmtR(dre?.resultadoOp ?? null)}
-              sub={dre?.resultadoOp != null
-                ? `margem op. ${pct(summary?.margemOp ?? null)}`
-                : "Custos não cadastrados"}
-              icon={dre?.resultadoOp != null && (dre.resultadoOp ?? 0) >= 0 ? TrendingUp : TrendingDown}
-              color={dre?.resultadoOp != null && (dre.resultadoOp ?? 0) >= 0 ? "green" : "red"}
-            />
-            <KPICard
-              label="Ticket Médio"
-              value={fmtR(summary?.ticketMedio ?? 0)}
-              sub={`${summary?.totalPecas ?? 0} peças no período`}
-              icon={Package}
-              color="amber"
-            />
+          {/* ── 2. Resumo de Vendas ─────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Resumo de Vendas</p>
+              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">
+                {data.period.from} → {data.period.to} · {data.period.days} dias
+              </p>
+            </div>
+            <div className="p-6 grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
+
+              {/* Vendas */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Vendas</p>
+                <p className="text-3xl font-black text-[#0F1E3C] leading-none">
+                  {summary?.pedidosConcluidos ?? 0}
+                </p>
+                <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
+                  pedidos concluídos
+                  {(summary?.pedidosTotal ?? 0) > (summary?.pedidosConcluidos ?? 0) && (
+                    <span className="ml-1 text-amber-500 font-semibold">
+                      · {(summary?.pedidosTotal ?? 0) - (summary?.pedidosConcluidos ?? 0)} em andamento
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Faturamento */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Faturamento</p>
+                <p className="text-3xl font-black text-[#4361EE] leading-none">
+                  {fmtR(dre?.receitaBruta ?? 0)}
+                </p>
+                <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
+                  {summary?.totalPecas ?? 0} peças · ticket {fmtR(summary?.ticketMedio ?? 0)}
+                </p>
+              </div>
+
+              {/* Lucro */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Lucro</p>
+                {dre?.resultadoOp != null ? (
+                  <>
+                    <p className={`text-3xl font-black leading-none ${dre.resultadoOp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {fmtR(dre.resultadoOp)}
+                    </p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">resultado operacional</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>
+                    <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">custos não cadastrados</p>
+                  </>
+                )}
+              </div>
+
+              {/* Margem */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Margem</p>
+                {summary?.margemOp != null ? (
+                  <>
+                    <p className={`text-3xl font-black leading-none ${summary.margemOp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {summary.margemOp.toFixed(1)}%
+                    </p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem operacional sobre receita</p>
+                  </>
+                ) : summary?.margemBruta != null ? (
+                  <>
+                    <p className={`text-3xl font-black leading-none ${summary.margemBruta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {summary.margemBruta.toFixed(1)}%
+                    </p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem bruta (s/ insumos)</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>
+                    <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">sem custo cadastrado</p>
+                  </>
+                )}
+              </div>
+
+              {/* Resultado s/ Insumos */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Resultado s/ Insumos</p>
+                {dre?.lucroBruto != null ? (
+                  <>
+                    <p className={`text-3xl font-black leading-none ${dre.lucroBruto >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {fmtR(dre.lucroBruto)}
+                    </p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem {pct(summary?.margemBruta ?? null)} · após custo de material</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>
+                    <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">custo de material não cadastrado</p>
+                  </>
+                )}
+              </div>
+
+              {/* Peças / Ticket */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Peças Vendidas</p>
+                <p className="text-3xl font-black text-amber-600 leading-none">
+                  {summary?.totalPecas ?? 0}
+                </p>
+                <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
+                  peças · ticket médio {fmtR(summary?.ticketMedio ?? 0)}
+                </p>
+              </div>
+
+            </div>
           </div>
 
           {/* ── 3. Fluxo de Insumos ─────────────────────────────────────────── */}
