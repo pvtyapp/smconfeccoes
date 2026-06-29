@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, BarChart2, Banknote } from "lucide-react"
+import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ export default function RelatorioVendasPage() {
             icon={ShoppingBag} color="bg-purple-100 text-purple-700" />
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard
             label="Receita Confirmada" value={fmtR(stats.totalR)}
             sub={`${stats.concludedCount} concluído${stats.concludedCount !== 1 ? "s" : ""}`}
@@ -296,34 +296,18 @@ export default function RelatorioVendasPage() {
           />
           <StatCard
             label="Pedidos no Período" value={String(stats.pedidos)}
-            sub={stats.avarPecas > 0 ? `+ ${stats.avarPecas} peça${stats.avarPecas !== 1 ? "s" : ""} avaria` : undefined}
+            sub={`${stats.concludedCount} concluídos · ${stats.pedidos - stats.concludedCount} em andamento`}
             icon={ShoppingBag} color="bg-blue-100 text-blue-700"
           />
           <StatCard
-            label="Peças Concluídas" value={String(stats.pecas)}
-            sub={stats.metros > 0 ? `+ ${stats.metros}m DTF` : undefined}
+            label="Peças no Período" value={String(stats.pecas)}
+            sub={stats.metros > 0 ? `+ ${stats.metros}m DTF` : "só pedidos concluídos"}
             icon={Package}    color="bg-purple-100 text-purple-700"
           />
           <StatCard
             label="Ticket Médio" value={stats.concludedCount > 0 ? fmtR(stats.ticket) : "—"}
             sub="pedidos concluídos"
             icon={TrendingUp}  color="bg-amber-100 text-amber-700"
-          />
-          <StatCard
-            label="Resultado s/ insumos"
-            value={stats.lucroTotal !== null ? fmtR(stats.lucroTotal) : "—"}
-            sub={stats.lucroTotal === null ? "Cadastre custo nos produtos" : "excl. costura e custos fixos"}
-            icon={Banknote}    color="bg-emerald-100 text-emerald-700"
-          />
-          <StatCard
-            label="Margem Média"
-            value={stats.margemMedia !== null ? `${stats.margemMedia.toFixed(1)}%` : "—"}
-            icon={BarChart2}   color={
-              stats.margemMedia === null ? "bg-gray-100 text-gray-400"
-              : stats.margemMedia >= 40  ? "bg-emerald-100 text-emerald-700"
-              : stats.margemMedia >= 20  ? "bg-amber-100 text-amber-700"
-              : "bg-red-100 text-red-700"
-            }
           />
         </div>
       )}
@@ -380,11 +364,16 @@ export default function RelatorioVendasPage() {
                   pagCls   = ""
                 }
 
+                const isConcluido  = o.status === "concluido"
+                const rowBaseCls   = isConcluido
+                  ? (isOpen ? "bg-emerald-50/60" : "bg-emerald-50/30 hover:bg-emerald-50/60")
+                  : (isOpen ? "bg-[#4361EE]/4"   : "opacity-60 hover:opacity-80 hover:bg-[#0F1E3C]/3")
+
                 return (
                   <React.Fragment key={key}>
                     <tr
                       onClick={() => hasItems && toggle(key)}
-                      className={`transition-colors ${hasItems ? "cursor-pointer" : ""} ${isOpen ? "bg-[#4361EE]/4" : "hover:bg-[#0F1E3C]/3"}`}
+                      className={`transition-all ${hasItems ? "cursor-pointer" : ""} ${rowBaseCls}`}
                     >
                       <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                       <td className="px-4 py-3.5">
@@ -408,7 +397,9 @@ export default function RelatorioVendasPage() {
                           <span className="text-xs text-[#0F1E3C]/25">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-right font-black text-[#0F1E3C] whitespace-nowrap">{fmtR(o.totalValue)}</td>
+                      <td className={`px-4 py-3.5 text-right font-black whitespace-nowrap ${isConcluido ? "text-[#0F1E3C]" : "text-[#0F1E3C]/40"}`}>
+                        {fmtR(o.totalValue)}
+                      </td>
                       <td className="px-4 py-3.5">
                         {hasItems && (
                           <ChevronRight size={13} className={`text-[#0F1E3C]/20 transition-transform ${isOpen ? "rotate-90 text-[#4361EE]" : ""}`} />

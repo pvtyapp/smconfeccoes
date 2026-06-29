@@ -37,7 +37,11 @@ export async function GET(req: Request) {
       FROM orders o
       LEFT JOIN wa_contacts c ON c.id = o.contact_id
       LEFT JOIN order_items oi ON oi.order_id = o.id
-      LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name)
+      LEFT JOIN LATERAL (
+        SELECT material_cost FROM products
+        WHERE LOWER(name) = LOWER(oi.product_name) AND status = 'active'
+        LIMIT 1
+      ) p ON true
       WHERE o.status != 'cancelado'
         AND o.source IN ('pdv', 'whatsapp', 'manual')
         ${orderDateCond}
