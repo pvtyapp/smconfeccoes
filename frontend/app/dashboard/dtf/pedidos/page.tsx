@@ -427,10 +427,15 @@ export default function DTFDashboardPage() {
                         {Number(b.metrosRestantes).toFixed(2)} m restantes
                       </span>
                     </div>
-                    <p className="text-[10px] text-[#0F1E3C]/30 mt-0.5">
-                      Bobina: {Number(b.tamanhoM).toFixed(0)} m
-                      {ultimoDesp != null && ` · Último desperdício: ${Number(ultimoDesp).toFixed(2)} m`}
-                    </p>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className="text-[10px] text-[#0F1E3C]/30">
+                        Bobina: {Number(b.tamanhoM).toFixed(0)} m
+                        {ultimoDesp != null && ` · Último desp.: ${Number(ultimoDesp).toFixed(1)} m`}
+                      </p>
+                      <p className="text-[10px] font-bold text-[#0F1E3C]/40">
+                        {b.pctUsado.toFixed(1)}% usada
+                      </p>
+                    </div>
                   </div>
 
                   {/* Form: Trocar bobina */}

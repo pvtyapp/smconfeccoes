@@ -27,12 +27,23 @@ type InsumoRelatorio = {
   pctDesperdicioMedio?: number | null
 }
 
+type FilmEficiencia = {
+  impressoraId: number
+  bobinas: number
+  totalConsumedM: number
+  totalProducedM: number
+  totalWasteM: number
+  desperdicoPct: number
+  eficienciaPct: number
+}
+
 type Relatorio = {
   pedidos: Pedido[]
   totalMetros: number
   totalReceita: number
   insumos: InsumoRelatorio[]
   custoCombinado: number | null
+  filmEficiencia: FilmEficiencia[]
 }
 
 type PeriodoKey = "7d" | "30d" | "90d" | "tudo"
@@ -189,6 +200,47 @@ export default function DTFRelatorioPage() {
               ))}
             </div>
           </div>
+
+          {/* Eficiência de film por impressora */}
+          {(data.filmEficiencia ?? []).length > 0 && (
+            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
+                <span className="text-sm font-bold text-[#0F1E3C]">Eficiência de Film — por Impressora</span>
+                <span className="text-[10px] text-gray-400">(histórico completo de bobinas)</span>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {(data.filmEficiencia ?? []).map(ef => {
+                  const ws = wasteStyle(ef.desperdicoPct)
+                  return (
+                    <div key={ef.impressoraId} className="px-5 py-4 grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Impressora</p>
+                        <p className="text-sm font-bold text-[#0F1E3C]">{ef.impressoraId}</p>
+                        <p className="text-[10px] text-gray-400">{ef.bobinas} bobina{ef.bobinas !== 1 ? "s" : ""}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Consumido</p>
+                        <p className="text-sm font-semibold text-[#0F1E3C]">{Number(ef.totalConsumedM).toFixed(1)} m</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Produzido</p>
+                        <p className="text-sm font-semibold text-[#0F1E3C]">{Number(ef.totalProducedM).toFixed(1)} m</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Desperdício</p>
+                        <p className={`text-sm font-bold ${ws.value}`}>{Number(ef.totalWasteM).toFixed(1)} m</p>
+                      </div>
+                      <div className={`rounded-xl px-3 py-2 border text-center ${ws.card}`}>
+                        <p className={`text-[10px] uppercase tracking-wider ${ws.label}`}>Eficiência</p>
+                        <p className={`text-xl font-black ${ws.value}`}>{Number(ef.eficienciaPct).toFixed(1)}%</p>
+                        <p className={`text-[9px] ${ws.label}`}>{Number(ef.desperdicoPct).toFixed(1)}% perdido</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Pedidos do período */}
           {data.pedidos.length > 0 && (

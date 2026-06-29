@@ -176,6 +176,21 @@ export async function GET(req: Request) {
       return { ...imp, insumos: ins, custoTotalInsumos, custoPorMetro }
     })
 
+    // Eficiência de film por impressora (todas as bobinas fechadas — all-time)
+    const { rows: filmEfRows } = await pool.query(`
+      SELECT impressora_id                                                       AS "impressoraId",
+             COUNT(*)::int                                                       AS bobinas,
+             SUM(tamanho_m)::float                                              AS "totalConsumedM",
+             SUM(metros_usados)::float                                          AS "totalProducedM",
+             SUM(desperdicio_m)::float                                          AS "totalWasteM",
+             (SUM(desperdicio_m) / NULLIF(SUM(tamanho_m), 0) * 100)::float     AS "desperdicoPct",
+             (SUM(metros_usados) / NULLIF(SUM(tamanho_m), 0) * 100)::float     AS "eficienciaPct"
+      FROM dtf_film_bobinas
+      WHERE fechada_em IS NOT NULL AND metros_usados IS NOT NULL
+      GROUP BY impressora_id
+      ORDER BY impressora_id
+    `)
+
     return NextResponse.json({
       pedidos,
       totalMetros,
@@ -183,6 +198,7 @@ export async function GET(req: Request) {
       insumos: insumosComCusto,
       custoCombinado: custoCombinado > 0 ? custoCombinado : null,
       impressoras,
+      filmEficiencia: filmEfRows,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
