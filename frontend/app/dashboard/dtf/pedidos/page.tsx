@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle, Info } from "lucide-react"
+import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle, Info, ChevronDown, ChevronUp, RotateCcw } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
@@ -17,6 +17,21 @@ type Pedido = {
 type InsumoSummary = {
   id: number; nome: string; unidade: string
   saldoAtual: number; alarmeQtd: number | null; lowStock: boolean
+}
+
+type FilmBobina = {
+  id: number
+  impressoraId: number
+  tamanhoM: number
+  abertaEm: string
+  metrosUsados: number
+  metrosRestantes: number
+  pctUsado: number
+  obs: string | null
+  historico: Array<{
+    id: number; tamanhoM: number; metrosUsados: number; desperdicioM: number
+    abertaEm: string; fechadaEm: string
+  }>
 }
 
 type ImpressoraInsumo = { insumoId: number; nome: string; unidade: string; quantidade: number; custo: number | null }
@@ -90,6 +105,13 @@ export default function DTFDashboardPage() {
   const [showTooltip, setShowTooltip] = useState(false)
   const tooltipRef = useRef<HTMLDivElement>(null)
 
+  const [filmBobinas,    setFilmBobinas]    = useState<FilmBobina[]>([])
+  const [filmAlertaM,    setFilmAlertaM]    = useState(80)
+  const [filmTrocaImp,   setFilmTrocaImp]   = useState<number | null>(null)
+  const [filmTrocaForm,  setFilmTrocaForm]  = useState({ tamanhoM: "100", obs: "" })
+  const [filmTrocando,   setFilmTrocando]   = useState(false)
+  const [filmHistOpen,   setFilmHistOpen]   = useState<number | null>(null)
+
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
     data: todayBR(),
@@ -113,14 +135,21 @@ export default function DTFDashboardPage() {
     if (r.ok) setInsumos(await r.json())
   }, [])
 
+  const loadFilm = useCallback(async () => {
+    const r = await fetch("/api/dtf/film-bobinas")
+    if (r.ok) setFilmBobinas(await r.json())
+  }, [])
+
   useEffect(() => { loadRelatorio() }, [loadRelatorio])
   useEffect(() => { loadInsumos() },   [loadInsumos])
+  useEffect(() => { loadFilm() },      [loadFilm])
   useEffect(() => {
     fetch("/api/dtf/preco").then(r => r.ok ? r.json() : null).then(d => {
       if (d?.precoMetro) setPrecoMetro(d.precoMetro)
     })
     fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
       if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+      if (d?.dtf_film_alerta_m)   setFilmAlertaM(Number(d.dtf_film_alerta_m) || 80)
     })
   }, [])
 
@@ -142,6 +171,23 @@ export default function DTFDashboardPage() {
       setShowForm(false)
       loadRelatorio()
     }
+  }
+
+  async function trocarBobina(impressoraId: number) {
+    setFilmTrocando(true)
+    await fetch("/api/dtf/film-bobinas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        impressoraId,
+        tamanhoM: parseFloat(filmTrocaForm.tamanhoM) || 100,
+        obs: filmTrocaForm.obs || null,
+      }),
+    })
+    setFilmTrocaImp(null)
+    setFilmTrocaForm({ tamanhoM: "100", obs: "" })
+    setFilmTrocando(false)
+    loadFilm()
   }
 
   async function excluir(id: number) {
@@ -325,6 +371,180 @@ export default function DTFDashboardPage() {
           </div>
         )}
       </section>
+
+      {/* ── Film Monitor ── */}
+      {numImpressoras >= 1 && (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <RotateCcw size={14} className="text-[#7C3AED]" />
+            <h2 className="text-xs font-bold text-[#7C3AED] uppercase tracking-widest">Film — Monitor por Impressora</h2>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filmBobinas.map(b => {
+              const isAlert    = b.metrosUsados >= filmAlertaM
+              const isCritical = b.metrosUsados >= (Number(b.tamanhoM) * 0.90)
+              const barColor   = isCritical ? "bg-red-500" : isAlert ? "bg-amber-400" : "bg-emerald-500"
+              const cardBorder = isCritical ? "border-red-200 bg-red-50/40" : isAlert ? "border-amber-200 bg-amber-50/30" : "border-[#0F1E3C]/8 bg-white"
+              const ultimoDesp = b.historico[0]?.desperdicioM
+
+              return (
+                <div key={b.id} className={`rounded-2xl border p-4 space-y-3 ${cardBorder}`}>
+                  {/* Header */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Printer size={12} className={isCritical ? "text-red-500" : isAlert ? "text-amber-500" : "text-[#7C3AED]"} />
+                      <span className="text-xs font-bold text-[#0F1E3C]">Impressora {b.impressoraId}</span>
+                      {isAlert && (
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isCritical ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                          {isCritical ? "CRÍTICO" : "ATENÇÃO"}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => { setFilmTrocaImp(b.impressoraId); setFilmTrocaForm({ tamanhoM: String(b.tamanhoM), obs: "" }) }}
+                      className="text-[10px] font-bold text-[#7C3AED] hover:underline"
+                    >
+                      Trocar bobina
+                    </button>
+                  </div>
+
+                  {/* Barra de progresso */}
+                  <div>
+                    <div className="h-2.5 w-full bg-[#0F1E3C]/8 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${barColor}`}
+                        style={{ width: `${Math.min(100, b.pctUsado)}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-[11px] font-bold text-[#0F1E3C]">
+                        {Number(b.metrosUsados).toFixed(2)} m usados
+                      </span>
+                      <span className={`text-[11px] font-bold ${isCritical ? "text-red-600" : isAlert ? "text-amber-600" : "text-[#0F1E3C]/50"}`}>
+                        {Number(b.metrosRestantes).toFixed(2)} m restantes
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[#0F1E3C]/30 mt-0.5">
+                      Bobina: {Number(b.tamanhoM).toFixed(0)} m
+                      {ultimoDesp != null && ` · Último desperdício: ${Number(ultimoDesp).toFixed(2)} m`}
+                    </p>
+                  </div>
+
+                  {/* Form: Trocar bobina */}
+                  {filmTrocaImp === b.impressoraId && (
+                    <div className="border-t border-[#7C3AED]/15 pt-3 space-y-2">
+                      <p className="text-[10px] font-bold text-[#7C3AED] uppercase tracking-wider">Nova Bobina</p>
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Tamanho (m)</label>
+                          <input
+                            type="number" min="1" step="1"
+                            value={filmTrocaForm.tamanhoM}
+                            onChange={e => setFilmTrocaForm(f => ({ ...f, tamanhoM: e.target.value }))}
+                            className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                          />
+                        </div>
+                        <div className="flex-[2]">
+                          <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Obs</label>
+                          <input
+                            type="text" placeholder="Fornecedor, lote..."
+                            value={filmTrocaForm.obs}
+                            onChange={e => setFilmTrocaForm(f => ({ ...f, obs: e.target.value }))}
+                            className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => trocarBobina(b.impressoraId)}
+                          disabled={filmTrocando}
+                          className="bg-[#7C3AED] text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-[#6D28D9] transition-colors disabled:opacity-50"
+                        >
+                          {filmTrocando ? "Salvando..." : "Confirmar troca"}
+                        </button>
+                        <button onClick={() => setFilmTrocaImp(null)} className="text-xs text-[#0F1E3C]/40 hover:text-[#0F1E3C]">
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Histórico accordion */}
+                  {b.historico.length > 0 && (
+                    <div className="border-t border-[#0F1E3C]/6 pt-2">
+                      <button
+                        onClick={() => setFilmHistOpen(filmHistOpen === b.id ? null : b.id)}
+                        className="flex items-center gap-1 text-[10px] text-[#0F1E3C]/35 hover:text-[#0F1E3C]/60 transition-colors"
+                      >
+                        {filmHistOpen === b.id ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                        {b.historico.length} bobina{b.historico.length !== 1 ? "s" : ""} anteriores
+                      </button>
+                      {filmHistOpen === b.id && (
+                        <div className="mt-2 space-y-1">
+                          {b.historico.slice(0, 6).map(h => (
+                            <div key={h.id} className="flex items-center justify-between text-[10px] text-[#0F1E3C]/50 py-1 border-b border-[#0F1E3C]/5 last:border-0">
+                              <span>{new Date(h.fechadaEm).toLocaleDateString("pt-BR")}</span>
+                              <span>{Number(h.metrosUsados).toFixed(2)} m usados</span>
+                              <span className={Number(h.desperdicioM) > 5 ? "text-red-500 font-bold" : "text-[#0F1E3C]/40"}>
+                                -{Number(h.desperdicioM).toFixed(2)} m perdidos
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Inicializar impressoras sem bobina */}
+          {Array.from({ length: numImpressoras }, (_, i) => i + 1)
+            .filter(n => !filmBobinas.some(b => b.impressoraId === n))
+            .length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {Array.from({ length: numImpressoras }, (_, i) => i + 1)
+                .filter(n => !filmBobinas.some(b => b.impressoraId === n))
+                .map(n => (
+                  <button key={n} onClick={() => { setFilmTrocaImp(n); setFilmTrocaForm({ tamanhoM: "100", obs: "" }) }}
+                    className="text-xs font-semibold text-[#7C3AED] border border-[#7C3AED]/30 px-3 py-1.5 rounded-xl hover:bg-[#7C3AED]/5 transition-colors">
+                    + Instalar bobina na Impressora {n}
+                  </button>
+                ))}
+            </div>
+          )}
+
+          {/* Form de instalação para impressoras sem bobina ativa */}
+          {filmTrocaImp !== null && !filmBobinas.some(b => b.impressoraId === filmTrocaImp) && (
+            <div className="bg-white border border-[#7C3AED]/20 rounded-2xl p-4 space-y-3">
+              <p className="text-xs font-bold text-[#7C3AED]">Instalar bobina na Impressora {filmTrocaImp}</p>
+              <div className="flex gap-3">
+                <div>
+                  <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Tamanho (m)</label>
+                  <input type="number" min="1" value={filmTrocaForm.tamanhoM}
+                    onChange={e => setFilmTrocaForm(f => ({ ...f, tamanhoM: e.target.value }))}
+                    className="w-24 border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"/>
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Obs</label>
+                  <input type="text" placeholder="Fornecedor, lote..." value={filmTrocaForm.obs}
+                    onChange={e => setFilmTrocaForm(f => ({ ...f, obs: e.target.value }))}
+                    className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"/>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => trocarBobina(filmTrocaImp!)} disabled={filmTrocando}
+                  className="bg-[#7C3AED] text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-[#6D28D9] disabled:opacity-50 transition-colors">
+                  {filmTrocando ? "Salvando..." : "Instalar"}
+                </button>
+                <button onClick={() => setFilmTrocaImp(null)} className="text-xs text-[#0F1E3C]/40">Cancelar</button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── Alerta estoque baixo ── */}
       {insumos.some(i => i.lowStock) && (

@@ -246,6 +246,11 @@ export default function PedidosPage() {
   const [selectedDtf,    setSelectedDtf]    = useState<DtfOrder | null>(null)
   const selectedDtfIdRef                    = useRef<number | null>(null)
   const [numImpressoras, setNumImpressoras] = useState(1)
+  const [filmBobinas,    setFilmBobinas]    = useState<Array<{
+    id: number; impressoraId: number; tamanhoM: number
+    metrosUsados: number; metrosRestantes: number; pctUsado: number
+  }>>([])
+  const [filmAlertaM,    setFilmAlertaM]    = useState(80)
 
   // History
   const [histPeriod,     setHistPeriod]     = useState<HistPeriod>("7d")
@@ -570,14 +575,21 @@ export default function PedidosPage() {
     setHistLoading(false)
   }, [histPeriod, histRangeStart, histRangeEnd])
 
+  const loadFilmBobinas = useCallback(async () => {
+    const r = await fetch("/api/dtf/film-bobinas")
+    if (r.ok) setFilmBobinas(await r.json())
+  }, [])
+
   useEffect(() => { loadDtf() }, [loadDtf])
+  useEffect(() => { loadFilmBobinas() }, [loadFilmBobinas])
   useEffect(() => {
-    const t = setInterval(loadDtf, 30_000)
+    const t = setInterval(() => { loadDtf(); loadFilmBobinas() }, 30_000)
     return () => clearInterval(t)
-  }, [loadDtf])
+  }, [loadDtf, loadFilmBobinas])
   useEffect(() => {
     fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
       if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+      if (d?.dtf_film_alerta_m)   setFilmAlertaM(Number(d.dtf_film_alerta_m) || 80)
     })
   }, [])
   useEffect(() => { if (histOpen) loadHistorico() }, [histOpen, loadHistorico])
@@ -2057,6 +2069,43 @@ export default function PedidosPage() {
               <Printer size={13} className="text-[#7C3AED]" />
               <p className="text-xs font-bold text-[#7C3AED] uppercase tracking-widest">DTF</p>
             </div>
+
+            {/* ── Film Alert ── */}
+            {filmBobinas.filter(b => b.metrosUsados >= filmAlertaM).map(b => {
+              const restantes   = Number(b.metrosRestantes)
+              const isCritical  = b.pctUsado >= 90
+              // pedidos triagem ainda sem impressora ou em_producao nessa impressora
+              const pending = dtfOrders.filter(o =>
+                (o.status === "triagem" && o.impressoraId == null) ||
+                (o.status === "em_producao" && o.impressoraId === b.impressoraId)
+              )
+              const totalPending = pending.reduce((s, o) => s + Number(o.metros ?? 0), 0)
+              const cabe         = totalPending <= restantes
+              return (
+                <div key={b.impressoraId} className={`flex items-start gap-3 rounded-xl px-4 py-3 mb-3 border ${
+                  isCritical ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"
+                }`}>
+                  <AlertCircle size={14} className={`flex-shrink-0 mt-0.5 ${isCritical ? "text-red-500" : "text-amber-500"}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-xs font-bold ${isCritical ? "text-red-700" : "text-amber-700"}`}>
+                      Impressora {b.impressoraId} — {restantes.toFixed(1)} m restantes de film
+                    </p>
+                    {pending.length > 0 ? (
+                      <p className={`text-[11px] mt-0.5 ${isCritical ? "text-red-600" : "text-amber-600"}`}>
+                        Fila pendente: {pending.map(o => `#${o.number} (${Number(o.metros ?? 0).toFixed(1)}m)`).join(" + ")} = {totalPending.toFixed(1)} m
+                        {" "}
+                        <span className={`font-bold ${cabe ? "text-emerald-600" : "text-red-600"}`}>
+                          {cabe ? "✓ cabe" : "✗ não cabe — trocar bobina antes"}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-amber-500 mt-0.5">Nenhum pedido pendente na fila.</p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+
             <div className="overflow-x-auto">
               <div className="flex gap-3 pb-2" style={{ minWidth: "max-content" }}>
                 {DTF_COLS.map(col => {

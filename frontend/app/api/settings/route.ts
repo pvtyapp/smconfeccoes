@@ -12,6 +12,7 @@ const ALLOWED_KEYS = new Set([
   "ausente_d15_msg", "ausente_d30_msg", "ausente_d45_msg",
   "controle_estoque_ativo", "reserva_expiry_hours", "print_receipt_printer",
   "dtf_num_impressoras",
+  "dtf_film_alerta_m", "dtf_film_tamanho_padrao",
 ])
 
 export async function GET() {
