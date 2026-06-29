@@ -15,7 +15,7 @@ export async function POST(
 
     const { rows } = await client.query(`
       SELECT o.id, o.number, o.status, o.total_value, o.contact_id,
-             c.jid, c.name AS "contactName"
+             COALESCE(c.phone_jid, c.jid) AS jid, c.name AS "contactName"
       FROM orders o
       LEFT JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.id = $1

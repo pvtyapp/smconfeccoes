@@ -169,6 +169,7 @@ export default function RelatorioVendasPage() {
 
     if (sourceFilter !== "avarias") {
       for (const o of orders) {
+        if (sourceFilter === "manual" && o.number.startsWith("COB-")) continue
         if (sourceFilter === "all" || o.source === sourceFilter)
           list.push({ kind: "order", data: o })
       }
@@ -191,11 +192,12 @@ export default function RelatorioVendasPage() {
     const avars   = entries.filter(e => e.kind === "avaria").map(e => (e as { kind: "avaria"; data: AvariaRecord }).data)
     const concluded = ords.filter(o => o.status === "concluido")
 
-    const totalR    = concluded.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
-    const pecas     = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
-    const metros    = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
-    const avarPecas = avars.reduce((s, a) => s + a.qty, 0)
-    const ticket    = concluded.length > 0 ? totalR / concluded.length : 0
+    const totalR         = concluded.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    const pecas          = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
+    const metros         = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
+    const avarPecas      = avars.reduce((s, a) => s + a.qty, 0)
+    const avarProductCount = new Set(avars.map(a => a.productName)).size
+    const ticket         = concluded.length > 0 ? totalR / concluded.length : 0
 
     let custoTotal = 0
     let custoKnown = false
@@ -210,7 +212,7 @@ export default function RelatorioVendasPage() {
     const lucroTotal  = custoKnown ? totalR - custoTotal : null
     const margemMedia = (custoKnown && totalR > 0) ? ((totalR - custoTotal) / totalR) * 100 : null
 
-    return { totalR, pedidos: ords.length, concludedCount: concluded.length, pecas, metros, avarPecas, ticket, lucroTotal, margemMedia }
+    return { totalR, pedidos: ords.length, concludedCount: concluded.length, pecas, metros, avarPecas, avarProductCount, ticket, lucroTotal, margemMedia }
   }, [entries])
 
   function toggle(key: string) {
@@ -277,44 +279,54 @@ export default function RelatorioVendasPage() {
       </div>
 
       {/* Stats — monetary KPIs only count concluído orders */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <StatCard
-          label="Receita Confirmada" value={fmtR(stats.totalR)}
-          sub={`${stats.concludedCount} concluído${stats.concludedCount !== 1 ? "s" : ""}`}
-          icon={DollarSign}  color="bg-green-100 text-green-700"
-        />
-        <StatCard
-          label="Pedidos no Período" value={String(stats.pedidos)}
-          sub={stats.avarPecas > 0 ? `+ ${stats.avarPecas} peça${stats.avarPecas !== 1 ? "s" : ""} avaria` : undefined}
-          icon={ShoppingBag} color="bg-blue-100 text-blue-700"
-        />
-        <StatCard
-          label="Peças Concluídas" value={String(stats.pecas)}
-          sub={stats.metros > 0 ? `+ ${stats.metros}m DTF` : undefined}
-          icon={Package}    color="bg-purple-100 text-purple-700"
-        />
-        <StatCard
-          label="Ticket Médio" value={stats.concludedCount > 0 ? fmtR(stats.ticket) : "—"}
-          sub="pedidos concluídos"
-          icon={TrendingUp}  color="bg-amber-100 text-amber-700"
-        />
-        <StatCard
-          label="Lucro Bruto"
-          value={stats.lucroTotal !== null ? fmtR(stats.lucroTotal) : "—"}
-          sub={stats.lucroTotal === null ? "Cadastre custo nos produtos" : undefined}
-          icon={Banknote}    color="bg-emerald-100 text-emerald-700"
-        />
-        <StatCard
-          label="Margem Média"
-          value={stats.margemMedia !== null ? `${stats.margemMedia.toFixed(1)}%` : "—"}
-          icon={BarChart2}   color={
-            stats.margemMedia === null ? "bg-gray-100 text-gray-400"
-            : stats.margemMedia >= 40  ? "bg-emerald-100 text-emerald-700"
-            : stats.margemMedia >= 20  ? "bg-amber-100 text-amber-700"
-            : "bg-red-100 text-red-700"
-          }
-        />
-      </div>
+      {sourceFilter === "avarias" ? (
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard label="Peças em Avaria" value={String(stats.avarPecas)}
+            sub={`${stats.avarProductCount} produto${stats.avarProductCount !== 1 ? "s" : ""}`}
+            icon={Package} color="bg-amber-100 text-amber-700" />
+          <StatCard label="Entradas registradas" value={String(entries.length)}
+            icon={ShoppingBag} color="bg-purple-100 text-purple-700" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <StatCard
+            label="Receita Confirmada" value={fmtR(stats.totalR)}
+            sub={`${stats.concludedCount} concluído${stats.concludedCount !== 1 ? "s" : ""}`}
+            icon={DollarSign}  color="bg-green-100 text-green-700"
+          />
+          <StatCard
+            label="Pedidos no Período" value={String(stats.pedidos)}
+            sub={stats.avarPecas > 0 ? `+ ${stats.avarPecas} peça${stats.avarPecas !== 1 ? "s" : ""} avaria` : undefined}
+            icon={ShoppingBag} color="bg-blue-100 text-blue-700"
+          />
+          <StatCard
+            label="Peças Concluídas" value={String(stats.pecas)}
+            sub={stats.metros > 0 ? `+ ${stats.metros}m DTF` : undefined}
+            icon={Package}    color="bg-purple-100 text-purple-700"
+          />
+          <StatCard
+            label="Ticket Médio" value={stats.concludedCount > 0 ? fmtR(stats.ticket) : "—"}
+            sub="pedidos concluídos"
+            icon={TrendingUp}  color="bg-amber-100 text-amber-700"
+          />
+          <StatCard
+            label="Resultado s/ insumos"
+            value={stats.lucroTotal !== null ? fmtR(stats.lucroTotal) : "—"}
+            sub={stats.lucroTotal === null ? "Cadastre custo nos produtos" : "excl. costura e custos fixos"}
+            icon={Banknote}    color="bg-emerald-100 text-emerald-700"
+          />
+          <StatCard
+            label="Margem Média"
+            value={stats.margemMedia !== null ? `${stats.margemMedia.toFixed(1)}%` : "—"}
+            icon={BarChart2}   color={
+              stats.margemMedia === null ? "bg-gray-100 text-gray-400"
+              : stats.margemMedia >= 40  ? "bg-emerald-100 text-emerald-700"
+              : stats.margemMedia >= 20  ? "bg-amber-100 text-amber-700"
+              : "bg-red-100 text-red-700"
+            }
+          />
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
@@ -363,6 +375,9 @@ export default function RelatorioVendasPage() {
                 } else if (isPrazo && isPago) {
                   pagLabel = "Prazo · Pago"
                   pagCls   = "text-blue-700 bg-blue-50"
+                } else if (o.status !== "concluido") {
+                  pagLabel = "—"
+                  pagCls   = ""
                 }
 
                 return (
@@ -387,7 +402,11 @@ export default function RelatorioVendasPage() {
                       </td>
                       <td className="px-4 py-3.5 text-center text-xs text-[#0F1E3C]/60">{pecasLabel}</td>
                       <td className="px-4 py-3.5 text-center">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${pagCls}`}>{pagLabel}</span>
+                        {pagLabel !== "—" ? (
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${pagCls}`}>{pagLabel}</span>
+                        ) : (
+                          <span className="text-xs text-[#0F1E3C]/25">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5 text-right font-black text-[#0F1E3C] whitespace-nowrap">{fmtR(o.totalValue)}</td>
                       <td className="px-4 py-3.5">

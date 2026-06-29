@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import {
   RefreshCw, CheckCircle, AlertCircle, Clock, DollarSign,
   Plus, X, Loader2, Search, TrendingDown, ChevronUp, ChevronDown,
-  Banknote, CreditCard, Smartphone, ArrowRightLeft, Bell,
+  Banknote, CreditCard, Smartphone, ArrowRightLeft, Bell, XCircle,
 } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 
@@ -66,6 +66,7 @@ export default function ClientesAReceberPage() {
   const [sort,      setSort]      = useState<{ key: SortKey; dir: SortDir }>({ key: "dueDate", dir: "asc" })
   const [baixa,     setBaixa]     = useState<PendingOrder | null>(null)
   const [showModal, setShowModal] = useState(false)
+  const [canceling, setCanceling] = useState<PendingOrder | null>(null)
 
   const today    = todayBR()
   const weekAhead = subDaysBR(-7)
@@ -86,6 +87,9 @@ export default function ClientesAReceberPage() {
   const overdueCount   = orders.filter(o => o.dueDate && o.dueDate < today).length
   const todayTotal     = orders.filter(o => o.dueDate === today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
   const todayCount     = orders.filter(o => o.dueDate === today).length
+  const semanaOrders   = orders.filter(o => o.dueDate && o.dueDate > today && o.dueDate <= weekAhead)
+  const semanaTotal    = semanaOrders.reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const semanaCount    = semanaOrders.length
 
   // ── Filter + Search + Sort ────────────────────────────────────────────────
   const filtered = orders
@@ -116,6 +120,16 @@ export default function ClientesAReceberPage() {
       }
       return (a.contactName ?? "").localeCompare(b.contactName ?? "") * dir
     })
+
+  async function handleCancelConfirm(order: PendingOrder) {
+    await fetch(`/api/orders/${order.id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "cancelado", actor: "dashboard" }),
+    })
+    setCanceling(null)
+    await load()
+  }
 
   function toggleSort(key: SortKey) {
     setSort(prev => prev.key === key
@@ -163,7 +177,7 @@ export default function ClientesAReceberPage() {
       </div>
 
       {/* ── Stats ───────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-7 h-7 rounded-xl bg-[#4361EE]/10 flex items-center justify-center">
@@ -195,6 +209,17 @@ export default function ClientesAReceberPage() {
           </div>
           <p className="text-2xl font-black text-amber-600">{fmtCurrency(todayTotal)}</p>
           <p className="text-xs text-amber-500 mt-1">{todayCount} {todayCount === 1 ? "cobrança" : "cobranças"}</p>
+        </div>
+
+        <div className={`bg-white rounded-2xl border shadow-sm p-5 ${semanaCount > 0 ? "border-blue-200 bg-blue-50/30" : "border-[#0F1E3C]/8"}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-7 h-7 rounded-xl bg-blue-100 flex items-center justify-center">
+              <AlertCircle size={14} className="text-blue-500" />
+            </div>
+            <span className="text-xs font-semibold text-blue-600 uppercase tracking-wider">Próximos 7d</span>
+          </div>
+          <p className="text-2xl font-black text-blue-600">{fmtCurrency(semanaTotal)}</p>
+          <p className="text-xs text-blue-500 mt-1">{semanaCount} {semanaCount === 1 ? "cobrança" : "cobranças"}</p>
         </div>
       </div>
 
@@ -326,7 +351,13 @@ export default function ClientesAReceberPage() {
                   </div>
 
                   {/* Ação */}
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setCanceling(o)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#0F1E3C]/12 text-[#0F1E3C]/40 hover:border-red-300 hover:text-red-500 hover:bg-red-50 text-xs font-bold transition-colors"
+                    >
+                      <X size={11} /> Cancelar
+                    </button>
                     <button
                       onClick={() => setBaixa(o)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-xs font-bold transition-colors"
@@ -358,6 +389,15 @@ export default function ClientesAReceberPage() {
           order={baixa}
           onClose={() => setBaixa(null)}
           onSuccess={async () => { setBaixa(null); await load() }}
+        />
+      )}
+
+      {/* ── Modal Cancelar Cobrança ─────────────────────────────────────────── */}
+      {canceling && (
+        <CancelarModal
+          order={canceling}
+          onClose={() => setCanceling(null)}
+          onConfirm={() => handleCancelConfirm(canceling)}
         />
       )}
 
@@ -667,6 +707,57 @@ function NovaCobrancaModal({ onClose, onSuccess }: { onClose: () => void; onSucc
                 className="flex-1 flex items-center justify-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white rounded-xl py-2.5 text-sm font-bold disabled:opacity-60 transition-colors">
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 Criar Cobrança
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── CancelarModal ────────────────────────────────────────────────────────────
+
+function CancelarModal({
+  order, onClose, onConfirm,
+}: {
+  order: PendingOrder; onClose: () => void; onConfirm: () => void
+}) {
+  const [saving, setSaving] = useState(false)
+
+  async function confirm() {
+    setSaving(true)
+    try { await onConfirm() } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
+            <div className="flex items-center gap-2">
+              <XCircle size={18} className="text-red-500" />
+              <h2 className="text-base font-bold text-[#0F1E3C]">Cancelar Cobrança</h2>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40"><X size={16} /></button>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="rounded-xl bg-red-50 border border-red-100 p-4">
+              <p className="text-sm font-bold text-[#0F1E3C]">{order.number} · {order.contactName || "Sem nome"}</p>
+              <p className="text-xs text-[#0F1E3C]/50 mt-0.5">{fmtCurrency(order.totalValue)}</p>
+            </div>
+            <p className="text-sm text-[#0F1E3C]/60">
+              Tem certeza? O pedido será marcado como <strong>cancelado</strong> e sairá da lista de cobranças.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
+                Voltar
+              </button>
+              <button onClick={confirm} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white rounded-xl py-2.5 text-sm font-bold disabled:opacity-60 transition-colors">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                {saving ? "Cancelando..." : "Confirmar Cancelamento"}
               </button>
             </div>
           </div>

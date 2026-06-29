@@ -49,8 +49,7 @@ function getPeriodDates(period: string, rangeStart: string, rangeEnd: string): [
 function fmtR(v: number | string) { return `R$ ${Number(v).toFixed(2).replace(".", ",")}` }
 
 function isSewingCost(c: OpCostRow): boolean {
-  const cat = c.category.toLowerCase()
-  return cat.includes("costura") || cat.includes("mão de obra") || cat.includes("salario") || cat.includes("salário")
+  return c.category === "Custo de Costura"
 }
 
 function buildProducts(orders: OrderRow[], variantCosts: VarCostRow[]): ProductCostItem[] {

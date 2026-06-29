@@ -4,8 +4,11 @@ import { useState, useEffect, useCallback } from "react"
 import MetricCard from "@/components/cards/MetricCard"
 import { calcInventoryMetrics, calcMonthlyOperationalCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
 import type { OperationalCost, InventoryMetric } from "@/lib/types"
-import { Factory, Package } from "lucide-react"
+import { Factory, Package, Receipt, DollarSign, AlertCircle, Clock } from "lucide-react"
+import Link from "next/link"
 import { todayBR, subDaysBR } from "@/lib/tz"
+
+type PendingOrder = { id: number; totalValue: number | null; dueDate: string | null }
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type PeriodKey = "hoje" | "ontem" | "7d" | "15d" | "30d" | "60d" | "range"
@@ -84,17 +87,27 @@ export default function DashboardPage() {
   const [metrics,      setMetrics]      = useState<InventoryMetric[]>([])
   const [stockLoading, setStockLoading] = useState(true)
 
-  // Load stock once on mount
+  // Receivables summary
+  const [receivables, setReceivables] = useState<PendingOrder[]>([])
+
+  // Raw material valuation
+  const [rawMatCost, setRawMatCost] = useState<number | null>(null)
+
+  // Load stock + receivables + raw material valuation once on mount
   useEffect(() => {
     Promise.all([
       fetch("/api/stock/balance").then(r => r.json()),
       fetch("/api/operational-costs").then(r => r.json()),
-    ]).then(([bal, c]) => {
+      fetch("/api/clientes-a-receber").then(r => r.json()),
+      fetch("/api/stock-valuation").then(r => r.ok ? r.json() : null),
+    ]).then(([bal, c, rec, val]) => {
       const b: BalanceRow[] = Array.isArray(bal) ? bal : []
       const cs: OperationalCost[] = Array.isArray(c) ? c : []
       setBalance(b)
       setCosts(cs)
       setMetrics(calcInventoryMetrics(b, calcMonthlyOperationalCost(cs)))
+      setReceivables(Array.isArray(rec) ? rec : [])
+      if (val?.rawMaterials?.totalCost != null) setRawMatCost(val.rawMaterials.totalCost)
     }).finally(() => setStockLoading(false))
   }, [])
 
@@ -112,6 +125,18 @@ export default function DashboardPage() {
   }, [period, rangeStart, rangeEnd])
 
   useEffect(() => { loadProd() }, [loadProd])
+
+  // Derived stock valuation (from existing balance)
+  const capitalProdutos  = balance.reduce((s, r) => s + r.currentStock * (Number(r.costPrice) || 0), 0)
+  const receitaPotencial = balance.reduce((s, r) => s + r.currentStock * (Number(r.salePrice) || 0), 0)
+
+  // Derived receivables
+  const today           = todayBR()
+  const recTotal        = receivables.reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const recOverdueTotal = receivables.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const recOverdueCount = receivables.filter(o => o.dueDate && o.dueDate < today).length
+  const recTodayTotal   = receivables.filter(o => o.dueDate === today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const recTodayCount   = receivables.filter(o => o.dueDate === today).length
 
   // Derived stock values
   const opCost     = calcMonthlyOperationalCost(costs)
@@ -243,6 +268,57 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {/* ── RECEBIMENTOS ── */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Receipt size={14} className="text-[#0F1E3C]/35"/>
+            <h2 className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Recebimentos Pendentes</h2>
+          </div>
+          <Link href="/dashboard/clientes-a-receber" className="text-xs font-semibold text-[#4361EE] hover:underline">
+            Ver todos →
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-4 flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-[#4361EE]/10 flex items-center justify-center flex-shrink-0">
+              <DollarSign size={16} className="text-[#4361EE]" />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Total a Receber</p>
+              <p className="text-2xl font-black text-[#0F1E3C] mt-0.5 leading-none">
+                {`R$ ${recTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+              </p>
+              <p className="text-[10px] text-[#0F1E3C]/40 mt-0.5">{receivables.length} cobranças pendentes</p>
+            </div>
+          </div>
+          <div className={`bg-white rounded-2xl border shadow-sm p-4 flex items-start gap-3 ${recOverdueCount > 0 ? "border-red-200 bg-red-50/30" : "border-[#0F1E3C]/8"}`}>
+            <div className="w-9 h-9 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
+              <AlertCircle size={16} className="text-red-500" />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-red-500">Vencidos</p>
+              <p className="text-2xl font-black text-red-600 mt-0.5 leading-none">
+                {`R$ ${recOverdueTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+              </p>
+              <p className="text-[10px] text-red-400 mt-0.5">{recOverdueCount} {recOverdueCount === 1 ? "cobrança" : "cobranças"}</p>
+            </div>
+          </div>
+          <div className={`bg-white rounded-2xl border shadow-sm p-4 flex items-start gap-3 ${recTodayCount > 0 ? "border-amber-200 bg-amber-50/30" : "border-[#0F1E3C]/8"}`}>
+            <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+              <Clock size={16} className="text-amber-500" />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">Vencem Hoje</p>
+              <p className="text-2xl font-black text-amber-600 mt-0.5 leading-none">
+                {`R$ ${recTodayTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+              </p>
+              <p className="text-[10px] text-amber-500 mt-0.5">{recTodayCount} {recTodayCount === 1 ? "cobrança" : "cobranças"}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── ESTOQUE (sempre atual) ── */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
@@ -251,12 +327,12 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <MetricCard title="Total em estoque"   value={`${totalStock} peças`} />
-          <MetricCard title="Custo op./mês"       value={formatCurrency(opCost)} color="blue" />
-          <MetricCard title="Variações ativas"    value={balance.length} />
-          <MetricCard title="Variações críticas"  value={critical.length} color={critical.length > 0 ? "red" : "default"} />
-          <MetricCard title="Produtos parados"    value={stopped.length} color={stopped.length > 0 ? "purple" : "default"} />
-          <MetricCard title="Sugestões produção"  value={toProduced.length} color={toProduced.length > 0 ? "yellow" : "default"} />
+          <MetricCard title="Total em estoque"     value={`${totalStock} peças`} />
+          <MetricCard title="Custo op./mês"        value={formatCurrency(opCost)} color="blue" />
+          <MetricCard title="Capital em produtos"  value={formatCurrency(capitalProdutos)} color="blue" />
+          <MetricCard title="Capital em insumos"   value={rawMatCost !== null ? formatCurrency(rawMatCost) : "—"} />
+          <MetricCard title="Receita potencial"    value={formatCurrency(receitaPotencial)} color="yellow" />
+          <MetricCard title="Variações críticas"   value={critical.length} color={critical.length > 0 ? "red" : "default"} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

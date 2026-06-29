@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { todayBR } from "@/lib/tz"
 import { X, Search, ChevronRight, ChevronLeft, User, Plus, Minus, Wrench, Package, Check, Calendar, FileText } from "lucide-react"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -655,7 +656,7 @@ export default function NovoPedidoModal({ onClose, onSuccess }: Props) {
                   type="date"
                   value={deliveryDate}
                   onChange={e => setDeliveryDate(e.target.value)}
-                  min={new Date().toISOString().split("T")[0]}
+                  min={todayBR()}
                   className="w-full px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                 />
               </div>

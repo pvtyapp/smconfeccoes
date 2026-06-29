@@ -106,7 +106,7 @@ export async function POST(
         const { rows: allReservations } = await pool.query(`
           SELECT pr.id, pr.contact_id, pr.variant_id, pr.qty,
                  pv.color, pv.size, p.name AS product_name,
-                 c.jid, c.name AS contact_name
+                 COALESCE(c.phone_jid, c.jid) AS jid, c.name AS contact_name
           FROM product_reservations pr
           JOIN product_variants pv ON pv.id = pr.variant_id
           JOIN products p          ON p.id  = pv.product_id

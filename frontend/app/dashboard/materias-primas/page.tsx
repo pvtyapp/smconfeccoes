@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
+import { todayBR } from "@/lib/tz"
 import {
   Plus, X, Check, Layers, ChevronDown, ChevronUp,
   Package, ChevronRight, AlertCircle, Info, Pencil, Trash2, Calendar,
@@ -1016,14 +1017,14 @@ export default function MateriasPrimasPage() {
 
       {/* Histórico */}
       {(() => {
-        const TODAY = new Date()
-        function daysAgo(n: number) { return new Date(TODAY.getTime() - n * 86400000) }
+        const todayStr = todayBR()
+        const NOW = new Date()
+        function daysAgo(n: number) { return new Date(NOW.getTime() - n * 86400000) }
         function fmtDate(s: string) {
           return new Date(s + "T00:00:00").toLocaleDateString("pt-BR", { day:"2-digit", month:"short" }).replace(".", "")
         }
         function inPeriod(date: string) {
           const d = new Date(date + "T00:00:00")
-          const todayStr = TODAY.toISOString().slice(0, 10)
           if (periodo === "hoje")  return date === todayStr
           if (periodo === "7d")    return d >= daysAgo(7)
           if (periodo === "30d")   return d >= daysAgo(30)

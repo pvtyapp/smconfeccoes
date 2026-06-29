@@ -1,11 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Plus, Trash2, Loader2 } from "lucide-react"
+import { Plus, Trash2, Loader2, Pencil, Check, X } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
 import { formatCurrency } from "@/lib/calculations"
+import { todayBR } from "@/lib/tz"
 
-const CATEGORIES = ["Linhas", "Lanche", "Frete", "Embalagem", "Material", "Manutenção", "Outros"]
+const CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
 const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 
 type VariableCost = {
@@ -17,9 +18,11 @@ type VariableCost = {
   notes: string | null
 }
 
-const today = new Date()
-const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`
-const formInit = { description: "", category: "", amount: "", costDate: today.toISOString().slice(0, 10), notes: "" }
+type EditForm = { id: number; description: string; category: string; amount: string; costDate: string; notes: string }
+
+function getFormInit() {
+  return { description: "", category: "", amount: "", costDate: todayBR(), notes: "" }
+}
 
 function monthLabel(m: string) {
   const [y, mo] = m.split("-")
@@ -27,13 +30,15 @@ function monthLabel(m: string) {
 }
 
 export default function CustoVariavelPage() {
-  const [costs, setCosts] = useState<VariableCost[]>([])
-  const [month, setMonth] = useState(currentMonth)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [costs,    setCosts]    = useState<VariableCost[]>([])
+  const [month,    setMonth]    = useState(() => todayBR().slice(0, 7))
+  const [loading,  setLoading]  = useState(true)
+  const [saving,   setSaving]   = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState(formInit)
-  const [error, setError] = useState("")
+  const [form,     setForm]     = useState(getFormInit)
+  const [error,    setError]    = useState("")
+  const [editing,  setEditing]  = useState<EditForm | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
 
   async function load(m: string) {
     setLoading(true)
@@ -65,7 +70,7 @@ export default function CustoVariavelPage() {
       })
       if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
       setShowForm(false)
-      setForm(formInit)
+      setForm(getFormInit())
       const entryMonth = form.costDate.slice(0, 7)
       setMonth(entryMonth)
       await load(entryMonth)
@@ -77,8 +82,34 @@ export default function CustoVariavelPage() {
   }
 
   async function handleDelete(id: number) {
+    if (!confirm("Remover este lançamento? Essa ação não tem volta.")) return
     await fetch(`/api/variable-costs/${id}`, { method: "DELETE" })
     await load(month)
+  }
+
+  async function handleSave(id: number) {
+    if (!editing) return
+    setSavingEdit(true)
+    try {
+      const res = await fetch(`/api/variable-costs/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: editing.description || null,
+          category: editing.category || null,
+          amount: editing.amount ? Number(editing.amount) : null,
+          costDate: editing.costDate || null,
+          notes: editing.notes || null,
+        }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro") }
+      setEditing(null)
+      await load(month)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao salvar")
+    } finally {
+      setSavingEdit(false)
+    }
   }
 
   const total = costs.reduce((s, c) => s + Number(c.amount), 0)
@@ -172,22 +203,70 @@ export default function CustoVariavelPage() {
             <tbody className="divide-y divide-[#0F1E3C]/4">
               {costs.length === 0 ? (
                 <tr><td colSpan={6} className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum lançamento em {monthLabel(month)}</td></tr>
-              ) : costs.map((c) => (
-                <tr key={c.id} className="hover:bg-[#F4F6FB] transition-colors">
-                  <td className="px-5 py-3 text-[#0F1E3C]/60 whitespace-nowrap">
-                    {new Date(c.costDate + "T12:00:00").toLocaleDateString("pt-BR")}
-                  </td>
-                  <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{c.description}</td>
-                  <td className="px-5 py-3">
-                    <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-amber-100 text-amber-700">{c.category}</span>
-                  </td>
-                  <td className="px-5 py-3 font-bold text-[#4361EE]">{formatCurrency(Number(c.amount))}</td>
-                  <td className="px-5 py-3 text-[#0F1E3C]/40 text-xs">{c.notes ?? "—"}</td>
-                  <td className="px-5 py-3">
-                    <button onClick={() => handleDelete(c.id)} className="text-[#0F1E3C]/30 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
-                  </td>
-                </tr>
-              ))}
+              ) : costs.map((c) =>
+                editing?.id === c.id ? (
+                  <tr key={c.id} className="bg-[#F4F6FB]">
+                    <td className="px-3 py-2 w-32">
+                      <input type="date" value={editing.costDate} onChange={e => setEditing({ ...editing, costDate: e.target.value })}
+                        className="w-full border border-[#0F1E3C]/15 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })}
+                        className="w-full border border-[#0F1E3C]/15 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <select value={editing.category} onChange={e => setEditing({ ...editing, category: e.target.value })}
+                        className="w-full border border-[#0F1E3C]/15 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30">
+                        {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2 w-28">
+                      <input type="number" step="0.01" value={editing.amount} onChange={e => setEditing({ ...editing, amount: e.target.value })}
+                        className="w-full border border-[#0F1E3C]/15 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input value={editing.notes} onChange={e => setEditing({ ...editing, notes: e.target.value })} placeholder="Obs."
+                        className="w-full border border-[#0F1E3C]/15 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => handleSave(c.id)} disabled={savingEdit}
+                          className="p-1.5 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors disabled:opacity-50">
+                          {savingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                        </button>
+                        <button onClick={() => setEditing(null)}
+                          className="p-1.5 rounded-lg bg-[#0F1E3C]/8 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/15 transition-colors">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={c.id} className="hover:bg-[#F4F6FB] transition-colors group">
+                    <td className="px-5 py-3 text-[#0F1E3C]/60 whitespace-nowrap">
+                      {new Date(c.costDate + "T12:00:00").toLocaleDateString("pt-BR")}
+                    </td>
+                    <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{c.description}</td>
+                    <td className="px-5 py-3">
+                      <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-amber-100 text-amber-700">{c.category}</span>
+                    </td>
+                    <td className="px-5 py-3 font-bold text-[#4361EE]">{formatCurrency(Number(c.amount))}</td>
+                    <td className="px-5 py-3 text-[#0F1E3C]/40 text-xs">{c.notes ?? "—"}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => setEditing({ id: c.id, description: c.description, category: c.category, amount: String(c.amount), costDate: c.costDate, notes: c.notes ?? "" })}
+                          className="p-1.5 rounded-lg text-[#0F1E3C]/30 hover:text-[#4361EE] hover:bg-[#4361EE]/8 transition-colors">
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded-lg text-[#0F1E3C]/30 hover:text-red-500 hover:bg-red-50 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              )}
             </tbody>
             {costs.length > 0 && (
               <tfoot>
