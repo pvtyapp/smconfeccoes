@@ -210,27 +210,6 @@ export default function SettingsPage() {
                 Ir para Produtos →
               </a>
             </div>
-            <div>
-              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2 block">Quantidade de impressoras</label>
-              <div className="flex gap-2">
-                {["1", "2", "3", "4"].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => set("dtf_num_impressoras", n)}
-                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${
-                      (settings.dtf_num_impressoras ?? "1") === n
-                        ? "bg-[#7C3AED] text-white border-[#7C3AED]"
-                        : "bg-[#F4F6FB] text-[#0F1E3C]/50 border-transparent hover:text-[#0F1E3C]"
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">
-                Com mais de 1 impressora, o operador seleciona qual está produzindo cada pedido. Os metros são somados por impressora no relatório.
-              </p>
-            </div>
           </section>
 
           {/* Armazenamento */}

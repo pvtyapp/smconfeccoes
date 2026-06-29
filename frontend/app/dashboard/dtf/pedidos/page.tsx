@@ -160,17 +160,37 @@ export default function DTFDashboardPage() {
         </div>
 
         <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">
-            {PERIOD_OPTIONS.map(opt => (
-              <button key={opt.key} onClick={() => setPeriod(opt.key)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  period === opt.key
-                    ? "bg-[#4361EE] text-white shadow-sm"
-                    : "text-[#0F1E3C]/50 hover:text-[#0F1E3C] hover:bg-white/60"
-                }`}>
-                {opt.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-white border border-[#0F1E3C]/10 rounded-xl px-3 py-1.5">
+              <Printer size={12} className="text-[#0F1E3C]/40" />
+              <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider whitespace-nowrap">Impressoras</label>
+              <input
+                type="number" min="1" step="1"
+                value={numImpressoras}
+                onChange={e => setNumImpressoras(Math.max(1, parseInt(e.target.value) || 1))}
+                onBlur={e => {
+                  const n = Math.max(1, parseInt(e.target.value) || 1)
+                  fetch("/api/settings", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ dtf_num_impressoras: String(n) }),
+                  })
+                }}
+                className="w-10 text-center text-sm font-bold text-[#0F1E3C] focus:outline-none bg-transparent"
+              />
+            </div>
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">
+              {PERIOD_OPTIONS.map(opt => (
+                <button key={opt.key} onClick={() => setPeriod(opt.key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    period === opt.key
+                      ? "bg-[#4361EE] text-white shadow-sm"
+                      : "text-[#0F1E3C]/50 hover:text-[#0F1E3C] hover:bg-white/60"
+                  }`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           {period === "range" && (
             <div className="flex items-center gap-2">
