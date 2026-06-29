@@ -59,18 +59,18 @@ export async function GET(req: Request) {
       WHERE cost_date BETWEEN $1 AND $2
     `, [from, to])
 
-    // 4. Diagnóstico: produtos nos pedidos sem custo cadastrado
+    // 4. Diagnóstico: produtos cadastrados nos pedidos mas sem custo preenchido
     const { rows: semCustoRows } = await pool.query(`
       SELECT DISTINCT oi.product_name
       FROM order_items oi
       JOIN orders o ON o.id = oi.order_id
-      LEFT JOIN products p
-        ON TRIM(LOWER(p.name)) = TRIM(LOWER(oi.product_name)) AND p.status = 'active'
+      JOIN products p
+        ON TRIM(LOWER(p.name)) = TRIM(LOWER(oi.product_name))
       WHERE o.status != 'cancelado'
         AND o.source IN ('pdv', 'whatsapp', 'manual')
         AND o.number NOT LIKE 'COB-%'
         AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
-        AND (p.id IS NULL OR p.material_cost IS NULL OR p.material_cost = 0)
+        AND (p.material_cost IS NULL OR p.material_cost = 0)
       ORDER BY oi.product_name
     `, [from, to])
 
