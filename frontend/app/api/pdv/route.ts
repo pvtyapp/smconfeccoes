@@ -110,11 +110,12 @@ export async function POST(req: Request) {
 
     // 4. Create order
     const isPrazo = paymentMethod === "prazo"
+    const finalStatus = isPrazo ? "pronto" : "concluido"
     const orderRes = await client.query(`
       INSERT INTO orders (number, contact_id, notes, source, total_value, due_date, status)
-      VALUES ($1, $2, $3, 'pdv', $4, $5, 'pronto')
+      VALUES ($1, $2, $3, 'pdv', $4, $5, $6)
       RETURNING id, number
-    `, [number, resolvedContactId, notes || null, total, isPrazo ? (dueDate || null) : null])
+    `, [number, resolvedContactId, notes || null, total, isPrazo ? (dueDate || null) : null, finalStatus])
 
     const orderId = orderRes.rows[0].id
 
@@ -136,8 +137,8 @@ export async function POST(req: Request) {
 
     await client.query(`
       INSERT INTO order_events (order_id, status, actor, note)
-      VALUES ($1, 'pronto', 'pdv', $2)
-    `, [orderId, `Venda PDV${isPrazo ? " · prazo" : " · " + paymentMethod}`])
+      VALUES ($1, $2, 'pdv', $3)
+    `, [orderId, finalStatus, `Venda PDV${isPrazo ? " · prazo" : " · " + paymentMethod}`])
 
     // 7. Stock movements
     const batchId = crypto.randomUUID()
