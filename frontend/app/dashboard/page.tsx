@@ -132,10 +132,10 @@ export default function DashboardPage() {
 
   // Derived receivables
   const today           = todayBR()
-  const recTotal        = receivables.reduce((s, o) => s + (o.totalValue ?? 0), 0)
-  const recOverdueTotal = receivables.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const recTotal        = receivables.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+  const recOverdueTotal = receivables.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const recOverdueCount = receivables.filter(o => o.dueDate && o.dueDate < today).length
-  const recTodayTotal   = receivables.filter(o => o.dueDate === today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const recTodayTotal   = receivables.filter(o => o.dueDate === today).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const recTodayCount   = receivables.filter(o => o.dueDate === today).length
 
   // Derived stock values

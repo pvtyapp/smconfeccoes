@@ -8,13 +8,13 @@ export async function GET() {
         o.id,
         o.number,
         o.status,
-        o.total_value  AS "totalValue",
-        o.due_date     AS "dueDate",
-        o.created_at   AS "createdAt",
-        c.id           AS "contactId",
-        c.name         AS "contactName",
-        c.phone        AS "contactPhone",
-        c.jid          AS "contactJid"
+        o.total_value::float  AS "totalValue",
+        o.due_date::text      AS "dueDate",
+        o.created_at          AS "createdAt",
+        c.id                  AS "contactId",
+        c.name                AS "contactName",
+        c.phone               AS "contactPhone",
+        COALESCE(c.phone_jid, c.jid) AS "contactJid"
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.paid_at IS NULL

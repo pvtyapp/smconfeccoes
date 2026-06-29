@@ -82,13 +82,13 @@ export default function ClientesAReceberPage() {
   useEffect(() => { load() }, [load])
 
   // ── Stats ─────────────────────────────────────────────────────────────────
-  const totalPending   = orders.reduce((s, o) => s + (o.totalValue ?? 0), 0)
-  const overdueTotal   = orders.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const totalPending   = orders.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+  const overdueTotal   = orders.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const overdueCount   = orders.filter(o => o.dueDate && o.dueDate < today).length
-  const todayTotal     = orders.filter(o => o.dueDate === today).reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const todayTotal     = orders.filter(o => o.dueDate === today).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const todayCount     = orders.filter(o => o.dueDate === today).length
   const semanaOrders   = orders.filter(o => o.dueDate && o.dueDate > today && o.dueDate <= weekAhead)
-  const semanaTotal    = semanaOrders.reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const semanaTotal    = semanaOrders.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const semanaCount    = semanaOrders.length
 
   // ── Filter + Search + Sort ────────────────────────────────────────────────
@@ -254,7 +254,7 @@ export default function ClientesAReceberPage() {
 
         {filtered.length > 0 && (
           <p className="text-xs text-[#0F1E3C]/40 ml-auto">
-            {filtered.length} resultado{filtered.length !== 1 ? "s" : ""} · {fmtCurrency(filtered.reduce((s, o) => s + (o.totalValue ?? 0), 0))}
+            {filtered.length} resultado{filtered.length !== 1 ? "s" : ""} · {fmtCurrency(filtered.reduce((s, o) => s + Number(o.totalValue ?? 0), 0))}
           </p>
         )}
       </div>
@@ -376,7 +376,7 @@ export default function ClientesAReceberPage() {
             <div className="flex items-center gap-1.5">
               <TrendingDown size={12} className="text-[#0F1E3C]/30" />
               <p className="text-xs font-bold text-[#0F1E3C]/60">
-                Total visível: <span className="text-[#0F1E3C]">{fmtCurrency(filtered.reduce((s, o) => s + (o.totalValue ?? 0), 0))}</span>
+                Total visível: <span className="text-[#0F1E3C]">{fmtCurrency(filtered.reduce((s, o) => s + Number(o.totalValue ?? 0), 0))}</span>
               </p>
             </div>
           </div>
