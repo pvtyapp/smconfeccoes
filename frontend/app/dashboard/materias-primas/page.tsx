@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react"
 import { todayBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 import {
   Plus, X, Check, Layers, ChevronDown, ChevronUp,
   Package, ChevronRight, AlertCircle, Info, Pencil, Trash2, Calendar,
@@ -47,7 +48,6 @@ const STATUS_CFG: Record<LotStatus, { label: string; bg: string; text: string }>
   esgotada:   { label:"ESGOTADA", bg:"bg-[#0F1E3C]/6", text:"text-[#0F1E3C]/35" },
 }
 
-function fmtR(v: number | string)  { return `R$ ${Number(v).toFixed(2).replace(".", ",")}` }
 function uls(u: Unit)      { return u === "kg" ? "kg" : u === "m" ? "metro" : "und" }
 function unitStep(u: Unit) { return u === "unidade" ? "1" : "0.001" }
 function fmtQty(v: number, u: Unit) {

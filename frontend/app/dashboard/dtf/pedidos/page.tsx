@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 type PeriodKey = "hoje" | "7d" | "30d" | "90d" | "range"
@@ -54,10 +55,6 @@ function periodLabel(key: PeriodKey, rs: string, re: string) {
   return `${fmt(rs)} – ${fmt(re)}`
 }
 
-function fmtR(v: number | null | undefined) {
-  if (v == null) return "—"
-  return `R$ ${Number(v).toFixed(2).replace(".", ",")}`
-}
 function fmtCpm(v: number | null | undefined) {
   if (v == null) return "—"
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`

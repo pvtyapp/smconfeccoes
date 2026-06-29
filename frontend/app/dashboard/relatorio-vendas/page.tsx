@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,12 +82,6 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtR(v: number | string | null) {
-  if (v === null || v === undefined) return "—"
-  const n = Number(v)
-  return `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
-}
 
 function fmtDate(iso: string | null) { return fmtDateBR(iso) }
 

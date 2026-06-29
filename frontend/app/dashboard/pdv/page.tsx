@@ -7,6 +7,7 @@ import {
   ChevronDown, ChevronUp, Printer,
 } from "lucide-react"
 import { todayBR, dateBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 import PdvReceiptModal, { type SaleReceipt } from "./PdvReceiptModal"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -79,10 +80,6 @@ function sizeSort(a: string, b: string) {
   if (ai === -1) return 1
   if (bi === -1) return -1
   return ai - bi
-}
-
-function fmtR(v: number) {
-  return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function fmtPhone(phone: string | null | undefined): string {
@@ -197,8 +194,8 @@ export default function PDVPage() {
   useEffect(() => {
     const c = selectedContact ?? duplicateFound
     if (c?.paymentTermEnabled && c.paymentTermType === "days" && c.paymentTermDays) {
-      const d = new Date()
-      d.setDate(d.getDate() + Number(c.paymentTermDays))
+      const [y, mo, day] = todayBR().split("-").map(Number)
+      const d = new Date(y, mo - 1, day + Number(c.paymentTermDays))
       setDueDate(dateBR(d))
     }
   }, [selectedContact, duplicateFound])
@@ -569,8 +566,8 @@ export default function PDVPage() {
     // Auto-compute dueDate for clients with fixed payment term
     let effectiveDueDate = dueDate
     if (payMethod === "prazo" && !effectiveDueDate && activeContact?.paymentTermType === "days" && activeContact.paymentTermDays) {
-      const d = new Date()
-      d.setDate(d.getDate() + Number(activeContact.paymentTermDays))
+      const [y, mo, day] = todayBR().split("-").map(Number)
+      const d = new Date(y, mo - 1, day + Number(activeContact.paymentTermDays))
       effectiveDueDate = dateBR(d)
     }
     if (payMethod === "prazo" && !effectiveDueDate) {
@@ -589,8 +586,8 @@ export default function PDVPage() {
     const c = selectedContact ?? duplicateFound
     let dd = ""
     if (c?.paymentTermType === "days" && c.paymentTermDays) {
-      const d = new Date()
-      d.setDate(d.getDate() + c.paymentTermDays)
+      const [y, mo, day] = todayBR().split("-").map(Number)
+      const d = new Date(y, mo - 1, day + c.paymentTermDays)
       dd = dateBR(d)
     } else if (dueDate) {
       dd = dueDate

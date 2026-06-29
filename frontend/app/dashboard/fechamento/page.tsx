@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Calculator, ChevronRight, Check, X, AlertCircle, Calendar, Package, Loader2 } from "lucide-react"
 import { todayBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type OpCost     = { id: string; name: string; category: string; monthlyValue: number; periodValue: number }
@@ -38,7 +39,6 @@ type Closure = {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-function fmtR(v: number) { return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function fmtDate(s: string) {
   const [y, m, d] = s.split("-")
   return `${d}/${m}/${y}`

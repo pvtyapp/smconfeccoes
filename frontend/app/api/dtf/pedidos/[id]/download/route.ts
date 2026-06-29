@@ -28,7 +28,8 @@ function getExt(filename: string | null, mimeType: string | null): string {
 }
 
 // Handles both https:// URLs (Vercel Blob legacy) and data: base64 strings (PostgreSQL)
-async function fetchFileBuffer(blobUrl: string): Promise<{ buffer: ArrayBuffer; mimeType: string } | null> {
+async function fetchFileBuffer(blobUrl: string | null): Promise<{ buffer: ArrayBuffer; mimeType: string } | null> {
+  if (!blobUrl) return null
   if (blobUrl.startsWith("data:")) {
     const comma = blobUrl.indexOf(",")
     if (comma === -1) return null

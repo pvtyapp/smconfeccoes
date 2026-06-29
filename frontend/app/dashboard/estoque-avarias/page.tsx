@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle,
   PackageOpen, ClipboardList, Calendar, ArrowUpRight, RotateCcw, Tag, Trash2, Check,
 } from "lucide-react"
+import { todayBR } from "@/lib/tz"
 
 type Disposition = "pendente" | "reaproveitado" | "vendido" | "descartado"
 
@@ -82,10 +83,6 @@ function fmtDate(s: string) {
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   })
-}
-
-function todayBRT(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" })
 }
 
 function StatCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
@@ -172,8 +169,8 @@ export default function EstoqueAvariasPage() {
   const [editing, setEditing]           = useState<AvariaItem | null>(null)
   const [filter, setFilter]             = useState<FilterMode>({ type: "days", days: 30 })
   const [showCal, setShowCal]           = useState(false)
-  const [calFrom, setCalFrom]           = useState(todayBRT())
-  const [calTo, setCalTo]               = useState(todayBRT())
+  const [calFrom, setCalFrom]           = useState(todayBR())
+  const [calTo, setCalTo]               = useState(todayBR())
   const calRef                          = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -314,7 +311,7 @@ export default function EstoqueAvariasPage() {
                   <div>
                     <label className="block text-[10px] font-semibold text-[#0F1E3C]/40 mb-1">Até</label>
                     <input
-                      type="date" value={calTo} min={calFrom} max={todayBRT()}
+                      type="date" value={calTo} min={calFrom} max={todayBR()}
                       onChange={e => setCalTo(e.target.value)}
                       className="w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE]"
                     />

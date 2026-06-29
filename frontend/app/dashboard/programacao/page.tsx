@@ -7,6 +7,7 @@ import {
   History, Pencil,
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type OrderStatus   = "em_andamento" | "concluida" | "em_revisao"
@@ -40,7 +41,6 @@ type AvailableEntry = {
 type MockProduct = { id: string; name: string; colors: string[]; sizes: string[] }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-function fmtR(v: number | string) { return `R$ ${Number(v).toFixed(2).replace(".", ",")}` }
 
 const PERIOD_OPTIONS = [
   { key:"hoje", label:"Hoje",   days:0  },

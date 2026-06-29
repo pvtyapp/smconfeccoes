@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react"
 import { Calendar, Scissors, Clock } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 const PERIOD_OPTIONS = [
   { key:"hoje",  label:"Hoje"    },
@@ -46,7 +47,6 @@ function getPeriodDates(period: string, rangeStart: string, rangeEnd: string): [
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-function fmtR(v: number | string) { return `R$ ${Number(v).toFixed(2).replace(".", ",")}` }
 
 function isSewingCost(c: OpCostRow): boolean {
   return c.category === "Custo de Costura"

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { BarChart2, TrendingDown } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 type Pedido = {
   id: number; data: string; cliente: string | null
@@ -49,10 +50,6 @@ function calcRange(key: PeriodoKey): { from: string; to: string } | null {
   return { from: subDaysBR(days - 1), to: todayBR() }
 }
 
-function fmtR(v: number | null | undefined) {
-  if (v == null) return "—"
-  return `R$ ${Number(v).toFixed(2).replace(".", ",")}`
-}
 function fmtCpm(v: number | null | undefined) {
   if (v == null) return "—"
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`

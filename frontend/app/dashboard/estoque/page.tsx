@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList, Calendar, SlidersHorizontal } from "lucide-react"
 import type { BalanceRow } from "@/lib/calculations"
+import { todayBR } from "@/lib/tz"
 
 type Movement = {
   id: string
@@ -94,10 +95,6 @@ function fmtDate(s: string) {
   })
 }
 
-function todayBRT(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" })
-}
-
 function stockStatus(row: BalanceRow): "zerado" | "critico" | "ok" {
   if (row.currentStock === 0) return "zerado"
   if (row.minStock > 0 && row.currentStock <= row.minStock) return "critico"
@@ -177,8 +174,8 @@ export default function EstoquePage() {
   const [adjustingGroup, setAdjustingGroup] = useState<ProductGroup | null>(null)
   const [filter, setFilter]       = useState<FilterMode>({ type: "hoje" })
   const [showCal, setShowCal]     = useState(false)
-  const [calFrom, setCalFrom]     = useState(todayBRT())
-  const [calTo, setCalTo]         = useState(todayBRT())
+  const [calFrom, setCalFrom]     = useState(todayBR())
+  const [calTo, setCalTo]         = useState(todayBR())
   const calRef                    = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -339,7 +336,7 @@ export default function EstoquePage() {
                       type="date"
                       value={calTo}
                       min={calFrom}
-                      max={todayBRT()}
+                      max={todayBR()}
                       onChange={e => setCalTo(e.target.value)}
                       className="w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE]"
                     />
