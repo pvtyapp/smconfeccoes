@@ -38,7 +38,8 @@ export async function GET(req: Request) {
         s.quantidade,
         NULL             AS custo_total,
         s.data,
-        s.observacao
+        s.observacao,
+        s.impressora_id
       FROM dtf_insumo_saidas s
       JOIN dtf_insumos i ON i.id = s.insumo_id
       WHERE s.data BETWEEN $1 AND $2

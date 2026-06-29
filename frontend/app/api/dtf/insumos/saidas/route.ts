@@ -4,7 +4,7 @@ import { pool } from "@/lib/db"
 export async function POST(req: Request) {
   const client = await pool.connect()
   try {
-    const { insumoId, quantidade, data, observacao } = await req.json()
+    const { insumoId, quantidade, data, observacao, impressoraId } = await req.json()
     if (!insumoId || !quantidade || !data)
       return NextResponse.json({ error: "insumoId, quantidade e data são obrigatórios" }, { status: 400 })
 
@@ -28,10 +28,10 @@ export async function POST(req: Request) {
     }
 
     const { rows } = await client.query(`
-      INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao, impressora_id)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING id
-    `, [insumoId, quantidade, data, observacao ?? null])
+    `, [insumoId, quantidade, data, observacao ?? null, impressoraId ?? null])
 
     await client.query("COMMIT")
     return NextResponse.json(rows[0], { status: 201 })

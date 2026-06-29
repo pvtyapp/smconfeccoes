@@ -122,13 +122,67 @@ export async function GET(req: Request) {
       ORDER BY impressora_id
     `, from && to ? [from, to] : [])
 
+    // Custo unitário médio por insumo (média ponderada de todas as entradas)
+    const { rows: unitCostRows } = await pool.query(`
+      SELECT insumo_id,
+             SUM(custo_total) / NULLIF(SUM(quantidade), 0) AS custo_unitario
+      FROM dtf_insumo_entradas
+      WHERE custo_total IS NOT NULL
+      GROUP BY insumo_id
+    `)
+    const unitCostMap = Object.fromEntries(unitCostRows.map(r => [r.insumo_id, Number(r.custo_unitario)]))
+
+    // Insumos consumidos por impressora (somente saídas com impressora_id definido)
+    const { rows: insumoPrinterRows } = await pool.query(`
+      SELECT s.impressora_id AS "impressoraId",
+             s.insumo_id     AS "insumoId",
+             i.nome,
+             i.unidade,
+             SUM(s.quantidade)::float AS quantidade
+      FROM dtf_insumo_saidas s
+      JOIN dtf_insumos i ON i.id = s.insumo_id
+      WHERE s.impressora_id IS NOT NULL
+        ${from && to ? "AND s.data BETWEEN $1 AND $2" : ""}
+      GROUP BY s.impressora_id, s.insumo_id, i.nome, i.unidade
+      ORDER BY s.impressora_id, s.insumo_id
+    `, from && to ? [from, to] : [])
+
+    // Montar estrutura por impressora
+    type ImpressoraInsumo = { insumoId: number; nome: string; unidade: string; quantidade: number; custo: number | null }
+    const impressoraInsumos: Record<number, ImpressoraInsumo[]> = {}
+    for (const row of insumoPrinterRows) {
+      const imp = row.impressoraId as number
+      if (!impressoraInsumos[imp]) impressoraInsumos[imp] = []
+      const custo = unitCostMap[row.insumoId] != null
+        ? row.quantidade * unitCostMap[row.insumoId]
+        : null
+      impressoraInsumos[imp].push({
+        insumoId: row.insumoId,
+        nome: row.nome,
+        unidade: row.unidade,
+        quantidade: row.quantidade,
+        custo,
+      })
+    }
+
+    const impressoras = impressorasRows.map(imp => {
+      const ins = impressoraInsumos[imp.impressoraId] ?? []
+      const custoTotalInsumos = ins.every(i => i.custo != null)
+        ? ins.reduce((s, i) => s + (i.custo ?? 0), 0)
+        : null
+      const custoPorMetro = custoTotalInsumos != null && imp.metros > 0
+        ? custoTotalInsumos / imp.metros
+        : null
+      return { ...imp, insumos: ins, custoTotalInsumos, custoPorMetro }
+    })
+
     return NextResponse.json({
       pedidos,
       totalMetros,
       totalReceita,
       insumos: insumosComCusto,
       custoCombinado: custoCombinado > 0 ? custoCombinado : null,
-      impressoras: impressorasRows,
+      impressoras,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

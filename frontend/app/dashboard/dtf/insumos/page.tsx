@@ -17,6 +17,7 @@ type Saida = {
   quantidade: number
   data: string
   observacao: string | null
+  impressoraId: number | null
 }
 
 type PeriodKey = "1d" | "7d" | "15d" | "30d" | "60d" | "range"
@@ -32,6 +33,7 @@ type HistoricoRow = {
   custo_total: number | null
   data: string
   observacao: string | null
+  impressora_id: number | null
 }
 
 const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
@@ -118,8 +120,10 @@ export default function DTFInsumosPage() {
   const [novoForm,     setNovoForm]     = useState(novoInsumoInit)
   const [savingNovo,   setSavingNovo]   = useState(false)
 
+  const [numImpressoras, setNumImpressoras] = useState(1)
+
   const [entradaForm, setEntradaForm] = useState({ quantidade: "", custoTotal: "", data: getToday(), observacao: "", bobinas: "", metrosPorBobina: "" })
-  const [saidaForm,   setSaidaForm]   = useState({ quantidade: "", data: getToday(), observacao: "" })
+  const [saidaForm,   setSaidaForm]   = useState({ quantidade: "", data: getToday(), observacao: "", impressoraId: "" })
   const [saidaError,  setSaidaError]  = useState("")
   const [alarmeForm,  setAlarmeForm]  = useState("")
 
@@ -155,6 +159,11 @@ export default function DTFInsumosPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
+      if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+    })
+  }, [])
 
   const loadHistorico = useCallback(async () => {
     if (histPeriod === "range" && (!histRangeStart || !histRangeEnd)) return
@@ -215,7 +224,7 @@ export default function DTFInsumosPage() {
   }
   function openSaida(id: number) {
     setShowSaida(id); setShowEntrada(null); setShowAlarme(null)
-    setSaidaForm({ quantidade: "", data: getToday(), observacao: "" })
+    setSaidaForm({ quantidade: "", data: getToday(), observacao: "", impressoraId: numImpressoras > 1 ? "1" : "" })
     setSaidaError("")
   }
   function openAlarme(ins: Insumo) {
@@ -249,14 +258,18 @@ export default function DTFInsumosPage() {
   async function salvarSaida(insumoId: number) {
     if (!saidaForm.quantidade || !saidaForm.data) return
     setSaidaError("")
+    const impressoraId = numImpressoras > 1 && saidaForm.impressoraId
+      ? parseInt(saidaForm.impressoraId)
+      : null
     const r = await fetch("/api/dtf/insumos/saidas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         insumoId,
-        quantidade: parseFloat(saidaForm.quantidade),
-        data:       saidaForm.data,
-        observacao: saidaForm.observacao || null,
+        quantidade:  parseFloat(saidaForm.quantidade),
+        data:        saidaForm.data,
+        observacao:  saidaForm.observacao || null,
+        impressoraId,
       }),
     })
     if (r.ok) { setShowSaida(null); setSaidaError(""); load(); loadHistorico() }
@@ -432,9 +445,9 @@ export default function DTFInsumosPage() {
               <div className="space-y-4">
                 {lista.map(ins => {
                   const isExpand = expanded.includes(ins.id)
-                  const history: Array<{ date: string; tipo: "entrada" | "saida"; id: number; quantidade: number; custoTotal?: number | null; observacao?: string | null }> = [
+                  const history: Array<{ date: string; tipo: "entrada" | "saida"; id: number; quantidade: number; custoTotal?: number | null; observacao?: string | null; impressoraId?: number | null }> = [
                     ...ins.entradas.map(e => ({ date: e.data, tipo: "entrada" as const, id: e.id, quantidade: e.quantidade, custoTotal: e.custoTotal, observacao: e.observacao })),
-                    ...ins.saidas.map(s  => ({ date: s.data, tipo: "saida"  as const, id: s.id, quantidade: s.quantidade, observacao: s.observacao })),
+                    ...ins.saidas.map(s  => ({ date: s.data, tipo: "saida"  as const, id: s.id, quantidade: s.quantidade, observacao: s.observacao, impressoraId: s.impressoraId })),
                   ].sort((a, b) => b.date.localeCompare(a.date))
 
                   return (
@@ -652,6 +665,30 @@ export default function DTFInsumosPage() {
                               Disponível: <span className="font-bold text-[#0F1E3C]">{fmtQtd(ins.saldoAtual, ins.unidade)}</span>
                             </p>
                           </div>
+
+                          {/* Seletor de impressora — só quando há mais de 1 */}
+                          {numImpressoras > 1 && (
+                            <div>
+                              <label className="text-xs text-gray-500 mb-1.5 block">Impressora *</label>
+                              <div className="flex gap-2 flex-wrap">
+                                {Array.from({ length: numImpressoras }, (_, i) => String(i + 1)).map(n => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() => setSaidaForm(f => ({ ...f, impressoraId: n }))}
+                                    className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
+                                      saidaForm.impressoraId === n
+                                        ? "bg-[#4361EE] text-white border-[#4361EE]"
+                                        : "bg-white text-[#0F1E3C]/50 border-gray-200 hover:border-[#4361EE]/40 hover:text-[#4361EE]"
+                                    }`}
+                                  >
+                                    Impressora {n}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
                           <div className="grid grid-cols-3 gap-3">
                             <div>
                               <label className="text-xs text-gray-500 mb-1 block">Data *</label>
@@ -715,6 +752,7 @@ export default function DTFInsumosPage() {
                                 <th className="px-5 py-2 text-left">Tipo</th>
                                 <th className="px-5 py-2 text-right">Quantidade</th>
                                 <th className="px-5 py-2 text-right">Custo</th>
+                                {numImpressoras > 1 && <th className="px-5 py-2 text-left">Imp.</th>}
                                 <th className="px-5 py-2 text-left">Observação</th>
                                 <th className="px-5 py-2"></th>
                               </tr>
@@ -736,6 +774,14 @@ export default function DTFInsumosPage() {
                                   <td className="px-5 py-2 text-right text-gray-500">
                                     {h.tipo === "entrada" && h.custoTotal != null ? fmtR(h.custoTotal) ?? "—" : "—"}
                                   </td>
+                                  {numImpressoras > 1 && (
+                                    <td className="px-5 py-2 text-gray-500">
+                                      {h.tipo === "saida" && h.impressoraId != null
+                                        ? <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">Imp. {h.impressoraId}</span>
+                                        : <span className="text-gray-300">—</span>
+                                      }
+                                    </td>
+                                  )}
                                   <td className="px-5 py-2 text-gray-400 max-w-[180px] truncate">{h.observacao || "—"}</td>
                                   <td className="px-5 py-2 text-right">
                                     <button
@@ -822,6 +868,7 @@ export default function DTFInsumosPage() {
                       <th className="px-5 py-3 text-left">Tipo</th>
                       <th className="px-5 py-3 text-right">Quantidade</th>
                       <th className="px-5 py-3 text-right">Custo</th>
+                      {numImpressoras > 1 && <th className="px-5 py-3 text-left">Imp.</th>}
                       <th className="px-5 py-3 text-left">Observação</th>
                     </tr>
                   </thead>
@@ -850,6 +897,14 @@ export default function DTFInsumosPage() {
                             ? `R$ ${Number(h.custo_total).toFixed(2).replace(".", ",")}`
                             : "—"}
                         </td>
+                        {numImpressoras > 1 && (
+                          <td className="px-5 py-2.5">
+                            {h.tipo === "saida" && h.impressora_id != null
+                              ? <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">Imp. {h.impressora_id}</span>
+                              : <span className="text-gray-300">—</span>
+                            }
+                          </td>
+                        )}
                         <td className="px-5 py-2.5 text-gray-400 max-w-[200px] truncate">{h.observacao || "—"}</td>
                       </tr>
                     ))}

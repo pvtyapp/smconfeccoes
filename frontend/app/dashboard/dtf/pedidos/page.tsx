@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle } from "lucide-react"
+import { useState, useEffect, useCallback, useRef } from "react"
+import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle, Info } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
@@ -20,7 +20,13 @@ type InsumoSummary = {
   consumoMedioPorMetro: number | null; diasRestantes: number | null
 }
 
-type ImpressoraMetric = { impressoraId: number; metros: number; pedidos: number }
+type ImpressoraInsumo = { insumoId: number; nome: string; unidade: string; quantidade: number; custo: number | null }
+type ImpressoraMetric = {
+  impressoraId: number; metros: number; pedidos: number
+  insumos: ImpressoraInsumo[]
+  custoTotalInsumos: number | null
+  custoPorMetro: number | null
+}
 
 type Relatorio = {
   pedidos: Pedido[]
@@ -81,6 +87,9 @@ export default function DTFDashboardPage() {
   const [loading,        setLoading]        = useState(true)
   const [precoMetro,     setPrecoMetro]     = useState<number | null>(null)
   const [numImpressoras, setNumImpressoras] = useState(1)
+
+  const [showTooltip, setShowTooltip] = useState(false)
+  const tooltipRef = useRef<HTMLDivElement>(null)
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
@@ -161,7 +170,7 @@ export default function DTFDashboardPage() {
 
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-white border border-[#0F1E3C]/10 rounded-xl px-3 py-1.5">
+            <div className="relative flex items-center gap-2 bg-white border border-[#0F1E3C]/10 rounded-xl px-3 py-1.5">
               <Printer size={12} className="text-[#0F1E3C]/40" />
               <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider whitespace-nowrap">Impressoras</label>
               <input
@@ -178,6 +187,26 @@ export default function DTFDashboardPage() {
                 }}
                 className="w-10 text-center text-sm font-bold text-[#0F1E3C] focus:outline-none bg-transparent"
               />
+              <button
+                onClick={() => setShowTooltip(v => !v)}
+                className="text-[#0F1E3C]/25 hover:text-[#4361EE] transition-colors"
+              >
+                <Info size={11} />
+              </button>
+              {showTooltip && (
+                <div ref={tooltipRef} className="absolute top-full right-0 mt-2 w-72 bg-[#0F1E3C] text-white text-[11px] rounded-xl px-4 py-3 shadow-xl z-50 leading-relaxed">
+                  <p className="font-bold mb-1">Quantidade de impressoras ativas</p>
+                  <p className="text-white/70">
+                    Com mais de 1 impressora, o operador seleciona qual máquina está produzindo cada pedido no kanban. Com isso o sistema rastreia:
+                  </p>
+                  <ul className="mt-1.5 space-y-1 text-white/70 list-disc list-inside">
+                    <li>Metros produzidos por impressora</li>
+                    <li>Insumos consumidos por impressora</li>
+                    <li>Custo/metro individual por impressora</li>
+                  </ul>
+                  <p className="mt-2 text-white/50 text-[10px]">Salva automaticamente ao sair do campo.</p>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">
               {PERIOD_OPTIONS.map(opt => (
@@ -235,14 +264,62 @@ export default function DTFDashboardPage() {
         {!loading && numImpressoras > 1 && (relatorio?.impressoras ?? []).length > 0 && (
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Por impressora</p>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {(relatorio?.impressoras ?? []).map(imp => (
-                <div key={imp.impressoraId} className="bg-white rounded-2xl border border-blue-200 px-4 py-3">
-                  <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider mb-1">
-                    Impressora {imp.impressoraId}
-                  </p>
-                  <p className="text-lg font-black text-[#0F1E3C]">{Number(imp.metros).toFixed(2)} m</p>
-                  <p className="text-[10px] text-[#0F1E3C]/40">{imp.pedidos} pedido{imp.pedidos !== 1 ? "s" : ""}</p>
+                <div key={imp.impressoraId} className="bg-white rounded-2xl border border-blue-200 px-4 py-4 space-y-3">
+                  {/* Cabeçalho */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider">
+                      Impressora {imp.impressoraId}
+                    </p>
+                    <span className="text-[10px] text-[#0F1E3C]/30">{imp.pedidos} pedido{imp.pedidos !== 1 ? "s" : ""}</span>
+                  </div>
+
+                  {/* Metros + custo/m */}
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-[10px] text-[#0F1E3C]/40">Metros produzidos</p>
+                      <p className="text-xl font-black text-[#0F1E3C]">{Number(imp.metros).toFixed(2)} m</p>
+                    </div>
+                    {imp.custoPorMetro != null && (
+                      <div className="text-right">
+                        <p className="text-[10px] text-[#0F1E3C]/40">Custo/metro</p>
+                        <p className="text-sm font-bold text-[#4361EE]">
+                          R$ {imp.custoPorMetro.toFixed(4).replace(".", ",")}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Insumos */}
+                  {imp.insumos.length > 0 && (
+                    <div className="border-t border-[#0F1E3C]/6 pt-2 space-y-1">
+                      <p className="text-[9px] font-bold text-[#0F1E3C]/30 uppercase tracking-widest mb-1">Insumos consumidos</p>
+                      {imp.insumos.map(ins => (
+                        <div key={ins.insumoId} className="flex items-center justify-between text-[11px]">
+                          <span className="text-[#0F1E3C]/60 font-medium">{ins.nome}</span>
+                          <span className="text-[#0F1E3C]/50">
+                            {parseFloat(ins.quantidade.toFixed(3))} {ins.unidade}
+                            {ins.custo != null && (
+                              <span className="ml-1 text-[#0F1E3C]/35">
+                                · R$ {ins.custo.toFixed(2).replace(".", ",")}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                      {imp.custoTotalInsumos != null && (
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[#0F1E3C]/6 font-bold">
+                          <span className="text-[#0F1E3C]/50">Total insumos</span>
+                          <span className="text-[#0F1E3C]">R$ {imp.custoTotalInsumos.toFixed(2).replace(".", ",")}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {imp.insumos.length === 0 && (
+                    <p className="text-[10px] text-[#0F1E3C]/25 italic">Nenhum insumo registrado nesta impressora.</p>
+                  )}
                 </div>
               ))}
             </div>

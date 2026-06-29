@@ -68,7 +68,7 @@ export async function GET() {
       `, [ins.id])
 
       const { rows: saidas } = await pool.query(`
-        SELECT id, quantidade, data, observacao
+        SELECT id, quantidade, data, observacao, impressora_id AS "impressoraId"
         FROM dtf_insumo_saidas WHERE insumo_id = $1
         ORDER BY data DESC, created_at DESC LIMIT 30
       `, [ins.id])
