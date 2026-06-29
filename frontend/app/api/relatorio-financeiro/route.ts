@@ -31,7 +31,11 @@ export async function GET(req: Request) {
         ) FILTER (WHERE oi.id IS NOT NULL) AS items
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
-      LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name)
+      LEFT JOIN LATERAL (
+        SELECT material_cost FROM products
+        WHERE LOWER(name) = LOWER(oi.product_name) AND status = 'active'
+        LIMIT 1
+      ) p ON true
       WHERE o.status != 'cancelado'
         AND o.source IN ('pdv', 'whatsapp', 'manual')
         AND o.number NOT LIKE 'COB-%'
@@ -54,6 +58,26 @@ export async function GET(req: Request) {
       WHERE cost_date BETWEEN $1 AND $2
     `, [from, to])
 
+    // 4. Entradas de matéria-prima compradas no período
+    const { rows: matEntradas } = await pool.query(`
+      SELECT
+        COALESCE(SUM(total_qty * unit_price), 0)::float AS total,
+        COUNT(*)::int AS count
+      FROM raw_material_entries
+      WHERE DATE(created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+
+    // 5. Bobinas esgotadas no período (consumo de insumos em produção)
+    const { rows: matSaidas } = await pool.query(`
+      SELECT
+        COALESCE(SUM(total_qty * unit_price), 0)::float AS total,
+        COUNT(*)::int AS count
+      FROM raw_material_entries
+      WHERE status = 'esgotada'
+        AND exhausted_at IS NOT NULL
+        AND DATE(exhausted_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+
     // ── Calcular DRE ──────────────────────────────────────────────────────────
     const concluded = orders.filter(o => o.status === "concluido")
 
@@ -61,7 +85,7 @@ export async function GET(req: Request) {
     const receitaBruta = concluded.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
 
     // Custo de insumos (material_cost × qty) — só para pedidos concluídos
-    let custoInsumos    = 0
+    let custoInsumos      = 0
     let custoInsumosKnown = false
     const byProduct: Map<string, { revenue: number; cost: number; qty: number; hasCost: boolean }> = new Map()
 
@@ -92,13 +116,13 @@ export async function GET(req: Request) {
       else custoFixo += val
     }
 
-    const custoVariavel    = Number(varCosts[0]?.total ?? 0)
-    const lucroBruto       = custoInsumosKnown ? receitaBruta - custoInsumos : null
-    const resultadoOp      = lucroBruto !== null
+    const custoVariavel = Number(varCosts[0]?.total ?? 0)
+    const lucroBruto    = custoInsumosKnown ? receitaBruta - custoInsumos : null
+    const resultadoOp   = lucroBruto !== null
       ? lucroBruto - custoCostura - custoFixo - custoVariavel
       : null
 
-    const totalPecas = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
+    const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
       s + (o.items ?? []).reduce((si: number, i: { qty: number }) => si + i.qty, 0), 0)
     const ticketMedio = concluded.length > 0 ? receitaBruta / concluded.length : 0
 
@@ -123,7 +147,7 @@ export async function GET(req: Request) {
       period: { from, to, days },
       dre: {
         receitaBruta,
-        custoInsumos:        custoInsumosKnown ? custoInsumos : null,
+        custoInsumos:  custoInsumosKnown ? custoInsumos : null,
         lucroBruto,
         custoCostura,
         custoFixo,
@@ -131,15 +155,19 @@ export async function GET(req: Request) {
         resultadoOp,
       },
       summary: {
-        pedidosTotal:    orders.length,
+        pedidosTotal:      orders.length,
         pedidosConcluidos: concluded.length,
         totalPecas,
         ticketMedio,
-        margemBruta:     lucroBruto !== null && receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : null,
-        margemOp:        resultadoOp !== null && receitaBruta > 0 ? (resultadoOp / receitaBruta) * 100 : null,
+        margemBruta: lucroBruto !== null && receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : null,
+        margemOp:    resultadoOp !== null && receitaBruta > 0 ? (resultadoOp / receitaBruta) * 100 : null,
       },
       byChannel,
       productRanking,
+      materialFlow: {
+        entradas: { total: Number(matEntradas[0]?.total ?? 0), count: Number(matEntradas[0]?.count ?? 0) },
+        saidas:   { total: Number(matSaidas[0]?.total  ?? 0), count: Number(matSaidas[0]?.count  ?? 0) },
+      },
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

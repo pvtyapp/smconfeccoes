@@ -1,19 +1,22 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
-import { RefreshCw, TrendingUp, TrendingDown, DollarSign, Package, ChevronDown, ChevronUp } from "lucide-react"
+import {
+  RefreshCw, TrendingUp, TrendingDown, DollarSign, Package,
+  ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Layers,
+} from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DRE = {
-  receitaBruta:   number
-  custoInsumos:   number | null
-  lucroBruto:     number | null
-  custoCostura:   number
-  custoFixo:      number
-  custoVariavel:  number
-  resultadoOp:    number | null
+  receitaBruta:  number
+  custoInsumos:  number | null
+  lucroBruto:    number | null
+  custoCostura:  number
+  custoFixo:     number
+  custoVariavel: number
+  resultadoOp:   number | null
 }
 
 type Summary = {
@@ -33,18 +36,27 @@ type ProductRow = {
   qty:     number
 }
 
+type MaterialFlow = {
+  entradas: { total: number; count: number }
+  saidas:   { total: number; count: number }
+}
+
 type ReportData = {
   period:         { from: string; to: string; days: number }
   dre:            DRE
   summary:        Summary
   byChannel:      Record<string, number>
   productRanking: ProductRow[]
+  materialFlow:   MaterialFlow
 }
 
 type StockItem = {
-  productName: string; color: string; size: string
-  qty: number; costPrice: number; salePrice: number
-  totalCost: number; totalSale: number
+  productName: string
+  qty:         number
+  costPrice:   number
+  salePrice:   number
+  totalCost:   number
+  totalSale:   number
 }
 type RawItem = {
   materialName: string; variantName: string; unit: string
@@ -61,12 +73,12 @@ type StockValuation = {
 type PresetKey = "mes_atual" | "mes_anterior" | "7d" | "30d" | "60d" | "range"
 
 const PRESETS: { key: PresetKey; label: string }[] = [
-  { key: "mes_atual",    label: "Mês atual"     },
-  { key: "mes_anterior", label: "Mês anterior"  },
-  { key: "7d",           label: "7 dias"        },
-  { key: "30d",          label: "30 dias"       },
-  { key: "60d",          label: "60 dias"       },
-  { key: "range",        label: "Período"       },
+  { key: "mes_atual",    label: "Mês atual"    },
+  { key: "mes_anterior", label: "Mês anterior" },
+  { key: "7d",           label: "7 dias"       },
+  { key: "30d",          label: "30 dias"      },
+  { key: "60d",          label: "60 dias"      },
+  { key: "range",        label: "Período"      },
 ]
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -75,15 +87,20 @@ const CHANNEL_LABEL: Record<string, string> = {
   manual:   "Manual",
 }
 
+const CHANNEL_COLOR: Record<string, string> = {
+  pdv:      "#4361EE",
+  whatsapp: "#10B981",
+  manual:   "#F59E0B",
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtR(v: number | null, opts?: { signed?: boolean }) {
+function fmtR(v: number | null) {
   if (v === null) return "—"
-  const n    = Number(v)
-  const abs  = Math.abs(n)
-  const str  = `R$ ${abs.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
-  if (opts?.signed && n < 0) return `(${str})`
-  return str
+  const n   = Number(v)
+  const abs = Math.abs(n)
+  const str = `R$ ${abs.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+  return n < 0 ? `(${str})` : str
 }
 
 function pct(v: number | null) {
@@ -102,9 +119,9 @@ function getPresetDates(key: PresetKey, rs: string, re: string): [string, string
       const lastDay = new Date(y, pm - 1, 0).getDate()
       return [`${py}-${String(pm).padStart(2, "0")}-01`, `${py}-${String(pm).padStart(2, "0")}-${lastDay}`]
     }
-    case "7d":  return [subDaysBR(6), t]
-    case "30d": return [subDaysBR(29), t]
-    case "60d": return [subDaysBR(59), t]
+    case "7d":    return [subDaysBR(6),  t]
+    case "30d":   return [subDaysBR(29), t]
+    case "60d":   return [subDaysBR(59), t]
     case "range": return (rs && re) ? [rs, re] : null
   }
 }
@@ -138,11 +155,9 @@ function DRERow({ label, value, indent, negative, bold, separator, sub }: {
   label?: string; value?: number | null; indent?: boolean; negative?: boolean
   bold?: boolean; separator?: boolean; sub?: string
 }) {
-  if (separator) {
-    return <div className="border-t border-[#0F1E3C]/8 my-1" />
-  }
-  const isNeg    = negative || (value !== null && value !== undefined && value < 0)
-  const display  = fmtR(value ?? null, { signed: true })
+  if (separator) return <div className="border-t border-[#0F1E3C]/8 my-1" />
+  const isNeg   = negative || (value !== null && value !== undefined && value < 0)
+  const display = fmtR(value ?? null)
   return (
     <div className={`flex items-center justify-between py-2 ${bold ? "font-bold" : ""}`}>
       <div className={`flex items-start gap-1 ${indent ? "pl-4" : ""}`}>
@@ -154,8 +169,8 @@ function DRERow({ label, value, indent, negative, bold, separator, sub }: {
       </div>
       <span className={`text-sm font-bold tabular-nums ${
         value === null || value === undefined ? "text-[#0F1E3C]/25"
-        : isNeg ? "text-red-600"
-        : bold  ? "text-[#0F1E3C]"
+        : isNeg  ? "text-red-600"
+        : bold   ? "text-[#0F1E3C]"
         : "text-[#0F1E3C]/70"
       }`}>
         {display}
@@ -173,9 +188,9 @@ export default function RelatorioFinanceiroPage() {
   const [data,       setData]       = useState<ReportData | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [error,      setError]      = useState("")
-  const [dreOpen,    setDreOpen]    = useState(true)
-  const [stockVal,   setStockVal]   = useState<StockValuation | null>(null)
+  const [dreOpen,    setDreOpen]    = useState(false)
   const [stockOpen,  setStockOpen]  = useState(true)
+  const [stockVal,   setStockVal]   = useState<StockValuation | null>(null)
 
   const load = useCallback(async () => {
     const dates = getPresetDates(preset, rangeStart, rangeEnd)
@@ -187,7 +202,7 @@ export default function RelatorioFinanceiroPage() {
         fetch(`/api/relatorio-financeiro?from=${dates[0]}&to=${dates[1]}`),
         fetch("/api/stock-valuation"),
       ])
-      if (!dreRes.ok) { const d = await dreRes.json(); throw new Error(d.error); }
+      if (!dreRes.ok) { const d = await dreRes.json(); throw new Error(d.error) }
       setData(await dreRes.json())
       if (valRes.ok) setStockVal(await valRes.json())
     } catch (e) {
@@ -199,8 +214,8 @@ export default function RelatorioFinanceiroPage() {
 
   useEffect(() => { load() }, [load])
 
-  const dre     = data?.dre
-  const summary = data?.summary
+  const dre          = data?.dre
+  const summary      = data?.summary
   const channelTotal = Object.values(data?.byChannel ?? {}).reduce((s, v) => s + v, 0)
 
   return (
@@ -212,7 +227,7 @@ export default function RelatorioFinanceiroPage() {
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
             Relatório Financeiro
           </h1>
-          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">DRE · Receita · Margens · Ranking de produtos</p>
+          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Receita · Insumos · Margens · Ranking</p>
         </div>
         <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors border border-[#0F1E3C]/8">
           <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
@@ -254,39 +269,254 @@ export default function RelatorioFinanceiroPage() {
         </div>
       ) : data && (
         <>
-          {/* KPI row */}
+
+          {/* ── 1. Receita por Canal — TOPO ─────────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Receita por Canal</p>
+              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">
+                pedidos concluídos · {data.period.from} → {data.period.to}
+              </p>
+            </div>
+            <div className="p-6">
+              {Object.keys(data.byChannel).length === 0 ? (
+                <p className="text-sm text-center text-[#0F1E3C]/30 py-4">Sem vendas concluídas no período</p>
+              ) : (
+                <>
+                  {/* Canal cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                    {(["pdv", "whatsapp", "manual"] as const).map(ch => {
+                      const val   = data.byChannel[ch] ?? 0
+                      const share = channelTotal > 0 ? (val / channelTotal) * 100 : 0
+                      const color = CHANNEL_COLOR[ch]
+                      return (
+                        <div key={ch} className="rounded-xl border border-[#0F1E3C]/6 p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">
+                            {CHANNEL_LABEL[ch]}
+                          </p>
+                          <p className="text-2xl font-black leading-none" style={{ color }}>
+                            {val > 0 ? fmtR(val) : "—"}
+                          </p>
+                          <div className="mt-3 h-1.5 bg-[#0F1E3C]/6 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{ width: `${share}%`, backgroundColor: color }}
+                            />
+                          </div>
+                          <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5 font-semibold">
+                            {share > 0 ? `${share.toFixed(1)}%` : "0%"} do total
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {/* Total */}
+                  <div className="flex items-center justify-between pt-3 border-t border-[#0F1E3C]/6">
+                    <span className="text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">
+                      Total · {summary?.pedidosConcluidos ?? 0} pedidos concluídos
+                    </span>
+                    <span className="text-lg font-black text-[#0F1E3C]">{fmtR(channelTotal)}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* ── 2. KPI cards ────────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KPICard
               label="Receita Confirmada"
               value={fmtR(dre?.receitaBruta ?? 0)}
-              sub={`${summary?.pedidosConcluidos ?? 0} pedidos concluídos`}
+              sub={`${summary?.pedidosConcluidos ?? 0} pedidos · ${summary?.totalPecas ?? 0} peças`}
               icon={DollarSign}
               color="blue"
             />
             <KPICard
               label="Resultado s/ Insumos"
               value={fmtR(dre?.lucroBruto ?? null)}
-              sub={dre?.lucroBruto != null ? `margem ${pct(summary?.margemBruta ?? null)}` : "Sem custo cadastrado"}
+              sub={dre?.lucroBruto != null
+                ? `margem ${pct(summary?.margemBruta ?? null)} sobre receita`
+                : "Custo de material não cadastrado"}
               icon={TrendingUp}
               color={dre?.lucroBruto != null && dre.lucroBruto >= 0 ? "green" : "red"}
             />
             <KPICard
               label="Resultado Operacional"
               value={fmtR(dre?.resultadoOp ?? null)}
-              sub={dre?.resultadoOp != null ? `margem op. ${pct(summary?.margemOp ?? null)}` : "Sem custo cadastrado"}
+              sub={dre?.resultadoOp != null
+                ? `margem op. ${pct(summary?.margemOp ?? null)}`
+                : "Custos não cadastrados"}
               icon={dre?.resultadoOp != null && (dre.resultadoOp ?? 0) >= 0 ? TrendingUp : TrendingDown}
               color={dre?.resultadoOp != null && (dre.resultadoOp ?? 0) >= 0 ? "green" : "red"}
             />
             <KPICard
-              label="Peças / Ticket Médio"
-              value={`${summary?.totalPecas ?? 0} pç`}
-              sub={`Ticket ${fmtR(summary?.ticketMedio ?? 0)}`}
+              label="Ticket Médio"
+              value={fmtR(summary?.ticketMedio ?? 0)}
+              sub={`${summary?.totalPecas ?? 0} peças no período`}
               icon={Package}
               color="amber"
             />
           </div>
 
-          {/* DRE Collapsible */}
+          {/* ── 3. Fluxo de Insumos ─────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Fluxo de Insumos</p>
+              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">
+                compras e consumo no período · saldo é snapshot atual
+              </p>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Entradas */}
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowUpRight size={14} className="text-emerald-600" />
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Compras (entradas)</p>
+                  </div>
+                  <p className="text-2xl font-black text-emerald-700 leading-none">
+                    {fmtR(data.materialFlow.entradas.total)}
+                  </p>
+                  <p className="text-[10px] text-emerald-600 mt-1.5">
+                    {data.materialFlow.entradas.count} {data.materialFlow.entradas.count === 1 ? "lote comprado" : "lotes comprados"}
+                  </p>
+                </div>
+
+                {/* Saídas */}
+                <div className="rounded-xl bg-red-50 border border-red-100 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowDownRight size={14} className="text-red-600" />
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-red-700">Consumo (saídas)</p>
+                  </div>
+                  <p className="text-2xl font-black text-red-700 leading-none">
+                    {data.materialFlow.saidas.total > 0
+                      ? `(${fmtR(data.materialFlow.saidas.total)})`
+                      : "—"}
+                  </p>
+                  <p className="text-[10px] text-red-600 mt-1.5">
+                    {data.materialFlow.saidas.count} {data.materialFlow.saidas.count === 1 ? "bobina esgotada" : "bobinas esgotadas"}
+                  </p>
+                </div>
+
+                {/* Saldo */}
+                <div className="rounded-xl bg-[#4361EE]/5 border border-[#4361EE]/12 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Layers size={14} className="text-[#4361EE]" />
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#4361EE]">Saldo em Insumos</p>
+                  </div>
+                  <p className="text-2xl font-black text-[#4361EE] leading-none">
+                    {fmtR(stockVal?.rawMaterials.totalCost ?? null)}
+                  </p>
+                  <p className="text-[10px] text-[#4361EE]/60 mt-1.5">
+                    snapshot atual · {stockVal?.rawMaterials.items.length ?? 0} lotes disponíveis
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── 4. Ranking de Produtos ───────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Ranking de Produtos</p>
+              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">pedidos concluídos no período · ordenado por receita</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#0F1E3C]/5 bg-[#F4F6FB]">
+                    {["#", "Produto", "Qtd", "Receita", "Custo", "Lucro", "Margem"].map(h => (
+                      <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#0F1E3C]/4">
+                  {data.productRanking.slice(0, 20).map((p, i) => {
+                    const lucro = p.cost !== null ? p.revenue - p.cost : null
+                    return (
+                      <tr key={p.name} className="hover:bg-[#F4F6FB] transition-colors">
+                        <td className="px-4 py-3 text-[10px] font-bold text-[#0F1E3C]/30 w-8">{i + 1}</td>
+                        <td className="px-4 py-3 font-semibold text-[#0F1E3C] max-w-[180px] truncate">{p.name}</td>
+                        <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">{p.qty}</td>
+                        <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">{fmtR(p.revenue)}</td>
+                        <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">
+                          {p.cost !== null ? fmtR(p.cost) : <span className="text-[#0F1E3C]/20">—</span>}
+                        </td>
+                        <td className="px-4 py-3 font-bold tabular-nums">
+                          {lucro !== null ? (
+                            <span className={lucro >= 0 ? "text-emerald-600" : "text-red-600"}>
+                              {fmtR(lucro)}
+                            </span>
+                          ) : <span className="text-[#0F1E3C]/20">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          {p.margin !== null ? (
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              p.margin >= 50 ? "bg-emerald-100 text-emerald-700"
+                              : p.margin >= 30 ? "bg-amber-100 text-amber-700"
+                              : "bg-red-100 text-red-700"
+                            }`}>
+                              {p.margin.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-[#0F1E3C]/20">sem custo</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {data.productRanking.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-sm text-[#0F1E3C]/25">
+                        Sem produtos vendidos no período
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {data.productRanking.length > 0 && (() => {
+                  const totalRevenue = data.productRanking.reduce((s, p) => s + p.revenue, 0)
+                  const totalCost    = data.productRanking.filter(p => p.cost !== null).reduce((s, p) => s + (p.cost ?? 0), 0)
+                  const hasCost      = data.productRanking.some(p => p.cost !== null)
+                  const totalLucro   = hasCost ? totalRevenue - totalCost : null
+                  const totalMargem  = hasCost && totalRevenue > 0 ? ((totalRevenue - totalCost) / totalRevenue) * 100 : null
+                  return (
+                    <tfoot>
+                      <tr className="border-t-2 border-[#0F1E3C]/10 bg-[#F4F6FB]">
+                        <td colSpan={2} className="px-4 py-3 text-xs font-bold text-[#0F1E3C]/40 uppercase">Total</td>
+                        <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">
+                          {data.productRanking.reduce((s, p) => s + p.qty, 0)}
+                        </td>
+                        <td className="px-4 py-3 font-black text-[#0F1E3C] tabular-nums">{fmtR(totalRevenue)}</td>
+                        <td className="px-4 py-3 font-bold text-[#0F1E3C]/60 tabular-nums">
+                          {hasCost ? fmtR(totalCost) : "—"}
+                        </td>
+                        <td className="px-4 py-3 font-black tabular-nums">
+                          {totalLucro !== null ? (
+                            <span className={totalLucro >= 0 ? "text-emerald-600" : "text-red-600"}>
+                              {fmtR(totalLucro)}
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          {totalMargem !== null ? (
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              totalMargem >= 50 ? "bg-emerald-100 text-emerald-700"
+                              : totalMargem >= 30 ? "bg-amber-100 text-amber-700"
+                              : "bg-red-100 text-red-700"
+                            }`}>
+                              {totalMargem.toFixed(1)}%
+                            </span>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )
+                })()}
+              </table>
+            </div>
+          </div>
+
+          {/* ── 5. DRE — colapsível ─────────────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
             <button
               onClick={() => setDreOpen(v => !v)}
@@ -298,7 +528,10 @@ export default function RelatorioFinanceiroPage() {
                   {data.period.days} dias · {data.period.from} → {data.period.to}
                 </p>
               </div>
-              {dreOpen ? <ChevronUp size={16} className="text-[#0F1E3C]/30" /> : <ChevronDown size={16} className="text-[#0F1E3C]/30" />}
+              {dreOpen
+                ? <ChevronUp size={16} className="text-[#0F1E3C]/30" />
+                : <ChevronDown size={16} className="text-[#0F1E3C]/30" />
+              }
             </button>
             {dreOpen && (
               <div className="px-6 py-4">
@@ -306,19 +539,21 @@ export default function RelatorioFinanceiroPage() {
                 <DRERow label="(-) Custo de Insumos" value={dre?.custoInsumos != null ? -(dre.custoInsumos) : null}
                   indent negative sub="material_cost dos produtos vendidos" />
                 <DRERow separator />
-                <DRERow bold label="Resultado s/ Insumos (Lucro Bruto)" value={dre?.lucroBruto} />
+                <DRERow bold label="Resultado s/ Insumos" value={dre?.lucroBruto}
+                  sub={dre?.lucroBruto != null ? `margem ${pct(summary?.margemBruta ?? null)}` : undefined} />
                 <DRERow label="(-) Custo de Costura" value={-(dre?.custoCostura ?? 0)} indent negative
-                  sub={`${data.period.days}d de custo operacional`} />
+                  sub={`${data.period.days}d proporcionais ao mês`} />
                 <DRERow label="(-) Custo Fixo" value={-(dre?.custoFixo ?? 0)} indent negative />
                 <DRERow label="(-) Custo Variável" value={-(dre?.custoVariavel ?? 0)} indent negative
                   sub="despesas variáveis lançadas no período" />
                 <DRERow separator />
-                <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp} />
+                <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}
+                  sub={dre?.resultadoOp != null ? `margem op. ${pct(summary?.margemOp ?? null)}` : undefined} />
               </div>
             )}
           </div>
 
-          {/* Stock valuation */}
+          {/* ── 6. Balanço de Estoque — snapshot, colapsível ────────────────── */}
           {stockVal && (
             <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
               <button
@@ -326,26 +561,32 @@ export default function RelatorioFinanceiroPage() {
                 className="w-full flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/6 hover:bg-[#F4F6FB] transition-colors"
               >
                 <div>
-                  <p className="text-sm font-bold text-[#0F1E3C] text-left">Balanço de Estoque — Snapshot Atual</p>
-                  <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5 text-left">Capital imobilizado em produto pronto e insumos</p>
+                  <p className="text-sm font-bold text-[#0F1E3C] text-left">Balanço de Estoque</p>
+                  <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5 text-left">
+                    snapshot atual — não muda com o filtro de período
+                  </p>
                 </div>
-                {stockOpen ? <ChevronUp size={16} className="text-[#0F1E3C]/30" /> : <ChevronDown size={16} className="text-[#0F1E3C]/30" />}
+                {stockOpen
+                  ? <ChevronUp size={16} className="text-[#0F1E3C]/30" />
+                  : <ChevronDown size={16} className="text-[#0F1E3C]/30" />
+                }
               </button>
+
               {stockOpen && (
-                <div className="p-6 space-y-6">
-                  {/* KPI cards do estoque */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-6 space-y-5">
+                  {/* KPI totais */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <KPICard
                       label="Capital em Produtos (custo)"
                       value={fmtR(stockVal.products.totalCost)}
-                      sub={`${stockVal.products.items.length} variações em estoque`}
+                      sub={`${stockVal.products.items.length} produtos em estoque`}
                       icon={Package} color="blue"
                     />
                     <KPICard
                       label="Capital em Insumos"
                       value={fmtR(stockVal.rawMaterials.totalCost)}
                       sub={`${stockVal.rawMaterials.items.length} lotes disponíveis`}
-                      icon={Package}
+                      icon={Layers}
                     />
                     <KPICard
                       label="Receita Potencial (venda)"
@@ -359,78 +600,63 @@ export default function RelatorioFinanceiroPage() {
                     />
                   </div>
 
-                  {/* Tabela de produtos em estoque */}
+                  {/* Tabela simplificada: 1 linha por produto */}
                   {stockVal.products.items.length > 0 && (
-                    <div>
-                      <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-3">Produtos em estoque</p>
-                      <div className="overflow-x-auto rounded-xl border border-[#0F1E3C]/6">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-[#0F1E3C]/5 bg-[#F4F6FB]">
-                              {["Produto", "Cor", "Tam", "Qtd", "Custo/un", "Preço/un", "Total custo", "Total venda"].map(h => (
-                                <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[#0F1E3C]/4">
-                            {stockVal.products.items.map((r, i) => (
-                              <tr key={i} className="hover:bg-[#F4F6FB] transition-colors">
-                                <td className="px-4 py-2.5 font-semibold text-[#0F1E3C] max-w-[140px] truncate">{r.productName}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/50">{r.color || "—"}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/50">{r.size  || "—"}</td>
-                                <td className="px-4 py-2.5 font-bold text-[#0F1E3C]">{r.qty}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/50">{r.costPrice > 0 ? fmtR(r.costPrice) : "—"}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/50">{r.salePrice > 0 ? fmtR(r.salePrice) : "—"}</td>
-                                <td className="px-4 py-2.5 font-bold text-[#4361EE]">{r.costPrice > 0 ? fmtR(r.totalCost) : "—"}</td>
-                                <td className="px-4 py-2.5 font-bold text-emerald-600">{r.salePrice > 0 ? fmtR(r.totalSale) : "—"}</td>
-                              </tr>
+                    <div className="overflow-x-auto rounded-xl border border-[#0F1E3C]/6">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-[#0F1E3C]/5 bg-[#F4F6FB]">
+                            {["Produto", "Qtd total", "Capital (custo)", "Potencial (venda)", "Margem%"].map(h => (
+                              <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider whitespace-nowrap">{h}</th>
                             ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t border-[#0F1E3C]/8 bg-[#F4F6FB]">
-                              <td colSpan={6} className="px-4 py-2.5 text-xs font-bold text-[#0F1E3C]/40 uppercase">Total</td>
-                              <td className="px-4 py-2.5 font-black text-[#4361EE]">{fmtR(stockVal.products.totalCost)}</td>
-                              <td className="px-4 py-2.5 font-black text-emerald-600">{fmtR(stockVal.products.totalSale)}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Insumos */}
-                  {stockVal.rawMaterials.items.length > 0 && (
-                    <div>
-                      <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-3">Insumos disponíveis</p>
-                      <div className="overflow-x-auto rounded-xl border border-[#0F1E3C]/6">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-[#0F1E3C]/5 bg-[#F4F6FB]">
-                              {["Insumo", "Variante", "Qtd", "Unidade", "Custo unit.", "Total"].map(h => (
-                                <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[#0F1E3C]/4">
-                            {stockVal.rawMaterials.items.map((r, i) => (
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#0F1E3C]/4">
+                          {stockVal.products.items.map((r, i) => {
+                            const margem = r.totalSale > 0 && r.totalCost > 0
+                              ? ((r.totalSale - r.totalCost) / r.totalSale) * 100
+                              : null
+                            return (
                               <tr key={i} className="hover:bg-[#F4F6FB] transition-colors">
-                                <td className="px-4 py-2.5 font-semibold text-[#0F1E3C]">{r.materialName}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/50">{r.variantName || "—"}</td>
-                                <td className="px-4 py-2.5 font-bold text-[#0F1E3C]">{r.qty}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/40">{r.unit}</td>
-                                <td className="px-4 py-2.5 text-[#0F1E3C]/50">{fmtR(r.unitPrice)}</td>
-                                <td className="px-4 py-2.5 font-bold text-[#4361EE]">{fmtR(r.totalCost)}</td>
+                                <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{r.productName}</td>
+                                <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">{r.qty}</td>
+                                <td className="px-4 py-3 font-bold text-[#4361EE] tabular-nums">
+                                  {r.costPrice > 0 ? fmtR(r.totalCost) : "—"}
+                                </td>
+                                <td className="px-4 py-3 font-bold text-emerald-600 tabular-nums">
+                                  {r.salePrice > 0 ? fmtR(r.totalSale) : "—"}
+                                </td>
+                                <td className="px-4 py-3">
+                                  {margem !== null ? (
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                      margem >= 50 ? "bg-emerald-100 text-emerald-700"
+                                      : margem >= 30 ? "bg-amber-100 text-amber-700"
+                                      : "bg-red-100 text-red-700"
+                                    }`}>
+                                      {margem.toFixed(1)}%
+                                    </span>
+                                  ) : "—"}
+                                </td>
                               </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t border-[#0F1E3C]/8 bg-[#F4F6FB]">
-                              <td colSpan={5} className="px-4 py-2.5 text-xs font-bold text-[#0F1E3C]/40 uppercase">Total insumos</td>
-                              <td className="px-4 py-2.5 font-black text-[#4361EE]">{fmtR(stockVal.rawMaterials.totalCost)}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
+                            )
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-[#0F1E3C]/8 bg-[#F4F6FB]">
+                            <td className="px-4 py-2.5 text-xs font-bold text-[#0F1E3C]/40 uppercase">Total</td>
+                            <td className="px-4 py-2.5 font-black text-[#0F1E3C] tabular-nums">
+                              {stockVal.products.items.reduce((s, r) => s + r.qty, 0)}
+                            </td>
+                            <td className="px-4 py-2.5 font-black text-[#4361EE] tabular-nums">
+                              {fmtR(stockVal.products.totalCost)}
+                            </td>
+                            <td className="px-4 py-2.5 font-black text-emerald-600 tabular-nums">
+                              {fmtR(stockVal.products.totalSale)}
+                            </td>
+                            <td className="px-4 py-2.5" />
+                          </tr>
+                        </tfoot>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -438,84 +664,6 @@ export default function RelatorioFinanceiroPage() {
             </div>
           )}
 
-          {/* Revenue by channel + Product ranking */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-            {/* By channel */}
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
-                <p className="text-sm font-bold text-[#0F1E3C]">Receita por canal</p>
-                <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">pedidos concluídos</p>
-              </div>
-              <div className="p-5 space-y-4">
-                {Object.entries(data.byChannel).sort(([, a], [, b]) => b - a).map(([ch, val]) => {
-                  const share = channelTotal > 0 ? (val / channelTotal) * 100 : 0
-                  return (
-                    <div key={ch}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-sm font-semibold text-[#0F1E3C]">{CHANNEL_LABEL[ch] ?? ch}</span>
-                        <div className="text-right">
-                          <span className="text-sm font-bold text-[#0F1E3C]">{fmtR(val)}</span>
-                          <span className="text-[10px] text-[#0F1E3C]/35 ml-1.5">{share.toFixed(1)}%</span>
-                        </div>
-                      </div>
-                      <div className="h-2 bg-[#0F1E3C]/6 rounded-full overflow-hidden">
-                        <div className="h-full bg-[#4361EE] rounded-full transition-all" style={{ width: `${share}%` }} />
-                      </div>
-                    </div>
-                  )
-                })}
-                {Object.keys(data.byChannel).length === 0 && (
-                  <p className="text-sm text-center text-[#0F1E3C]/30 py-4">Sem vendas no período</p>
-                )}
-              </div>
-            </div>
-
-            {/* Product ranking */}
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-[#0F1E3C]/6">
-                <p className="text-sm font-bold text-[#0F1E3C]">Ranking de produtos</p>
-                <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">por receita · pedidos concluídos</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#0F1E3C]/5 bg-[#F4F6FB]">
-                      {["#", "Produto", "Qtd", "Receita", "Margem"].map(h => (
-                        <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#0F1E3C]/4">
-                    {data.productRanking.slice(0, 12).map((p, i) => (
-                      <tr key={p.name} className="hover:bg-[#F4F6FB] transition-colors">
-                        <td className="px-4 py-3 text-[10px] font-bold text-[#0F1E3C]/30">{i + 1}</td>
-                        <td className="px-4 py-3 font-semibold text-[#0F1E3C] max-w-[160px] truncate">{p.name}</td>
-                        <td className="px-4 py-3 text-[#0F1E3C]/50">{p.qty}</td>
-                        <td className="px-4 py-3 font-bold text-[#0F1E3C]">{fmtR(p.revenue)}</td>
-                        <td className="px-4 py-3">
-                          {p.margin !== null ? (
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                              p.margin >= 40 ? "bg-emerald-100 text-emerald-700"
-                              : p.margin >= 20 ? "bg-amber-100 text-amber-700"
-                              : "bg-red-100 text-red-700"
-                            }`}>
-                              {p.margin.toFixed(1)}%
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-[#0F1E3C]/25">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                    {data.productRanking.length === 0 && (
-                      <tr><td colSpan={5} className="py-10 text-center text-sm text-[#0F1E3C]/25">Sem dados</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
         </>
       )}
     </div>
