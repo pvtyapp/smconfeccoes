@@ -29,6 +29,7 @@ export async function GET(req: Request) {
         p.status,
         p.source,
         p.due_date         AS "dueDate",
+        p.impressora_id    AS "impressoraId",
         p.contact_id       AS "contactId",
         p.created_at       AS "createdAt",
         c.name             AS "contactName",

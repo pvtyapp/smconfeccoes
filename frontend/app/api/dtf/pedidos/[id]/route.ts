@@ -14,6 +14,7 @@ export async function GET(
         p.metros_finais AS "metrosFinais", p.largura_cm AS "larguraCm",
         p.preco_cobrado AS "precoCobrado", p.observacao,
         p.status, p.source, p.due_date AS "dueDate",
+        p.impressora_id AS "impressoraId",
         p.contact_id AS "contactId", p.created_at AS "createdAt",
         c.name AS "contactName", c.phone AS "contactPhone", c.jid AS "contactJid",
         c.payment_term_enabled AS "paymentTermEnabled",

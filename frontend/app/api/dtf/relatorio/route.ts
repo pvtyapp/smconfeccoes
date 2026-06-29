@@ -109,12 +109,26 @@ export async function GET(req: Request) {
       return s + (i.custoPorMetroAtual ?? 0)
     }, 0)
 
+    // Metros por impressora
+    const { rows: impressorasRows } = await pool.query(`
+      SELECT impressora_id AS "impressoraId",
+             SUM(COALESCE(metros_finais, metros, 0))::float AS metros,
+             COUNT(*)::int AS pedidos
+      FROM dtf_pedidos
+      WHERE status != 'cancelado'
+        AND impressora_id IS NOT NULL
+        ${from && to ? "AND data BETWEEN $1 AND $2" : ""}
+      GROUP BY impressora_id
+      ORDER BY impressora_id
+    `, from && to ? [from, to] : [])
+
     return NextResponse.json({
       pedidos,
       totalMetros,
       totalReceita,
       insumos: insumosComCusto,
       custoCombinado: custoCombinado > 0 ? custoCombinado : null,
+      impressoras: impressorasRows,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

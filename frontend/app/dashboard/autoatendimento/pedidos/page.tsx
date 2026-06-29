@@ -245,6 +245,7 @@ export default function PedidosPage() {
   const [dtfOrders,      setDtfOrders]      = useState<DtfOrder[]>([])
   const [selectedDtf,    setSelectedDtf]    = useState<DtfOrder | null>(null)
   const selectedDtfIdRef                    = useRef<number | null>(null)
+  const [numImpressoras, setNumImpressoras] = useState(1)
 
   // History
   const [histPeriod,     setHistPeriod]     = useState<HistPeriod>("7d")
@@ -574,6 +575,11 @@ export default function PedidosPage() {
     const t = setInterval(loadDtf, 30_000)
     return () => clearInterval(t)
   }, [loadDtf])
+  useEffect(() => {
+    fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
+      if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+    })
+  }, [])
   useEffect(() => { if (histOpen) loadHistorico() }, [histOpen, loadHistorico])
 
   // ── Load conversations ─────────────────────────────────────────────────────
@@ -2185,7 +2191,7 @@ export default function PedidosPage() {
         <OrderModal order={selected} onClose={() => { setSelected(null); selectedIdRef.current = null }} onRefresh={() => loadOrders()} />
       )}
       {selectedDtf && (
-        <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} />
+        <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} numImpressoras={numImpressoras} />
       )}
 
       {/* ── LIGHTBOX ── */}

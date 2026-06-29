@@ -8,6 +8,7 @@ type Props = {
   order: DtfOrder
   onClose: () => void
   onRefresh: () => void
+  numImpressoras?: number
 }
 
 // triagem → em_producao → pronto; concluido handled separately
@@ -16,7 +17,7 @@ const STATUS_FLOW: Record<string, { next: string; label: string; color: string }
   em_producao: { next: "pronto",      label: "Marcar Pronto",      color: "bg-green-600 hover:bg-green-700" },
 }
 
-export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
+export default function DtfOrderModal({ order, onClose, onRefresh, numImpressoras = 1 }: Props) {
   const [downloading,   setDownloading]   = useState(false)
   const [saving,        setSaving]        = useState(false)
   const [metrosFinais,  setMetrosFinais]  = useState(order.metrosFinais ? String(order.metrosFinais) : "")
@@ -30,6 +31,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
   const [showCancel,    setShowCancel]    = useState(false)
   const [notifyClient,  setNotifyClient]  = useState(true)
   const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido DTF ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
+  const [impressoraId,  setImpressoraId]  = useState<number>(1)
 
   useEffect(() => {
     fetch("/api/dtf/preco")
@@ -114,6 +116,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
       const body: Record<string, unknown> = { status: flow.next }
       if (metrosFinais && !isNaN(metros)) body.metrosFinais = metros
       if (valorCalculado)                 body.precoCobrado = valorCalculado
+      if (flow.next === "em_producao")    body.impressoraId = impressoraId
       if (flow.next === "pronto") {
         body.paymentMode = usePrazo ? "prazo" : "avista"
         if (usePrazo && dueDate) body.dueDate = dueDate
@@ -252,6 +255,29 @@ export default function DtfOrderModal({ order, onClose, onRefresh }: Props) {
                   </p>
                 )}
               </div>
+
+              {/* Impressora — só aparece quando triagem → em_producao com múltiplas impressoras */}
+              {order.status === "triagem" && numImpressoras > 1 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider block">Qual impressora?</label>
+                  <div className="flex gap-2">
+                    {Array.from({ length: numImpressoras }, (_, i) => i + 1).map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setImpressoraId(n)}
+                        className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                          impressoraId === n
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-[#F4F6FB] text-[#0F1E3C]/50 border-transparent hover:text-[#0F1E3C]"
+                        }`}
+                      >
+                        Impressora {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Prazo / à vista — só aparece quando indo para pronto */}
               {isProducao && (

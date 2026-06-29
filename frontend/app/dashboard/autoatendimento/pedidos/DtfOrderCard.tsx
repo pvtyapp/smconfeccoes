@@ -17,6 +17,7 @@ export type DtfOrder = {
   status: string
   source: string
   dueDate: string | null
+  impressoraId: number | null
   contactId: number | null
   contactName: string | null
   contactPhone: string | null
@@ -113,19 +114,26 @@ export default function DtfOrderCard({ order, onClick }: Props) {
         )}
       </div>
 
-      <div className="mt-3 pt-3 border-t border-[#0F1E3C]/6 flex items-center gap-1.5">
-        {order.attachments.length === 0 ? (
-          <>
-            <AlertTriangle size={10} className="text-amber-500" />
-            <span className="text-[10px] text-amber-600 font-semibold">Aguardando arquivo</span>
-          </>
-        ) : (
-          <>
-            <Download size={10} className="text-[#7C3AED]" />
-            <span className="text-[10px] text-[#7C3AED] font-semibold">
-              {order.attachments.length} arquivo{order.attachments.length !== 1 ? "s" : ""}
-            </span>
-          </>
+      <div className="mt-3 pt-3 border-t border-[#0F1E3C]/6 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          {order.attachments.length === 0 ? (
+            <>
+              <AlertTriangle size={10} className="text-amber-500" />
+              <span className="text-[10px] text-amber-600 font-semibold">Aguardando arquivo</span>
+            </>
+          ) : (
+            <>
+              <Download size={10} className="text-[#7C3AED]" />
+              <span className="text-[10px] text-[#7C3AED] font-semibold">
+                {order.attachments.length} arquivo{order.attachments.length !== 1 ? "s" : ""}
+              </span>
+            </>
+          )}
+        </div>
+        {order.status === "em_producao" && order.impressoraId != null && (
+          <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+            🖨 Imp. {order.impressoraId}
+          </span>
         )}
       </div>
     </button>

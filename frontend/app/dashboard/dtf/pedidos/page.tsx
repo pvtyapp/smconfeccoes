@@ -20,12 +20,15 @@ type InsumoSummary = {
   consumoMedioPorMetro: number | null; diasRestantes: number | null
 }
 
+type ImpressoraMetric = { impressoraId: number; metros: number; pedidos: number }
+
 type Relatorio = {
   pedidos: Pedido[]
   totalMetros: number
   totalReceita: number
   insumos: Array<{ id: number; nome: string; custoPorMetroAtual: number | null }>
   custoCombinado: number | null
+  impressoras: ImpressoraMetric[]
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
@@ -73,10 +76,11 @@ export default function DTFDashboardPage() {
   const [rangeStart, setRangeStart] = useState("")
   const [rangeEnd,   setRangeEnd]   = useState("")
 
-  const [relatorio,   setRelatorio]   = useState<Relatorio | null>(null)
-  const [insumos,     setInsumos]     = useState<InsumoSummary[]>([])
-  const [loading,     setLoading]     = useState(true)
-  const [precoMetro,  setPrecoMetro]  = useState<number | null>(null)
+  const [relatorio,      setRelatorio]      = useState<Relatorio | null>(null)
+  const [insumos,        setInsumos]        = useState<InsumoSummary[]>([])
+  const [loading,        setLoading]        = useState(true)
+  const [precoMetro,     setPrecoMetro]     = useState<number | null>(null)
+  const [numImpressoras, setNumImpressoras] = useState(1)
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
@@ -106,6 +110,9 @@ export default function DTFDashboardPage() {
   useEffect(() => {
     fetch("/api/dtf/preco").then(r => r.ok ? r.json() : null).then(d => {
       if (d?.precoMetro) setPrecoMetro(d.precoMetro)
+    })
+    fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
+      if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
     })
   }, [])
 
@@ -203,6 +210,24 @@ export default function DTFDashboardPage() {
               ))
           }
         </div>
+
+        {/* Cards por impressora — só com múltiplas impressoras e dados */}
+        {!loading && numImpressoras > 1 && (relatorio?.impressoras ?? []).length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Por impressora</p>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {(relatorio?.impressoras ?? []).map(imp => (
+                <div key={imp.impressoraId} className="bg-white rounded-2xl border border-blue-200 px-4 py-3">
+                  <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider mb-1">
+                    Impressora {imp.impressoraId}
+                  </p>
+                  <p className="text-lg font-black text-[#0F1E3C]">{Number(imp.metros).toFixed(2)} m</p>
+                  <p className="text-[10px] text-[#0F1E3C]/40">{imp.pedidos} pedido{imp.pedidos !== 1 ? "s" : ""}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* ── Alerta estoque baixo ── */}

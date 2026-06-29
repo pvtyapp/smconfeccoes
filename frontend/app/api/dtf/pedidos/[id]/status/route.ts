@@ -20,8 +20,9 @@ export async function POST(
       dueDate?: string
       notifyClient?: boolean
       cancelMessage?: string
+      impressoraId?: number
     }
-    const { status, metrosFinais, precoCobrado, paymentMode, dueDate, notifyClient, cancelMessage } = body
+    const { status, metrosFinais, precoCobrado, paymentMode, dueDate, notifyClient, cancelMessage, impressoraId } = body
 
     if (!VALID.includes(status))
       return NextResponse.json({ error: `Status inválido. Use: ${VALID.join(", ")}` }, { status: 400 })
@@ -99,9 +100,10 @@ export async function POST(
         UPDATE dtf_pedidos
         SET status        = 'em_producao',
             metros_finais = COALESCE($1::numeric, metros_finais),
-            preco_cobrado = COALESCE($2::numeric, preco_cobrado)
+            preco_cobrado = COALESCE($2::numeric, preco_cobrado),
+            impressora_id = COALESCE($4::int, impressora_id)
         WHERE id = $3
-      `, [metrosFinais ?? null, precoCobrado ?? null, id])
+      `, [metrosFinais ?? null, precoCobrado ?? null, id, impressoraId ?? null])
 
       await client.query("COMMIT")
 
