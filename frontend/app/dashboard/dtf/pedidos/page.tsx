@@ -107,6 +107,7 @@ export default function DTFDashboardPage() {
 
   const [filmBobinas,    setFilmBobinas]    = useState<FilmBobina[]>([])
   const [filmAlertaM,    setFilmAlertaM]    = useState(80)
+  const [filmTamanhoM,   setFilmTamanhoM]   = useState(100)
   const [filmTrocaImp,   setFilmTrocaImp]   = useState<number | null>(null)
   const [filmTrocaForm,  setFilmTrocaForm]  = useState({ tamanhoM: "100", obs: "" })
   const [filmTrocando,   setFilmTrocando]   = useState(false)
@@ -148,8 +149,9 @@ export default function DTFDashboardPage() {
       if (d?.precoMetro) setPrecoMetro(d.precoMetro)
     })
     fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
-      if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
-      if (d?.dtf_film_alerta_m)   setFilmAlertaM(Number(d.dtf_film_alerta_m) || 80)
+      if (d?.dtf_num_impressoras)     setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+      if (d?.dtf_film_alerta_m)       setFilmAlertaM(Number(d.dtf_film_alerta_m) || 80)
+      if (d?.dtf_film_tamanho_padrao) setFilmTamanhoM(Number(d.dtf_film_tamanho_padrao) || 100)
     })
   }, [])
 
@@ -586,8 +588,15 @@ export default function DTFDashboardPage() {
                   </div>
                 </div>
                 <p className={`text-2xl font-black ${ins.lowStock ? "text-red-600" : clr.text}`}>
-                  {parseFloat(Number(ins.saldoAtual).toFixed(3))} {ins.unidade}
+                  {ins.unidade === "metro"
+                    ? `${parseFloat((ins.saldoAtual / filmTamanhoM).toFixed(2))} bobina${ins.saldoAtual / filmTamanhoM !== 1 ? "s" : ""}`
+                    : `${parseFloat(Number(ins.saldoAtual).toFixed(3))} ${ins.unidade}`}
                 </p>
+                {ins.unidade === "metro" && (
+                  <p className={`text-[10px] mt-0.5 opacity-40 ${ins.lowStock ? "text-red-600" : clr.text}`}>
+                    {parseFloat(Number(ins.saldoAtual).toFixed(1))} m no total
+                  </p>
+                )}
                 {(() => {
                   const cpm = relatorio?.insumos.find(r => r.id === ins.id)?.custoPorMetroAtual
                   return cpm != null ? (

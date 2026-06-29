@@ -87,6 +87,10 @@ function fmtData(s: string) {
 function fmtQtd(v: number, unidade: string) {
   return `${parseFloat(Number(v).toFixed(3))} ${unidade}`
 }
+function fmtFilm(metros: number, tamanhoM: number) {
+  const bobinas = metros / tamanhoM
+  return `${parseFloat(bobinas.toFixed(2))} bobina${bobinas !== 1 ? "s" : ""} (${parseFloat(Number(metros).toFixed(1))} m)`
+}
 function fmtR(v: number | null | undefined) {
   if (v == null) return null
   return `R$ ${Number(v).toFixed(2).replace(".", ",")}`
@@ -120,7 +124,8 @@ export default function DTFInsumosPage() {
   const [novoForm,     setNovoForm]     = useState(novoInsumoInit)
   const [savingNovo,   setSavingNovo]   = useState(false)
 
-  const [numImpressoras, setNumImpressoras] = useState(1)
+  const [numImpressoras,  setNumImpressoras]  = useState(1)
+  const [filmTamanhoM,    setFilmTamanhoM]    = useState(100)
 
   const [entradaForm, setEntradaForm] = useState({ quantidade: "", custoTotal: "", data: getToday(), observacao: "", bobinas: "", metrosPorBobina: "" })
   const [saidaForm,   setSaidaForm]   = useState({ quantidade: "", data: getToday(), observacao: "", impressoraId: "" })
@@ -161,7 +166,8 @@ export default function DTFInsumosPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => {
     fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
-      if (d?.dtf_num_impressoras) setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+      if (d?.dtf_num_impressoras)      setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
+      if (d?.dtf_film_tamanho_padrao)  setFilmTamanhoM(Number(d.dtf_film_tamanho_padrao) || 100)
     })
   }, [])
 
@@ -495,7 +501,9 @@ export default function DTFInsumosPage() {
                         <div>
                           <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Saldo atual</p>
                           <p className={`text-lg font-black ${ins.lowStock ? "text-red-600" : "text-[#0F1E3C]"}`}>
-                            {fmtQtd(ins.saldoAtual, ins.unidade)}
+                            {ins.unidade === "metro"
+                              ? fmtFilm(ins.saldoAtual, filmTamanhoM)
+                              : fmtQtd(ins.saldoAtual, ins.unidade)}
                           </p>
                         </div>
                         <div>
@@ -513,7 +521,11 @@ export default function DTFInsumosPage() {
                           <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Alarme</p>
                           {ins.alarmeQtd != null ? (
                             <>
-                              <p className="text-sm font-bold text-amber-600">{fmtQtd(ins.alarmeQtd, ins.unidade)}</p>
+                              <p className="text-sm font-bold text-amber-600">
+                                {ins.unidade === "metro"
+                                  ? fmtFilm(ins.alarmeQtd, filmTamanhoM)
+                                  : fmtQtd(ins.alarmeQtd, ins.unidade)}
+                              </p>
                               {ins.diasAlarme != null && <p className="text-[10px] text-gray-400">≈ {ins.diasAlarme} dias</p>}
                             </>
                           ) : (
@@ -769,7 +781,10 @@ export default function DTFInsumosPage() {
                                     </span>
                                   </td>
                                   <td className={`px-5 py-2 text-right font-bold ${h.tipo === "entrada" ? "text-emerald-600" : "text-orange-600"}`}>
-                                    {h.tipo === "entrada" ? "+" : "-"}{fmtQtd(h.quantidade, ins.unidade)}
+                                    {h.tipo === "entrada" ? "+" : "-"}
+                                    {ins.unidade === "metro"
+                                      ? fmtFilm(h.quantidade, filmTamanhoM)
+                                      : fmtQtd(h.quantidade, ins.unidade)}
                                   </td>
                                   <td className="px-5 py-2 text-right text-gray-500">
                                     {h.tipo === "entrada" && h.custoTotal != null ? fmtR(h.custoTotal) ?? "—" : "—"}

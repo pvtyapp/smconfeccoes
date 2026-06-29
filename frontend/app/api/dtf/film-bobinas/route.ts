@@ -80,6 +80,32 @@ export async function POST(req: Request) {
       `, [ativa.id, metrosUsados, desperdicio])
     }
 
+    // Deduzir do estoque de film (insumo unidade=metro)
+    const { rows: filmRows } = await client.query(
+      `SELECT id FROM dtf_insumos WHERE unidade = 'metro' ORDER BY id LIMIT 1`
+    )
+    if (filmRows.length > 0) {
+      const filmId = filmRows[0].id
+      const { rows: saldoRows } = await client.query(`
+        SELECT
+          COALESCE((SELECT SUM(quantidade) FROM dtf_insumo_entradas WHERE insumo_id = $1), 0) -
+          COALESCE((SELECT SUM(quantidade) FROM dtf_insumo_saidas   WHERE insumo_id = $1), 0)
+          AS saldo
+      `, [filmId])
+      const saldo = Number(saldoRows[0].saldo)
+      if (saldo < tamanhoM) {
+        await client.query("ROLLBACK")
+        return NextResponse.json(
+          { error: `Estoque insuficiente. Disponível: ${saldo.toFixed(2)} m` },
+          { status: 422 }
+        )
+      }
+      await client.query(`
+        INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao, impressora_id)
+        VALUES ($1, $2, CURRENT_DATE, $3, $4)
+      `, [filmId, tamanhoM, `Bobina instalada — Impressora ${impressoraId}`, impressoraId])
+    }
+
     // Abrir nova bobina
     const { rows } = await client.query(`
       INSERT INTO dtf_film_bobinas (impressora_id, tamanho_m, obs)
