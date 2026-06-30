@@ -63,10 +63,8 @@ type Insumo = {
   unidade: string
   grupo: string
   alarmeQtd: number | null
-  diasAlarme: number | null
   saldoAtual: number
-  consumoMedioPorMetro: number | null
-  diasRestantes: number | null
+  custoPorMetroAtual: number | null
   lowStock: boolean
   entradas: Entrada[]
   saidas: Saida[]
@@ -95,13 +93,6 @@ function fmtR(v: number | null | undefined) {
   if (v == null) return null
   return `R$ ${Number(v).toFixed(2).replace(".", ",")}`
 }
-function fmtCpm(v: number | null | undefined, unidade: string) {
-  if (v == null) return "—"
-  const n = Number(v)
-  const decimals = unidade.toLowerCase() === "metro" ? 3 : 4
-  return `${parseFloat(n.toFixed(decimals))} ${unidade}/m impresso`
-}
-
 function getToday() { return todayBR() }
 
 const UNIDADES = ["litro", "metro", "kg", "g", "ml", "unidade"]
@@ -497,7 +488,7 @@ export default function DTFInsumosPage() {
                       </div>
 
                       {/* Stats */}
-                      <div className="px-5 py-3 grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="px-5 py-3 grid grid-cols-2 md:grid-cols-3 gap-4">
                         <div>
                           <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Saldo atual</p>
                           <p className={`text-lg font-black ${ins.lowStock ? "text-red-600" : "text-[#0F1E3C]"}`}>
@@ -507,27 +498,21 @@ export default function DTFInsumosPage() {
                           </p>
                         </div>
                         <div>
-                          <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Consumo médio</p>
-                          <p className="text-sm font-bold text-[#4361EE]">{fmtCpm(ins.consumoMedioPorMetro, ins.unidade)}</p>
-                          <p className="text-[10px] text-gray-400">por metro impresso</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Duração estimada</p>
-                          <p className={`text-sm font-bold ${ins.diasRestantes != null && ins.diasRestantes < 14 ? "text-red-500" : "text-[#0F1E3C]"}`}>
-                            {ins.diasRestantes != null ? `~${ins.diasRestantes} dias` : "—"}
+                          <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Custo/m impresso</p>
+                          <p className="text-sm font-bold text-[#4361EE]">
+                            {ins.custoPorMetroAtual != null
+                              ? `R$ ${Number(ins.custoPorMetroAtual).toFixed(4).replace(".", ",")}/m`
+                              : "—"}
                           </p>
                         </div>
                         <div>
                           <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Alarme</p>
                           {ins.alarmeQtd != null ? (
-                            <>
-                              <p className="text-sm font-bold text-amber-600">
-                                {ins.unidade === "metro"
-                                  ? fmtFilm(ins.alarmeQtd, filmTamanhoM)
-                                  : fmtQtd(ins.alarmeQtd, ins.unidade)}
-                              </p>
-                              {ins.diasAlarme != null && <p className="text-[10px] text-gray-400">≈ {ins.diasAlarme} dias</p>}
-                            </>
+                            <p className="text-sm font-bold text-amber-600">
+                              {ins.unidade === "metro"
+                                ? fmtFilm(ins.alarmeQtd, filmTamanhoM)
+                                : fmtQtd(ins.alarmeQtd, ins.unidade)}
+                            </p>
                           ) : (
                             <button onClick={() => openAlarme(ins)} className="text-xs text-gray-300 hover:text-amber-500 transition-colors flex items-center gap-1">
                               <Settings size={10} /> Configurar
@@ -785,6 +770,9 @@ export default function DTFInsumosPage() {
                                     {ins.unidade === "metro"
                                       ? fmtFilm(h.quantidade, filmTamanhoM)
                                       : fmtQtd(h.quantidade, ins.unidade)}
+                                    {ins.unidade === "metro" && (
+                                      <span className="text-[10px] font-normal text-gray-400 ml-1">({Number(h.quantidade).toFixed(1)} m)</span>
+                                    )}
                                   </td>
                                   <td className="px-5 py-2 text-right text-gray-500">
                                     {h.tipo === "entrada" && h.custoTotal != null ? fmtR(h.custoTotal) ?? "—" : "—"}
@@ -905,7 +893,13 @@ export default function DTFInsumosPage() {
                           </span>
                         </td>
                         <td className={`px-5 py-2.5 text-right font-bold whitespace-nowrap ${h.tipo === "entrada" ? "text-emerald-600" : "text-orange-600"}`}>
-                          {h.tipo === "entrada" ? "+" : "-"}{fmtQtd(h.quantidade, h.unidade)}
+                          {h.tipo === "entrada" ? "+" : "-"}
+                          {h.unidade === "metro"
+                            ? fmtFilm(h.quantidade, filmTamanhoM)
+                            : fmtQtd(h.quantidade, h.unidade)}
+                          {h.unidade === "metro" && (
+                            <span className="text-[10px] font-normal text-gray-400 ml-1">({Number(h.quantidade).toFixed(1)} m)</span>
+                          )}
                         </td>
                         <td className="px-5 py-2.5 text-right text-gray-500 whitespace-nowrap">
                           {h.tipo === "entrada" && h.custo_total != null

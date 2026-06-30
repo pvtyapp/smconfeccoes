@@ -377,9 +377,48 @@ export default function DTFDashboardPage() {
       {/* ── Film Monitor ── */}
       {numImpressoras >= 1 && (
         <section className="space-y-3">
-          <div className="flex items-center gap-2">
-            <RotateCcw size={14} className="text-[#7C3AED]" />
-            <h2 className="text-xs font-bold text-[#7C3AED] uppercase tracking-widest">Film — Monitor por Impressora</h2>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <RotateCcw size={14} className="text-[#7C3AED]" />
+              <h2 className="text-xs font-bold text-[#7C3AED] uppercase tracking-widest">Film — Monitor por Impressora</h2>
+            </div>
+            <div className="flex items-center gap-4 bg-white border border-[#7C3AED]/15 rounded-xl px-3 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[#0F1E3C]/40">Bobina</span>
+                <input
+                  type="number" min="1" step="1"
+                  value={filmTamanhoM}
+                  onChange={e => setFilmTamanhoM(Math.max(1, parseInt(e.target.value) || 100))}
+                  onBlur={e => {
+                    const n = Math.max(1, parseInt(e.target.value) || 100)
+                    fetch("/api/settings", {
+                      method: "PUT", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ dtf_film_tamanho_padrao: String(n) }),
+                    })
+                  }}
+                  className="w-12 text-center text-xs font-bold text-[#7C3AED] focus:outline-none bg-transparent"
+                />
+                <span className="text-[10px] text-[#0F1E3C]/30">m</span>
+              </div>
+              <div className="w-px h-4 bg-[#0F1E3C]/10" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[#0F1E3C]/40">Alerta em</span>
+                <input
+                  type="number" min="1" step="1"
+                  value={filmAlertaM}
+                  onChange={e => setFilmAlertaM(Math.max(1, parseInt(e.target.value) || 80))}
+                  onBlur={e => {
+                    const n = Math.max(1, parseInt(e.target.value) || 80)
+                    fetch("/api/settings", {
+                      method: "PUT", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ dtf_film_alerta_m: String(n) }),
+                    })
+                  }}
+                  className="w-12 text-center text-xs font-bold text-[#7C3AED] focus:outline-none bg-transparent"
+                />
+                <span className="text-[10px] text-[#0F1E3C]/30">m</span>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

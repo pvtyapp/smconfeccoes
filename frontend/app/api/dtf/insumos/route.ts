@@ -36,6 +36,18 @@ export async function GET() {
     const metros90d    = Number(metrosRows[0].metros_90d)
     const metrosPorDia = metros90d / 90
 
+    // Custo unitário médio ponderado por insumo (de todas as entradas com custo)
+    const { rows: costRows } = await pool.query(`
+      SELECT insumo_id,
+             SUM(custo_total)::float / NULLIF(SUM(quantidade), 0) AS custo_unitario
+      FROM dtf_insumo_entradas
+      WHERE custo_total IS NOT NULL
+      GROUP BY insumo_id
+    `)
+    const costMap: Record<number, number> = Object.fromEntries(
+      costRows.map(r => [r.insumo_id, Number(r.custo_unitario)])
+    )
+
     const result = await Promise.all(insumos.map(async (ins) => {
       const { rows: aggRows } = await pool.query(`
         SELECT
@@ -50,15 +62,11 @@ export async function GET() {
       const consumoMedioPorMetro = totalMetros > 0 && totalSaidas > 0
         ? totalSaidas / totalMetros : null
 
-      const consumoDiario = consumoMedioPorMetro && metrosPorDia > 0
-        ? consumoMedioPorMetro * metrosPorDia : null
-
-      const diasRestantes = consumoDiario && consumoDiario > 0
-        ? Math.round(saldoAtual / consumoDiario) : null
+      const custoUnitario = costMap[ins.id] ?? null
+      const custoPorMetroAtual = custoUnitario != null && consumoMedioPorMetro != null
+        ? custoUnitario * consumoMedioPorMetro : null
 
       const alarmeQtd = ins.alarme_qtd != null ? Number(ins.alarme_qtd) : null
-      const diasAlarme = consumoDiario && consumoDiario > 0 && alarmeQtd
-        ? Math.round(alarmeQtd / consumoDiario) : null
       const lowStock = alarmeQtd !== null && saldoAtual <= alarmeQtd
 
       const { rows: entradas } = await pool.query(`
@@ -79,10 +87,8 @@ export async function GET() {
         unidade: ins.unidade,
         grupo: ins.grupo,
         alarmeQtd,
-        diasAlarme,
         saldoAtual,
-        consumoMedioPorMetro,
-        diasRestantes,
+        custoPorMetroAtual,
         lowStock,
         entradas,
         saidas,
