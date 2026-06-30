@@ -191,6 +191,21 @@ export async function GET(req: Request) {
       ORDER BY impressora_id
     `)
 
+    // Top clientes do período
+    const { rows: topClientes } = await pool.query(`
+      SELECT
+        COALESCE(cliente, '(sem nome)') AS cliente,
+        COUNT(*)::int                   AS pedidos,
+        SUM(COALESCE(metros_finais, metros, 0))::float AS metros,
+        COALESCE(SUM(preco_cobrado), 0)::float         AS receita
+      FROM dtf_pedidos
+      WHERE status != 'cancelado'
+        ${from && to ? "AND data BETWEEN $1 AND $2" : ""}
+      GROUP BY cliente
+      ORDER BY receita DESC
+      LIMIT 10
+    `, from && to ? [from, to] : [])
+
     return NextResponse.json({
       pedidos,
       totalMetros,
@@ -199,6 +214,7 @@ export async function GET(req: Request) {
       custoCombinado: custoCombinado > 0 ? custoCombinado : null,
       impressoras,
       filmEficiencia: filmEfRows,
+      topClientes,
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { BarChart2, TrendingDown } from "lucide-react"
+import { BarChart2, TrendingDown, Printer, Users } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 
 type Pedido = {
   id: number; data: string; cliente: string | null
-  metros: number; precoCobrado: number | null; observacao: string | null
+  metros: number; metrosFinais: number | null
+  precoCobrado: number | null; observacao: string | null
 }
 
 type CicloFechado = {
@@ -37,13 +38,35 @@ type FilmEficiencia = {
   eficienciaPct: number
 }
 
+type ImpressoraInsumo = {
+  insumoId: number; nome: string; unidade: string; quantidade: number; custo: number | null
+}
+
+type Impressora = {
+  impressoraId: number
+  metros: number
+  pedidos: number
+  insumos: ImpressoraInsumo[]
+  custoTotalInsumos: number | null
+  custoPorMetro: number | null
+}
+
+type TopCliente = {
+  cliente: string
+  pedidos: number
+  metros: number
+  receita: number
+}
+
 type Relatorio = {
   pedidos: Pedido[]
   totalMetros: number
   totalReceita: number
   insumos: InsumoRelatorio[]
   custoCombinado: number | null
+  impressoras: Impressora[]
   filmEficiencia: FilmEficiencia[]
+  topClientes: TopCliente[]
 }
 
 type PeriodoKey = "7d" | "30d" | "90d" | "tudo"
@@ -66,11 +89,21 @@ function fmtCpm(v: number | null | undefined) {
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`
 }
 function fmtData(s: string) { return fmtDateBR(s) }
+function fmtM(v: number | null | undefined) {
+  if (v == null) return "—"
+  return `${Number(v).toFixed(2)} m`
+}
 
 function wasteStyle(pct: number) {
   if (pct < 8)  return { card: "bg-emerald-50 border-emerald-100", label: "text-emerald-400", value: "text-emerald-700" }
   if (pct < 15) return { card: "bg-amber-50 border-amber-100",     label: "text-amber-400",   value: "text-amber-700"   }
   return               { card: "bg-red-50 border-red-100",         label: "text-red-400",     value: "text-red-700"     }
+}
+
+function margemStyle(pct: number) {
+  if (pct >= 30) return { card: "bg-emerald-50 border-emerald-100", label: "text-emerald-400", value: "text-emerald-700" }
+  if (pct >= 10) return { card: "bg-amber-50 border-amber-100",     label: "text-amber-400",   value: "text-amber-700"   }
+  return                { card: "bg-red-50 border-red-100",         label: "text-red-400",     value: "text-red-700"     }
 }
 
 const INSUMO_COLOR: Record<string, string> = {
@@ -101,7 +134,7 @@ export default function DTFRelatorioPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[#0F1E3C]">Relatório DTF</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Custo por metro e análise de produção</p>
+          <p className="text-sm text-gray-400 mt-0.5">Custos, margens e performance de produção</p>
         </div>
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
           {PERIODOS.map(p => (
@@ -119,39 +152,202 @@ export default function DTFRelatorioPage() {
         <div className="p-10 text-center text-sm text-gray-400">Carregando...</div>
       ) : !data ? null : (
         <>
-          {/* Stats topo */}
+          {/* ── BLOCO 1: KPIs financeiros ── */}
           {(() => {
             const film = data.insumos.find(i => i.unidade === "metro")
-            const temDesp = film != null && film.pctDesperdicioMedio != null
-            const cols = temDesp ? "grid-cols-2 md:grid-cols-5" : "grid-cols-2 md:grid-cols-4"
-            const ws = temDesp ? wasteStyle(Number(film!.pctDesperdicioMedio)) : null
+            const custoTotal = data.custoCombinado != null ? data.custoCombinado * data.totalMetros : null
+            const margemBruta = custoTotal != null ? data.totalReceita - custoTotal : null
+            const margemPct = margemBruta != null && data.totalReceita > 0
+              ? (margemBruta / data.totalReceita) * 100 : null
+            const precoMedioM = data.totalMetros > 0 ? data.totalReceita / data.totalMetros : null
+            const ticketMedio = data.pedidos.length > 0 ? data.totalReceita / data.pedidos.length : null
+            const metroMedio  = data.pedidos.length > 0 ? data.totalMetros  / data.pedidos.length : null
+            const margemNegativa = margemBruta != null && margemBruta < 0
+
+            const ms = margemPct != null ? margemStyle(margemPct) : null
+            const ws = film?.pctDesperdicioMedio != null
+              ? wasteStyle(Number(film.pctDesperdicioMedio)) : null
+
             return (
-              <div className={`grid ${cols} gap-4`}>
-                {[
-                  { label: "Metros no período",    value: `${Number(data.totalMetros).toFixed(2)} m` },
-                  { label: "Receita no período",   value: fmtR(data.totalReceita) },
-                  { label: "Pedidos",              value: String(data.pedidos.length) },
-                  { label: "Custo/metro combinado", value: fmtCpm(data.custoCombinado), highlight: true },
-                ].map(s => (
-                  <div key={s.label} className={`rounded-2xl p-4 border shadow-sm ${s.highlight ? "bg-[#0F1E3C] border-[#0F1E3C]" : "bg-white border-gray-100"}`}>
-                    <p className={`text-xs uppercase tracking-widest mb-1 ${s.highlight ? "text-white/50" : "text-gray-400"}`}>{s.label}</p>
-                    <p className={`text-2xl font-bold ${s.highlight ? "text-white" : "text-[#0F1E3C]"}`}>{s.value}</p>
-                  </div>
-                ))}
-                {temDesp && ws && (
-                  <div className={`rounded-2xl p-4 border shadow-sm ${ws.card}`}>
-                    <p className={`text-xs uppercase tracking-widest mb-1 ${ws.label}`}>Desperdício Film</p>
-                    <p className={`text-2xl font-bold ${ws.value}`}>
-                      {Number(film!.pctDesperdicioMedio).toFixed(1)}%
-                    </p>
-                    <p className={`text-[10px] mt-0.5 ${ws.label}`}>média ponderada</p>
+              <div className="space-y-3">
+                {margemNegativa && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 font-semibold flex items-center gap-2">
+                    ⚠️ Custo/m ({fmtCpm(data.custoCombinado)}) está acima do preço médio cobrado ({fmtCpm(precoMedioM)}) — margem negativa no período.
                   </div>
                 )}
+
+                {/* Linha 1: volume */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { label: "Metros no período",  value: fmtM(data.totalMetros) },
+                    { label: "Receita no período",  value: fmtR(data.totalReceita) },
+                    { label: "Pedidos",             value: String(data.pedidos.length) },
+                    { label: "Metro médio/pedido",  value: fmtM(metroMedio) },
+                  ].map(s => (
+                    <div key={s.label} className="rounded-2xl p-4 border border-gray-100 bg-white shadow-sm">
+                      <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">{s.label}</p>
+                      <p className="text-2xl font-bold text-[#0F1E3C]">{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Linha 2: financeiro */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="rounded-2xl p-4 border border-[#0F1E3C] bg-[#0F1E3C] shadow-sm">
+                    <p className="text-xs uppercase tracking-widest mb-1 text-white/50">Custo/m combinado</p>
+                    <p className="text-2xl font-bold text-white">{fmtCpm(data.custoCombinado)}</p>
+                  </div>
+                  <div className="rounded-2xl p-4 border border-gray-100 bg-white shadow-sm">
+                    <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">Preço médio/m</p>
+                    <p className="text-2xl font-bold text-[#0F1E3C]">{fmtCpm(precoMedioM)}</p>
+                  </div>
+                  <div className="rounded-2xl p-4 border border-gray-100 bg-white shadow-sm">
+                    <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">Ticket médio</p>
+                    <p className="text-2xl font-bold text-[#0F1E3C]">{fmtR(ticketMedio)}</p>
+                  </div>
+                  {ms && margemPct != null ? (
+                    <div className={`rounded-2xl p-4 border shadow-sm ${ms.card}`}>
+                      <p className={`text-xs uppercase tracking-widest mb-1 ${ms.label}`}>Margem bruta</p>
+                      <p className={`text-2xl font-bold ${ms.value}`}>{margemPct.toFixed(1)}%</p>
+                      <p className={`text-[10px] mt-0.5 ${ms.label}`}>{fmtR(margemBruta)} no período</p>
+                    </div>
+                  ) : ws && film?.pctDesperdicioMedio != null ? (
+                    <div className={`rounded-2xl p-4 border shadow-sm ${ws.card}`}>
+                      <p className={`text-xs uppercase tracking-widest mb-1 ${ws.label}`}>Desperdício film</p>
+                      <p className={`text-2xl font-bold ${ws.value}`}>{Number(film.pctDesperdicioMedio).toFixed(1)}%</p>
+                      <p className={`text-[10px] mt-0.5 ${ws.label}`}>média ponderada</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl p-4 border border-gray-100 bg-white shadow-sm">
+                      <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">Margem bruta</p>
+                      <p className="text-2xl font-bold text-gray-300">—</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })()}
 
-          {/* Custo por insumo */}
+          {/* ── BLOCO 2: Performance por Impressora ── */}
+          {(data.impressoras ?? []).length > 0 && (
+            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
+                <Printer size={16} className="text-[#4361EE]" />
+                <span className="font-semibold text-sm text-[#0F1E3C]">Performance por Impressora</span>
+                <span className="text-[10px] text-gray-400">período selecionado</span>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {(data.impressoras ?? []).map((imp, idx) => {
+                  const totalMetrosAll = (data.impressoras ?? []).reduce((s, i) => s + i.metros, 0)
+                  const share = totalMetrosAll > 0 ? (imp.metros / totalMetrosAll) * 100 : 0
+                  const globalCpm = data.custoCombinado
+                  const impCpm = imp.custoPorMetro
+                  const diffCpm = globalCpm && impCpm ? impCpm - globalCpm : null
+
+                  return (
+                    <div key={imp.impressoraId} className="px-5 py-4">
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-white bg-[#0F1E3C] rounded-lg px-2 py-1">
+                            Imp. {imp.impressoraId}
+                          </span>
+                          <span className="text-sm font-semibold text-[#0F1E3C]">{Number(imp.metros).toFixed(2)} m</span>
+                          <span className="text-xs text-gray-400">{imp.pedidos} pedido{imp.pedidos !== 1 ? "s" : ""}</span>
+                          <span className="text-xs text-gray-400">{share.toFixed(1)}% do volume</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {impCpm != null && (
+                            <span className="text-sm font-mono font-semibold text-[#0F1E3C]">
+                              {fmtCpm(impCpm)}
+                            </span>
+                          )}
+                          {diffCpm != null && (
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                              diffCpm > 0
+                                ? "bg-red-50 text-red-600"
+                                : diffCpm < 0
+                                ? "bg-emerald-50 text-emerald-600"
+                                : "bg-gray-50 text-gray-400"
+                            }`}>
+                              {diffCpm > 0 ? "+" : ""}{diffCpm.toFixed(4).replace(".", ",")} vs média
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Barra de share */}
+                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-2">
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${share}%`,
+                            backgroundColor: ["#4361EE", "#7B2FBE", "#E85D04", "#2EC4B6"][idx % 4],
+                          }}
+                        />
+                      </div>
+
+                      {/* Insumos breakdown */}
+                      {imp.insumos.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {imp.insumos.map(ins => (
+                            <span key={ins.insumoId} className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg px-2 py-1 text-gray-500">
+                              {ins.nome}: {Number(ins.quantidade).toFixed(2)} {ins.unidade}
+                              {ins.custo != null && ` · ${fmtR(ins.custo)}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── BLOCO 3: Top Clientes ── */}
+          {(data.topClientes ?? []).filter(c => c.receita > 0).length > 0 && (
+            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
+                <Users size={16} className="text-[#4361EE]" />
+                <span className="font-semibold text-sm text-[#0F1E3C]">Top Clientes</span>
+                <span className="text-[10px] text-gray-400">período selecionado</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
+                    <th className="px-5 py-3 text-left">Cliente</th>
+                    <th className="px-5 py-3 text-right">Pedidos</th>
+                    <th className="px-5 py-3 text-right">Metros</th>
+                    <th className="px-5 py-3 text-right">Receita</th>
+                    <th className="px-5 py-3 text-right">% total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(data.topClientes ?? []).filter(c => c.receita > 0).map((c, i) => {
+                    const pct = data.totalReceita > 0 ? (c.receita / data.totalReceita) * 100 : 0
+                    return (
+                      <tr key={i} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="px-5 py-3 font-medium text-[#0F1E3C]">{c.cliente}</td>
+                        <td className="px-5 py-3 text-right text-gray-500">{c.pedidos}</td>
+                        <td className="px-5 py-3 text-right font-mono text-gray-700">{Number(c.metros).toFixed(2)} m</td>
+                        <td className="px-5 py-3 text-right font-semibold text-[#0F1E3C]">{fmtR(c.receita)}</td>
+                        <td className="px-5 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-[#4361EE] rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-xs text-gray-500 w-8 text-right">{pct.toFixed(0)}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* ── BLOCO 4: Custo por Insumo ── */}
           <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
               <TrendingDown size={16} className="text-[#4361EE]" />
@@ -201,7 +397,7 @@ export default function DTFRelatorioPage() {
             </div>
           </div>
 
-          {/* Eficiência de film por impressora */}
+          {/* ── Eficiência de film por impressora (histórico completo) ── */}
           {(data.filmEficiencia ?? []).length > 0 && (
             <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
               <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
@@ -242,40 +438,64 @@ export default function DTFRelatorioPage() {
             </div>
           )}
 
-          {/* Pedidos do período */}
-          {data.pedidos.length > 0 && (
-            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
-                <BarChart2 size={16} className="text-[#4361EE]" />
-                <span className="font-semibold text-sm text-[#0F1E3C]">Pedidos no Período</span>
-              </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
-                    <th className="px-5 py-3 text-left">Data</th>
-                    <th className="px-5 py-3 text-left">Cliente</th>
-                    <th className="px-5 py-3 text-right">Metros</th>
-                    <th className="px-5 py-3 text-right">Preço</th>
-                    <th className="px-5 py-3 text-right">Custo est.</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {data.pedidos.map(p => {
-                    const custo = data.custoCombinado ? Number(p.metros) * data.custoCombinado : null
-                    return (
-                      <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
-                        <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
-                        <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{Number(p.metros).toFixed(2)} m</td>
-                        <td className="px-5 py-3 text-right text-gray-700">{fmtR(p.precoCobrado)}</td>
-                        <td className="px-5 py-3 text-right text-gray-500 text-xs">{fmtR(custo)}</td>
+          {/* ── Pedidos do período ── */}
+          {data.pedidos.length > 0 && (() => {
+            const cpm = data.custoCombinado
+            return (
+              <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
+                  <BarChart2 size={16} className="text-[#4361EE]" />
+                  <span className="font-semibold text-sm text-[#0F1E3C]">Pedidos no Período</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
+                        <th className="px-5 py-3 text-left">Data</th>
+                        <th className="px-5 py-3 text-left">Cliente</th>
+                        <th className="px-5 py-3 text-right">Metros</th>
+                        <th className="px-5 py-3 text-right">Preço cobrado</th>
+                        <th className="px-5 py-3 text-right">Preço/m</th>
+                        <th className="px-5 py-3 text-right">Custo est.</th>
+                        <th className="px-5 py-3 text-right">Margem</th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {data.pedidos.map(p => {
+                        const metros = Number(p.metrosFinais ?? p.metros ?? 0)
+                        const preco  = p.precoCobrado != null ? Number(p.precoCobrado) : null
+                        const custo  = cpm != null && metros > 0 ? cpm * metros : null
+                        const margem = preco != null && custo != null ? preco - custo : null
+                        const margemPct = margem != null && preco != null && preco > 0
+                          ? (margem / preco) * 100 : null
+                        const precoM = preco != null && metros > 0 ? preco / metros : null
+                        const negativa = margem != null && margem < 0
+
+                        return (
+                          <tr key={p.id} className={`hover:bg-gray-50/50 transition-colors ${negativa ? "bg-red-50/30" : ""}`}>
+                            <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
+                            <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
+                            <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
+                            <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
+                            <td className="px-5 py-3 text-right text-xs font-mono text-gray-500">{fmtCpm(precoM)}</td>
+                            <td className="px-5 py-3 text-right text-gray-400 text-xs">{fmtR(custo)}</td>
+                            <td className="px-5 py-3 text-right">
+                              {margem != null ? (
+                                <span className={`text-xs font-semibold ${negativa ? "text-red-600" : "text-emerald-600"}`}>
+                                  {margemPct != null ? `${margemPct.toFixed(0)}%` : ""}{" "}
+                                  <span className="font-normal text-[10px]">({fmtR(margem)})</span>
+                                </span>
+                              ) : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
         </>
       )}
     </div>
