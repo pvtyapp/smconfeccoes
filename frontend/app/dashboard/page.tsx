@@ -7,6 +7,7 @@ import type { OperationalCost, InventoryMetric } from "@/lib/types"
 import { Factory, Package, Receipt, DollarSign, AlertCircle, Clock } from "lucide-react"
 import Link from "next/link"
 import { todayBR, subDaysBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 type PendingOrder = { id: number; totalValue: number | null; dueDate: string | null }
 
@@ -25,9 +26,6 @@ type ProdData = {
   summary: { orderCount: number; totalPieces: number; materialCost: number; operationalCost: number; totalCost: number }
   byProduct: ProdProduct[]
 }
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-function fmtR(v: number) { return `R$ ${v.toFixed(2).replace(".", ",")}` }
 
 const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
   { key: "hoje",  label: "Hoje"    },

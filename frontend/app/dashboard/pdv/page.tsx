@@ -194,9 +194,9 @@ export default function PDVPage() {
   useEffect(() => {
     const c = selectedContact ?? duplicateFound
     if (c?.paymentTermEnabled && c.paymentTermType === "days" && c.paymentTermDays) {
-      const [y, mo, day] = todayBR().split("-").map(Number)
-      const d = new Date(y, mo - 1, day + Number(c.paymentTermDays))
-      setDueDate(dateBR(d))
+      const base = new Date(todayBR() + "T12:00:00Z")
+      base.setUTCDate(base.getUTCDate() + Number(c.paymentTermDays))
+      setDueDate(base.toISOString().slice(0, 10))
     }
   }, [selectedContact, duplicateFound])
 

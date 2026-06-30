@@ -208,7 +208,7 @@ export default function EstoquePage() {
   )
 
   const stats = useMemo(() => {
-    const totalValue = balance.reduce((a, r) => a + r.currentStock * Number(r.costPrice), 0)
+    const totalValue = balance.reduce((a, r) => a + r.currentStock * Number(r.averageCost || r.costPrice), 0)
     const totalQty   = balance.reduce((a, r) => a + r.currentStock, 0)
     const critical   = balance.filter(r => stockStatus(r) !== "ok").length
     const inPeriod   = movementsInPeriod.filter(m => m.type === "in").reduce((a, m) => a + m.quantity, 0)
@@ -229,7 +229,7 @@ export default function EstoquePage() {
       productName: g.productName,
       rows: g.rows.sort((a, b) => a.color.localeCompare(b.color)),
       totalQty:    g.rows.reduce((s, r) => s + r.currentStock, 0),
-      totalValue:  g.rows.reduce((s, r) => s + r.currentStock * Number(r.costPrice), 0),
+      totalValue:  g.rows.reduce((s, r) => s + r.currentStock * Number(r.averageCost || r.costPrice), 0),
       hasCritical: g.rows.some(r => stockStatus(r) !== "ok"),
     }))
   }, [balance])

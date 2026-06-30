@@ -235,12 +235,25 @@ type MaterialPick = {
   color: string; entryId: number; entryNumber: string; totalQty: number; totalCost: number
 }
 
+const DRAFT_KEY = "programacao_nova_ordem_draft"
+
+function saveDraft(productId: string | null, selectedColors: string[], matPicks: MaterialPick[], step: string) {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ productId, selectedColors, matPicks, step })) } catch {}
+}
+function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY) } catch {}
+}
+function loadDraft(): { productId: string | null; selectedColors: string[]; matPicks: MaterialPick[]; step: string } | null {
+  try { const v = localStorage.getItem(DRAFT_KEY); return v ? JSON.parse(v) : null } catch { return null }
+}
+
 function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   type Step = "grade" | "materiais"
-  const [step, setStep]               = useState<Step>("grade")
-  const [productId, setProductId]     = useState<string | null>(null)
-  const [selectedColors, setSelectedColors] = useState<string[]>([])
-  const [matPicks, setMatPicks]       = useState<MaterialPick[]>([])
+  const draft = loadDraft()
+  const [step, setStep]               = useState<Step>((draft?.step as Step) ?? "grade")
+  const [productId, setProductId]     = useState<string | null>(draft?.productId ?? null)
+  const [selectedColors, setSelectedColors] = useState<string[]>(draft?.selectedColors ?? [])
+  const [matPicks, setMatPicks]       = useState<MaterialPick[]>(draft?.matPicks ?? [])
 
   // Fetched data
   const [products,  setProducts]  = useState<MockProduct[]>([])
@@ -433,13 +446,13 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-[#0F1E3C]/8 flex-shrink-0 bg-[#F9FAFB]">
-          <button onClick={() => { if (stepIdx===0) onClose(); else setStep(stepOrder[stepIdx-1]) }}
+          <button onClick={() => { if (stepIdx===0) { clearDraft(); onClose() } else setStep(stepOrder[stepIdx-1]) }}
             className="px-4 py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
             {stepIdx===0 ? "Cancelar" : "Voltar"}
           </button>
           <div className="flex gap-2">
             {step==="materiais" && (
-              <button onClick={onClose}
+              <button onClick={() => { saveDraft(productId, selectedColors, matPicks, step); onClose() }}
                 className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 transition-colors">
                 Salvar rascunho
               </button>
@@ -460,6 +473,7 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                       entryIds: matPicks.map(m => m.entryId),
                     }),
                   })
+                  clearDraft()
                   onSuccess()
                   onClose()
                 }

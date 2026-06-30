@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { X, Printer, Check } from "lucide-react"
+import { fmtR } from "@/lib/format"
 
 export type ReceiptItem = {
   key: string
@@ -41,10 +42,6 @@ const PAY_LABEL: Record<string, string> = {
 
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
-
-function fmtR(v: number) {
-  return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 function fmtPhone(phone: string | null | undefined): string {
   if (!phone) return "—"

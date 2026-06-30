@@ -96,7 +96,7 @@ const CHANNEL_COLOR: Record<string, string> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtR(v: number | null) {
+function fmtRDRE(v: number | null) {
   if (v === null) return "—"
   const n   = Number(v)
   const abs = Math.abs(n)
@@ -158,7 +158,7 @@ function DRERow({ label, value, indent, negative, bold, separator, sub }: {
 }) {
   if (separator) return <div className="border-t border-[#0F1E3C]/8 my-1" />
   const isNeg   = negative || (value !== null && value !== undefined && value < 0)
-  const display = fmtR(value ?? null)
+  const display = fmtRDRE(value ?? null)
   return (
     <div className={`flex items-center justify-between py-2 ${bold ? "font-bold" : ""}`}>
       <div className={`flex items-start gap-1 ${indent ? "pl-4" : ""}`}>
@@ -311,7 +311,7 @@ export default function RelatorioFinanceiroPage() {
                             {CHANNEL_LABEL[ch]}
                           </p>
                           <p className="text-2xl font-black leading-none" style={{ color }}>
-                            {val > 0 ? fmtR(val) : "—"}
+                            {val > 0 ? fmtRDRE(val) : "—"}
                           </p>
                           <div className="mt-3 h-1.5 bg-[#0F1E3C]/6 rounded-full overflow-hidden">
                             <div
@@ -331,7 +331,7 @@ export default function RelatorioFinanceiroPage() {
                     <span className="text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">
                       Total · {summary?.pedidosConcluidos ?? 0} pedidos concluídos
                     </span>
-                    <span className="text-lg font-black text-[#0F1E3C]">{fmtR(channelTotal)}</span>
+                    <span className="text-lg font-black text-[#0F1E3C]">{fmtRDRE(channelTotal)}</span>
                   </div>
                 </>
               )}
@@ -368,10 +368,10 @@ export default function RelatorioFinanceiroPage() {
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Faturamento</p>
                 <p className="text-3xl font-black text-[#4361EE] leading-none">
-                  {fmtR(dre?.receitaBruta ?? 0)}
+                  {fmtRDRE(dre?.receitaBruta ?? 0)}
                 </p>
                 <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
-                  {summary?.totalPecas ?? 0} peças · ticket {fmtR(summary?.ticketMedio ?? 0)}
+                  {summary?.totalPecas ?? 0} peças · ticket {fmtRDRE(summary?.ticketMedio ?? 0)}
                 </p>
               </div>
 
@@ -381,7 +381,7 @@ export default function RelatorioFinanceiroPage() {
                 {dre?.resultadoOp != null ? (
                   <>
                     <p className={`text-3xl font-black leading-none ${dre.resultadoOp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {fmtR(dre.resultadoOp)}
+                      {fmtRDRE(dre.resultadoOp)}
                     </p>
                     <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">resultado operacional</p>
                   </>
@@ -424,7 +424,7 @@ export default function RelatorioFinanceiroPage() {
                 {dre?.lucroBruto != null ? (
                   <>
                     <p className={`text-3xl font-black leading-none ${dre.lucroBruto >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {fmtR(dre.lucroBruto)}
+                      {fmtRDRE(dre.lucroBruto)}
                     </p>
                     <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem {pct(summary?.margemBruta ?? null)} · após custo de material</p>
                   </>
@@ -443,7 +443,7 @@ export default function RelatorioFinanceiroPage() {
                   {summary?.totalPecas ?? 0}
                 </p>
                 <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
-                  peças · ticket médio {fmtR(summary?.ticketMedio ?? 0)}
+                  peças · ticket médio {fmtRDRE(summary?.ticketMedio ?? 0)}
                 </p>
               </div>
 
@@ -467,7 +467,7 @@ export default function RelatorioFinanceiroPage() {
                     <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Compras (entradas)</p>
                   </div>
                   <p className="text-2xl font-black text-emerald-700 leading-none">
-                    {fmtR(data.materialFlow.entradas.total)}
+                    {fmtRDRE(data.materialFlow.entradas.total)}
                   </p>
                   <p className="text-[10px] text-emerald-600 mt-1.5">
                     {data.materialFlow.entradas.count} {data.materialFlow.entradas.count === 1 ? "lote comprado" : "lotes comprados"}
@@ -482,7 +482,7 @@ export default function RelatorioFinanceiroPage() {
                   </div>
                   <p className="text-2xl font-black text-red-700 leading-none">
                     {data.materialFlow.saidas.total > 0
-                      ? `(${fmtR(data.materialFlow.saidas.total)})`
+                      ? `(${fmtRDRE(data.materialFlow.saidas.total)})`
                       : "—"}
                   </p>
                   <p className="text-[10px] text-red-600 mt-1.5">
@@ -497,7 +497,7 @@ export default function RelatorioFinanceiroPage() {
                     <p className="text-[10px] font-bold uppercase tracking-wider text-[#4361EE]">Saldo em Insumos</p>
                   </div>
                   <p className="text-2xl font-black text-[#4361EE] leading-none">
-                    {fmtR(stockVal?.rawMaterials.totalCost ?? null)}
+                    {fmtRDRE(stockVal?.rawMaterials.totalCost ?? null)}
                   </p>
                   <p className="text-[10px] text-[#4361EE]/60 mt-1.5">
                     snapshot atual · {stockVal?.rawMaterials.items.length ?? 0} lotes disponíveis
@@ -530,14 +530,14 @@ export default function RelatorioFinanceiroPage() {
                         <td className="px-4 py-3 text-[10px] font-bold text-[#0F1E3C]/30 w-8">{i + 1}</td>
                         <td className="px-4 py-3 font-semibold text-[#0F1E3C] max-w-[180px] truncate">{p.name}</td>
                         <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">{p.qty}</td>
-                        <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">{fmtR(p.revenue)}</td>
+                        <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">{fmtRDRE(p.revenue)}</td>
                         <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">
-                          {p.cost !== null ? fmtR(p.cost) : <span className="text-[#0F1E3C]/20">—</span>}
+                          {p.cost !== null ? fmtRDRE(p.cost) : <span className="text-[#0F1E3C]/20">—</span>}
                         </td>
                         <td className="px-4 py-3 font-bold tabular-nums">
                           {lucro !== null ? (
                             <span className={lucro >= 0 ? "text-emerald-600" : "text-red-600"}>
-                              {fmtR(lucro)}
+                              {fmtRDRE(lucro)}
                             </span>
                           ) : <span className="text-[#0F1E3C]/20">—</span>}
                         </td>
@@ -578,14 +578,14 @@ export default function RelatorioFinanceiroPage() {
                         <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">
                           {data.productRanking.reduce((s, p) => s + p.qty, 0)}
                         </td>
-                        <td className="px-4 py-3 font-black text-[#0F1E3C] tabular-nums">{fmtR(totalRevenue)}</td>
+                        <td className="px-4 py-3 font-black text-[#0F1E3C] tabular-nums">{fmtRDRE(totalRevenue)}</td>
                         <td className="px-4 py-3 font-bold text-[#0F1E3C]/60 tabular-nums">
-                          {hasCost ? fmtR(totalCost) : "—"}
+                          {hasCost ? fmtRDRE(totalCost) : "—"}
                         </td>
                         <td className="px-4 py-3 font-black tabular-nums">
                           {totalLucro !== null ? (
                             <span className={totalLucro >= 0 ? "text-emerald-600" : "text-red-600"}>
-                              {fmtR(totalLucro)}
+                              {fmtRDRE(totalLucro)}
                             </span>
                           ) : "—"}
                         </td>
@@ -670,25 +670,25 @@ export default function RelatorioFinanceiroPage() {
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <KPICard
                       label="Capital Total Imobilizado"
-                      value={fmtR(stockVal.grandTotalCost)}
+                      value={fmtRDRE(stockVal.grandTotalCost)}
                       sub="produtos + insumos ao custo"
                       icon={Layers} color="blue"
                     />
                     <KPICard
                       label="Capital em Produtos"
-                      value={fmtR(stockVal.products.totalCost)}
+                      value={fmtRDRE(stockVal.products.totalCost)}
                       sub={`${stockVal.products.items.length} produtos em estoque`}
                       icon={Package}
                     />
                     <KPICard
                       label="Capital em Insumos"
-                      value={fmtR(stockVal.rawMaterials.totalCost)}
+                      value={fmtRDRE(stockVal.rawMaterials.totalCost)}
                       sub={`${stockVal.rawMaterials.items.length} lotes disponíveis`}
                       icon={Layers}
                     />
                     <KPICard
                       label="Receita Potencial (venda)"
-                      value={fmtR(stockVal.products.totalSale)}
+                      value={fmtRDRE(stockVal.products.totalSale)}
                       sub={
                         stockVal.products.totalCost > 0
                           ? `margem potencial ${(((stockVal.products.totalSale - stockVal.products.totalCost) / stockVal.products.totalSale) * 100).toFixed(1)}%`
@@ -719,10 +719,10 @@ export default function RelatorioFinanceiroPage() {
                                 <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{r.productName}</td>
                                 <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">{r.qty}</td>
                                 <td className="px-4 py-3 font-bold text-[#4361EE] tabular-nums">
-                                  {r.costPrice > 0 ? fmtR(r.totalCost) : "—"}
+                                  {r.costPrice > 0 ? fmtRDRE(r.totalCost) : "—"}
                                 </td>
                                 <td className="px-4 py-3 font-bold text-emerald-600 tabular-nums">
-                                  {r.salePrice > 0 ? fmtR(r.totalSale) : "—"}
+                                  {r.salePrice > 0 ? fmtRDRE(r.totalSale) : "—"}
                                 </td>
                                 <td className="px-4 py-3">
                                   {margem !== null ? (
@@ -746,10 +746,10 @@ export default function RelatorioFinanceiroPage() {
                               {stockVal.products.items.reduce((s, r) => s + r.qty, 0)}
                             </td>
                             <td className="px-4 py-2.5 font-black text-[#4361EE] tabular-nums">
-                              {fmtR(stockVal.products.totalCost)}
+                              {fmtRDRE(stockVal.products.totalCost)}
                             </td>
                             <td className="px-4 py-2.5 font-black text-emerald-600 tabular-nums">
-                              {fmtR(stockVal.products.totalSale)}
+                              {fmtRDRE(stockVal.products.totalSale)}
                             </td>
                             <td className="px-4 py-2.5" />
                           </tr>

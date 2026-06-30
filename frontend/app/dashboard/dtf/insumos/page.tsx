@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Plus, TrendingDown, AlertTriangle, ChevronDown, ChevronUp, Trash2, Bell, Settings, X, History } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
+import { fmtR } from "@/lib/format"
 
 type Entrada = {
   id: number
@@ -88,10 +89,6 @@ function fmtQtd(v: number, unidade: string) {
 function fmtFilm(metros: number, tamanhoM: number) {
   const bobinas = metros / tamanhoM
   return `${parseFloat(bobinas.toFixed(2))} bobina${bobinas !== 1 ? "s" : ""} (${parseFloat(Number(metros).toFixed(1))} m)`
-}
-function fmtR(v: number | null | undefined) {
-  if (v == null) return null
-  return `R$ ${Number(v).toFixed(2).replace(".", ",")}`
 }
 function getToday() { return todayBR() }
 
