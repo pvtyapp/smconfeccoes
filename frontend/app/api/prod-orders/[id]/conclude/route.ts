@@ -69,17 +69,30 @@ export async function POST(
 
       // Compute SKU costs if any bobina was exhausted
       if (anyCostCalculated) {
-        // Fetch monthly sewing cost from operational_costs (category contains 'costura')
+        // Monthly sewing cost — exact category, same filter as custo-producao page
         const { rows: sewRows } = await client.query(`
           SELECT COALESCE(SUM(monthly_value), 0) AS total
           FROM operational_costs
-          WHERE active = true
-            AND (category ILIKE '%costura%' OR category ILIKE '%mão de obra%'
-                 OR category ILIKE '%salario%' OR category ILIKE '%salário%')
+          WHERE active = true AND category = 'Custo de Costura'
         `)
-        // Estimate: one order = one day's work, 22 working days/month
         const monthlySewing = Number(sewRows[0].total)
-        const sewingCostForOrder = monthlySewing / 22
+
+        // Total pieces this month: all concluded/encerrada orders + this order (qty_produced already updated)
+        const { rows: monthPieces } = await client.query(`
+          SELECT COALESCE(SUM(poi.qty_produced), 0) AS total
+          FROM prod_order_items poi
+          JOIN prod_orders po ON po.id = poi.order_id
+          WHERE (
+            (po.status IN ('concluida', 'encerrada')
+             AND DATE_TRUNC('month', po.concluded_at) = DATE_TRUNC('month', NOW()))
+            OR po.id = $1
+          )
+        `, [id])
+        const totalPiecesMonth = Number(monthPieces[0].total)
+
+        const sewingCostForOrder = monthlySewing > 0 && totalPiecesMonth > 0
+          ? (monthlySewing / totalPiecesMonth) * totalProduced
+          : 0
 
         await client.query("SELECT calculate_sku_costs($1, $2)", [id, sewingCostForOrder])
 
