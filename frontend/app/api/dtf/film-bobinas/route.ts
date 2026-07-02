@@ -100,18 +100,18 @@ export async function POST(req: Request) {
         AS saldo
     `, [filmId])
     const saldo = Number(saldoRows[0].saldo)
-    if (saldo < 1) {
+    if (saldo < tamanhoM) {
       await client.query("ROLLBACK")
       return NextResponse.json(
-        { error: `Estoque insuficiente. Disponível: ${parseFloat(saldo.toFixed(2))} bobina(s)` },
+        { error: `Estoque insuficiente. Disponível: ${parseFloat(saldo.toFixed(2))} m` },
         { status: 422 }
       )
     }
     const { rows: saidaRows } = await client.query(`
       INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao, impressora_id)
-      VALUES ($1, 1, CURRENT_DATE, $2, $3)
+      VALUES ($1, $2, CURRENT_DATE, $3, $4)
       RETURNING id
-    `, [filmId, `Bobina instalada — Impressora ${impressoraId}`, impressoraId])
+    `, [filmId, tamanhoM, `Bobina instalada — Impressora ${impressoraId}`, impressoraId])
     const saidaId = saidaRows[0].id
 
     // Abrir nova bobina
