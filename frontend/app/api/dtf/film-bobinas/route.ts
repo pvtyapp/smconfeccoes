@@ -80,38 +80,46 @@ export async function POST(req: Request) {
       `, [ativa.id, metrosUsados, desperdicio])
     }
 
-    // Deduzir do estoque de film (insumo unidade=metro)
+    // Deduzir 1 bobina do estoque de film (grupo = 'Film')
     const { rows: filmRows } = await client.query(
-      `SELECT id FROM dtf_insumos WHERE unidade = 'metro' ORDER BY id LIMIT 1`
+      `SELECT id FROM dtf_insumos WHERE LOWER(grupo) = 'film' ORDER BY id LIMIT 1`
     )
-    if (filmRows.length > 0) {
-      const filmId = filmRows[0].id
-      const { rows: saldoRows } = await client.query(`
-        SELECT
-          COALESCE((SELECT SUM(quantidade) FROM dtf_insumo_entradas WHERE insumo_id = $1), 0) -
-          COALESCE((SELECT SUM(quantidade) FROM dtf_insumo_saidas   WHERE insumo_id = $1), 0)
-          AS saldo
-      `, [filmId])
-      const saldo = Number(saldoRows[0].saldo)
-      if (saldo < tamanhoM) {
-        await client.query("ROLLBACK")
-        return NextResponse.json(
-          { error: `Estoque insuficiente. Disponível: ${saldo.toFixed(2)} m` },
-          { status: 422 }
-        )
-      }
-      await client.query(`
-        INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao, impressora_id)
-        VALUES ($1, $2, CURRENT_DATE, $3, $4)
-      `, [filmId, tamanhoM, `Bobina instalada — Impressora ${impressoraId}`, impressoraId])
+    if (filmRows.length === 0) {
+      await client.query("ROLLBACK")
+      return NextResponse.json(
+        { error: "Insumo de Film não encontrado. Cadastre um insumo no grupo 'Film' antes de usar o monitor." },
+        { status: 422 }
+      )
     }
+
+    const filmId = filmRows[0].id
+    const { rows: saldoRows } = await client.query(`
+      SELECT
+        COALESCE((SELECT SUM(quantidade) FROM dtf_insumo_entradas WHERE insumo_id = $1), 0) -
+        COALESCE((SELECT SUM(quantidade) FROM dtf_insumo_saidas   WHERE insumo_id = $1), 0)
+        AS saldo
+    `, [filmId])
+    const saldo = Number(saldoRows[0].saldo)
+    if (saldo < 1) {
+      await client.query("ROLLBACK")
+      return NextResponse.json(
+        { error: `Estoque insuficiente. Disponível: ${parseFloat(saldo.toFixed(2))} bobina(s)` },
+        { status: 422 }
+      )
+    }
+    const { rows: saidaRows } = await client.query(`
+      INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao, impressora_id)
+      VALUES ($1, 1, CURRENT_DATE, $2, $3)
+      RETURNING id
+    `, [filmId, `Bobina instalada — Impressora ${impressoraId}`, impressoraId])
+    const saidaId = saidaRows[0].id
 
     // Abrir nova bobina
     const { rows } = await client.query(`
-      INSERT INTO dtf_film_bobinas (impressora_id, tamanho_m, obs)
-      VALUES ($1, $2, $3)
+      INSERT INTO dtf_film_bobinas (impressora_id, tamanho_m, obs, insumo_saida_id)
+      VALUES ($1, $2, $3, $4)
       RETURNING id, impressora_id AS "impressoraId", tamanho_m AS "tamanhoM", aberta_em AS "abertaEm"
-    `, [impressoraId, tamanhoM, obs ?? null])
+    `, [impressoraId, tamanhoM, obs ?? null, saidaId])
 
     await client.query("COMMIT")
     return NextResponse.json(rows[0], { status: 201 })

@@ -13,15 +13,16 @@ export async function GET(req: Request) {
     const { rows } = await pool.query(`
       SELECT
         e.id,
-        'entrada'        AS tipo,
+        'entrada'             AS tipo,
         e.insumo_id,
-        i.nome           AS insumo_nome,
+        i.nome                AS insumo_nome,
         COALESCE(i.grupo, i.nome) AS grupo,
         i.unidade,
         e.quantidade,
         e.custo_total,
         e.data,
-        e.observacao
+        e.observacao,
+        NULL::integer         AS impressora_id
       FROM dtf_insumo_entradas e
       JOIN dtf_insumos i ON i.id = e.insumo_id
       WHERE e.data BETWEEN $1 AND $2
@@ -30,13 +31,13 @@ export async function GET(req: Request) {
 
       SELECT
         s.id,
-        'saida'          AS tipo,
+        'saida'               AS tipo,
         s.insumo_id,
-        i.nome           AS insumo_nome,
+        i.nome                AS insumo_nome,
         COALESCE(i.grupo, i.nome) AS grupo,
         i.unidade,
         s.quantidade,
-        NULL             AS custo_total,
+        NULL                  AS custo_total,
         s.data,
         s.observacao,
         s.impressora_id
