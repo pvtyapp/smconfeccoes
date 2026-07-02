@@ -109,7 +109,7 @@ export async function POST(req: Request) {
     }
     const { rows: saidaRows } = await client.query(`
       INSERT INTO dtf_insumo_saidas (insumo_id, quantidade, data, observacao, impressora_id)
-      VALUES ($1, $2, CURRENT_DATE, $3, $4)
+      VALUES ($1, $2, (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date, $3, $4)
       RETURNING id
     `, [filmId, tamanhoM, `Bobina instalada — Impressora ${impressoraId}`, impressoraId])
     const saidaId = saidaRows[0].id
