@@ -175,7 +175,7 @@ export async function POST(req: Request) {
 
     for (const c of individualChats) {
       const jid     = ((c.remoteJid ?? c.id) as string) || ""
-      const rawName = (c.name as string) || (c.pushName as string) || ""
+      const rawName = (c.pushName as string) || ""
       const name    = /^\d+$/.test(rawName.trim()) ? "" : rawName
       const phone   = extractPhone(c)
       const pic     = (c.profilePicUrl as string) || null
