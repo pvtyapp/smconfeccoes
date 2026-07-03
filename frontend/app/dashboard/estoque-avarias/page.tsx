@@ -18,8 +18,10 @@ type AvariaItem = {
   qty:         number
   disposition: Disposition
   notes:       string | null
+  salePrice:   number | null
   orderNumber: string | null
   createdAt:   string
+  resolvedAt:  string | null
 }
 
 type AvariaGroup = {
@@ -208,9 +210,10 @@ export default function EstoqueAvariasPage() {
 
   const periodTag = filterLabel(filter)
 
+  // Estoque ativo: só pendentes
   const groups = useMemo<AvariaGroup[]>(() => {
     const map = new Map<string, AvariaItem[]>()
-    for (const item of avarias) {
+    for (const item of avarias.filter(a => a.disposition === "pendente")) {
       if (!map.has(item.productName)) map.set(item.productName, [])
       map.get(item.productName)!.push(item)
     }
@@ -218,13 +221,22 @@ export default function EstoqueAvariasPage() {
       productName,
       items:       items.sort((a, b) => a.color.localeCompare(b.color)),
       totalQty:    items.reduce((s, i) => s + i.qty, 0),
-      hasPendente: items.some(i => i.disposition === "pendente"),
+      hasPendente: true,
     }))
   }, [avarias])
 
+  // Histórico: resolvidos no período (ordena por data de resolução)
   const historyItems = useMemo(
-    () => [...avariasInPeriod].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [avariasInPeriod]
+    () => avarias
+      .filter(a => a.disposition !== "pendente")
+      .filter(a => {
+        const d = new Date(a.resolvedAt ?? a.createdAt)
+        return d >= fromDate && d <= toDate
+      })
+      .sort((a, b) =>
+        new Date(b.resolvedAt ?? b.createdAt).getTime() - new Date(a.resolvedAt ?? a.createdAt).getTime()
+      ),
+    [avarias, fromDate, toDate]
   )
 
   function toggleExpand(productName: string) {
@@ -243,11 +255,11 @@ export default function EstoqueAvariasPage() {
     })
   }
 
-  async function handleSave(id: number, disposition: Disposition, notes: string) {
+  async function handleSave(id: number, disposition: Disposition, notes: string, salePrice?: number | null) {
     await fetch(`/api/defect-stock/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ disposition, notes }),
+      body: JSON.stringify({ disposition, notes, salePrice: salePrice ?? null }),
     })
     setEditing(null)
     setShowSaida(false)
@@ -437,7 +449,7 @@ export default function EstoqueAvariasPage() {
                       <p className="text-base font-black text-amber-500">{a.qty} pç</p>
                       <p className="text-[10px] text-[#0F1E3C]/30">{a.color} · {a.size}</p>
                     </div>
-                    <p className="text-[10px] text-[#0F1E3C]/30 flex-shrink-0 w-28 text-right">{fmtDate(a.createdAt)}</p>
+                    <p className="text-[10px] text-[#0F1E3C]/30 flex-shrink-0 w-28 text-right">{fmtDate(a.resolvedAt ?? a.createdAt)}</p>
                     <span className="text-[#0F1E3C]/25 flex-shrink-0">
                       {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </span>
@@ -450,6 +462,9 @@ export default function EstoqueAvariasPage() {
                           Ordem: {a.orderNumber}
                         </span>
                       )}
+                      <span className="text-[10px] text-[#0F1E3C]/30">
+                        Entrada: {fmtDate(a.createdAt)}
+                      </span>
                       {a.notes && <p className="text-xs text-[#0F1E3C]/50 flex-1">{a.notes}</p>}
                       <button
                         onClick={e => { e.stopPropagation(); setEditing(a) }}
@@ -518,15 +533,19 @@ function DispositionModal({
 }: {
   item:    AvariaItem
   onClose: () => void
-  onSave:  (id: number, disposition: Disposition, notes: string) => Promise<void>
+  onSave:  (id: number, disposition: Disposition, notes: string, salePrice?: number | null) => Promise<void>
 }) {
-  const [selected, setSelected] = useState<Disposition>(item.disposition === "pendente" ? "reaproveitado" : item.disposition)
-  const [notes, setNotes]       = useState(item.notes ?? "")
-  const [saving, setSaving]     = useState(false)
+  const [selected,   setSelected]   = useState<Disposition>(item.disposition === "pendente" ? "reaproveitado" : item.disposition)
+  const [notes,      setNotes]      = useState(item.notes ?? "")
+  const [salePrice,  setSalePrice]  = useState(item.salePrice != null ? String(item.salePrice) : "")
+  const [saving,     setSaving]     = useState(false)
+
+  const canConfirm = selected !== "vendido" || (salePrice !== "" && Number(salePrice) > 0)
 
   async function handleConfirm() {
+    if (!canConfirm) return
     setSaving(true)
-    try { await onSave(item.id, selected, notes) }
+    try { await onSave(item.id, selected, notes, selected === "vendido" ? Number(salePrice) : null) }
     finally { setSaving(false) }
   }
 
@@ -565,6 +584,23 @@ function DispositionModal({
             </button>
           ))}
 
+          {selected === "vendido" && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">
+                Valor da venda (R$) *
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={salePrice}
+                onChange={e => setSalePrice(e.target.value)}
+                placeholder="0,00"
+                className="w-full px-3 py-2.5 rounded-xl border border-amber-300 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400"
+              />
+            </div>
+          )}
+
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">
               Observação (opcional)
@@ -585,7 +621,7 @@ function DispositionModal({
           </button>
           <button
             onClick={handleConfirm}
-            disabled={saving}
+            disabled={saving || !canConfirm}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451d1] disabled:opacity-60 transition-colors"
           >
             {saving && <Loader2 size={14} className="animate-spin" />}
@@ -604,18 +640,21 @@ function SaidaModal({
 }: {
   avarias: AvariaItem[]
   onClose: () => void
-  onSave:  (id: number, disposition: Disposition, notes: string) => Promise<void>
+  onSave:  (id: number, disposition: Disposition, notes: string, salePrice?: number | null) => Promise<void>
 }) {
   const [selected,    setSelected]    = useState<AvariaItem | null>(null)
   const [disposition, setDisposition] = useState<Disposition>("reaproveitado")
   const [notes,       setNotes]       = useState("")
+  const [salePrice,   setSalePrice]   = useState("")
   const [saving,      setSaving]      = useState(false)
 
+  const canConfirm = !!selected && (disposition !== "vendido" || (salePrice !== "" && Number(salePrice) > 0))
+
   async function handleConfirm() {
-    if (!selected) return
+    if (!selected || !canConfirm) return
     setSaving(true)
     try {
-      await onSave(selected.id, disposition, notes)
+      await onSave(selected.id, disposition, notes, disposition === "vendido" ? Number(salePrice) : null)
     } finally {
       setSaving(false)
     }
@@ -700,6 +739,23 @@ function SaidaModal({
                       </div>
                     </div>
 
+                    {disposition === "vendido" && (
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">
+                          Valor da venda (R$) *
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={salePrice}
+                          onChange={e => setSalePrice(e.target.value)}
+                          placeholder="0,00"
+                          className="w-full px-3 py-2.5 rounded-xl border border-amber-300 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400"
+                        />
+                      </div>
+                    )}
+
                     <div>
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">
                         Observação (opcional)
@@ -724,7 +780,7 @@ function SaidaModal({
             </button>
             <button
               onClick={handleConfirm}
-              disabled={!selected || saving}
+              disabled={!canConfirm || saving}
               className="flex-1 flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-40 transition-colors"
             >
               {saving && <Loader2 size={14} className="animate-spin" />}

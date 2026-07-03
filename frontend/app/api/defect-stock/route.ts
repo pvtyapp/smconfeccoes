@@ -10,12 +10,14 @@ export async function GET(req: Request) {
     const { rows } = await pool.query(`
       SELECT
         ds.id,
-        ds.variant_id  AS "variantId",
+        ds.variant_id   AS "variantId",
         ds.product_name AS "productName",
         ds.color, ds.size, ds.qty,
         ds.disposition, ds.notes,
-        po.number AS "orderNumber",
-        ds.created_at AS "createdAt"
+        ds.sale_price   AS "salePrice",
+        po.number       AS "orderNumber",
+        ds.created_at   AS "createdAt",
+        ds.resolved_at  AS "resolvedAt"
       FROM defect_stock ds
       LEFT JOIN prod_orders po ON po.id = ds.order_id
       WHERE ($1 = 'all' OR ds.disposition = $1)

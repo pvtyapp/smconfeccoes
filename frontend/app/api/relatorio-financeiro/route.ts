@@ -74,7 +74,32 @@ export async function GET(req: Request) {
       ORDER BY oi.product_name
     `, [from, to])
 
-    // 5. Entradas de matéria-prima compradas no período
+    // 5a. Receita de avarias vendidas no período
+    const { rows: avariaVendas } = await pool.query(`
+      SELECT COALESCE(SUM(sale_price), 0)::float AS total
+      FROM defect_stock
+      WHERE disposition = 'vendido'
+        AND sale_price IS NOT NULL
+        AND resolved_at IS NOT NULL
+        AND DATE(resolved_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+
+    // 5b. Perdas por descarte (qty × custo médio da variante ou custo do produto)
+    const { rows: avariaDescartes } = await pool.query(`
+      SELECT COALESCE(SUM(ds.qty * COALESCE(pv.average_cost, p.material_cost, 0)), 0)::float AS total
+      FROM defect_stock ds
+      LEFT JOIN product_variants pv ON pv.id = ds.variant_id
+      LEFT JOIN LATERAL (
+        SELECT material_cost FROM products
+        WHERE LOWER(TRIM(name)) = LOWER(TRIM(ds.product_name)) AND status = 'active'
+        LIMIT 1
+      ) p ON true
+      WHERE ds.disposition = 'descartado'
+        AND ds.resolved_at IS NOT NULL
+        AND DATE(ds.resolved_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+
+    // 6. Entradas de matéria-prima compradas no período
     const { rows: matEntradas } = await pool.query(`
       SELECT
         COALESCE(SUM(total_qty * unit_price), 0)::float AS total,
@@ -97,8 +122,12 @@ export async function GET(req: Request) {
     // ── Calcular DRE ──────────────────────────────────────────────────────────
     const concluded = orders.filter(o => o.status === "concluido")
 
-    // Receita bruta — apenas pedidos concluídos
-    const receitaBruta = concluded.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
+    const receitaAvarias  = Number(avariaVendas[0]?.total   ?? 0)
+    const perdasDescarte  = Number(avariaDescartes[0]?.total ?? 0)
+
+    // Receita bruta — pedidos concluídos + avarias vendidas
+    const receitaOrdens = concluded.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
+    const receitaBruta  = receitaOrdens + receitaAvarias
 
     // Custo de insumos (material_cost × qty) — só para pedidos concluídos
     let custoInsumos      = 0
@@ -135,7 +164,7 @@ export async function GET(req: Request) {
     const custoVariavel = Number(varCosts[0]?.total ?? 0)
     const lucroBruto    = custoInsumosKnown ? receitaBruta - custoInsumos : null
     const resultadoOp   = lucroBruto !== null
-      ? lucroBruto - custoCostura - custoFixo - custoVariavel
+      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte
       : null
 
     const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
@@ -163,11 +192,13 @@ export async function GET(req: Request) {
       period: { from, to, days },
       dre: {
         receitaBruta,
+        receitaAvarias,
         custoInsumos:  custoInsumosKnown ? custoInsumos : null,
         lucroBruto,
         custoCostura,
         custoFixo,
         custoVariavel,
+        perdasDescarte,
         resultadoOp,
       },
       summary: {

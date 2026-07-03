@@ -10,13 +10,15 @@ import { todayBR, subDaysBR } from "@/lib/tz"
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DRE = {
-  receitaBruta:  number
-  custoInsumos:  number | null
-  lucroBruto:    number | null
-  custoCostura:  number
-  custoFixo:     number
-  custoVariavel: number
-  resultadoOp:   number | null
+  receitaBruta:   number
+  receitaAvarias: number
+  custoInsumos:   number | null
+  lucroBruto:     number | null
+  custoCostura:   number
+  custoFixo:      number
+  custoVariavel:  number
+  perdasDescarte: number
+  resultadoOp:    number | null
 }
 
 type Summary = {
@@ -628,6 +630,10 @@ export default function RelatorioFinanceiroPage() {
             {dreOpen && (
               <div className="px-6 py-4">
                 <DRERow bold label="(+) Receita Bruta" value={dre?.receitaBruta} />
+                {(dre?.receitaAvarias ?? 0) > 0 && (
+                  <DRERow label="↳ Avarias vendidas" value={dre?.receitaAvarias} indent
+                    sub="vendas de peças com desconto" />
+                )}
                 <DRERow label="(-) Custo de Insumos" value={dre?.custoInsumos != null ? -(dre.custoInsumos) : null}
                   indent negative sub="material_cost dos produtos vendidos" />
                 <DRERow separator />
@@ -638,6 +644,10 @@ export default function RelatorioFinanceiroPage() {
                 <DRERow label="(-) Custo Fixo" value={-(dre?.custoFixo ?? 0)} indent negative />
                 <DRERow label="(-) Custo Variável" value={-(dre?.custoVariavel ?? 0)} indent negative
                   sub="despesas variáveis lançadas no período" />
+                {(dre?.perdasDescarte ?? 0) > 0 && (
+                  <DRERow label="(-) Perdas por Descarte" value={-(dre?.perdasDescarte ?? 0)} indent negative
+                    sub="qty × custo médio · avarias descartadas no período" />
+                )}
                 <DRERow separator />
                 <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}
                   sub={dre?.resultadoOp != null ? `margem op. ${pct(summary?.margemOp ?? null)}` : undefined} />

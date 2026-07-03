@@ -71,6 +71,9 @@ type Insumo = {
   saidas: Saida[]
 }
 
+const MONITORED_GROUPS = new Set(["film", "tinta", "poliamida"])
+const isMonitored = (grupo: string) => MONITORED_GROUPS.has(grupo.toLowerCase())
+
 const GROUP_COLOR: Record<string, { bg: string; text: string; border: string }> = {
   Tinta:     { bg: "bg-blue-50",   text: "text-blue-700",   border: "border-blue-200"   },
   Film:      { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" },
@@ -469,10 +472,16 @@ export default function DTFInsumosPage() {
                             className="flex items-center gap-1 text-xs bg-emerald-600 text-white px-2.5 py-1.5 rounded-xl font-semibold hover:bg-emerald-700 transition-colors">
                             <Plus size={11} /> Entrada
                           </button>
-                          <button onClick={() => openSaida(ins.id)}
-                            className="flex items-center gap-1 text-xs bg-[#4361EE] text-white px-2.5 py-1.5 rounded-xl font-semibold hover:bg-[#3451d1] transition-colors">
-                            <TrendingDown size={11} /> Uso
-                          </button>
+                          {isMonitored(grupo) ? (
+                            <span className="text-[10px] text-gray-400 italic px-1">
+                              {grupo.toLowerCase() === "film" ? "via Film Monitor" : "via Monitor Refil"}
+                            </span>
+                          ) : (
+                            <button onClick={() => openSaida(ins.id)}
+                              className="flex items-center gap-1 text-xs bg-[#4361EE] text-white px-2.5 py-1.5 rounded-xl font-semibold hover:bg-[#3451d1] transition-colors">
+                              <TrendingDown size={11} /> Uso
+                            </button>
+                          )}
                           {history.length > 0 && (
                             <button onClick={() => toggleExpand(ins.id)} className="text-gray-400 hover:text-gray-600 transition-colors p-1">
                               {isExpand ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -650,8 +659,8 @@ export default function DTFInsumosPage() {
                         )
                       })()}
 
-                      {/* Form: Saída */}
-                      {showSaida === ins.id && (
+                      {/* Form: Saída — apenas grupos sem monitor dedicado */}
+                      {showSaida === ins.id && !isMonitored(grupo) && (
                         <div className="px-5 py-3 bg-[#4361EE]/5 border-t border-[#4361EE]/10 space-y-3">
                           <div className="flex items-center justify-between">
                             <p className="text-[10px] font-bold text-[#4361EE] uppercase tracking-wider">Registrar Uso</p>

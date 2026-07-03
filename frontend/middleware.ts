@@ -18,6 +18,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/migrate-v2",
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
+  "/api/dtf/printer-refis/migrate",
   "/api/debug/",
 ]
 

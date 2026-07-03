@@ -15,8 +15,26 @@ type Pedido = {
 }
 
 type InsumoSummary = {
-  id: number; nome: string; unidade: string
+  id: number; nome: string; unidade: string; grupo: string
   saldoAtual: number; alarmeQtd: number | null; lowStock: boolean
+}
+
+type PrinterRefil = {
+  id: number
+  impressoraId: number
+  insumoId: number
+  insumoNome: string
+  unidade: string
+  grupo: string
+  quantidade: number
+  custoTotal: number | null
+  abertaEm: string
+  metrosAtuais: number
+  custoPorMetroAtual: number | null
+  historico: Array<{
+    id: number; metrosNoCiclo: number | null; custoPorMetro: number | null
+    abertaEm: string; fechadaEm: string
+  }>
 }
 
 type FilmBobina = {
@@ -113,10 +131,16 @@ export default function DTFDashboardPage() {
   const [filmTrocando,   setFilmTrocando]   = useState(false)
   const [filmHistOpen,   setFilmHistOpen]   = useState<number | null>(null)
 
+  const [printerRefis,  setPrinterRefis]  = useState<PrinterRefil[]>([])
+  const [refilImp,      setRefilImp]      = useState<number | null>(null)
+  const [refilForm,     setRefilForm]     = useState({ insumoId: "", quantidade: "", custoTotal: "", obs: "" })
+  const [refilSaving,   setRefilSaving]   = useState(false)
+  const [refilError,    setRefilError]    = useState("")
+
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
     data: todayBR(),
-    cliente: "", metros: "", precoCobrado: "", observacao: "",
+    cliente: "", metros: "", precoCobrado: "", observacao: "", impressoraId: "1",
   })
 
   const loadRelatorio = useCallback(async () => {
@@ -141,9 +165,15 @@ export default function DTFDashboardPage() {
     if (r.ok) setFilmBobinas(await r.json())
   }, [])
 
+  const loadRefis = useCallback(async () => {
+    const r = await fetch("/api/dtf/printer-refis")
+    if (r.ok) setPrinterRefis(await r.json())
+  }, [])
+
   useEffect(() => { loadRelatorio() }, [loadRelatorio])
   useEffect(() => { loadInsumos() },   [loadInsumos])
   useEffect(() => { loadFilm() },      [loadFilm])
+  useEffect(() => { loadRefis() },     [loadRefis])
   useEffect(() => {
     fetch("/api/dtf/preco").then(r => r.ok ? r.json() : null).then(d => {
       if (d?.precoMetro) setPrecoMetro(d.precoMetro)
@@ -157,6 +187,9 @@ export default function DTFDashboardPage() {
 
   async function salvar() {
     if (!form.data || !form.metros) return
+    const impressoraId = numImpressoras > 1 && form.impressoraId
+      ? parseInt(form.impressoraId)
+      : numImpressoras === 1 ? 1 : null
     const r = await fetch("/api/dtf/pedidos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -166,12 +199,42 @@ export default function DTFDashboardPage() {
         metros: parseFloat(form.metros),
         precoCobrado: form.precoCobrado ? parseFloat(form.precoCobrado) : null,
         observacao: form.observacao || null,
+        impressoraId,
       }),
     })
     if (r.ok) {
-      setForm({ data: todayBR(), cliente: "", metros: "", precoCobrado: "", observacao: "" })
+      setForm({ data: todayBR(), cliente: "", metros: "", precoCobrado: "", observacao: "", impressoraId: "1" })
       setShowForm(false)
       loadRelatorio()
+      loadFilm()
+      loadRefis()
+    }
+  }
+
+  async function salvarRefil(impressoraId: number) {
+    if (!refilForm.insumoId || !refilForm.quantidade) return
+    setRefilSaving(true)
+    setRefilError("")
+    const r = await fetch("/api/dtf/printer-refis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        impressoraId,
+        insumoId: parseInt(refilForm.insumoId),
+        quantidade: parseFloat(refilForm.quantidade),
+        custoTotal: refilForm.custoTotal ? parseFloat(refilForm.custoTotal) : null,
+        obs: refilForm.obs || null,
+      }),
+    })
+    setRefilSaving(false)
+    if (r.ok) {
+      setRefilImp(null)
+      setRefilForm({ insumoId: "", quantidade: "", custoTotal: "", obs: "" })
+      loadRefis()
+      loadInsumos()
+    } else {
+      const d = await r.json()
+      setRefilError(d.error ?? "Erro ao salvar")
     }
   }
 
@@ -592,6 +655,139 @@ export default function DTFDashboardPage() {
         </section>
       )}
 
+      {/* ── Monitor de Tintas & Poliamida ── */}
+      {(() => {
+        const insumoOptions = insumos.filter(i => i.grupo.toLowerCase() !== "film")
+        if (insumoOptions.length === 0) return null
+        return (
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <FlaskConical size={14} className="text-[#E85D04]" />
+              <h2 className="text-xs font-bold text-[#E85D04] uppercase tracking-widest">Tintas & Poliamida — Monitor por Impressora</h2>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Array.from({ length: numImpressoras }, (_, i) => i + 1).map(imp => {
+                const refisImp = printerRefis.filter(r => r.impressoraId === imp)
+                const isOpen   = refilImp === imp
+
+                return (
+                  <div key={imp} className="bg-white border border-orange-100 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FlaskConical size={12} className="text-[#E85D04]" />
+                        <span className="text-xs font-bold text-[#0F1E3C]">Impressora {imp}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setRefilImp(isOpen ? null : imp)
+                          setRefilForm({ insumoId: "", quantidade: "", custoTotal: "", obs: "" })
+                          setRefilError("")
+                        }}
+                        className="text-[10px] font-bold text-[#E85D04] hover:underline"
+                      >
+                        {isOpen ? "Cancelar" : "+ Novo Refil"}
+                      </button>
+                    </div>
+
+                    {refisImp.length === 0 && !isOpen ? (
+                      <p className="text-[10px] text-[#0F1E3C]/25 italic">Nenhum refil ativo.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {refisImp.map(r => {
+                          const cpm = r.custoPorMetroAtual
+                          return (
+                            <div key={r.id} className="border border-gray-100 rounded-xl px-3 py-2 space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-[#0F1E3C]">{r.insumoNome}</span>
+                                <span className="text-[10px] text-gray-400">{Number(r.quantidade).toFixed(3)} {r.unidade}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-[#0F1E3C]/40">
+                                  {Number(r.metrosAtuais).toFixed(2)} m impresso
+                                </span>
+                                <span className={`text-[10px] font-bold font-mono ${cpm != null ? "text-[#E85D04]" : "text-gray-300"}`}>
+                                  {cpm != null ? `R$ ${cpm.toFixed(4).replace(".", ",")}/m` : "aguardando metros"}
+                                </span>
+                              </div>
+                              {r.historico.length > 0 && (
+                                <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-50">
+                                  Último ciclo: {Number(r.historico[0].metrosNoCiclo ?? 0).toFixed(1)} m
+                                  {r.historico[0].custoPorMetro != null && (
+                                    <span className="font-mono ml-1">
+                                      · R$ {Number(r.historico[0].custoPorMetro).toFixed(4).replace(".", ",")}/m
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {isOpen && (
+                      <div className="border-t border-orange-100 pt-3 space-y-2">
+                        <p className="text-[10px] font-bold text-[#E85D04] uppercase tracking-wider">Novo Refil — Impressora {imp}</p>
+                        <div>
+                          <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Insumo *</label>
+                          <select value={refilForm.insumoId}
+                            onChange={e => setRefilForm(f => ({ ...f, insumoId: e.target.value }))}
+                            className="w-full border border-orange-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200/50 bg-white text-[#0F1E3C]">
+                            <option value="">— Selecione —</option>
+                            {insumoOptions.map(o => (
+                              <option key={o.id} value={String(o.id)}>{o.nome} ({o.unidade})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Quantidade *</label>
+                            <input type="number" step="0.001" min="0" placeholder="0,000"
+                              value={refilForm.quantidade}
+                              onChange={e => setRefilForm(f => ({ ...f, quantidade: e.target.value }))}
+                              className="w-full border border-orange-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200/50"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Custo total (R$)</label>
+                            <input type="number" step="0.01" min="0" placeholder="Opcional"
+                              value={refilForm.custoTotal}
+                              onChange={e => setRefilForm(f => ({ ...f, custoTotal: e.target.value }))}
+                              className="w-full border border-orange-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200/50"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Obs</label>
+                          <input type="text" placeholder="Opcional"
+                            value={refilForm.obs}
+                            onChange={e => setRefilForm(f => ({ ...f, obs: e.target.value }))}
+                            className="w-full border border-orange-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200/50"
+                          />
+                        </div>
+                        {refilError && (
+                          <p className="text-[10px] text-red-600 bg-red-50 px-3 py-2 rounded-lg">{refilError}</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => salvarRefil(imp)}
+                            disabled={refilSaving || !refilForm.insumoId || !refilForm.quantidade}
+                            className="bg-[#E85D04] text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-[#D14D00] transition-colors disabled:opacity-50"
+                          >
+                            {refilSaving ? "Salvando..." : "Confirmar Refil"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })()}
+
       {/* ── Alerta estoque baixo ── */}
       {insumos.some(i => i.lowStock) && (
         <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
@@ -679,13 +875,31 @@ export default function DTFDashboardPage() {
         {showForm && (
           <div className="bg-white border border-[#0F1E3C]/8 rounded-2xl shadow-sm p-5 space-y-4">
             <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Novo Pedido</p>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className={`grid gap-3 ${numImpressoras > 1 ? "grid-cols-2 md:grid-cols-6" : "grid-cols-2 md:grid-cols-5"}`}>
               <div>
                 <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Data *</label>
                 <input type="date" value={form.data}
                   onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
                   className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
               </div>
+              {numImpressoras > 1 && (
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Impressora *</label>
+                  <div className="flex gap-1">
+                    {Array.from({ length: numImpressoras }, (_, i) => String(i + 1)).map(n => (
+                      <button key={n} type="button"
+                        onClick={() => setForm(f => ({ ...f, impressoraId: n }))}
+                        className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                          form.impressoraId === n
+                            ? "bg-[#4361EE] text-white border-[#4361EE]"
+                            : "bg-white text-[#0F1E3C]/50 border-gray-200 hover:border-[#4361EE]/40"
+                        }`}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Metros *</label>
                 <input type="number" step="0.01" min="0" placeholder="0,00" value={form.metros}

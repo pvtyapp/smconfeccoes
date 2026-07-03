@@ -37,6 +37,7 @@ type AvariaRecord = {
   size: string | null
   qty: number
   notes: string | null
+  salePrice: number | null
   createdAt: string
   orderNumber: string | null
 }
@@ -489,7 +490,9 @@ export default function RelatorioVendasPage() {
                   </td>
                   <td className="px-4 py-3.5 text-center text-xs text-[#0F1E3C]/60">{a.qty}</td>
                   <td className="px-4 py-3.5 text-center text-xs text-[#0F1E3C]/30">—</td>
-                  <td className="px-4 py-3.5 text-right text-xs text-[#0F1E3C]/30">—</td>
+                  <td className={`px-4 py-3.5 text-right font-black whitespace-nowrap ${a.salePrice != null ? "text-[#0F1E3C]" : "text-[#0F1E3C]/30"}`}>
+                    {a.salePrice != null ? fmtR(a.salePrice) : "—"}
+                  </td>
                   <td className="px-4 py-3.5" />
                 </tr>
               )

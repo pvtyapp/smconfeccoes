@@ -67,7 +67,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { data, cliente, metros, precoCobrado, observacao, contactId, status, source, larguraCm } = body
+    const { data, cliente, metros, precoCobrado, observacao, contactId, status, source, larguraCm, impressoraId } = body
 
     if (!data) return NextResponse.json({ error: "data é obrigatória" }, { status: 400 })
 
@@ -76,12 +76,12 @@ export async function POST(req: Request) {
 
     const { rows } = await pool.query(`
       INSERT INTO dtf_pedidos
-        (number, data, cliente, metros, preco_cobrado, observacao, contact_id, status, source, largura_cm)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (number, data, cliente, metros, preco_cobrado, observacao, contact_id, status, source, largura_cm, impressora_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id, number, data, cliente, metros,
         metros_finais AS "metrosFinais", largura_cm AS "larguraCm",
         preco_cobrado AS "precoCobrado", observacao, status, source,
-        contact_id AS "contactId", created_at AS "createdAt"
+        contact_id AS "contactId", impressora_id AS "impressoraId", created_at AS "createdAt"
     `, [
       number,
       data,
@@ -93,6 +93,7 @@ export async function POST(req: Request) {
       status ?? 'triagem',
       source ?? 'manual',
       larguraCm ?? null,
+      impressoraId ?? null,
     ])
 
     return NextResponse.json(rows[0], { status: 201 })

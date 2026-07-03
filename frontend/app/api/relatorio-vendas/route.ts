@@ -9,7 +9,7 @@ export async function GET(req: Request) {
 
     const hasDate = !!(from && to)
     const orderDateCond  = hasDate ? `AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
-    const avariDateCond  = hasDate ? `AND DATE(ds.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
+    const avariDateCond  = hasDate ? `AND DATE(COALESCE(ds.resolved_at, ds.created_at) AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
     const params = hasDate ? [from, to] : []
 
     const { rows: orders } = await pool.query(`
@@ -44,6 +44,7 @@ export async function GET(req: Request) {
       ) p ON true
       WHERE o.status != 'cancelado'
         AND o.source IN ('pdv', 'whatsapp', 'manual')
+        AND o.number NOT LIKE 'COB-%'
         ${orderDateCond}
       GROUP BY o.id, c.name, c.phone
       ORDER BY o.created_at DESC
@@ -57,13 +58,14 @@ export async function GET(req: Request) {
         ds.size,
         ds.qty,
         ds.notes,
-        ds.created_at   AS "createdAt",
+        ds.sale_price                    AS "salePrice",
+        COALESCE(ds.resolved_at, ds.created_at) AS "createdAt",
         o.number        AS "orderNumber"
       FROM defect_stock ds
       LEFT JOIN orders o ON o.id = ds.order_id
       WHERE ds.disposition = 'vendido'
         ${avariDateCond}
-      ORDER BY ds.created_at DESC
+      ORDER BY COALESCE(ds.resolved_at, ds.created_at) DESC
     `, params)
 
     return NextResponse.json({ orders, avarias })
