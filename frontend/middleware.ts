@@ -23,8 +23,8 @@ const PUBLIC_API_PREFIXES = [
 export function middleware(request: NextRequest) {
   const AUTH_SECRET = process.env.AUTH_SECRET
 
-  // AUTH_SECRET not configured → skip middleware (backward compat)
-  if (!AUTH_SECRET) return NextResponse.next()
+  // AUTH_SECRET not configured OR running locally → skip middleware
+  if (!AUTH_SECRET || process.env.VERCEL_ENV !== "production") return NextResponse.next()
 
   const { pathname } = request.nextUrl
 
