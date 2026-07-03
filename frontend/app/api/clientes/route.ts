@@ -38,6 +38,7 @@ export async function GET() {
         c.id,
         c.name,
         c.phone,
+        c.phone_jid  AS "phoneJid",
         c.jid,
         c.lifecycle_state        AS "lifecycleState",
         c.last_order_at          AS "lastOrderAt",
@@ -55,9 +56,13 @@ export async function GET() {
         COALESCE(
           SUM(o.total_value)
           FILTER (WHERE o.status != 'cancelado'), 0
+        ) + COALESCE(
+          SUM(dp.preco_cobrado)
+          FILTER (WHERE dp.status != 'cancelado'), 0
         )                                                  AS "totalSpent"
       FROM wa_contacts c
       LEFT JOIN orders o ON o.contact_id = c.id
+      LEFT JOIN dtf_pedidos dp ON dp.contact_id = c.id
       GROUP BY c.id
       ORDER BY c.last_order_at DESC NULLS LAST, c.created_at DESC
     `)

@@ -9,8 +9,9 @@ import {
 
 type Contact = {
   id: number
-  name: string
-  phone: string
+  name: string | null
+  phone: string | null
+  phoneJid: string | null
   jid: string
   lifecycleState: string
   chatbotState: string | null
@@ -52,17 +53,23 @@ const LIFECYCLE_CONFIG: Record<string, { label: string; cls: string }> = {
   new:     { label: "Novo",     cls: "bg-gray-100 text-gray-600"   },
   active:  { label: "Ativo",    cls: "bg-green-100 text-green-700" },
   ausente: { label: "Ausente",  cls: "bg-amber-100 text-amber-700" },
+  frio:    { label: "Frio",     cls: "bg-blue-100 text-blue-600"   },
 }
 
 const CHATBOT_STATE_LABEL: Record<string, string> = {
-  idle:                     "Aguardando",
-  coletando:                "Coletando pedido",
-  aguardando_cliente_1:     "Aguardando confirmação",
-  dtf_coletando:            "Coletando DTF",
-  triagem:                  "Pedido em triagem",
-  confirmando:              "Confirmando qtd.",
-  em_separacao:             "Em separação",
-  pronto:                   "Pronto p/ retirada",
+  idle:                             "Aguardando",
+  coletando:                        "Coletando pedido",
+  aguardando_nome:                  "Aguardando nome",
+  aguardando_cliente_1:             "Aguardando confirmação",
+  dtf_coletando:                    "Coletando DTF",
+  triagem:                          "Pedido em triagem",
+  confirmando:                      "Confirmando qtd.",
+  em_separacao:                     "Em separação",
+  pronto:                           "Pronto p/ retirada",
+  atendimento:                      "Atendimento manual",
+  aguardando_separacao_resposta:    "Aguard. separação parcial",
+  aguardando_cancelamento_resposta: "Aguard. cancelamento",
+  aguardando_reserva_resposta:      "Aguard. reserva",
 }
 
 const DTF_STATUS_LABEL: Record<string, string> = {
@@ -88,10 +95,17 @@ function fmtCurrency(val: number | string | null) {
   if (val === null || val === undefined) return "—"
   return `R$ ${Number(val).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
 }
-function fmtPhone(phone: string) {
+function fmtPhone(phone: string | null | undefined) {
+  if (!phone) return "—"
   const p = phone.replace(/\D/g, "")
+  if (p.length === 13) return `+${p.slice(0, 2)} (${p.slice(2, 4)}) ${p.slice(4, 9)}-${p.slice(9)}`
+  if (p.length === 12) return `+${p.slice(0, 2)} (${p.slice(2, 4)}) ${p.slice(4, 8)}-${p.slice(8)}`
   if (p.length === 11) return `(${p.slice(0, 2)}) ${p.slice(2, 7)}-${p.slice(7)}`
   return phone
+}
+
+function isLidUnresolved(c: { jid: string; phoneJid: string | null }) {
+  return c.jid?.endsWith("@lid") && !c.phoneJid
 }
 
 function Toggle({ on, onChange, color = "bg-[#4361EE]" }: { on: boolean; onChange: () => void; color?: string }) {
@@ -213,6 +227,7 @@ export default function ClientesPage() {
               { key: "active",  label: "Ativos"   },
               { key: "ausente", label: "Ausentes" },
               { key: "new",     label: "Novos"    },
+              { key: "frio",    label: "Frios"    },
             ].map(({ key, label }) => (
               <button key={key} onClick={() => setFilterLifecycle(key)}
                 className={`px-3 py-2 transition-colors ${filterLifecycle === key ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
@@ -249,8 +264,17 @@ export default function ClientesPage() {
                   <tr key={c.id} onClick={() => setSelectedId(isSelected ? null : c.id)}
                     className={`cursor-pointer transition-colors ${isSelected ? "bg-[#4361EE]/6" : "hover:bg-[#0F1E3C]/3"}`}>
                     <td className="px-5 py-3.5">
-                      <p className="font-semibold text-[#0F1E3C]">{c.name || "Sem nome"}</p>
-                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{fmtPhone(c.phone)}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-[#0F1E3C]">{c.name || "Sem nome"}</p>
+                        {isLidUnresolved(c) && (
+                          <span className="text-[9px] font-bold bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                            Aguard. sync
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
+                        {isLidUnresolved(c) ? "Nº pendente de identificação" : fmtPhone(c.phone)}
+                      </p>
                     </td>
                     <td className="px-4 py-3.5">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${lc.cls}`}>{lc.label}</span>
@@ -406,6 +430,8 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const [termDays,       setTermDays]       = useState<string>(String(contact.paymentTermDays ?? 7))
   const [precoExclusivo, setPrecoExclusivo] = useState(contact.precoExclusivo)
   const [chatbotObs,     setChatbotObs]     = useState(contact.chatbotObs ?? "")
+  const [chatbotProduto, setChatbotProduto] = useState(contact.chatbotProdutoEnabled)
+  const [chatbotDtf,     setChatbotDtf]     = useState(contact.chatbotDtfEnabled)
   const [saving,         setSaving]         = useState(false)
   const [saved,          setSaved]          = useState(false)
   const [confirmDelete,  setConfirmDelete]  = useState(false)
@@ -480,6 +506,8 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
           days: termEnabled && termType === "days" ? parseInt(termDays) || null : null,
           precoExclusivo,
           chatbotObs: chatbotObs.trim() || null,
+          chatbotProdutoEnabled: chatbotProduto,
+          chatbotDtfEnabled: chatbotDtf,
         }),
       })
       setSaved(true)
@@ -519,7 +547,9 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
                 />
                 <Pencil size={12} className="text-[#0F1E3C]/25 flex-shrink-0" />
               </div>
-              <p className="text-xs text-[#0F1E3C]/40 mt-1">{fmtPhone(contact.phone)}</p>
+              <p className="text-xs text-[#0F1E3C]/40 mt-1">
+                {isLidUnresolved(contact) ? "Nº pendente de identificação" : fmtPhone(contact.phone)}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2 mt-2 ml-10">
@@ -584,6 +614,25 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
               className="w-full px-3 py-2 rounded-xl border border-[#0F1E3C]/10 text-xs text-[#0F1E3C] resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 placeholder-[#0F1E3C]/25"
             />
             <p className="text-[10px] text-[#0F1E3C]/30 mt-1">O chatbot usa essas informações para personalizar o atendimento.</p>
+          </div>
+
+          {/* Canais */}
+          <div className="space-y-2.5 pt-2 border-t border-[#0F1E3C]/6">
+            <p className="text-xs text-[#0F1E3C]/50 font-medium">Canais ativos</p>
+            <div className="flex items-center gap-3">
+              <Toggle on={chatbotProduto} onChange={() => setChatbotProduto(v => !v)} />
+              <div>
+                <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot Produto</p>
+                <p className="text-[10px] text-[#0F1E3C]/40">Pedidos de roupa via WhatsApp</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Toggle on={chatbotDtf} onChange={() => setChatbotDtf(v => !v)} color="bg-purple-600" />
+              <div>
+                <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot DTF</p>
+                <p className="text-[10px] text-[#0F1E3C]/40">Pedidos de impressão via WhatsApp</p>
+              </div>
+            </div>
           </div>
         </div>
 
