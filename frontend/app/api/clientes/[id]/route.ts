@@ -8,7 +8,8 @@ export async function GET(
   try {
     const { id } = await params
     const { searchParams } = new URL(req.url)
-    const days = parseInt(searchParams.get("days") ?? "0")
+    const daysRaw = parseInt(searchParams.get("days") ?? "0")
+    const days = Number.isFinite(daysRaw) && daysRaw >= 0 ? daysRaw : 0
 
     const contactRes = await pool.query(`
       SELECT
@@ -99,6 +100,9 @@ export async function DELETE(
 
     // Cascade delete in dependency order
     await pool.query(`DELETE FROM wa_messages WHERE contact_id = $1`, [id])
+    await pool.query(`DELETE FROM wa_contact_tags WHERE contact_id = $1`, [id]).catch(() => {})
+    await pool.query(`DELETE FROM wa_contact_offers WHERE contact_id = $1`, [id]).catch(() => {})
+    await pool.query(`DELETE FROM product_reservations WHERE contact_id = $1`, [id]).catch(() => {})
     await pool.query(`
       DELETE FROM order_items WHERE order_id IN (
         SELECT id FROM orders WHERE contact_id = $1
@@ -124,7 +128,7 @@ export async function PUT(
 ) {
   try {
     const { id } = await params
-    const { name, enabled, type, days, precoExclusivo, chatbotObs } = await req.json()
+    const { name, enabled, type, days, precoExclusivo, chatbotObs, chatbotProdutoEnabled, chatbotDtfEnabled } = await req.json()
 
     await pool.query(`
       UPDATE wa_contacts
@@ -133,8 +137,10 @@ export async function PUT(
           payment_term_type         = $3,
           payment_term_days         = $4,
           preco_exclusivo           = $5,
-          chatbot_obs               = $6
-      WHERE id = $7
+          chatbot_obs               = $6,
+          chatbot_produto_enabled   = COALESCE($7, chatbot_produto_enabled),
+          chatbot_dtf_enabled       = COALESCE($8, chatbot_dtf_enabled)
+      WHERE id = $9
     `, [
       name?.trim() ?? null,
       Boolean(enabled),
@@ -142,6 +148,8 @@ export async function PUT(
       enabled && type === "days" ? (days ?? null) : null,
       precoExclusivo !== undefined ? Boolean(precoExclusivo) : false,
       chatbotObs ?? null,
+      chatbotProdutoEnabled !== undefined ? Boolean(chatbotProdutoEnabled) : null,
+      chatbotDtfEnabled !== undefined ? Boolean(chatbotDtfEnabled) : null,
       id,
     ])
 

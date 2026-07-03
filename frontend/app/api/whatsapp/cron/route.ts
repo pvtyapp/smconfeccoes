@@ -2,9 +2,12 @@ import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { campaignSend } from "@/lib/whatsapp/campaignSend"
 import { todayBR } from "@/lib/tz"
-import { runBlobTtlCleanup, cleanAbandonedDtfOrcamento } from "@/lib/blob-cleanup"
-import { list } from "@vercel/blob"
+import { runMediaCleanup } from "@/lib/blob-cleanup"
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
 
 // Vercel Cron: 0 12 * * * (09h Brasília = 12h UTC)
 export async function GET(req: Request) {
@@ -13,7 +16,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { novo: number; ausente: number; frio: number; cobranca: number; stuck: number; errors: number; textCleanup: number; dtfAbandoned: number; evoRestarted?: boolean } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, stuck: 0, errors: 0, textCleanup: 0, dtfAbandoned: 0 }
+  const results: { novo: number; ausente: number; frio: number; cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; campaignSent?: number; scheduleSent?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -64,18 +67,14 @@ export async function GET(req: Request) {
   } catch (e) { console.error("[cron] watchdog evolution falhou:", e instanceof Error ? e.message : e) }
 
   await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS phone_jid TEXT`).catch(() => {})
+  await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_marketing_sent_at TIMESTAMPTZ`).catch(() => {})
+  await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS marketing_optout BOOLEAN DEFAULT FALSE`).catch(() => {})
 
   const settingsRes = await pool.query("SELECT key, value FROM app_settings")
   const s: Record<string, string> = {}
   for (const row of settingsRes.rows) s[row.key] = row.value
 
-  if (s.chatbot_ativo === "false") {
-    const host = req.headers.get("host") || ""
-    const proto = host.includes("localhost") ? "http" : "https"
-    waitUntil(fetch(`${proto}://${host}/api/chat/sync`, { method: "POST", signal: AbortSignal.timeout(25_000) }).catch(() => {}))
-    return NextResponse.json({ ok: true, skipped: "chatbot_ativo=false" })
-  }
-
+  const chatbotAtivo  = s.chatbot_ativo !== "false"
   const lifecycleActive = s.lifecycle_ativo !== "false"
 
   function t(template: string, name: string) {
@@ -84,7 +83,7 @@ export async function GET(req: Request) {
 
   const today = todayBR()
 
-  if (lifecycleActive) {
+  if (chatbotAtivo && lifecycleActive) {
   // ── 1. Novo D2 — lead que não converteu em 48h ────────────────────────────────
   try {
     const rows = await pool.query(`
@@ -93,6 +92,10 @@ export async function GET(req: Request) {
         AND COALESCE(novo_seq, 0) = 0
         AND state = 'idle'
         AND created_at < NOW() - INTERVAL '2 days'
+        AND NOT COALESCE(marketing_optout, false)
+        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
+        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+      LIMIT 3
     `)
     for (const c of rows.rows) {
       const cli = await pool.connect()
@@ -100,7 +103,7 @@ export async function GET(req: Request) {
         await cli.query("BEGIN")
         await cli.query(`
           UPDATE wa_contacts
-          SET novo_seq = 1, novo_last_sent_at = NOW(), updated_at = NOW()
+          SET novo_seq = 1, novo_last_sent_at = NOW(), last_marketing_sent_at = NOW(), updated_at = NOW()
           WHERE id = $1
         `, [c.id])
         await sendWhatsApp(c.send_jid as string, t(
@@ -116,6 +119,7 @@ export async function GET(req: Request) {
       } finally {
         cli.release()
       }
+      await randDelay()
     }
   } catch { results.errors++ }
 
@@ -145,6 +149,10 @@ export async function GET(req: Request) {
         AND last_order_at < NOW() - INTERVAL '15 days'
         AND state NOT IN ('coletando','aguardando_menu','aguardando_cliente_1',
                           'dtf_verificando','dtf_coletando','cross_sell_dtf','cross_sell_produto')
+        AND NOT COALESCE(marketing_optout, false)
+        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
+        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+      LIMIT 3
     `)
     for (const c of rows.rows) {
       const cli = await pool.connect()
@@ -153,7 +161,7 @@ export async function GET(req: Request) {
         await cli.query(`
           UPDATE wa_contacts
           SET lifecycle_state = 'ausente', lifecycle_updated_at = NOW(),
-              ausente_seq = 1, ausente_last_sent_at = NOW()
+              ausente_seq = 1, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW()
           WHERE id = $1
         `, [c.id])
         await sendWhatsApp(c.send_jid as string, t(
@@ -169,6 +177,7 @@ export async function GET(req: Request) {
       } finally {
         cli.release()
       }
+      await randDelay()
     }
   } catch { results.errors++ }
 
@@ -180,12 +189,16 @@ export async function GET(req: Request) {
         AND ausente_seq = 1
         AND last_order_at IS NOT NULL
         AND last_order_at < NOW() - INTERVAL '30 days'
+        AND NOT COALESCE(marketing_optout, false)
+        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
+        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+      LIMIT 3
     `)
     for (const c of rows.rows) {
       const cli = await pool.connect()
       try {
         await cli.query("BEGIN")
-        await cli.query(`UPDATE wa_contacts SET ausente_seq = 2, ausente_last_sent_at = NOW() WHERE id = $1`, [c.id])
+        await cli.query(`UPDATE wa_contacts SET ausente_seq = 2, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW() WHERE id = $1`, [c.id])
         await sendWhatsApp(c.send_jid as string, t(
           s.ausente_d30_msg || "{nome}, chegaram peças novas esse mês. Me chama quando precisar.",
           c.name
@@ -199,6 +212,7 @@ export async function GET(req: Request) {
       } finally {
         cli.release()
       }
+      await randDelay()
     }
   } catch { results.errors++ }
 
@@ -210,12 +224,16 @@ export async function GET(req: Request) {
         AND ausente_seq = 2
         AND last_order_at IS NOT NULL
         AND last_order_at < NOW() - INTERVAL '45 days'
+        AND NOT COALESCE(marketing_optout, false)
+        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
+        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+      LIMIT 3
     `)
     for (const c of rows.rows) {
       const cli = await pool.connect()
       try {
         await cli.query("BEGIN")
-        await cli.query(`UPDATE wa_contacts SET ausente_seq = 3, ausente_last_sent_at = NOW() WHERE id = $1`, [c.id])
+        await cli.query(`UPDATE wa_contacts SET ausente_seq = 3, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW() WHERE id = $1`, [c.id])
         await sendWhatsApp(c.send_jid as string, t(
           s.ausente_d45_msg || "Oi {nome}! Uma última mensagem — quando precisar de estoque, pode contar comigo.",
           c.name
@@ -229,6 +247,7 @@ export async function GET(req: Request) {
       } finally {
         cli.release()
       }
+      await randDelay()
     }
   } catch { results.errors++ }
 
@@ -373,46 +392,119 @@ export async function GET(req: Request) {
     }
   } catch (e) { console.error("[cron] reserva expiry falhou:", e instanceof Error ? e.message : e); results.errors++ }
 
-  // ── 10. Limpeza TTL de blobs de mídia ────────────────────────────────────────
-  const blobCleanup = await runBlobTtlCleanup().catch(() => ({ deleted: 0 }))
-
-  // ── 11. Mensagens de texto antigas (> 180 dias) de contatos inativos ──────────
+  // ── 10. Mídia TTL 48h + evicção 500MB + delete mensagens > 14 dias ────────────
   try {
-    const { rows: oldMsgs } = await pool.query(`
-      SELECT m.id FROM wa_messages m
-      JOIN wa_contacts c ON c.id = m.contact_id
-      WHERE m.media_type IS NULL
-        AND m.media_url IS NULL
-        AND m.created_at < NOW() - INTERVAL '180 days'
-        AND (c.last_order_at IS NULL OR c.last_order_at < NOW() - INTERVAL '90 days')
-      LIMIT 500
+    const { mediaCleared, messagesDeleted } = await runMediaCleanup()
+    results.mediaCleared    = mediaCleared
+    results.messagesDeleted = messagesDeleted
+  } catch { results.errors++ }
+
+  // ── 11. Campaigns — processa até 30 mensagens da campanha mais antiga ──────────
+  type CampRecipient = { jid: string; id?: number; name: string; isGroup?: boolean }
+  try {
+    const { rows: [camp] } = await pool.query(`
+      SELECT id, content, media_url, recipients_json, sent_count, total_count
+      FROM marketing_campaigns
+      WHERE status = 'sending'
+      ORDER BY created_at ASC
+      LIMIT 1
     `)
-    if (oldMsgs.length) {
-      await pool.query(`DELETE FROM wa_messages WHERE id = ANY($1)`, [oldMsgs.map((r: { id: number }) => r.id)])
-      results.textCleanup = oldMsgs.length
+    if (camp) {
+      const recipients = (camp.recipients_json ?? []) as CampRecipient[]
+      const BATCH = 8
+      for (let i = 0; i < BATCH; i++) {
+        const idx = (camp.sent_count as number) + i
+        if (idx >= recipients.length) {
+          await pool.query(`UPDATE marketing_campaigns SET status = 'sent', executed_at = NOW() WHERE id = $1`, [camp.id]).catch(() => {})
+          break
+        }
+        const r = recipients[idx]
+        let sendJid = r.jid as string
+        let skip = false
+        if (r.id && !r.isGroup) {
+          const { rows: g } = await pool.query(
+            `SELECT COALESCE(phone_jid, CASE WHEN jid NOT LIKE '%@lid' THEN jid ELSE NULL END) AS sjid,
+                    COALESCE(marketing_optout, false) AS optout, last_marketing_sent_at
+             FROM wa_contacts WHERE id = $1`, [r.id]
+          ).catch(() => ({ rows: [] as {sjid:string|null; optout:boolean; last_marketing_sent_at:Date|null}[] }))
+          const row = g[0]
+          if (!row || row.optout) { skip = true }
+          else if (row.last_marketing_sent_at && (Date.now() - new Date(row.last_marketing_sent_at).getTime()) < 20*3600*1000) { skip = true }
+          else if (row.sjid) { sendJid = row.sjid }
+        }
+        if (!skip && sendJid.endsWith("@lid")) skip = true
+        let hasError = false
+        if (!skip) {
+          try {
+            const msg = r.isGroup ? (camp.content as string) : (camp.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
+            await campaignSend(sendJid, msg, camp.media_url as string | null)
+            if (r.id) await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})
+            results.campaignSent = (results.campaignSent ?? 0) + 1
+          } catch { hasError = true; results.errors++ }
+        }
+        await pool.query(
+          `UPDATE marketing_campaigns SET sent_count = $1, error_count = error_count + $2,
+           status = CASE WHEN $1 >= total_count THEN 'sent' ELSE status END,
+           executed_at = CASE WHEN $1 >= total_count THEN NOW() ELSE executed_at END WHERE id = $3`,
+          [idx + 1, hasError ? 1 : 0, camp.id]
+        ).catch(() => {})
+        if (idx + 1 >= recipients.length) break
+        if (!skip) await randDelay()
+      }
     }
   } catch { results.errors++ }
 
-  // ── 12. Blobs de pedidos DTF orcamento abandonados (> 60 dias) ────────────────
+  // ── 12. Schedules — dispara schedules do dia (horário BR) ───────────────────────
   try {
-    results.dtfAbandoned = await cleanAbandonedDtfOrcamento()
+    const brDay = Number(new Date(Date.now() - 3 * 3600 * 1000).getUTCDay())
+    const { rows: dueSchedules } = await pool.query(`
+      SELECT id, audience_type, audience_lifecycle, audience_group_jids
+      FROM marketing_schedules
+      WHERE active = true
+        AND $1 = ANY(days_of_week)
+        AND time_of_day <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::time
+        AND (last_executed_at IS NULL
+             OR DATE(last_executed_at AT TIME ZONE 'America/Sao_Paulo')
+                < (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo'))
+      LIMIT 3
+    `, [brDay])
+    for (const sched of dueSchedules) {
+      try {
+        const { rows: [item] } = await pool.query(
+          `SELECT id, content, media_url AS "mediaUrl" FROM marketing_schedule_items
+           WHERE schedule_id = $1 ORDER BY COALESCE(last_sent_at,'1970-01-01') ASC, id ASC LIMIT 1`, [sched.id]
+        )
+        if (!item) continue
+        let q = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts
+                 WHERE jid IS NOT NULL AND NOT COALESCE(marketing_optout,false)
+                   AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+                   AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
+        const qp: string[] = []
+        if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }
+        const { rows: rcpts } = await pool.query(q, qp)
+        let sentCount = 0
+        for (const r of rcpts.slice(0, 5)) {
+          try {
+            const msg = (item.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
+            await campaignSend(r.jid as string, msg, item.mediaUrl as string | null)
+            if (r.id) await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})
+            sentCount++; results.scheduleSent = (results.scheduleSent ?? 0) + 1
+          } catch { results.errors++ }
+          await randDelay()
+        }
+        await pool.query(`INSERT INTO marketing_schedule_executions (schedule_id, item_id, content, media_url, sent_count, error_count) VALUES ($1,$2,$3,$4,$5,0)`,
+          [sched.id, item.id, item.content, item.mediaUrl ?? null, sentCount]).catch(() => {})
+        await pool.query(`UPDATE marketing_schedules SET last_executed_at = NOW() WHERE id = $1`, [sched.id])
+        await pool.query(`UPDATE marketing_schedule_items SET last_sent_at = NOW(), sent_count = sent_count + $1 WHERE id = $2`, [sentCount, item.id])
+      } catch { results.errors++ }
+    }
   } catch { results.errors++ }
-
-  // ── Registra uso de blob no banco para exibir no dashboard ────────────────────
-  try {
-    const { blobs } = await list({ limit: 1000 })
-    const totalMb = blobs.reduce((s, b) => s + b.size, 0) / (1024 * 1024)
-    await pool.query(
-      `INSERT INTO app_settings (key, value) VALUES ('blob_usage_mb', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [totalMb.toFixed(1)]
-    )
-  } catch { /* non-fatal */ }
 
   // Trigger sync after lifecycle — keeps contacts, phone_jid, and names up to date
   const host = req.headers.get("host") || ""
   const proto = host.includes("localhost") ? "http" : "https"
-  waitUntil(fetch(`${proto}://${host}/api/chat/sync`, { method: "POST", signal: AbortSignal.timeout(25_000) }).catch(() => {}))
+  const syncHeaders: Record<string, string> = process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {}
+  waitUntil(fetch(`${proto}://${host}/api/chat/sync`, { method: "POST", headers: syncHeaders, signal: AbortSignal.timeout(25_000) }).catch(() => {}))
 
-  return NextResponse.json({ ok: true, ...results, blobsDeleted: blobCleanup.deleted, date: today })
+  return NextResponse.json({ ok: true, ...results, date: today })
 }

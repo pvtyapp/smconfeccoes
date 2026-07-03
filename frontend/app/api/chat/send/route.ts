@@ -54,17 +54,17 @@ export async function POST(req: Request) {
     if (contactId) {
       await pool.query(
         `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, quoted_id, quoted_text)
-         VALUES ($1, $2, 'out', $3, 'sent', $4, $5)
+         VALUES ($1, $2, 'out', $3, $6, $4, $5)
          ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-        [contactId, evoMsgId, text, qMsgId, qContent]
+        [contactId, evoMsgId, text, qMsgId, qContent, evoOk ? "sent" : "failed"]
       ).catch(() => {})
     } else if (jid.endsWith("@s.whatsapp.net")) {
       const phone = jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
       const { rows } = await pool.query(
-        `INSERT INTO wa_contacts (jid, name, phone) VALUES ($1, $2, $3)
+        `INSERT INTO wa_contacts (jid, name, phone) VALUES ($1, NULL, $2)
          ON CONFLICT (jid) DO UPDATE SET updated_at = NOW()
          RETURNING id`,
-        [jid, phone, phone]
+        [jid, phone]
       ).catch(() => ({ rows: [] as { id: number }[] }))
       if (rows[0]?.id) {
         await pool.query(

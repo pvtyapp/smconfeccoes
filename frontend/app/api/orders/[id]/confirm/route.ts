@@ -29,6 +29,13 @@ export async function POST(
       VALUES ($1, 'em_separacao', 'dashboard', 'Quantidades confirmadas — em separação')
     `, [id])
 
+    // Sync chatbot state so cliente receives correct next message
+    await client.query(`
+      UPDATE wa_contacts SET state = 'em_separacao', state_data = $1, updated_at = NOW()
+      WHERE id = (SELECT contact_id FROM orders WHERE id = $2)
+        AND state IN ('triagem', 'confirmando', 'idle')
+    `, [JSON.stringify({ orderId: Number(id) }), id])
+
     await client.query("COMMIT")
     return NextResponse.json({ success: true })
   } catch (err) {

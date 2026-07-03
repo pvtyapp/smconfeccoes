@@ -49,18 +49,35 @@ export async function POST(req: Request) {
     let hasError = false
     const mediaUrl = camp.media_url as string | null
 
-    // Resolve real send JID — recipients_json may have stale @lid JIDs
+    // Resolve real send JID — also guard optout and daily limit
     let sendJid = recipient.jid as string
     if (recipient.id && !recipient.isGroup) {
       const { rows: jr } = await pool.query(
         `SELECT COALESCE(phone_jid,
-           CASE WHEN jid NOT LIKE '%@lid' THEN jid
-                ELSE CONCAT(phone, '@s.whatsapp.net')
-           END
-         ) AS send_jid FROM wa_contacts WHERE id = $1`,
+           CASE WHEN jid NOT LIKE '%@lid' THEN jid ELSE NULL END
+         ) AS send_jid,
+         COALESCE(marketing_optout, false) AS optout,
+         last_marketing_sent_at
+         FROM wa_contacts WHERE id = $1`,
         [recipient.id]
-      ).catch(() => ({ rows: [] as { send_jid: string }[] }))
-      if (jr[0]?.send_jid) sendJid = jr[0].send_jid
+      ).catch(() => ({ rows: [] as { send_jid: string | null; optout: boolean; last_marketing_sent_at: Date | null }[] }))
+
+      const g = jr[0]
+      if (g?.optout) {
+        await countDoneHelper(pool, campaignId, idx, camp.total_count as number, false)
+        return NextResponse.json({ done: idx + 1 >= (camp.total_count as number), sentCount: idx + 1, totalCount: camp.total_count as number, skipped: "optout" })
+      }
+      if (g?.last_marketing_sent_at && (Date.now() - new Date(g.last_marketing_sent_at).getTime()) < 20 * 60 * 60 * 1000) {
+        await countDoneHelper(pool, campaignId, idx, camp.total_count as number, false)
+        return NextResponse.json({ done: idx + 1 >= (camp.total_count as number), sentCount: idx + 1, totalCount: camp.total_count as number, skipped: "daily_limit" })
+      }
+      if (g?.send_jid) sendJid = g.send_jid
+    }
+
+    // @lid without resolved JID — skip
+    if (sendJid.endsWith("@lid")) {
+      await countDoneHelper(pool, campaignId, idx, camp.total_count as number, false)
+      return NextResponse.json({ done: idx + 1 >= (camp.total_count as number), sentCount: idx + 1, totalCount: camp.total_count as number, skipped: "lid_unresolved" })
     }
 
     try {
@@ -87,6 +104,7 @@ export async function POST(req: Request) {
       }
 
       if (recipient.id) {
+        await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [recipient.id]).catch(() => {})
         await pool.query(
           `INSERT INTO wa_messages (contact_id, direction, content, media_url, media_type)
            VALUES ($1,'out',$2,$3,$4)`,
@@ -114,4 +132,23 @@ export async function POST(req: Request) {
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
+}
+
+async function countDoneHelper(
+  db: typeof pool,
+  campaignId: number,
+  idx: number,
+  total: number,
+  hasError: boolean
+) {
+  const newCount = idx + 1
+  const isDone   = newCount >= total
+  await db.query(
+    `UPDATE marketing_campaigns
+     SET sent_count = $1, error_count = error_count + $2,
+         status = CASE WHEN $3 THEN 'sent' ELSE status END,
+         executed_at = CASE WHEN $3 THEN NOW() ELSE executed_at END
+     WHERE id = $4`,
+    [newCount, hasError ? 1 : 0, isDone, campaignId]
+  ).catch(() => {})
 }

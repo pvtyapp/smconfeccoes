@@ -77,14 +77,15 @@ export async function POST(
         `)
         const monthlySewing = Number(sewRows[0].total)
 
-        // Total pieces this month: all concluded/encerrada orders + this order (qty_produced already updated)
+        // Total pieces this month (BRT): all concluded/encerrada orders + this order
         const { rows: monthPieces } = await client.query(`
           SELECT COALESCE(SUM(poi.qty_produced), 0) AS total
           FROM prod_order_items poi
           JOIN prod_orders po ON po.id = poi.order_id
           WHERE (
             (po.status IN ('concluida', 'encerrada')
-             AND DATE_TRUNC('month', po.concluded_at) = DATE_TRUNC('month', NOW()))
+             AND DATE_TRUNC('month', po.concluded_at AT TIME ZONE 'America/Sao_Paulo')
+               = DATE_TRUNC('month', NOW() AT TIME ZONE 'America/Sao_Paulo'))
             OR po.id = $1
           )
         `, [id])
@@ -120,6 +121,13 @@ export async function POST(
       `, [anyCostCalculated ? 'calculado' : 'pendente', id])
 
       await client.query("COMMIT")
+
+      // Log event (silent fail if prod_order_logs doesn't exist yet)
+      pool.query(
+        `INSERT INTO prod_order_logs (order_id, event, payload) VALUES ($1, $2, $3)`,
+        [id, 'concluida', JSON.stringify({ totalProduced, anyCostCalculated })]
+      ).catch(() => {})
+
       return NextResponse.json({ success: true })
     } catch (e) {
       await client.query("ROLLBACK")

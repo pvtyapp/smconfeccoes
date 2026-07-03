@@ -62,12 +62,22 @@ export async function GET() {
 export async function POST(req: Request) {
   const client = await pool.connect()
   try {
-    const { impressoraId, insumoId, quantidade, custoTotal, obs } = await req.json()
+    const { impressoraId, insumoId, quantidade, obs } = await req.json()
     if (!impressoraId || !insumoId || !quantidade)
       return NextResponse.json(
         { error: "impressoraId, insumoId e quantidade são obrigatórios" },
         { status: 400 }
       )
+
+    // Custo unitário médio ponderado das entradas — preço vem do estoque, não do body
+    const { rows: costRows } = await pool.query(`
+      SELECT SUM(custo_total) / NULLIF(SUM(quantidade), 0) AS custo_unitario
+      FROM dtf_insumo_entradas
+      WHERE insumo_id = $1 AND custo_total IS NOT NULL
+    `, [insumoId])
+    const custoUnitario: number | null = costRows[0]?.custo_unitario != null
+      ? Number(costRows[0].custo_unitario) : null
+    const custoTotal = custoUnitario != null ? custoUnitario * Number(quantidade) : null
 
     await client.query("BEGIN")
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle, Info, ChevronDown, ChevronUp, RotateCcw } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
-import { fmtR } from "@/lib/format"
+import { fmtR, fmtQtd } from "@/lib/format"
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 type PeriodKey = "hoje" | "7d" | "30d" | "90d" | "range"
@@ -17,6 +17,7 @@ type Pedido = {
 type InsumoSummary = {
   id: number; nome: string; unidade: string; grupo: string
   saldoAtual: number; alarmeQtd: number | null; lowStock: boolean
+  custoUnitario: number | null
 }
 
 type PrinterRefil = {
@@ -133,7 +134,7 @@ export default function DTFDashboardPage() {
 
   const [printerRefis,  setPrinterRefis]  = useState<PrinterRefil[]>([])
   const [refilImp,      setRefilImp]      = useState<number | null>(null)
-  const [refilForm,     setRefilForm]     = useState({ insumoId: "", quantidade: "", custoTotal: "", obs: "" })
+  const [refilForm,     setRefilForm]     = useState({ insumoId: "", quantidade: "", obs: "" })
   const [refilSaving,   setRefilSaving]   = useState(false)
   const [refilError,    setRefilError]    = useState("")
 
@@ -222,14 +223,13 @@ export default function DTFDashboardPage() {
         impressoraId,
         insumoId: parseInt(refilForm.insumoId),
         quantidade: parseFloat(refilForm.quantidade),
-        custoTotal: refilForm.custoTotal ? parseFloat(refilForm.custoTotal) : null,
         obs: refilForm.obs || null,
       }),
     })
     setRefilSaving(false)
     if (r.ok) {
       setRefilImp(null)
-      setRefilForm({ insumoId: "", quantidade: "", custoTotal: "", obs: "" })
+      setRefilForm({ insumoId: "", quantidade: "", obs: "" })
       loadRefis()
       loadInsumos()
     } else {
@@ -409,7 +409,7 @@ export default function DTFDashboardPage() {
                         <div key={ins.insumoId} className="flex items-center justify-between text-[11px]">
                           <span className="text-[#0F1E3C]/60 font-medium">{ins.nome}</span>
                           <span className="text-[#0F1E3C]/50">
-                            {parseFloat(ins.quantidade.toFixed(3))} {ins.unidade}
+                            {fmtQtd(ins.quantidade, ins.unidade)}
                             {ins.custo != null && (
                               <span className="ml-1 text-[#0F1E3C]/35">
                                 · R$ {ins.custo.toFixed(2).replace(".", ",")}
@@ -681,7 +681,7 @@ export default function DTFDashboardPage() {
                       <button
                         onClick={() => {
                           setRefilImp(isOpen ? null : imp)
-                          setRefilForm({ insumoId: "", quantidade: "", custoTotal: "", obs: "" })
+                          setRefilForm({ insumoId: "", quantidade: "", obs: "" })
                           setRefilError("")
                         }}
                         className="text-[10px] font-bold text-[#E85D04] hover:underline"
@@ -700,7 +700,7 @@ export default function DTFDashboardPage() {
                             <div key={r.id} className="border border-gray-100 rounded-xl px-3 py-2 space-y-1">
                               <div className="flex items-center justify-between">
                                 <span className="text-xs font-semibold text-[#0F1E3C]">{r.insumoNome}</span>
-                                <span className="text-[10px] text-gray-400">{Number(r.quantidade).toFixed(3)} {r.unidade}</span>
+                                <span className="text-[10px] text-gray-400">{fmtQtd(r.quantidade, r.unidade)}</span>
                               </div>
                               <div className="flex items-center justify-between">
                                 <span className="text-[10px] text-[#0F1E3C]/40">
@@ -740,7 +740,7 @@ export default function DTFDashboardPage() {
                             ))}
                           </select>
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-2">
                           <div>
                             <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Quantidade *</label>
                             <input type="number" step="0.001" min="0" placeholder="0,000"
@@ -749,14 +749,28 @@ export default function DTFDashboardPage() {
                               className="w-full border border-orange-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200/50"
                             />
                           </div>
-                          <div>
-                            <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Custo total (R$)</label>
-                            <input type="number" step="0.01" min="0" placeholder="Opcional"
-                              value={refilForm.custoTotal}
-                              onChange={e => setRefilForm(f => ({ ...f, custoTotal: e.target.value }))}
-                              className="w-full border border-orange-100 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200/50"
-                            />
-                          </div>
+                          {(() => {
+                            const ins = insumos.find(i => String(i.id) === refilForm.insumoId)
+                            const qtd = parseFloat(refilForm.quantidade)
+                            if (!ins || !refilForm.insumoId) return null
+                            if (ins.custoUnitario == null) return (
+                              <p className="text-[10px] text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">
+                                Sem compras cadastradas para este insumo — custo não calculado
+                              </p>
+                            )
+                            const custo = !isNaN(qtd) && qtd > 0 ? qtd * ins.custoUnitario : null
+                            return (
+                              <p className="text-[10px] text-[#0F1E3C]/50 bg-orange-50 px-3 py-1.5 rounded-lg">
+                                Custo estimado:{" "}
+                                <span className="font-bold text-[#E85D04]">
+                                  {custo != null ? `R$ ${custo.toFixed(2).replace(".", ",")}` : "—"}
+                                </span>
+                                <span className="text-[#0F1E3C]/30 ml-1">
+                                  ({ins.custoUnitario != null ? `R$ ${ins.custoUnitario.toFixed(4).replace(".", ",")}/${ins.unidade}` : ""} — média ponderada)
+                                </span>
+                              </p>
+                            )
+                          })()}
                         </div>
                         <div>
                           <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Obs</label>
@@ -830,7 +844,7 @@ export default function DTFDashboardPage() {
                 <p className={`text-2xl font-black ${ins.lowStock ? "text-red-600" : clr.text}`}>
                   {ins.unidade === "metro"
                     ? `${parseFloat((ins.saldoAtual / filmTamanhoM).toFixed(2))} bobina${ins.saldoAtual / filmTamanhoM !== 1 ? "s" : ""}`
-                    : `${parseFloat(Number(ins.saldoAtual).toFixed(3))} ${ins.unidade}`}
+                    : fmtQtd(ins.saldoAtual, ins.unidade)}
                 </p>
                 {ins.unidade === "metro" && (
                   <p className={`text-[10px] mt-0.5 opacity-40 ${ins.lowStock ? "text-red-600" : clr.text}`}>

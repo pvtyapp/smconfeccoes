@@ -32,7 +32,7 @@ export async function GET(req: Request) {
       ORDER BY color, size
     `, [ids])
 
-    // Materials
+    // Materials (with color — fallback to empty string if column doesn't exist yet)
     const { rows: mats } = await pool.query(`
       SELECT
         pom.order_id AS "orderId",
@@ -42,12 +42,28 @@ export async function GET(req: Request) {
         rme.total_qty AS "totalQty", rme.total_cost AS "totalCost",
         pom.pieces_from_entry AS "piecesFromEntry",
         pom.exhausted_here AS "exhaustedHere",
-        rme.status AS "entryStatus"
+        rme.status AS "entryStatus",
+        COALESCE(pom.color, '') AS "color"
       FROM prod_order_materials pom
       JOIN raw_material_entries rme ON rme.id = pom.entry_id
       JOIN raw_materials rm ON rm.id = rme.material_id
       WHERE pom.order_id = ANY($1)
-    `, [ids])
+    `, [ids]).catch(() => pool.query(`
+      SELECT
+        pom.order_id AS "orderId",
+        pom.entry_id AS "entryId",
+        rme.number AS "entryNumber",
+        rme.material_id AS "materialId", rm.name AS "materialName", rm.unit,
+        rme.total_qty AS "totalQty", rme.total_cost AS "totalCost",
+        pom.pieces_from_entry AS "piecesFromEntry",
+        pom.exhausted_here AS "exhaustedHere",
+        rme.status AS "entryStatus",
+        '' AS "color"
+      FROM prod_order_materials pom
+      JOIN raw_material_entries rme ON rme.id = pom.entry_id
+      JOIN raw_materials rm ON rm.id = rme.material_id
+      WHERE pom.order_id = ANY($1)
+    `, [ids]))
 
     // Revision batch totals
     const { rows: revisions } = await pool.query(`
@@ -62,13 +78,30 @@ export async function GET(req: Request) {
 
     const revMap = new Map(revisions.map(r => [r.orderId, r]))
 
+    // Order logs (silent fallback to [] if table doesn't exist yet)
+    const logMap = new Map<number, { at: string; text: string }[]>()
+    await pool.query(`
+      SELECT order_id AS "orderId", event, payload, created_at AS "createdAt"
+      FROM prod_order_logs
+      WHERE order_id = ANY($1)
+      ORDER BY created_at ASC
+    `, [ids]).then(({ rows: logs }) => {
+      for (const log of logs) {
+        if (!logMap.has(log.orderId)) logMap.set(log.orderId, [])
+        logMap.get(log.orderId)!.push({
+          at:   new Date(log.createdAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" }),
+          text: log.event,
+        })
+      }
+    }).catch(() => {})
+
     const result = orders.map(o => ({
       ...o,
       grade:          items.filter(i => i.orderId === o.id).map(({ orderId: _, ...r }) => r),
       materials:      mats.filter(m => m.orderId === o.id).map(({ orderId: _, ...r }) => r),
       totalAprovadas: Number(revMap.get(o.id)?.totalAprovadas ?? 0),
       totalAvarias:   Number(revMap.get(o.id)?.totalAvarias   ?? 0),
-      logs:           [],
+      logs:           logMap.get(o.id) ?? [],
     }))
 
     return NextResponse.json(result)
@@ -79,10 +112,16 @@ export async function GET(req: Request) {
 }
 
 // ─── POST: create prod_order ───────────────────────────────────────────────────
-// body: { productId, selectedColors, entryIds }
+// body: { productId, selectedColors, entries: [{entryId, color}][] }
+// (also supports legacy: entryIds: number[] — maps to entries without color)
 export async function POST(req: Request) {
   try {
-    const { productId, selectedColors, entryIds } = await req.json()
+    const body = await req.json()
+    const { productId, selectedColors } = body
+
+    // Support both entries:[{entryId, color}] and legacy entryIds:number[]
+    const entries: { entryId: number; color?: string }[] =
+      body.entries ?? (body.entryIds ?? []).map((id: number) => ({ entryId: id }))
 
     if (!productId || !selectedColors?.length) {
       return NextResponse.json(
@@ -105,6 +144,20 @@ export async function POST(req: Request) {
     try {
       await client.query("BEGIN")
 
+      // C3: Validate that all selected entries are not already esgotada
+      for (const entry of entries) {
+        const { rows: entryRows } = await client.query(
+          `SELECT status FROM raw_material_entries WHERE id = $1`,
+          [entry.entryId]
+        )
+        if (!entryRows.length) {
+          throw new Error(`Lote ${entry.entryId} não encontrado`)
+        }
+        if (entryRows[0].status === 'esgotada') {
+          throw new Error(`Lote ${entry.entryId} já está esgotado e não pode ser usado`)
+        }
+      }
+
       // Create order
       const { rows } = await client.query(`
         INSERT INTO prod_orders (product_id, product_name, number, status)
@@ -126,14 +179,27 @@ export async function POST(req: Request) {
         }
       }
 
-      // Link material entries
-      for (const entryId of (entryIds ?? [])) {
-        await client.query(`
-          INSERT INTO prod_order_materials (order_id, entry_id) VALUES ($1, $2)
-        `, [id, entryId])
+      // Link material entries (with color — graceful fallback if column doesn't exist)
+      for (const entry of entries) {
+        const inserted = await client.query(
+          `INSERT INTO prod_order_materials (order_id, entry_id, color) VALUES ($1, $2, $3)`,
+          [id, entry.entryId, entry.color ?? null]
+        ).catch(() =>
+          client.query(
+            `INSERT INTO prod_order_materials (order_id, entry_id) VALUES ($1, $2)`,
+            [id, entry.entryId]
+          )
+        )
+        void inserted
       }
 
       await client.query("COMMIT")
+
+      // Log event (silent fail if table doesn't exist yet)
+      pool.query(
+        `INSERT INTO prod_order_logs (order_id, event, payload) VALUES ($1, $2, $3)`,
+        [id, 'criada', JSON.stringify({ productId, productName, selectedColors, entryCount: entries.length })]
+      ).catch(() => {})
 
       return NextResponse.json({ id, number, createdAt }, { status: 201 })
     } catch (e) {

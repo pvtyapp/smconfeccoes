@@ -88,6 +88,7 @@ export async function GET() {
         grupo: ins.grupo,
         alarmeQtd,
         saldoAtual,
+        custoUnitario,
         custoPorMetroAtual,
         lowStock,
         entradas,

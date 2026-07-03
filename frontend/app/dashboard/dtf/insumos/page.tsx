@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Plus, TrendingDown, AlertTriangle, ChevronDown, ChevronUp, Trash2, Bell, Settings, X, History } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
-import { fmtR } from "@/lib/format"
+import { fmtR, fmtQtd } from "@/lib/format"
 
 type Entrada = {
   id: number
@@ -85,9 +85,6 @@ function groupColor(grupo: string) {
 
 function fmtData(s: string) {
   return new Date(s.slice(0, 10) + "T12:00:00").toLocaleDateString("pt-BR")
-}
-function fmtQtd(v: number, unidade: string) {
-  return `${parseFloat(Number(v).toFixed(3))} ${unidade}`
 }
 function fmtFilm(metros: number, tamanhoM: number) {
   const bobinas = metros / tamanhoM

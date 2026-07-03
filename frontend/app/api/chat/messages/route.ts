@@ -3,7 +3,7 @@ import { pool } from "@/lib/db"
 
 export const dynamic = "force-dynamic"
 
-const PAGE_SIZE = 60
+const PAGE_SIZE = 50
 
 export async function GET(req: Request) {
   try {

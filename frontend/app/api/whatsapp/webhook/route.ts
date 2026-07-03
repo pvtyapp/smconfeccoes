@@ -94,8 +94,58 @@ export async function POST(req: Request) {
       [JSON.stringify({ event, ts: new Date().toISOString(), preview: JSON.stringify(body).slice(0, 2000) })]
     ).catch(() => {})
 
-    // contacts.upsert fires the entire phone book on connection — ignore it.
+    // contacts.upsert fires the entire phonebook on connection.
+    // Use it to populate missing names and phone_jid for existing contacts only.
     if (event === "contacts.upsert") {
+      const cts = Array.isArray(body?.data)
+        ? (body.data as Array<{ id?: string; name?: string; notify?: string }>)
+        : []
+
+      if (cts.length > 0) {
+        // Fire-and-forget so webhook returns immediately
+        pool.connect().then(async (cli) => {
+          try {
+            for (const c of cts) {
+              const jid = c.id?.trim()
+              if (!jid) continue
+
+              const rawName = (c.name || c.notify || "").trim()
+              const name = rawName && !/^\d+$/.test(rawName) ? rawName : null
+
+              if (jid.endsWith("@s.whatsapp.net")) {
+                const phone = jid.replace("@s.whatsapp.net", "")
+                // Update name on matching @s contact AND any @lid twin with same phone
+                if (name) {
+                  await cli.query(`
+                    UPDATE wa_contacts
+                    SET name = $1, updated_at = NOW()
+                    WHERE (jid = $2 OR phone = $3)
+                      AND (name IS NULL OR name = '' OR name ~ '^[0-9]+$')
+                  `, [name, jid, phone]).catch(() => {})
+                }
+                // Populate phone_jid for @lid contacts that share this phone number
+                await cli.query(`
+                  UPDATE wa_contacts
+                  SET phone_jid = $1, updated_at = NOW()
+                  WHERE phone = $2 AND jid LIKE '%@lid' AND phone_jid IS NULL
+                `, [jid, phone]).catch(() => {})
+              } else if (jid.endsWith("@lid") && name) {
+                await cli.query(`
+                  UPDATE wa_contacts
+                  SET name = $1, updated_at = NOW()
+                  WHERE jid = $2
+                    AND (name IS NULL OR name = '' OR name ~ '^[0-9]+$')
+                `, [name, jid]).catch(() => {})
+              }
+            }
+          } catch (e) {
+            console.error("[contacts.upsert] falhou:", e)
+          } finally {
+            cli.release()
+          }
+        }).catch(() => {})
+      }
+
       return NextResponse.json({ ok: true })
     }
 
@@ -449,6 +499,20 @@ export async function POST(req: Request) {
       waitUntil(saveMediaBackground(msg, contact.id, incomingMsgId, mediaMeta.mediaType, state))
     }
 
+    // Marketing opt-out — detect stop words before any chatbot logic
+    if (text.trim() && !hasMedia) {
+      const lower = text.toLowerCase().trim()
+      const OPTOUT = ["stop", "descadastrar", "parar mensagens", "nao quero mensagens", "não quero mensagens"]
+      if (OPTOUT.includes(lower)) {
+        await pool.query(
+          `UPDATE wa_contacts SET marketing_optout = true, updated_at = NOW() WHERE id = $1`,
+          [contact.id]
+        ).catch(() => {})
+        replyWA(jid, "✅ Pronto! Você não receberá mais mensagens de marketing. Para reativar, é só nos chamar.")
+        return NextResponse.json({ ok: true })
+      }
+    }
+
     // Fetch global chatbot settings
     let globalChatbotAtivo = false  // OFF by default — ativar via Settings
     let globalPedidosAuto  = true
@@ -481,6 +545,17 @@ export async function POST(req: Request) {
     const isPausedTemp = chatbotPausedUntil && chatbotPausedUntil > new Date()
     const isPausedPerm = !chatbotProdutoEnabled && !chatbotDtfEnabled
     if (state === "atendimento" || isPausedTemp || isPausedPerm) {
+      // cancelar sempre recebe resposta mesmo com bot pausado
+      if (!hasMedia) {
+        const lcCancel = text.toLowerCase().trim()
+        if (["cancelar", "cancel", "sair", "voltar"].includes(lcCancel)) {
+          await pool.query(
+            `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
+            [contact.id]
+          )
+          replyWA(jid, "Recebi! Nossa equipe entra em contato agora. 👋")
+        }
+      }
       return NextResponse.json({ ok: true })
     }
 
@@ -1323,6 +1398,7 @@ async function createOrderDirect(
         UPDATE wa_contacts
         SET lifecycle_state      = 'active',
             lifecycle_updated_at = NOW(),
+            last_order_at        = NOW(),
             ausente_seq          = 0
         WHERE id = $1
       `, [contactId])
@@ -1532,31 +1608,39 @@ async function handleActiveOrder(
     const isNao = ["não", "nao", "n", "no"].includes(lower)
 
     if (isSim && orderId) {
-      await pool.query(
-        `UPDATE orders SET status = 'em_separacao', needs_print = true WHERE id = $1`, [orderId]
-      )
-      await pool.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'em_separacao', 'chatbot', 'Confirmado pelo cliente via WhatsApp')
-      `, [orderId])
-
-      // Baixa estoque (guard contra dupla-baixa)
-      const { rows: already } = await pool.query(`
-        SELECT 1 FROM stock_movements WHERE channel = 'chatbot' AND notes = $1 LIMIT 1
-      `, [`Pedido ${orderNumber}`])
-      if (!already.length) {
-        const { rows: items } = await pool.query(
-          `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
+      const cli7 = await pool.connect()
+      try {
+        await cli7.query("BEGIN")
+        await cli7.query(`SELECT pg_advisory_xact_lock($1)`, [contactId])
+        await cli7.query(
+          `UPDATE orders SET status = 'em_separacao', needs_print = true WHERE id = $1`, [orderId]
         )
-        for (const item of items) {
-          await pool.query(
-            `INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-             VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)`,
-            [item.variant_id, item.qty, `Pedido ${orderNumber}`]
+        await cli7.query(`
+          INSERT INTO order_events (order_id, status, actor, note)
+          VALUES ($1, 'em_separacao', 'chatbot', 'Confirmado pelo cliente via WhatsApp')
+        `, [orderId])
+        const { rows: already } = await cli7.query(`
+          SELECT 1 FROM stock_movements WHERE channel = 'chatbot' AND notes = $1 LIMIT 1
+        `, [`Pedido ${orderNumber}`])
+        if (!already.length) {
+          const { rows: items } = await cli7.query(
+            `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
           )
+          for (const item of items) {
+            await cli7.query(
+              `INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+               VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)`,
+              [item.variant_id, item.qty, `Pedido ${orderNumber}`]
+            )
+          }
         }
+        await cli7.query("COMMIT")
+      } catch (e) {
+        await cli7.query("ROLLBACK").catch(() => {})
+        console.error("[confirmando] transação falhou:", e)
+      } finally {
+        cli7.release()
       }
-
       await setState(contactId, "em_separacao", { orderId, orderNumber })
       replyWA(jid, `✅ Perfeito! Pedido *${orderNumber}* confirmado e em separação. Avisaremos quando estiver pronto para retirada!`)
       return
@@ -1919,28 +2003,39 @@ async function handleAguardandoSeparacaoResposta(
 
     // Parcial: remove itens faltantes, avança para separação
     if (availableItemIds.length > 0) {
-      await pool.query(`
-        DELETE FROM order_items WHERE order_id = $1 AND id != ALL($2::int[])
-      `, [orderId, availableItemIds])
-      await pool.query(
-        `UPDATE orders SET total_value = (
-           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
-         ), is_partial = true, status = 'em_separacao', needs_print = true WHERE id = $1`,
-        [orderId]
-      )
-      await pool.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'em_separacao', 'chatbot', 'Cliente confirmou separação parcial')
-      `, [orderId])
-      // Baixa estoque dos itens disponíveis
-      const { rows: items } = await pool.query(
-        `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
-      )
-      for (const item of items) {
-        await pool.query(`
-          INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-          VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
-        `, [item.variant_id, item.qty, `Pedido ${orderNumber}`])
+      const cli6 = await pool.connect()
+      try {
+        await cli6.query("BEGIN")
+        await cli6.query(`SELECT pg_advisory_xact_lock($1)`, [contactId])
+        await cli6.query(`
+          DELETE FROM order_items WHERE order_id = $1 AND id != ALL($2::int[])
+        `, [orderId, availableItemIds])
+        await cli6.query(
+          `UPDATE orders SET total_value = (
+             SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
+           ), is_partial = true, status = 'em_separacao', needs_print = true WHERE id = $1`,
+          [orderId]
+        )
+        await cli6.query(`
+          INSERT INTO order_events (order_id, status, actor, note)
+          VALUES ($1, 'em_separacao', 'chatbot', 'Cliente confirmou separação parcial')
+        `, [orderId])
+        const { rows: items } = await cli6.query(
+          `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
+        )
+        for (const item of items) {
+          await cli6.query(`
+            INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+            VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
+          `, [item.variant_id, item.qty, `Pedido ${orderNumber}`])
+        }
+        await cli6.query("COMMIT")
+      } catch (e) {
+        await cli6.query("ROLLBACK").catch(() => {})
+        console.error("[aguardandoSeparacao] transação falhou:", e)
+        throw e
+      } finally {
+        cli6.release()
       }
     }
 
@@ -2222,14 +2317,17 @@ async function handleDtfMedia(
   contactId: number,
   stateData: Record<string, unknown>,
 ) {
+  const cli8 = await pool.connect()
   try {
+    await cli8.query("BEGIN")
+
     const today = todayBR()
-    const numRes = await pool.query(
+    const numRes = await cli8.query(
       `SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`
     )
     const number = numRes.rows[0].num
 
-    const pedidoRes = await pool.query(`
+    const pedidoRes = await cli8.query(`
       INSERT INTO dtf_pedidos (number, data, contact_id, status, source, largura_cm)
       VALUES ($1, $2, $3, 'triagem', 'whatsapp', $4)
       RETURNING id
@@ -2237,24 +2335,35 @@ async function handleDtfMedia(
     const pedidoId = pedidoRes.rows[0].id
 
     // Auto-link the triggering wa_message to this order
-    const { rows: msgRows } = await pool.query(`
+    const { rows: msgRows } = await cli8.query(`
       SELECT id, file_name FROM wa_messages
       WHERE contact_id = $1 AND media_type IN ('document', 'image') AND direction = 'in'
+        AND created_at > NOW() - INTERVAL '5 minutes'
       ORDER BY id DESC LIMIT 1
     `, [contactId])
     if (msgRows[0]) {
-      await pool.query(`
+      await cli8.query(`
         INSERT INTO dtf_order_attachments (pedido_id, wa_message_id, filename)
         VALUES ($1, $2, $3)
       `, [pedidoId, msgRows[0].id, msgRows[0].file_name]).catch(() => {})
     }
 
-    await pool.query(
-      `UPDATE wa_contacts SET needs_attention = true, updated_at = NOW() WHERE id = $1`,
+    await cli8.query(
+      `UPDATE wa_contacts
+       SET needs_attention = true, lifecycle_state = 'active',
+           lifecycle_updated_at = NOW(), last_order_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
       [contactId]
     )
 
+    await cli8.query("COMMIT")
+
     await setState(contactId, "idle")
     replyWA(jid, `✅ Recebi! Protocolo *${number}* registrado.\nNossa equipe analisa e entra em contato em breve. 🖨️`)
-  } catch (e) { console.error("[handleDtfMedia] falhou — migration dtf_pedidos/dtf_order_number_seq não rodou?", e) }
+  } catch (e) {
+    await cli8.query("ROLLBACK").catch(() => {})
+    console.error("[handleDtfMedia] falhou — migration dtf_pedidos/dtf_order_number_seq não rodou?", e)
+  } finally {
+    cli8.release()
+  }
 }

@@ -23,8 +23,8 @@ export async function GET() {
     if (pvc.length) return NextResponse.json(pvc)
 
     // Fallback: derive from prod_order_items + prod_order_materials
-    // costMaterial = entry.cost_per_piece × size_weight (simplified: just cost_per_piece if available)
-    const { rows: fallback } = await pool.query(`
+    // Only material cost available — sewing cost not yet calculated (bobinas not exhausted)
+    const { rows: fallbackRaw } = await pool.query(`
       SELECT
         po.product_id    AS "productId",
         po.product_name  AS "productName",
@@ -42,6 +42,7 @@ export async function GET() {
       ORDER BY po.product_name, poi.color, poi.size
     `).catch(() => ({ rows: [] }))
 
+    const fallback = fallbackRaw.map(r => ({ ...r, isFallback: true }))
     return NextResponse.json(fallback)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

@@ -10,7 +10,7 @@ const ALLOWED_KEYS = new Set([
   "produto_horario_dias", "produto_horario_inicio", "produto_horario_fim", "produto_fechado_ate",
   "novo_d2_msg",
   "ausente_d15_msg", "ausente_d30_msg", "ausente_d45_msg",
-  "controle_estoque_ativo", "reserva_expiry_hours", "print_receipt_printer",
+  "controle_estoque_ativo", "reserva_expiry_hours", "chatbot_idle_return_minutes", "print_receipt_printer",
   "dtf_num_impressoras",
   "dtf_film_alerta_m", "dtf_film_tamanho_padrao",
 ])

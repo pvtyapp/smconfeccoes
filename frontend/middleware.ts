@@ -11,7 +11,6 @@ const PUBLIC_API_PREFIXES = [
   "/api/chat/migrate",
   "/api/marketing/migrate",
   "/api/chat/sync",
-  "/api/chat/cleanup-dupes",
   "/api/dtf/pedidos/migrate2",
   "/api/dtf/pedidos/migrate3",
   "/api/dtf/pedidos/migrate4",
@@ -19,7 +18,6 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
-  "/api/debug/",
 ]
 
 export function middleware(request: NextRequest) {

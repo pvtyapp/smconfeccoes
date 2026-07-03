@@ -116,7 +116,12 @@ export async function POST(
       }
 
     } else {
-      await client.query(`UPDATE dtf_pedidos SET status = $1 WHERE id = $2`, [status, id])
+      await client.query(`
+        UPDATE dtf_pedidos
+        SET status       = $1,
+            concluded_at = CASE WHEN $1 = 'concluido' THEN NOW() ELSE concluded_at END
+        WHERE id = $2
+      `, [status, id])
       await client.query("COMMIT")
 
       // cancelado WA

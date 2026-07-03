@@ -57,7 +57,8 @@ function RevisaoModal({
 
   const totalAprovadas = rows.reduce((s, r) => s + r.aprovada, 0)
   const totalAvarias   = rows.reduce((s, r) => s + r.avaria,  0)
-  const valid          = rows.every(r => r.avaria >= 0 && r.avaria <= r.qty)
+  const totalDistrib   = totalAprovadas + totalAvarias
+  const valid          = rows.every(r => r.avaria >= 0 && r.avaria <= r.qty) && totalDistrib === ordem.totalPecas
 
   const colorGroups = useMemo(() => {
     const map = new Map<string, typeof rows>()
@@ -140,6 +141,18 @@ function RevisaoModal({
             <span className="text-sm font-black text-amber-600 text-center">{totalAvarias}</span>
           </div>
 
+          {/* Validation: total must match */}
+          {totalDistrib !== ordem.totalPecas && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
+              <AlertTriangle size={13} className="text-red-500 flex-shrink-0"/>
+              <p className="text-xs text-red-700 font-semibold">
+                {totalDistrib < ordem.totalPecas
+                  ? `Faltam ${ordem.totalPecas - totalDistrib} pç — distribua entre aprovadas e avarias`
+                  : `Excesso de ${totalDistrib - ordem.totalPecas} pç — revise as quantidades`}
+              </p>
+            </div>
+          )}
+
           {/* Destination preview */}
           <div className="grid grid-cols-2 gap-3 pt-1">
             <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200">
@@ -160,7 +173,7 @@ function RevisaoModal({
             Cancelar
           </button>
           <button
-            disabled={!valid || totalAprovadas + totalAvarias === 0}
+            disabled={!valid}
             onClick={handleConcluir}
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold
               disabled:opacity-40 hover:bg-[#3451d1] transition-colors">

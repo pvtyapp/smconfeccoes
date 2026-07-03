@@ -50,7 +50,11 @@ function extractPhone(c: Record<string, unknown>): string {
   return jid.replace("@lid", "").replace(/\D/g, "")
 }
 
-export async function POST() {
+export async function POST(req: Request) {
+  const auth = req.headers.get("authorization")
+  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
   try {
     // ── Migrations ──────────────────────────────────────────────────────────────
     await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).catch(() => {})

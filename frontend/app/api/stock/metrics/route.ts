@@ -24,11 +24,9 @@ function elapsedInSeg(seg: number, day: number): number {
 
 export async function GET() {
   try {
-    // Current date in Brasília (UTC-3 fixed)
-    const nowBRT    = new Date(Date.now() - 3 * 60 * 60 * 1000)
-    const currentDay = nowBRT.getUTCDate()
-    const currentMo  = nowBRT.getUTCMonth() + 1
-    const currentYr  = nowBRT.getUTCFullYear()
+    // Current date in Brasília — use Intl to handle DST correctly
+    const nowBRT_str  = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }) // YYYY-MM-DD
+    const [currentYr, currentMo, currentDay] = nowBRT_str.split("-").map(Number)
     const currentSeg = weekSeg(currentDay)
     const elapsed    = Math.max(1, elapsedInSeg(currentSeg, currentDay))
 

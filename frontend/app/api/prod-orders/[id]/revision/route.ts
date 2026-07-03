@@ -96,6 +96,14 @@ export async function POST(
 
       await client.query("COMMIT")
 
+      // Log event (silent fail if prod_order_logs doesn't exist yet)
+      const totalAprovadas = grade.reduce((s: number, g: { aprovadas?: number }) => s + (g.aprovadas ?? 0), 0)
+      const totalAvarias   = grade.reduce((s: number, g: { avarias?: number })   => s + (g.avarias   ?? 0), 0)
+      pool.query(
+        `INSERT INTO prod_order_logs (order_id, event, payload) VALUES ($1, $2, $3)`,
+        [id, 'encerrada', JSON.stringify({ totalAprovadas, totalAvarias })]
+      ).catch(() => {})
+
       // ── Notifica reservas pendentes — FIFO por variante (só o 1º de cada fila) ──
       const approvedVariantIds = grade
         .filter((g: { aprovadas?: number }) => (g.aprovadas ?? 0) > 0)

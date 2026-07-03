@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { BarChart2, TrendingDown, Printer, Users } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
-import { fmtR } from "@/lib/format"
+import { fmtR, fmtQtd } from "@/lib/format"
 
 type Pedido = {
   id: number; data: string; cliente: string | null
@@ -291,7 +291,7 @@ export default function DTFRelatorioPage() {
                         <div className="flex flex-wrap gap-2 mt-1">
                           {imp.insumos.map(ins => (
                             <span key={ins.insumoId} className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg px-2 py-1 text-gray-500">
-                              {ins.nome}: {Number(ins.quantidade).toFixed(2)} {ins.unidade}
+                              {ins.nome}: {fmtQtd(ins.quantidade, ins.unidade)}
                               {ins.custo != null && ` · ${fmtR(ins.custo)}`}
                             </span>
                           ))}

@@ -53,19 +53,15 @@ export async function POST(req: Request) {
       resolvedContactId = rows[0].id
     }
 
-    // Fallback: anonymous "Balcão" contact
+    // Fallback: anonymous "Balcão" contact — ON CONFLICT (jid) prevents race condition
     if (!resolvedContactId) {
-      const balcao = await client.query(
-        "SELECT id FROM wa_contacts WHERE phone = '00000000000' LIMIT 1"
-      )
-      if (balcao.rows.length > 0) {
-        resolvedContactId = balcao.rows[0].id
-      } else {
-        const { rows } = await client.query(
-          "INSERT INTO wa_contacts (name, phone) VALUES ('Balcão', '00000000000') RETURNING id"
-        )
-        resolvedContactId = rows[0].id
-      }
+      const { rows: balcao } = await client.query(`
+        INSERT INTO wa_contacts (name, phone, jid)
+        VALUES ('Balcão', '00000000000', 'balcao@system')
+        ON CONFLICT (jid) DO UPDATE SET name = 'Balcão'
+        RETURNING id
+      `)
+      resolvedContactId = balcao[0].id
     }
 
     // 2. Order number

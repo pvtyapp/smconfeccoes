@@ -83,7 +83,13 @@ async function resolveContacts(
 ): Promise<Array<{ id: number; jid: string; name: string }>> {
   if (audienceType === "groups") return []
 
-  let q = `SELECT id, jid, name FROM wa_contacts WHERE jid IS NOT NULL`
+  let q = `
+    SELECT id, COALESCE(phone_jid, jid) AS jid, name
+    FROM wa_contacts
+    WHERE jid IS NOT NULL
+      AND NOT COALESCE(marketing_optout, false)
+      AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+  `
   const params: (string | null)[] = []
 
   if ((audienceType === "lifecycle" || audienceType === "mixed") && lifecycle && lifecycle !== "all") {

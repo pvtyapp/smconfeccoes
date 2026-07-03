@@ -12,6 +12,12 @@ export async function DELETE(req: Request) {
     const { contactId, jid } = await req.json() as { contactId: number; jid: string }
     if (!contactId) return NextResponse.json({ error: "contactId obrigatório" }, { status: 400 })
 
+    // Unlink DTF attachments before deleting messages (nullable FK)
+    await pool.query(
+      `UPDATE dtf_order_attachments SET wa_message_id = NULL
+       WHERE wa_message_id IN (SELECT id FROM wa_messages WHERE contact_id = $1)`,
+      [contactId]
+    ).catch(() => {})
     // Delete from our DB (keep wa_contacts for CRM)
     await pool.query("DELETE FROM wa_messages WHERE contact_id = $1", [contactId])
 
@@ -30,8 +36,12 @@ export async function DELETE(req: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url)
+    const limit  = Math.min(parseInt(searchParams.get("limit")  ?? "20"), 100)
+    const offset = Math.max(parseInt(searchParams.get("offset") ?? "0"), 0)
+
     const { rows } = await pool.query(`
       SELECT
         c.id,
@@ -63,9 +73,12 @@ export async function GET() {
         GROUP BY contact_id
       ) ur ON ur.contact_id = c.id
       ORDER BY lm.created_at DESC
-      LIMIT 100
-    `)
-    return NextResponse.json(rows)
+      LIMIT $1 OFFSET $2
+    `, [limit + 1, offset])
+
+    const hasMore       = rows.length > limit
+    const conversations = hasMore ? rows.slice(0, limit) : rows
+    return NextResponse.json({ conversations, hasMore })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

@@ -10,7 +10,7 @@ import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
-type OrderStatus   = "em_andamento" | "concluida" | "em_revisao"
+type OrderStatus   = "em_andamento" | "concluida" | "em_revisao" | "encerrada"
 type CostStatus    = "pendente" | "calculado"
 type GradeRow      = { color: string; size: string; qtyProduced?: number }
 type MaterialLink  = {
@@ -181,6 +181,11 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
                                 </button>
                               ))}
                             </div>
+                            {st.exhausted && (
+                              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2">
+                                Irreversível — o custo/peça desta bobina será calculado agora.
+                              </p>
+                            )}
                             {preview !== null && (
                               <div className="mt-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
                                 <p className="text-xs text-emerald-700 font-semibold">
@@ -470,7 +475,7 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                     body: JSON.stringify({
                       productId,
                       selectedColors,
-                      entryIds: matPicks.map(m => m.entryId),
+                      entries: matPicks.map(m => ({ entryId: m.entryId, color: m.color })),
                     }),
                   })
                   clearDraft()
@@ -502,26 +507,36 @@ function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => voi
   },[order.grade])
 
   const totalProduced = order.grade.reduce((s,r)=>s+(r.qtyProduced??0),0)
-  const isAndamento   = order.status==="em_andamento"
+  const isAndamento  = order.status === "em_andamento"
+  const isEncerrada  = order.status === "encerrada"
 
   return (
     <div className={`bg-white rounded-2xl border overflow-hidden ${
-      isAndamento ? "border-amber-200" : order.costStatus==="calculado" ? "border-emerald-200" : "border-[#0F1E3C]/8"
+      isAndamento   ? "border-amber-200"   :
+      isEncerrada   ? "border-[#4361EE]/20" :
+      order.costStatus==="calculado" ? "border-emerald-200" : "border-[#0F1E3C]/8"
     }`}>
 
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${isAndamento ? "bg-amber-400" : order.costStatus==="calculado" ? "bg-emerald-500" : "bg-[#0F1E3C]/20"}`}/>
+          <div className={`w-2 h-2 rounded-full ${
+            isAndamento ? "bg-amber-400"  :
+            isEncerrada ? "bg-[#4361EE]" :
+            order.costStatus==="calculado" ? "bg-emerald-500" : "bg-[#0F1E3C]/20"
+          }`}/>
           <div>
             <div className="flex items-center gap-2">
               <p className="font-bold text-[#0F1E3C]">{order.productName}</p>
               <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
                 isAndamento ? "bg-amber-100 text-amber-700" :
+                isEncerrada ? "bg-[#4361EE]/10 text-[#4361EE]" :
                 order.costStatus==="calculado" ? "bg-emerald-100 text-emerald-700" :
                 "bg-[#0F1E3C]/6 text-[#0F1E3C]/40"
               }`}>
-                {isAndamento ? "EM ANDAMENTO" : order.costStatus==="calculado" ? "CONCLUÍDA ✓" : "CONCLUÍDA · CUSTO PENDENTE"}
+                {isAndamento ? "EM ANDAMENTO" :
+                 isEncerrada ? "ENCERRADA" :
+                 order.costStatus==="calculado" ? "CONCLUÍDA ✓" : "CONCLUÍDA · CUSTO PENDENTE"}
               </span>
             </div>
             <p className="text-xs text-[#0F1E3C]/40 mt-0.5">

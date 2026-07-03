@@ -263,6 +263,10 @@ export default function PedidosPage() {
   // Chat
   const [chatTab,        setChatTab]        = useState<"conversas" | "grupos">("conversas")
   const [convs,          setConvs]          = useState<Conversation[]>([])
+  const [hasMoreConvs,   setHasMoreConvs]   = useState(false)
+  const [loadingMoreConvs, setLoadingMoreConvs] = useState(false)
+  const convLimitRef     = useRef(20)
+  const convListRef      = useRef<HTMLDivElement>(null)
   const [chatContact,    setChatContact]    = useState<Conversation | null>(null)
   const [messages,       setMessages]       = useState<Message[]>([])
   const [chatInput,      setChatInput]      = useState("")
@@ -597,9 +601,27 @@ export default function PedidosPage() {
   // ── Load conversations ─────────────────────────────────────────────────────
 
   const loadConvs = useCallback(async () => {
-    const r = await fetch("/api/chat/conversations")
-    if (r.ok) setConvs(await r.json())
+    const r = await fetch(`/api/chat/conversations?limit=${convLimitRef.current}`)
+    if (r.ok) {
+      const data = await r.json()
+      setConvs(data.conversations ?? [])
+      setHasMoreConvs(data.hasMore ?? false)
+    }
   }, [])
+
+  const loadMoreConvs = useCallback(async () => {
+    if (loadingMoreConvs || !hasMoreConvs) return
+    setLoadingMoreConvs(true)
+    const offset = convLimitRef.current
+    const r = await fetch(`/api/chat/conversations?limit=20&offset=${offset}`)
+    if (r.ok) {
+      const data = await r.json()
+      setConvs(prev => [...prev, ...(data.conversations ?? [])])
+      setHasMoreConvs(data.hasMore ?? false)
+      convLimitRef.current += 20
+    }
+    setLoadingMoreConvs(false)
+  }, [loadingMoreConvs, hasMoreConvs])
 
   useEffect(() => {
     loadConvs()
@@ -755,8 +777,8 @@ export default function PedidosPage() {
 
   const pollMessages = useCallback(async (contactId: number) => {
     if (isFirstLoad.current) return
-    if (!latestMsgAt.current) return
-    const r = await fetch(`/api/chat/messages?contactId=${contactId}&since=${encodeURIComponent(latestMsgAt.current)}`)
+    if (lastSeenId.current === 0) return
+    const r = await fetch(`/api/chat/messages?contactId=${contactId}&afterId=${lastSeenId.current}`)
     if (!r.ok) return
     const newMsgs: Message[] = await r.json()
     if (newMsgs.length === 0) return
@@ -1174,7 +1196,12 @@ export default function PedidosPage() {
                   style={{ background: "#2A3942", color: "#E9EDEF", border: "none" }} />
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div ref={convListRef} className="flex-1 overflow-y-auto"
+              onScroll={() => {
+                const el = convListRef.current
+                if (!el || loadingMoreConvs || !hasMoreConvs || chatSearch) return
+                if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) loadMoreConvs()
+              }}>
               {filteredConvs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-2" style={{ color: "#8696A0" }}>
                   <MessageCircle size={28} strokeWidth={1.2} />
@@ -1275,6 +1302,18 @@ export default function PedidosPage() {
                   </div>
                 </button>
               ))}
+              {loadingMoreConvs && (
+                <div className="flex justify-center py-3">
+                  <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#8696A0", borderTopColor: "transparent" }} />
+                </div>
+              )}
+              {!loadingMoreConvs && hasMoreConvs && !chatSearch && (
+                <button onClick={loadMoreConvs}
+                  className="w-full py-2 text-[11px] font-medium transition-colors"
+                  style={{ color: "#8696A0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  Ver mais conversas
+                </button>
+              )}
             </div>
           </>
         )}

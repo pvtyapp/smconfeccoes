@@ -10,16 +10,22 @@ export async function PATCH(
     const { id }   = await params
     const { status, notes } = await req.json()
 
+    // M2: prevent race condition — skip if already esgotada when trying to set esgotada
     const { rows } = await pool.query(`
       UPDATE raw_material_entries
       SET
         status = COALESCE($1, status),
         notes  = COALESCE($2, notes)
       WHERE id = $3
+        AND NOT (COALESCE($1, '') = 'esgotada' AND status = 'esgotada')
       RETURNING id, number, status
     `, [status ?? null, notes ?? null, id])
 
-    if (!rows.length) return NextResponse.json({ error: "Not found" }, { status: 404 })
+    if (!rows.length) {
+      const { rows: exists } = await pool.query(`SELECT id, status FROM raw_material_entries WHERE id=$1`, [id])
+      if (!exists.length) return NextResponse.json({ error: "Not found" }, { status: 404 })
+      return NextResponse.json(exists[0]) // already in target state
+    }
     return NextResponse.json(rows[0])
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
