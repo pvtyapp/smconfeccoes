@@ -882,6 +882,18 @@ async function handleMedia(
     return
   }
 
+  if (state === "dtf_coletando_arquivos") {
+    const contactRes = await pool.query(`SELECT state_data FROM wa_contacts WHERE id = $1`, [contactId])
+    const stateData = contactRes.rows[0]?.state_data ?? {}
+    const pedidoId = stateData.pedidoId as number | undefined
+    if (pedidoId) {
+      await addFileToDtfPedido(jid, contactId, pedidoId, msg)
+    } else {
+      await handleDtfMedia(jid, contactId, stateData)
+    }
+    return
+  }
+
   // Áudio: não conseguimos processar, pede texto
   const msgAudio = (msg as Record<string, unknown>).message as Record<string, unknown> | undefined
   if (msgAudio?.audioMessage) {
@@ -1049,6 +1061,19 @@ async function handleText(
       if (reminded === 0) {
         replyWA(jid, "Pode mandar sua arte aqui! 🖨️")
         await setState(contactId, "dtf_coletando", { ...stateData, dtfReminderCount: 1 })
+      }
+      break
+    }
+
+    case "dtf_coletando_arquivos": {
+      const lower = text.toLowerCase().trim()
+      const done = ["pronto", "ok", "é só isso", "e so isso", "isso", "finalizar", "fim", "só isso", "so isso"]
+      if (done.some(w => lower === w || lower.startsWith(w))) {
+        await setState(contactId, "idle")
+        const pedNum = stateData.pedidoNumber as string ?? ""
+        replyWA(jid, `✅ Pedido *${pedNum}* finalizado! Nossa equipe analisa e entra em contato em breve. 🖨️`)
+      } else {
+        replyWA(jid, "Pode mandar mais arquivos ou responda *pronto* para finalizar.")
       }
       break
     }
@@ -2358,12 +2383,36 @@ async function handleDtfMedia(
 
     await cli8.query("COMMIT")
 
-    await setState(contactId, "idle")
-    replyWA(jid, `✅ Recebi! Protocolo *${number}* registrado.\nNossa equipe analisa e entra em contato em breve. 🖨️`)
+    await setState(contactId, "dtf_coletando_arquivos", { pedidoId, pedidoNumber: number })
+    replyWA(jid, `📎 Arte *${number}* recebida! Tem mais arquivos pra adicionar?\nManda agora ou responda *pronto* para finalizar.`)
   } catch (e) {
     await cli8.query("ROLLBACK").catch(() => {})
     console.error("[handleDtfMedia] falhou — migration dtf_pedidos/dtf_order_number_seq não rodou?", e)
   } finally {
     cli8.release()
+  }
+}
+
+async function addFileToDtfPedido(jid: string, contactId: number, pedidoId: number, msg: unknown) {
+  try {
+    const { rows: msgRows } = await pool.query(`
+      SELECT id, file_name FROM wa_messages
+      WHERE contact_id = $1 AND media_type IN ('document', 'image') AND direction = 'in'
+        AND created_at > NOW() - INTERVAL '5 minutes'
+      ORDER BY id DESC LIMIT 1
+    `, [contactId])
+
+    if (msgRows[0]) {
+      await pool.query(`
+        INSERT INTO dtf_order_attachments (pedido_id, wa_message_id, filename)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+      `, [pedidoId, msgRows[0].id, msgRows[0].file_name])
+    }
+
+    void msg
+    replyWA(jid, `📎 Arquivo adicionado! Mais algum ou responda *pronto* para finalizar.`)
+  } catch (e) {
+    console.error("[addFileToDtfPedido]", e)
   }
 }
