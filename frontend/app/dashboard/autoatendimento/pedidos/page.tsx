@@ -5,7 +5,7 @@ import {
   RefreshCw, ShoppingBag,
   Search, Send, MessageCircle, ChevronLeft, Printer, History,
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot, UserCheck,
-  Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
+  Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check, GitMerge,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
@@ -330,6 +330,7 @@ export default function PedidosPage() {
   const [chatbotAtivo,      setChatbotAtivo]      = useState(true)
   const [togglingBot,       setTogglingBot]        = useState(false)
   const [resetting,         setResetting]          = useState(false)
+  const [mergingDupes,      setMergingDupes]       = useState(false)
   const [controleEstoque,   setControleEstoque]    = useState(false)
   const [togglingEstoque,   setTogglingEstoque]    = useState(false)
 
@@ -445,6 +446,16 @@ export default function PedidosPage() {
       body: JSON.stringify({ controle_estoque_ativo: String(next) }),
     }).catch(() => setControleEstoque(!next))
     setTogglingEstoque(false)
+  }
+
+  async function mergeDupeContacts() {
+    if (!confirm("Juntar conversas duplicadas do mesmo número?\n\nMensagens das duplicatas são movidas para o contato original.")) return
+    setMergingDupes(true)
+    const r = await fetch("/api/chat/cleanup-dupes", { method: "POST" }).catch(() => null)
+    const data = r?.ok ? await r.json() : null
+    setMergingDupes(false)
+    await loadConvs()
+    alert(data ? `Pronto! ${data.cleaned} duplicata(s) removida(s).` : "Erro ao executar limpeza.")
   }
 
   async function resetWA() {
@@ -1978,6 +1989,15 @@ export default function PedidosPage() {
             <button onClick={() => { loadOrders(); loadDtf() }}
               className="p-2 rounded-xl text-[#0F1E3C]/40 hover:bg-white hover:text-[#0F1E3C] transition-colors">
               <RefreshCw size={14} className={loadingOrders ? "animate-spin" : ""} />
+            </button>
+
+            <button
+              onClick={mergeDupeContacts}
+              disabled={mergingDupes}
+              title="Juntar conversas duplicadas"
+              className="p-2 rounded-xl text-orange-400/60 hover:bg-orange-50 hover:text-orange-500 transition-colors disabled:opacity-40"
+            >
+              <GitMerge size={14} className={mergingDupes ? "animate-spin" : ""} />
             </button>
 
             <button

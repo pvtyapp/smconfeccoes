@@ -43,36 +43,47 @@ export async function GET(req: Request) {
     const offset = Math.max(parseInt(searchParams.get("offset") ?? "0"), 0)
 
     const { rows } = await pool.query(`
-      SELECT
-        c.id,
-        c.name,
-        c.phone,
-        c.jid,
-        c.profile_pic            AS "profilePic",
-        c.lifecycle_state        AS "lifecycleState",
-        c.needs_attention        AS "needsAttention",
-        c.attention_reason       AS "attentionReason",
-        c.state                  AS "state",
-        c.chatbot_paused_until   AS "chatbotPausedUntil",
-        lm.content               AS "lastMessage",
-        lm.direction             AS "lastDirection",
-        lm.created_at            AS "lastAt",
-        COALESCE(ur.unread, 0)   AS unread
-      FROM wa_contacts c
-      JOIN LATERAL (
-        SELECT content, direction, created_at
-        FROM wa_messages
-        WHERE contact_id = c.id
-        ORDER BY created_at DESC
-        LIMIT 1
-      ) lm ON true
-      LEFT JOIN (
-        SELECT contact_id, COUNT(*) AS unread
-        FROM wa_messages
-        WHERE direction = 'in' AND read_at IS NULL
-        GROUP BY contact_id
-      ) ur ON ur.contact_id = c.id
-      ORDER BY lm.created_at DESC
+      WITH ranked AS (
+        SELECT
+          c.id,
+          c.name,
+          c.phone,
+          c.jid,
+          c.profile_pic            AS "profilePic",
+          c.lifecycle_state        AS "lifecycleState",
+          c.needs_attention        AS "needsAttention",
+          c.attention_reason       AS "attentionReason",
+          c.state                  AS "state",
+          c.chatbot_paused_until   AS "chatbotPausedUntil",
+          lm.content               AS "lastMessage",
+          lm.direction             AS "lastDirection",
+          lm.created_at            AS "lastAt",
+          COALESCE(ur.unread, 0)   AS unread,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(NULLIF(c.phone,''), c.jid)
+            ORDER BY lm.created_at DESC, c.id ASC
+          ) AS rn
+        FROM wa_contacts c
+        JOIN LATERAL (
+          SELECT content, direction, created_at
+          FROM wa_messages
+          WHERE contact_id = c.id
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) lm ON true
+        LEFT JOIN (
+          SELECT contact_id, COUNT(*) AS unread
+          FROM wa_messages
+          WHERE direction = 'in' AND read_at IS NULL
+          GROUP BY contact_id
+        ) ur ON ur.contact_id = c.id
+      )
+      SELECT id, name, phone, jid, "profilePic", "lifecycleState", "needsAttention",
+             "attentionReason", state, "chatbotPausedUntil", "lastMessage", "lastDirection",
+             "lastAt", unread
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY "lastAt" DESC
       LIMIT $1 OFFSET $2
     `, [limit + 1, offset])
 

@@ -328,18 +328,35 @@ export async function POST(req: Request) {
           const outPhone = phoneJid
           ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
           : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-          // Upsert so outgoing messages to contacts never seen before are never lost
-          const { rows: cRows } = await pool.query(
-            `INSERT INTO wa_contacts (jid, name, phone, phone_jid)
-             VALUES ($1, NULL, $2, $3)
-             ON CONFLICT (jid) DO UPDATE SET
-               phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
-               updated_at = NOW()
-             RETURNING id`,
-            [jid, outPhone, phoneJid]
+          // Lookup by phone first — prevents creating a @s.whatsapp.net ghost when @lid contact already exists
+          const { rows: phoneRows } = await pool.query(
+            `SELECT id FROM wa_contacts WHERE phone = $1 LIMIT 1`,
+            [outPhone]
           ).catch(() => ({ rows: [] as { id: number }[] }))
-          if (cRows[0]) {
-            const contactId0 = cRows[0].id as number
+
+          let contactId0: number | null = null
+          if (phoneRows[0]) {
+            contactId0 = phoneRows[0].id as number
+            if (phoneJid) {
+              await pool.query(
+                `UPDATE wa_contacts SET phone_jid = COALESCE(phone_jid, $1), updated_at = NOW() WHERE id = $2`,
+                [phoneJid, contactId0]
+              ).catch(() => {})
+            }
+          } else {
+            const { rows: cRows } = await pool.query(
+              `INSERT INTO wa_contacts (jid, name, phone, phone_jid)
+               VALUES ($1, NULL, $2, $3)
+               ON CONFLICT (jid) DO UPDATE SET
+                 phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
+                 updated_at = NOW()
+               RETURNING id`,
+              [jid, outPhone, phoneJid]
+            ).catch(() => ({ rows: [] as { id: number }[] }))
+            contactId0 = cRows[0]?.id ?? null
+          }
+
+          if (contactId0 !== null) {
             await pool.query(
               `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
                VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))
