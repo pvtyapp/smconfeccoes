@@ -851,17 +851,21 @@ export default function PedidosPage() {
     await fetch(`/api/chat/sync-outgoing?contactId=${contactId}&jid=${encodeURIComponent(jid)}`).catch(() => {})
   }, [])
 
+  // Limpa media APENAS quando o contato muda de fato (por id) — não por recriação de callbacks
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!chatContact) return
     setMediaLoaded({})
     fetchingMedia.current.clear()
+  }, [chatContact?.id])
+
+  useEffect(() => {
+    if (!chatContact) return
     latestMsgAt.current = null
     lastSeenId.current  = 0
     isFirstLoad.current = true
-    // sync primeiro para garantir que outgoing histórico está no DB antes do full load
+    // Carrega mensagens imediatamente; sync em paralelo (não bloqueia exibição)
+    loadMessages(chatContact.id)
     syncOutgoing(chatContact.id, chatContact.jid)
-      .then(() => loadMessages(chatContact.id))
-      .then(() => pollMessages(chatContact.id))
     loadContactDtfOrders(chatContact.id)
     // Mark as read in DB + send read receipt to WA (bidirectional)
     fetch("/api/chat/mark-read", {
@@ -869,7 +873,7 @@ export default function PedidosPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contactId: chatContact.id, jid: chatContact.jid }),
     }).then(() => loadConvs())
-  }, [chatContact, syncOutgoing, loadMessages, pollMessages, loadConvs, loadContactDtfOrders])
+  }, [chatContact, syncOutgoing, loadMessages, loadConvs, loadContactDtfOrders])
 
   useEffect(() => {
     if (!chatContact) return
