@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { cleanDtfBlobsOnConclude } from "@/lib/blob-cleanup"
 
 export async function POST(
   req: Request,
@@ -71,10 +70,6 @@ export async function POST(
         ORDER BY id LIMIT 1
       `, [pedido.impressora_id ?? null, pedido.metros_finais, pedido.number])
         .catch(() => {})
-    }
-
-    if (pedido.contact_id) {
-      cleanDtfBlobsOnConclude(pedido.contact_id, new Date(pedido.pedido_created_at)).catch(() => {})
     }
 
     return NextResponse.json({ ok: true })

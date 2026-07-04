@@ -309,6 +309,14 @@ export default function PedidosPage() {
   // Lightbox
   const [lightboxMsg, setLightboxMsg] = useState<Message | null>(null)
 
+  // Lazy media loading
+  const [mediaLoaded, setMediaLoaded] = useState<Record<number, string | "expired">>({})
+  const mediaObserverRef = useRef<IntersectionObserver | null>(null)
+  const fetchingMedia    = useRef<Set<number>>(new Set())
+
+  // DTF download progress
+  const [dtfDownloadProgress, setDtfDownloadProgress] = useState<{ orderId: number; current: number; total: number } | null>(null)
+
   // Pagination (load older)
   const [msgOffset,        setMsgOffset]        = useState(0)
   const [hasMoreMsgs,      setHasMoreMsgs]      = useState(false)
@@ -707,34 +715,49 @@ export default function PedidosPage() {
 
   // ── Load messages (full load ao selecionar, incremental poll) ─────────────
 
-  const refreshMediaUrls = useCallback(async (
-    contactId: number, pendingIds: Set<number>, attempt = 0
-  ) => {
-    const r = await fetch(`/api/chat/messages?contactId=${contactId}&noSync=1`)
+  const fetchMessageMedia = useCallback(async (msgId: number, attempt = 0) => {
+    const r = await fetch(`/api/chat/media/${msgId}`)
     if (!r.ok) return
-    const data = await r.json()
-    const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
-    const byId = new Map(msgs.map(m => [m.id, m]))
-    const stillPending = new Set<number>()
-    setMessages(prev => prev.map(m => {
-      if (!pendingIds.has(m.id)) return m
-      const updated = byId.get(m.id)
-      // Permanently failed — stop retrying, mark as unavailable
-      if (updated?.mediaFailed) return { ...m, mediaFailed: true }
-      if (!updated?.mediaData) { stillPending.add(m.id); return m }
-      return { ...m, mediaData: updated.mediaData, mediaThumb: updated.mediaThumb, mediaCategory: updated.mediaCategory }
-    }))
-    // Retry with backoff: 8s, 16s, 30s — para dar tempo ao waitUntil de terminar
+    const d = await r.json() as {
+      mediaData: string | null; mediaThumb: string | null
+      mediaCategory: string | null; mediaFailed: boolean; expired: boolean
+    }
+    if (d.mediaFailed || d.expired) {
+      setMediaLoaded(prev => ({ ...prev, [msgId]: "expired" }))
+      return
+    }
+    if (d.mediaData) {
+      setMediaLoaded(prev => ({ ...prev, [msgId]: d.mediaData! }))
+      if (d.mediaCategory || d.mediaThumb) {
+        setMessages(prev => prev.map(m => m.id === msgId
+          ? { ...m, mediaCategory: d.mediaCategory ?? m.mediaCategory, mediaThumb: d.mediaThumb ?? m.mediaThumb }
+          : m
+        ))
+      }
+      return
+    }
+    // Mídia ainda processando — retry com backoff
     const delays = [8_000, 16_000, 30_000]
-    if (stillPending.size > 0 && attempt < delays.length) {
-      setTimeout(() => refreshMediaUrls(contactId, stillPending, attempt + 1), delays[attempt])
-    } else if (stillPending.size > 0) {
-      // Retries esgotados — marca como indisponível
-      setMessages(prev => prev.map(m =>
-        stillPending.has(m.id) ? { ...m, mediaFailed: true } : m
-      ))
+    if (attempt < delays.length) {
+      setTimeout(() => fetchMessageMedia(msgId, attempt + 1), delays[attempt])
+    } else {
+      setMediaLoaded(prev => ({ ...prev, [msgId]: "expired" }))
     }
   }, [])
+
+  useEffect(() => {
+    mediaObserverRef.current = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return
+        const id = Number((entry.target as HTMLElement).dataset.mediaMsgId)
+        if (!id || fetchingMedia.current.has(id)) return
+        fetchingMedia.current.add(id)
+        mediaObserverRef.current?.unobserve(entry.target)
+        fetchMessageMedia(id)
+      })
+    }, { rootMargin: "200px 0px", threshold: 0.01 })
+    return () => mediaObserverRef.current?.disconnect()
+  }, [fetchMessageMedia])
 
   const loadMessages = useCallback(async (contactId: number, noSync = false) => {
     try {
@@ -750,15 +773,11 @@ export default function PedidosPage() {
       const newMax = msgs.length > 0 ? Math.max(...msgs.map(m => m.id)) : 0
       if (newMax > lastSeenId.current) lastSeenId.current = newMax
 
-      const pendingIds = new Set(msgs.filter(m => m.mediaType && !m.mediaData && !m.mediaFailed).map(m => m.id))
-      if (pendingIds.size > 0) {
-        setTimeout(() => refreshMediaUrls(contactId, pendingIds), 5_000)
-      }
     } finally {
       // Libera o poll mesmo quando o load retorna vazio (contato sem histórico no DB)
       isFirstLoad.current = false
     }
-  }, [refreshMediaUrls])
+  }, [fetchMessageMedia])
 
   const loadOlderMsgs = useCallback(async (contactId: number, currentOffset: number) => {
     setLoadingOlderMsgs(true)
@@ -775,6 +794,11 @@ export default function PedidosPage() {
       setHasMoreMsgs(more)
     }
     setLoadingOlderMsgs(false)
+  }, [])
+
+  const loadContactDtfOrders = useCallback(async (contactId: number) => {
+    const r = await fetch(`/api/dtf/pedidos?contactId=${contactId}`)
+    if (r.ok) setContactDtfOrders(await r.json())
   }, [])
 
   const pollMessages = useCallback(async (contactId: number) => {
@@ -795,6 +819,10 @@ export default function PedidosPage() {
     latestMsgAt.current = newMsgs[newMsgs.length - 1].createdAt
     // Se chegaram mensagens novas do cliente com o chat aberto, marca como lidas via Evolution
     const hasNewIncoming = newMsgs.some(m => m.direction === "in")
+    // Refresh DTF panel se chegou arquivo novo do cliente
+    if (newMsgs.some(m => m.direction === "in" && m.mediaType)) {
+      loadContactDtfOrders(contactId)
+    }
     if (hasNewIncoming && chatContactRef.current) {
       fetch("/api/chat/mark-read", {
         method: "POST",
@@ -804,12 +832,7 @@ export default function PedidosPage() {
     } else {
       loadConvs()
     }
-  }, [loadConvs])
-
-  const loadContactDtfOrders = useCallback(async (contactId: number) => {
-    const r = await fetch(`/api/dtf/pedidos?contactId=${contactId}`)
-    if (r.ok) setContactDtfOrders(await r.json())
-  }, [])
+  }, [loadConvs, loadContactDtfOrders])
 
   const syncOutgoing = useCallback(async (contactId: number, jid: string) => {
     await fetch(`/api/chat/sync-outgoing?contactId=${contactId}&jid=${encodeURIComponent(jid)}`).catch(() => {})
@@ -817,6 +840,8 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (!chatContact) return
+    setMediaLoaded({})
+    fetchingMedia.current.clear()
     latestMsgAt.current = null
     lastSeenId.current  = 0
     isFirstLoad.current = true
@@ -975,7 +1000,9 @@ export default function PedidosPage() {
   }
 
   async function linkDtfFile(m: Message) {
-    if (!chatContact || !m.mediaData) return
+    if (!chatContact) return
+    const hasMedia = typeof mediaLoaded[m.id] === "string" && mediaLoaded[m.id] !== "expired"
+    if (!hasMedia) return
     setLinkingDtfMsg(m.id)
     setDtfLinkToast(null)
     try {
@@ -985,7 +1012,9 @@ export default function PedidosPage() {
         body: JSON.stringify({
           contactId: chatContact.id,
           waMessageId: m.id,
-          fileUrl: m.mediaData,
+          fileUrl: typeof mediaLoaded[m.id] === "string" && mediaLoaded[m.id] !== "expired"
+            ? mediaLoaded[m.id]
+            : null,
           fileName: m.fileName,
           mimeType: null,
         }),
@@ -1007,39 +1036,76 @@ export default function PedidosPage() {
     }
   }
 
-  async function downloadDtfOrder(orderId: number, contactName: string) {
-    if (downloadingDtfId === orderId) return
-    setDownloadingDtfId(orderId)
-    const slug = (contactName ?? "arte").split(" ")[0]
+  async function downloadDtfOrder(order: DtfOrder, contactName: string) {
+    if (downloadingDtfId === order.id) return
+    setDownloadingDtfId(order.id)
+    const slug        = (contactName ?? "arte").split(" ")[0].toLowerCase()
+    const attachments = order.attachments.filter(a => a.blobUrl)
+    if (attachments.length === 0) { setDownloadingDtfId(null); return }
     try {
-      const r = await fetch(`/api/dtf/pedidos/${orderId}/download`)
-      if (!r.ok) return
-      const contentType = r.headers.get("content-type") ?? ""
-      const isZip = contentType.includes("zip")
-      const blob  = await r.blob()
-      const url   = URL.createObjectURL(blob)
-      const a     = document.createElement("a")
-      a.href      = url
-      a.download  = isZip ? `${slug}-artes.zip` : `${slug}-arte`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      setDownloadedDtfIds(prev => new Set(prev).add(orderId))
+      if (attachments.length === 1) {
+        const att = attachments[0]
+        const url = att.blobUrl!
+        let blob: Blob
+        if (url.startsWith("data:")) {
+          const comma = url.indexOf(",")
+          const mime  = url.slice(5, comma).split(";")[0]
+          blob = new Blob([Uint8Array.from(atob(url.slice(comma + 1)), c => c.charCodeAt(0))], { type: mime })
+        } else {
+          const r = await fetch(url); if (!r.ok) throw new Error()
+          blob = await r.blob()
+        }
+        const ext = att.filename?.split(".").pop() ?? att.mimeType?.split("/")[1] ?? "png"
+        const a   = document.createElement("a")
+        a.href = URL.createObjectURL(blob); a.download = `${slug}-arte.${ext}`
+        document.body.appendChild(a); a.click(); document.body.removeChild(a)
+        URL.revokeObjectURL(a.href)
+        setDownloadedDtfIds(prev => new Set(prev).add(order.id))
+        return
+      }
+      // Múltiplos arquivos — ZIP client-side com barra de progresso
+      const JSZipMod = await import("jszip")
+      const zip      = new JSZipMod.default()
+      for (let i = 0; i < attachments.length; i++) {
+        setDtfDownloadProgress({ orderId: order.id, current: i + 1, total: attachments.length })
+        const att = attachments[i]
+        const url = att.blobUrl!
+        const ext = att.filename?.split(".").pop() ?? att.mimeType?.split("/")[1] ?? "png"
+        if (url.startsWith("data:")) {
+          zip.file(`${slug}-${i + 1}.${ext}`, url.slice(url.indexOf(",") + 1), { base64: true })
+        } else {
+          const r = await fetch(url)
+          if (r.ok) zip.file(`${slug}-${i + 1}.${ext}`, await r.arrayBuffer())
+        }
+      }
+      const blob = await zip.generateAsync({ type: "blob" })
+      const a    = document.createElement("a")
+      a.href = URL.createObjectURL(blob); a.download = `${slug}-artes.zip`
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(a.href)
+      setDownloadedDtfIds(prev => new Set(prev).add(order.id))
     } catch { /* silent */ }
-    finally { setDownloadingDtfId(null) }
+    finally { setDownloadingDtfId(null); setDtfDownloadProgress(null) }
   }
 
-  async function downloadChatFile(msgId: number, url: string, filename: string | null) {
+  async function downloadChatFile(msgId: number, filename: string | null) {
     setDownloadingMsgId(msgId)
     try {
+      let url: string | undefined = typeof mediaLoaded[msgId] === "string" && mediaLoaded[msgId] !== "expired"
+        ? (mediaLoaded[msgId] as string)
+        : undefined
+      if (!url) {
+        const r = await fetch(`/api/chat/media/${msgId}`)
+        if (!r.ok) return
+        const d = await r.json()
+        url = d.mediaData ?? undefined
+      }
+      if (!url) return
       let blob: Blob
       if (url.startsWith("data:")) {
-        const comma  = url.indexOf(",")
-        const mime   = url.slice(5, comma).split(";")[0]
-        const b64    = url.slice(comma + 1)
-        const bytes  = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-        blob = new Blob([bytes], { type: mime })
+        const comma = url.indexOf(",")
+        const mime  = url.slice(5, comma).split(";")[0]
+        blob = new Blob([Uint8Array.from(atob(url.slice(comma + 1)), c => c.charCodeAt(0))], { type: mime })
       } else {
         const r = await fetch(url)
         if (!r.ok) return
@@ -1047,11 +1113,8 @@ export default function PedidosPage() {
       }
       const objUrl = URL.createObjectURL(blob)
       const a      = document.createElement("a")
-      a.href       = objUrl
-      a.download   = filename ?? "arquivo"
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      a.href = objUrl; a.download = filename ?? "arquivo"
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
       URL.revokeObjectURL(objUrl)
     } catch { /* silent */ }
     finally { setDownloadingMsgId(null) }
@@ -1504,6 +1567,12 @@ export default function PedidosPage() {
                           </div>
                         )}
                         <div className={`flex ${isOut ? "justify-end" : "justify-start"} ${prevSame ? "mt-0.5" : "mt-1.5"}`}
+                          ref={el => {
+                            if (!el || !m.mediaType) return
+                            if (mediaLoaded[m.id] !== undefined) { mediaObserverRef.current?.unobserve(el); return }
+                            mediaObserverRef.current?.unobserve(el)
+                            mediaObserverRef.current?.observe(el)
+                          }}
                           onMouseEnter={() => setHoveredMsg(m.id)}
                           onMouseLeave={() => setHoveredMsg(null)}>
                           <div className="relative max-w-[65%] group">
@@ -1539,6 +1608,9 @@ export default function PedidosPage() {
                               )}
 
                               {(() => {
+                                const msgMediaData = typeof mediaLoaded[m.id] === "string" && mediaLoaded[m.id] !== "expired"
+                                  ? mediaLoaded[m.id] as string : null
+                                const msgMediaExpired = mediaLoaded[m.id] === "expired" || m.mediaFailed === true
                                 const timeEl = (extra?: string) => (
                                   <span className={`flex items-center justify-end gap-1 text-[10px] select-none ${extra ?? ""}`} style={{ color: "#667781" }}>
                                     {fmtTime(m.createdAt)}
@@ -1552,15 +1624,15 @@ export default function PedidosPage() {
                                   </span>
                                 )
 
-                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && (m.mediaData || m.mediaThumb)) {
-                                  const displaySrc = m.mediaData || m.mediaThumb
-                                  const isReady = !!m.mediaData
+                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && (msgMediaData || m.mediaThumb)) {
+                                  const displaySrc = msgMediaData || m.mediaThumb
+                                  const isReady = !!msgMediaData
                                   return (
                                   <div>
                                     <div className="relative">
                                       {m.mediaType === "video" && isReady ? (
                                         // eslint-disable-next-line jsx-a11y/media-has-caption
-                                        <video controls src={m.mediaData!} className="w-full max-w-[240px] object-cover rounded" />
+                                        <video controls src={msgMediaData!} className="w-full max-w-[240px] object-cover rounded" />
                                       ) : (
                                         <>
                                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1574,8 +1646,11 @@ export default function PedidosPage() {
                                           )}
                                         </>
                                       )}
-                                      {!isReady && (
+                                      {!isReady && !msgMediaExpired && (
                                         <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.4)" }}>carregando...</div>
+                                      )}
+                                      {!isReady && msgMediaExpired && (
+                                        <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.55)" }}>Mídia expirada</div>
                                       )}
                                     </div>
                                     {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>{m.caption}</p>}
@@ -1592,19 +1667,19 @@ export default function PedidosPage() {
                                           {m.fileName || (m.mediaCategory === "pix" ? "Comprovante PIX" : m.mediaCategory === "dtf" ? "Arte DTF" : "Documento")}
                                         </p>
                                         {m.caption && <p className="text-[11px] mt-0.5" style={{ color: "#667781" }}>{m.caption}</p>}
-                                        {m.mediaData
-                                          ? <button onClick={() => downloadChatFile(m.id, m.mediaData!, m.fileName)}
+                                        {msgMediaData
+                                          ? <button onClick={() => downloadChatFile(m.id, m.fileName)}
                                               disabled={downloadingMsgId === m.id}
                                               className="text-[10px] underline disabled:opacity-50" style={{ color: "#00A884" }}>
                                               {downloadingMsgId === m.id ? "Baixando..." : "Baixar arquivo"}
                                             </button>
-                                          : m.mediaFailed
-                                            ? <span className="text-[10px]" style={{ color: "#8696A0" }}>Arquivo não disponível</span>
+                                          : msgMediaExpired
+                                            ? <span className="text-[10px]" style={{ color: "#8696A0" }}>Mídia expirada</span>
                                             : <span className="text-[10px]" style={{ color: "#8696A0" }}>Carregando...</span>
                                         }
                                       </div>
                                     </div>
-                                    {!isOut && (m.mediaCategory === "dtf" || m.mediaCategory === "documento") && !!m.mediaData && (
+                                    {!isOut && (m.mediaCategory === "dtf" || m.mediaCategory === "documento") && !!msgMediaData && (
                                       <button onClick={() => linkDtfFile(m)} disabled={linkingDtfMsg === m.id}
                                         className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-[10px] font-bold transition-colors disabled:opacity-50"
                                         style={{ background: "rgba(124,58,237,0.08)", borderColor: "rgba(124,58,237,0.3)", color: "#7C3AED" }}>
@@ -1619,10 +1694,12 @@ export default function PedidosPage() {
 
                                 if (m.mediaType === "audio") return (
                                   <div className="px-3 py-2">
-                                    {m.mediaData
+                                    {msgMediaData
                                       // eslint-disable-next-line jsx-a11y/media-has-caption
-                                      ? <audio controls src={m.mediaData} className="w-full max-w-[220px]" style={{ height: "32px" }} />
-                                      : <span className="text-[12px]" style={{ color: "#667781" }}>🎤 Áudio</span>
+                                      ? <audio controls src={msgMediaData} className="w-full max-w-[220px]" style={{ height: "32px" }} />
+                                      : msgMediaExpired
+                                        ? <span className="text-[12px]" style={{ color: "#8696A0" }}>🎤 Áudio expirado</span>
+                                        : <span className="text-[12px]" style={{ color: "#667781" }}>🎤 Áudio</span>
                                     }
                                     {timeEl("mt-1")}
                                   </div>
@@ -1630,7 +1707,7 @@ export default function PedidosPage() {
 
                                 return (
                                   <div className="px-3 py-1.5 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>
-                                    {m.mediaType && !m.mediaData && !m.mediaThumb
+                                    {m.mediaType && !msgMediaData && !m.mediaThumb
                                       ? <span style={{ color: "#667781" }}>{MEDIA_EMOJI[m.mediaType] ?? formatMsgPreview(m.content)}</span>
                                       : formatMsgPreview(m.content)
                                     }
@@ -1784,15 +1861,26 @@ export default function PedidosPage() {
                             const wasDownloaded = downloadedDtfIds.has(o.id)
                             return (
                               <button key={o.id}
-                                onClick={() => downloadDtfOrder(o.id, o.contactName ?? chatContact?.name ?? "arte")}
+                                onClick={() => downloadDtfOrder(o, o.contactName ?? chatContact?.name ?? "arte")}
                                 disabled={isDownloading}
-                                className="flex items-center justify-center gap-2 w-full py-2 text-white text-xs font-bold rounded-xl transition-colors hover:opacity-90 disabled:opacity-60"
+                                className="flex flex-col items-center justify-center gap-1 w-full py-2 text-white text-xs font-bold rounded-xl transition-colors hover:opacity-90 disabled:opacity-60"
                                 style={{ background: wasDownloaded ? "#059669" : "#7C3AED" }}>
-                                {isDownloading
-                                  ? <><Loader2 size={12} className="animate-spin" /> Baixando...</>
-                                  : wasDownloaded
-                                    ? <><Check size={12} /> Baixado — baixar novamente</>
-                                    : <><Download size={13} /> {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte (renomeado)"}</>}
+                                {isDownloading && dtfDownloadProgress?.orderId === o.id
+                                  ? <>
+                                      <span className="flex items-center gap-1.5">
+                                        <Loader2 size={12} className="animate-spin" />
+                                        Baixando {dtfDownloadProgress.current} de {dtfDownloadProgress.total}...
+                                      </span>
+                                      <div className="w-full max-w-[140px] h-1 rounded-full bg-white/20 overflow-hidden">
+                                        <div className="h-full bg-white rounded-full transition-all duration-200"
+                                          style={{ width: `${Math.round(dtfDownloadProgress.current / dtfDownloadProgress.total * 100)}%` }} />
+                                      </div>
+                                    </>
+                                  : isDownloading
+                                    ? <><Loader2 size={12} className="animate-spin" /> Aguarde...</>
+                                    : wasDownloaded
+                                      ? <><Check size={12} /> Baixado — baixar novamente</>
+                                      : <><Download size={13} /> {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte"}</>}
                               </button>
                             )
                           })}
@@ -2315,11 +2403,12 @@ export default function PedidosPage() {
       )}
 
       {/* ── LIGHTBOX ── */}
-      {lightboxMsg?.mediaData && (
+      {lightboxMsg && (typeof mediaLoaded[lightboxMsg.id] === "string" && mediaLoaded[lightboxMsg.id] !== "expired") && (
         <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
           onClick={() => setLightboxMsg(null)}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightboxMsg.mediaData} alt="Imagem ampliada"
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={mediaLoaded[lightboxMsg.id] as string} alt="Imagem ampliada"
             className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
             onClick={e => e.stopPropagation()} />
 
@@ -2328,7 +2417,7 @@ export default function PedidosPage() {
             <span className="text-white/50 text-xs">
               {lightboxMsg.direction === "out" ? "Você" : (chatContact?.name || chatContact?.phone)} · {fmtTime(lightboxMsg.createdAt)}
             </span>
-            <a href={lightboxMsg.mediaData} download
+            <a href={mediaLoaded[lightboxMsg.id] as string} download
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors">
               <Download size={13} /> Salvar
             </a>

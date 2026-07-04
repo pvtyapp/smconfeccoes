@@ -23,8 +23,7 @@ export async function GET(req: Request) {
           media_type             AS "mediaType",
           media_url              AS "mediaUrl",
           media_thumb            AS "mediaThumb",
-          media_data             AS "mediaData",
-          media_category         AS "mediaCategory",
+                  media_category         AS "mediaCategory",
           file_name              AS "fileName",
           caption,
           status,
@@ -57,7 +56,6 @@ export async function GET(req: Request) {
         media_type        AS "mediaType",
         media_url         AS "mediaUrl",
         media_thumb       AS "mediaThumb",
-        media_data        AS "mediaData",
         media_category    AS "mediaCategory",
         file_name         AS "fileName",
         caption,
@@ -68,7 +66,7 @@ export async function GET(req: Request) {
         created_at        AS "createdAt",
         COALESCE(media_failed, FALSE) AS "mediaFailed"
       FROM (
-        SELECT id, message_id, direction, content, media_type, media_url, media_thumb, media_data,
+        SELECT id, message_id, direction, content, media_type, media_url, media_thumb,
                media_category, file_name, caption, status, quoted_id, quoted_text,
                read_at, created_at, media_failed
         FROM wa_messages
