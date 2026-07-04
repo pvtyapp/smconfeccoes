@@ -759,6 +759,19 @@ export default function PedidosPage() {
     return () => mediaObserverRef.current?.disconnect()
   }, [fetchMessageMedia])
 
+  // Após cada update de mensagens, registra elementos de mídia ainda não carregados
+  useEffect(() => {
+    const observer = mediaObserverRef.current
+    if (!observer) return
+    const timer = setTimeout(() => {
+      document.querySelectorAll<HTMLElement>("[data-media-msg-id]").forEach(el => {
+        const id = Number(el.dataset.mediaMsgId)
+        if (id && !fetchingMedia.current.has(id)) observer.observe(el)
+      })
+    }, 30)
+    return () => clearTimeout(timer)
+  }, [messages])
+
   const loadMessages = useCallback(async (contactId: number, noSync = false) => {
     try {
       const r = await fetch(`/api/chat/messages?contactId=${contactId}${noSync ? "&noSync=1" : ""}`)
@@ -1068,6 +1081,8 @@ export default function PedidosPage() {
       const zip      = new JSZipMod.default()
       for (let i = 0; i < attachments.length; i++) {
         setDtfDownloadProgress({ orderId: order.id, current: i + 1, total: attachments.length })
+        // Yield para o browser renderizar a atualização do progresso
+        await new Promise<void>(r => requestAnimationFrame(() => r()))
         const att = attachments[i]
         const url = att.blobUrl!
         const ext = att.filename?.split(".").pop() ?? att.mimeType?.split("/")[1] ?? "png"
@@ -1567,12 +1582,7 @@ export default function PedidosPage() {
                           </div>
                         )}
                         <div className={`flex ${isOut ? "justify-end" : "justify-start"} ${prevSame ? "mt-0.5" : "mt-1.5"}`}
-                          ref={el => {
-                            if (!el || !m.mediaType) return
-                            if (mediaLoaded[m.id] !== undefined) { mediaObserverRef.current?.unobserve(el); return }
-                            mediaObserverRef.current?.unobserve(el)
-                            mediaObserverRef.current?.observe(el)
-                          }}
+                          data-media-msg-id={m.mediaType && mediaLoaded[m.id] === undefined ? m.id : undefined}
                           onMouseEnter={() => setHoveredMsg(m.id)}
                           onMouseLeave={() => setHoveredMsg(null)}>
                           <div className="relative max-w-[65%] group">
