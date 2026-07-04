@@ -323,7 +323,8 @@ export async function GET(req: Request) {
       SET state = 'idle', state_data = '{}', updated_at = NOW()
       WHERE state IN ('aguardando_menu','dtf_coletando','dtf_sem_arquivo','cross_sell_produto',
                       'cross_sell_dtf','aguardando_cliente_1','confirmando',
-                      'aguardando_separacao_resposta','aguardando_cancelamento_resposta')
+                      'aguardando_separacao_resposta','aguardando_cancelamento_resposta',
+                      'aguardando_reserva_resposta')
         AND updated_at < NOW() - INTERVAL '6 hours'
     `)
     results.stuck = rowCount ?? 0
@@ -344,10 +345,10 @@ export async function GET(req: Request) {
 
     // Para cada variante que expirou, notifica próximo da fila (FIFO)
     for (const expired of expiredRes) {
-      // Reseta estado do contato que expirou
+      // Reseta estado do contato que expirou (independente do state atual)
       await pool.query(`
         UPDATE wa_contacts SET state = 'idle', state_data = '{}', updated_at = NOW()
-        WHERE id = $1 AND state = 'aguardando_reserva_resposta'
+        WHERE id = $1
       `, [expired.contact_id]).catch(() => {})
 
       // Próximo pending para a mesma variante
@@ -373,20 +374,9 @@ export async function GET(req: Request) {
           WHERE id = $2
         `, [newExpiresAt, next.id])
 
-        await pool.query(`
-          UPDATE wa_contacts SET state = 'aguardando_reserva_resposta',
-            state_data = $1, updated_at = NOW()
-          WHERE id = $2
-        `, [JSON.stringify({
-          reservationId: next.id,
-          variantId:     next.variant_id ?? expired.variant_id,
-          variantName,
-          qty:           next.qty,
-        }), next.contact_id])
-
         sendWhatsApp(
           next.jid,
-          `🎉 *${variantName}* disponível! Você estava na lista de espera.\n\nAinda precisa? Responde *SIM* ou *NÃO*. (Você tem ${expiryHours}h para responder)`
+          `🎉 *${variantName}* disponível! Você estava na lista de espera. Entre em contato para confirmar! 😊`
         ).catch(() => {})
       }
     }

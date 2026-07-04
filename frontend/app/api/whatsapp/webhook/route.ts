@@ -576,14 +576,12 @@ export async function POST(req: Request) {
 
     // Fetch global chatbot settings
     let globalChatbotAtivo = false  // OFF by default — ativar via Settings
-    let globalPedidosAuto  = true
     const globalSettings: Record<string, string> = {}
     try {
       const { rows: gs } = await pool.query(`SELECT key, value FROM app_settings`)
       for (const r of gs) {
         globalSettings[r.key] = r.value
         if (r.key === "chatbot_ativo") globalChatbotAtivo = r.value === "true"
-        if (r.key === "pedidos_auto")  globalPedidosAuto  = r.value !== "false"
       }
     } catch { /* use defaults */ }
 
@@ -594,11 +592,7 @@ export async function POST(req: Request) {
       : { available: false, reason: "desativado" }
     const dtfStatus      = getServiceStatus("dtf", globalSettings)
 
-    // Global chatbot mudo — silently create order if pedidos_auto is on
     if (!globalChatbotAtivo) {
-      if (globalPedidosAuto && text.trim() && !hasMedia) {
-        await trySilentOrderCreate(contact.id, text.trim())
-      }
       return NextResponse.json({ ok: true })
     }
 
@@ -847,8 +841,20 @@ function buildUnavailableMsg(
 
 // ─── catálogo ────────────────────────────────────────────────────────────────
 
-async function sendCatalog(jid: string, contactId: number) {
+async function sendCatalog(jid: string, contactId: number, bypassRateLimit = false) {
   await tagContact(contactId, "interessado_produto")
+
+  if (!bypassRateLimit) {
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_catalog_sent_at TIMESTAMPTZ`).catch(() => {})
+    const { rows: rateRows } = await pool.query(
+      `SELECT last_catalog_sent_at FROM wa_contacts WHERE id = $1`, [contactId]
+    )
+    const lastSent: Date | null = rateRows[0]?.last_catalog_sent_at ? new Date(rateRows[0].last_catalog_sent_at) : null
+    if (lastSent && Date.now() - lastSent.getTime() < 24 * 60 * 60 * 1000) {
+      replyWA(jid, "Já enviamos nosso catálogo hoje! Alguma dúvida sobre um produto específico?")
+      return
+    }
+  }
 
   const catalog = await getCatalog()
 
@@ -873,6 +879,7 @@ async function sendCatalog(jid: string, contactId: number) {
 
   const exName = catalog[0].name.toLowerCase()
   replyWA(jid, `Nossos produtos:\n\n${lines.join("\n")}\n\nQual você quer? Me passa assim:\n_Ex: 20 ${exName} preto G_`)
+  pool.query(`UPDATE wa_contacts SET last_catalog_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
 }
 
 // ─── variação ────────────────────────────────────────────────────────────────
@@ -1094,7 +1101,7 @@ async function handleText(
   if (state === "idle") {
     const { rows: activeRows } = await pool.query(`
       SELECT id, number, status FROM orders
-      WHERE contact_id = $1 AND status IN ('triagem', 'em_separacao', 'pronto') AND paid_at IS NULL
+      WHERE contact_id = $1 AND status IN ('triagem', 'confirmando', 'em_separacao', 'pronto') AND paid_at IS NULL
       AND created_at > NOW() - INTERVAL '14 days'
       ORDER BY created_at DESC LIMIT 1
     `, [contactId])
@@ -1141,18 +1148,6 @@ async function handleText(
 
     case "aguardando_nome":
       await handleAguardandoNome(jid, contactId, text)
-      break
-
-    case "aguardando_separacao_resposta":
-      await handleAguardandoSeparacaoResposta(jid, contactId, stateData, text)
-      break
-
-    case "aguardando_cancelamento_resposta":
-      await handleAguardandoCancelamentoResposta(jid, contactId, stateData, text)
-      break
-
-    case "aguardando_reserva_resposta":
-      await handleAguardandoReservaResposta(jid, contactId, stateData, text)
       break
 
     default:
@@ -1384,7 +1379,7 @@ async function createOrderDirect(
     }
     // Nenhum produto identificado: reseta rawMessages para não acumular lixo
     await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-    await sendCatalog(jid, contactId)
+    await sendCatalog(jid, contactId, true)
     return
   }
 
@@ -1529,121 +1524,6 @@ async function createOrderDirect(
   if (hasUnmatched)  reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
   if (hasStockIssue) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
 
-  // ── Controle de estoque automático ─────────────────────────────────────────
-  const controleAtivo = globalSettings.controle_estoque_ativo === "true"
-
-  if (controleAtivo && isNewOrder) {
-    const outOfStock   = matched.filter(m => m.matched && !m.stockOk)
-    const inStockItems = matched.filter(m => !m.matched || m.stockOk)
-
-    if (outOfStock.length === 0 && !hasUnmatched) {
-      // Tudo em estoque e todos os itens foram encontrados → avança direto para separação
-      const orderCli = await pool.connect()
-      try {
-        await orderCli.query("BEGIN")
-        await orderCli.query(
-          `UPDATE orders SET status = 'em_separacao', needs_print = true WHERE id = $1`, [orderId]
-        )
-        await orderCli.query(`
-          INSERT INTO order_events (order_id, status, actor, note)
-          VALUES ($1, 'em_separacao', 'chatbot', 'Avançado automaticamente — estoque OK')
-        `, [orderId])
-        for (const item of matched) {
-          if (item.variantId) {
-            await orderCli.query(`
-              INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-              VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
-            `, [item.variantId, item.qty, `Pedido ${orderNumber}`])
-          }
-        }
-        await orderCli.query("COMMIT")
-      } catch (e) {
-        await orderCli.query("ROLLBACK").catch(() => {})
-        throw e
-      } finally {
-        orderCli.release()
-      }
-      await setState(contactId, "em_separacao", { orderId, orderNumber })
-      replyWA(jid, `✅ Pedido *${orderNumber}* recebido! Já estamos separando. Avisamos quando pronto para retirada!`)
-      return
-    }
-
-    // Há itens faltando
-    const missingNames = outOfStock.map(m =>
-      [m.productName, m.color, m.size].filter(Boolean).join(" ")
-    )
-
-    // Verifica se existem prod_orders em_andamento para os produtos faltantes
-    const missingVarIds = outOfStock.filter(m => m.variantId).map(m => m.variantId as string)
-    let hasProdOrders = false
-    const variantProdOrderMap: Record<string, boolean> = {}
-    if (missingVarIds.length > 0) {
-      const { rows: prodOrds } = await pool.query(`
-        SELECT DISTINCT pv.id AS variant_id
-        FROM prod_orders po
-        JOIN prod_order_items poi ON poi.order_id = po.id
-        JOIN product_variants pv ON pv.product_id = poi.product_id
-        WHERE po.status = 'em_andamento' AND pv.id::text = ANY($1::text[])
-      `, [missingVarIds])
-      hasProdOrders = prodOrds.length > 0
-      for (const r of prodOrds) variantProdOrderMap[String(r.variant_id)] = true
-    }
-
-    // Busca os order_item IDs dos itens disponíveis para preservar
-    const { rows: allOrderItems } = await pool.query(
-      `SELECT id, variant_id FROM order_items WHERE order_id = $1`, [orderId]
-    )
-    const availableItemIds: number[] = allOrderItems
-      .filter((oi: { id: number; variant_id: string }) =>
-        !outOfStock.some(m => String(m.variantId) === String(oi.variant_id))
-      )
-      .map((oi: { id: number }) => oi.id)
-
-    const missingItems = outOfStock.map(m => ({
-      variantId: m.variantId ?? null,
-      name: [m.productName, m.color, m.size].filter(Boolean).join(" "),
-      qty: m.qty,
-      withReserva: m.variantId ? Boolean(variantProdOrderMap[String(m.variantId)]) : false,
-    }))
-
-    // Cenário D: TUDO faltando
-    if (inStockItems.length === 0) {
-      if (hasProdOrders) {
-        await setState(contactId, "aguardando_separacao_resposta", {
-          orderId, orderNumber, missingItems, availableItemIds: [], allMissing: true,
-        })
-        replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas os itens estão em produção e chegam em breve.\n\nPosso te avisar quando estiver disponível para separar?`)
-      } else {
-        await pool.query(
-          `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'estoque' WHERE id = $1`, [contactId]
-        )
-        await setState(contactId, "triagem", { orderId, orderNumber })
-        replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas infelizmente não temos os itens em estoque no momento. Nossa equipe entra em contato para te ajudar!`)
-      }
-      return
-    }
-
-    // Cenário parcial: alguns disponíveis, alguns faltando
-    const missingStr = missingNames.length === 1
-      ? `*${missingNames[0]}*`
-      : missingNames.map(n => `• *${n}*`).join("\n")
-
-    const introMissing = missingNames.length === 1
-      ? `a ${missingStr} não temos em estoque agora`
-      : `esses itens não temos em estoque agora:\n${missingStr}`
-
-    const reservaHint = hasProdOrders
-      ? ` (está em produção e chega em breve)`
-      : ""
-
-    await setState(contactId, "aguardando_separacao_resposta", {
-      orderId, orderNumber, missingItems, availableItemIds,
-    })
-    replyWA(jid, `Oi! Recebi seu pedido *${orderNumber}*, mas ${introMissing}${reservaHint}.\n\nPosso separar o restante?`)
-    return
-  }
-
-  // Fluxo normal sem controle de estoque ativo
   await setState(contactId, "triagem", { orderId, orderNumber })
   reply += `\n\nPode me mandar mais itens se precisar. Nossa equipe confirma e avisa quando estiver pronto!`
 
@@ -1686,124 +1566,10 @@ async function handleActiveOrder(
 ) {
   const lower = text.toLowerCase().trim()
 
-  // Estado confirmando: espera SIM/NÃO do cliente antes de qualquer outra lógica
+  // confirmando — operador está gerenciando, informa o cliente e aguarda
   if (state === "confirmando") {
-    const orderId     = stateData?.orderId     as number | undefined
-    const orderNumber = stateData?.orderNumber as string | undefined
-    const isSim = ["sim", "s", "yes", "confirmo"].includes(lower)
-    const isNao = ["não", "nao", "n", "no"].includes(lower)
-
-    if (isSim && orderId) {
-      const cli7 = await pool.connect()
-      try {
-        await cli7.query("BEGIN")
-        await cli7.query(`SELECT pg_advisory_xact_lock($1)`, [contactId])
-        await cli7.query(
-          `UPDATE orders SET status = 'em_separacao', needs_print = true WHERE id = $1`, [orderId]
-        )
-        await cli7.query(`
-          INSERT INTO order_events (order_id, status, actor, note)
-          VALUES ($1, 'em_separacao', 'chatbot', 'Confirmado pelo cliente via WhatsApp')
-        `, [orderId])
-        const { rows: already } = await cli7.query(`
-          SELECT 1 FROM stock_movements WHERE channel = 'chatbot' AND notes = $1 LIMIT 1
-        `, [`Pedido ${orderNumber}`])
-        if (!already.length) {
-          const { rows: items } = await cli7.query(
-            `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
-          )
-          for (const item of items) {
-            await cli7.query(
-              `INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-               VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)`,
-              [item.variant_id, item.qty, `Pedido ${orderNumber}`]
-            )
-          }
-        }
-        await cli7.query("COMMIT")
-      } catch (e) {
-        await cli7.query("ROLLBACK").catch(() => {})
-        console.error("[confirmando] transação falhou:", e)
-      } finally {
-        cli7.release()
-      }
-      await setState(contactId, "em_separacao", { orderId, orderNumber })
-      replyWA(jid, `✅ Perfeito! Pedido *${orderNumber}* confirmado e em separação. Avisaremos quando estiver pronto para retirada!`)
-      return
-    }
-
-    if (isNao && orderId) {
-      await pool.query(`UPDATE orders SET status = 'triagem' WHERE id = $1`, [orderId])
-      await pool.query(
-        `INSERT INTO order_events (order_id, status, actor, note)
-         VALUES ($1, 'triagem', 'chatbot', 'Cliente pediu ajuste via WhatsApp')`,
-        [orderId]
-      )
-      await setState(contactId, "triagem", { orderId, orderNumber })
-      replyWA(jid, `Tudo bem! Me fala o que quer ajustar no pedido *${orderNumber ?? ""}* — pode mudar quantidade, adicionar ou remover itens. Quando estiver certo é só responder *confirmar*.`)
-
-      // Notifica operador se configurado
-      pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
-        const opJid = rows[0]?.value
-        if (opJid) replyWA(opJid, `⚠️ *${pushName || jid}* pediu ajuste no pedido *${orderNumber ?? ""}*. O chatbot está em contato — pedido voltou para triagem.`)
-      }).catch(() => {})
-      return
-    }
-
-    replyWA(jid, `Seu pedido *${orderNumber ?? ""}* aguarda confirmação. Responde *SIM* para confirmar ou *NÃO* para ajustar.`)
+    replyWA(jid, "Seu pedido está em análise! Nossa equipe confirma em breve. 😊")
     return
-  }
-
-  // ── cliente sinaliza que pedido está pronto para confirmar (triagem) ────────
-  if (state === "triagem") {
-    const isConfirmar = lower === "pronto" || lower === "ok" || lower === "confirmar" ||
-      ["tá bom", "ta bom", "tudo certo", "pode confirmar", "pode ir", "fechado",
-       "tá certo", "ta certo", "isso mesmo", "está certo", "pode mandar"].some(k => lower.includes(k))
-
-    if (isConfirmar) {
-      const { rows: openConf } = await pool.query(
-        `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-         ORDER BY created_at DESC LIMIT 1`,
-        [contactId]
-      )
-      if (!openConf[0]) {
-        replyWA(jid, "Não encontrei pedido aberto. Me manda o que você quer pedir!")
-        return
-      }
-      const confOrderId  = openConf[0].id  as number
-      const confOrderNum = openConf[0].number as string
-
-      const { rows: confItems } = await pool.query(
-        `SELECT product_name, color, size, qty::int AS qty FROM order_items WHERE order_id = $1 ORDER BY id`,
-        [confOrderId]
-      )
-      if (!confItems.length) {
-        replyWA(jid, "Seu pedido está vazio. Me manda os itens primeiro!")
-        return
-      }
-
-      const confLines = (confItems as { product_name: string; color: string; size: string; qty: number }[]).map((it, idx) => {
-        const desc = [it.product_name, it.color, it.size].filter(Boolean).join(" ")
-        return `${idx + 1}. ${desc} · *${it.qty} un*`
-      })
-
-      await pool.query(`UPDATE orders SET status = 'confirmando' WHERE id = $1`, [confOrderId])
-      await pool.query(
-        `INSERT INTO order_events (order_id, status, actor, note)
-         VALUES ($1, 'confirmando', 'chatbot', 'Cliente sinalizou pedido pronto para separação')`,
-        [confOrderId]
-      )
-      await setState(contactId, "confirmando", { orderId: confOrderId, orderNumber: confOrderNum })
-
-      const totalConf = await pool.query(
-        `SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) AS total FROM order_items WHERE order_id = $1`,
-        [confOrderId]
-      )
-      const totalVal = Number(totalConf.rows[0]?.total ?? 0)
-      const totalStr = totalVal > 0 ? `\n\n💰 *Total: R$ ${totalVal.toFixed(2).replace(".", ",")}*` : ""
-      replyWA(jid, `Ótimo! Seu pedido *${confOrderNum}* ficou assim:\n\n${confLines.join("\n")}${totalStr}\n\nResponde *SIM* para confirmar ou *NÃO* para ajustar.`)
-      return
-    }
   }
 
   // ── pergunta de prazo → sinaliza para atendimento manual ──────────────────
@@ -2049,352 +1815,8 @@ async function handleActiveOrder(
   replyWA(jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida é só chamar.`)
 }
 
-// ─── Reserva: resposta do cliente ao "posso separar o restante?" ─────────────
+// ─── Reserva: resposta do cliente (legado — estado nunca mais setado pelo chatbot) ──
 
-async function handleAguardandoSeparacaoResposta(
-  jid: string,
-  contactId: number,
-  stateData: Record<string, unknown>,
-  text: string
-) {
-  const lower   = text.toLowerCase().trim()
-  const isSim   = ["sim", "s", "yes", "pode", "claro", "manda", "vai", "ok", "pode sim"].some(w => lower === w || lower.startsWith(w + " "))
-  const isNao   = ["não", "nao", "n", "no", "nao quero", "não quero"].includes(lower)
-
-  const orderId     = stateData.orderId     as number
-  const orderNumber = stateData.orderNumber as string
-  const missingItems= (stateData.missingItems as Array<{ variantId: string | null; name: string; qty: number; withReserva?: boolean }>) ?? []
-  const availableItemIds = (stateData.availableItemIds as number[]) ?? []
-  const allMissing  = Boolean(stateData.allMissing)
-
-  if (isSim) {
-    if (allMissing) {
-      // Todos os itens em produção — cria reservas, mantém pedido em triagem
-      for (const mi of missingItems) {
-        if (mi.variantId) {
-          await pool.query(`
-            INSERT INTO product_reservations (contact_id, variant_id, qty, prod_order_id, order_id)
-            VALUES ($1, $2, $3,
-              (SELECT po.id FROM prod_orders po JOIN prod_order_items poi ON poi.order_id = po.id
-               JOIN product_variants pv ON pv.product_id = poi.product_id
-               WHERE po.status = 'em_andamento' AND pv.id = $2 LIMIT 1),
-              $4)
-          `, [contactId, mi.variantId, mi.qty, orderId])
-        }
-      }
-      await setState(contactId, "triagem", { orderId, orderNumber })
-      replyWA(jid, `✅ Reserva feita! Assim que ${missingItems.length === 1 ? "o item chegar" : "os itens chegarem"} te avisamos aqui.`)
-      return
-    }
-
-    // Parcial: remove itens faltantes, avança para separação
-    if (availableItemIds.length > 0) {
-      const cli6 = await pool.connect()
-      try {
-        await cli6.query("BEGIN")
-        await cli6.query(`SELECT pg_advisory_xact_lock($1)`, [contactId])
-        await cli6.query(`
-          DELETE FROM order_items WHERE order_id = $1 AND id != ALL($2::int[])
-        `, [orderId, availableItemIds])
-        await cli6.query(
-          `UPDATE orders SET total_value = (
-             SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
-           ), is_partial = true, status = 'em_separacao', needs_print = true WHERE id = $1`,
-          [orderId]
-        )
-        await cli6.query(`
-          INSERT INTO order_events (order_id, status, actor, note)
-          VALUES ($1, 'em_separacao', 'chatbot', 'Cliente confirmou separação parcial')
-        `, [orderId])
-        const { rows: items } = await cli6.query(
-          `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`, [orderId]
-        )
-        for (const item of items) {
-          await cli6.query(`
-            INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-            VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
-          `, [item.variant_id, item.qty, `Pedido ${orderNumber}`])
-        }
-        await cli6.query("COMMIT")
-      } catch (e) {
-        await cli6.query("ROLLBACK").catch(() => {})
-        console.error("[aguardandoSeparacao] transação falhou:", e)
-        throw e
-      } finally {
-        cli6.release()
-      }
-    }
-
-    // Cria reservas para itens com prod_order ativo
-    for (const mi of missingItems) {
-      if (mi.variantId && mi.withReserva) {
-        await pool.query(`
-          INSERT INTO product_reservations (contact_id, variant_id, qty, prod_order_id, order_id)
-          VALUES ($1, $2, $3,
-            (SELECT po.id FROM prod_orders po JOIN prod_order_items poi ON poi.order_id = po.id
-             JOIN product_variants pv ON pv.product_id = poi.product_id
-             WHERE po.status = 'em_andamento' AND pv.id = $2 LIMIT 1),
-            $4)
-        `, [contactId, mi.variantId, mi.qty, orderId])
-      }
-    }
-
-    const hasReserva = missingItems.some(m => m.withReserva)
-    await setState(contactId, "em_separacao", { orderId, orderNumber })
-
-    let msg = `✅ Perfeito! Já estamos separando o que tem.`
-    if (hasReserva) msg += ` E já anotei a reserva dos itens em produção — te aviso quando chegar!`
-    msg += ` Avisamos quando pronto para retirada!`
-    replyWA(jid, msg)
-    return
-  }
-
-  if (isNao) {
-    await setState(contactId, "aguardando_cancelamento_resposta", { orderId, orderNumber })
-    replyWA(jid, `Sem problema! Deseja cancelar o pedido *${orderNumber}*? Responde *SIM* ou *NÃO*.`)
-    return
-  }
-
-  // Não entendeu
-  replyWA(jid, `Responde *SIM* para separar o que tem ou *NÃO* se preferir aguardar.`)
-}
-
-async function handleAguardandoCancelamentoResposta(
-  jid: string,
-  contactId: number,
-  stateData: Record<string, unknown>,
-  text: string
-) {
-  const lower = text.toLowerCase().trim()
-  const isSim = ["sim", "s", "yes", "pode cancelar", "cancela"].some(w => lower === w || lower.startsWith(w + " "))
-  const isNao = ["não", "nao", "n", "no"].includes(lower)
-
-  const orderId     = stateData.orderId     as number
-  const orderNumber = stateData.orderNumber as string
-
-  if (isSim) {
-    await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [orderId])
-    await pool.query(`
-      INSERT INTO order_events (order_id, status, actor, note)
-      VALUES ($1, 'cancelado', 'chatbot', 'Cliente cancelou via WhatsApp')
-    `, [orderId])
-    await setState(contactId, "idle")
-    replyWA(jid, `Ok, pedido *${orderNumber}* cancelado. Quando precisar é só chamar!`)
-    return
-  }
-
-  if (isNao) {
-    await pool.query(
-      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
-      [contactId]
-    )
-    await setState(contactId, "triagem", { orderId, orderNumber })
-    replyWA(jid, `Certo! Pedido *${orderNumber}* continua aguardando. Nossa equipe entra em contato.`)
-    return
-  }
-
-  replyWA(jid, `Responde *SIM* para cancelar ou *NÃO* para manter o pedido.`)
-}
-
-async function handleAguardandoReservaResposta(
-  jid: string,
-  contactId: number,
-  stateData: Record<string, unknown>,
-  text: string
-) {
-  const lower = text.toLowerCase().trim()
-  const isSim = ["sim", "s", "yes", "quero", "preciso", "pode", "manda"].some(w => lower === w || lower.startsWith(w + " "))
-  const isNao = ["não", "nao", "n", "no", "nao preciso", "não preciso", "cancelar", "cancela"].some(w => lower === w || lower.startsWith(w + " "))
-
-  const reservationId = stateData.reservationId as number
-  const variantId     = stateData.variantId     as string
-  const variantName   = stateData.variantName   as string
-  const qty           = stateData.qty           as number
-
-  if (isSim) {
-    // Verifica saldo disponível (descontando reservas notificadas de outros clientes)
-    const { rows: stockRows } = await pool.query(`
-      SELECT
-        COALESCE(SUM(CASE WHEN sm.type = 'in' THEN sm.quantity ELSE -sm.quantity END), 0) AS balance,
-        COALESCE(
-          (SELECT SUM(qty) FROM product_reservations
-           WHERE variant_id = $1 AND status = 'notified' AND id != $2),
-          0
-        ) AS other_notified
-      FROM stock_movements sm
-      WHERE sm.variant_id = $1
-    `, [variantId, reservationId])
-
-    const available = Math.max(
-      0,
-      Number(stockRows[0]?.balance ?? 0) - Number(stockRows[0]?.other_notified ?? 0)
-    )
-
-    if (available < qty) {
-      // Estoque insuficiente — cancela e avisa
-      await pool.query(`UPDATE product_reservations SET status = 'cancelled' WHERE id = $1`, [reservationId])
-      await setState(contactId, "idle")
-      replyWA(jid, `😔 Lamentamos! As unidades de *${variantName}* foram reservadas por outros clientes. Assim que tiver disponível novamente, te avisamos!`)
-      return
-    }
-
-    // Confirma reserva → cria novo pedido
-    const numRes  = await pool.query("SELECT nextval('order_number_seq') AS n")
-    const number  = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
-    const { rows: vRows } = await pool.query(
-      `SELECT sale_price FROM product_variants WHERE id = $1`, [variantId]
-    )
-    const unitPrice  = vRows[0]?.sale_price ? Number(vRows[0].sale_price) : null
-    const totalValue = unitPrice ? unitPrice * qty : null
-
-    const { rows: [newOrder] } = await pool.query(`
-      INSERT INTO orders (number, contact_id, status, total_value, source, needs_print)
-      VALUES ($1, $2, 'em_separacao', $3, 'whatsapp', true)
-      RETURNING id, number
-    `, [number, contactId, totalValue])
-
-    await pool.query(`
-      INSERT INTO order_items (order_id, product_name, color, size, variant_id, qty, unit_price)
-      SELECT $1, p.name, pv.color, pv.size, pv.id, $2, pv.sale_price
-      FROM product_variants pv JOIN products p ON p.id = pv.product_id
-      WHERE pv.id = $3
-    `, [newOrder.id, qty, variantId])
-
-    await pool.query(`
-      INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-      VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
-    `, [variantId, qty, `Pedido ${number} (reserva)`])
-
-    await pool.query(`UPDATE product_reservations SET status = 'confirmed' WHERE id = $1`, [reservationId])
-
-    await pool.query(`
-      INSERT INTO order_events (order_id, status, actor, note)
-      VALUES ($1, 'em_separacao', 'chatbot', 'Pedido criado a partir de reserva confirmada')
-    `, [newOrder.id])
-
-    await setState(contactId, "em_separacao", { orderId: newOrder.id, orderNumber: number })
-    replyWA(jid, `✅ Perfeito! Separando as *${qty} ${variantName}* para você. Pedido *${number}* em separação — avisamos quando pronto!`)
-    return
-  }
-
-  if (isNao) {
-    await pool.query(`UPDATE product_reservations SET status = 'cancelled' WHERE id = $1`, [reservationId])
-
-    // Notifica o próximo da fila imediatamente (sem esperar o cron)
-    const { rows: nextRes } = await pool.query(`
-      SELECT pr.id, pr.contact_id, pr.qty, pv.color, pv.size, p.name AS product_name,
-             COALESCE(c.phone_jid, c.jid) AS send_jid
-      FROM product_reservations pr
-      JOIN product_variants pv ON pv.id = pr.variant_id
-      JOIN products p          ON p.id  = pv.product_id
-      JOIN wa_contacts c       ON c.id  = pr.contact_id
-      WHERE pr.variant_id = $1 AND pr.status = 'pending'
-      ORDER BY pr.created_at ASC LIMIT 1
-    `, [variantId])
-
-    if (nextRes[0]?.send_jid) {
-      const next = nextRes[0]
-      const { rows: cfgRows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'reserva_expiry_hours'`)
-      const expiryHours = Number(cfgRows[0]?.value ?? 4)
-      const expiresAt   = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString()
-      const nextName    = [next.product_name, next.color, next.size].filter(Boolean).join(" ")
-
-      await pool.query(`
-        UPDATE product_reservations SET status = 'notified', notified_at = NOW(), expires_at = $1
-        WHERE id = $2
-      `, [expiresAt, next.id])
-
-      await pool.query(`
-        UPDATE wa_contacts SET state = 'aguardando_reserva_resposta', state_data = $1, updated_at = NOW()
-        WHERE id = $2
-      `, [JSON.stringify({ reservationId: next.id, variantId, variantName: nextName, qty: next.qty }), next.contact_id])
-
-      sendWhatsApp(next.send_jid, `🎉 Boa notícia! A *${nextName}* que você reservou chegou!\n\nAinda precisa? Responde *SIM* ou *NÃO*.`).catch(() => {})
-    }
-
-    await setState(contactId, "idle")
-    replyWA(jid, `Tudo bem! Reserva cancelada. Quando precisar é só chamar.`)
-    return
-  }
-
-  replyWA(jid, `A *${variantName}* que você reservou chegou! Ainda precisa? Responde *SIM* ou *NÃO*.`)
-}
-
-// ─── Silent order create (chatbot mudo + pedidos_auto on) ───────────────────
-
-async function trySilentOrderCreate(contactId: number, text: string) {
-  try {
-    // Pass last ordered product as context so AI can infer product when not specified
-    let productHint: string | null = null
-    try {
-      const res = await pool.query(`
-        SELECT oi.product_name
-        FROM order_items oi
-        JOIN orders o ON o.id = oi.order_id
-        WHERE o.contact_id = $1 AND o.status != 'cancelado'
-        ORDER BY o.created_at DESC LIMIT 1
-      `, [contactId])
-      if (res.rows[0]?.product_name) {
-        productHint = `Último produto pedido por este cliente: "${res.rows[0].product_name}". Se a mensagem tiver qty+cor+tamanho sem produto explícito, use este produto.`
-      }
-    } catch { /* no history */ }
-
-    const { intent, items: preParsed } = await classifyAndParse(text, productHint)
-    if (intent !== "pedido" || !preParsed || preParsed.length === 0) return
-
-    const matched = await matchVariants(preParsed)
-    if (matched.length === 0) return
-
-    // Dedup: acrescenta na triagem aberta se existir
-    const { rows: openTriagemSilent } = await pool.query(
-      `SELECT id FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       AND created_at > NOW() - INTERVAL '2 hours' ORDER BY created_at DESC LIMIT 1`,
-      [contactId]
-    )
-    if (openTriagemSilent[0]) {
-      const existId = openTriagemSilent[0].id as number
-      for (const item of matched) {
-        await pool.query(
-          `INSERT INTO order_items (order_id, product_name, color, size, qty, variant_id, unit_price)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [existId, item.productName, item.color || "", item.size || "", item.qty, item.variantId, item.unitPrice]
-        )
-      }
-      await pool.query(
-        `UPDATE orders SET total_value = (
-           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
-         ) WHERE id = $1`,
-        [existId]
-      )
-      return
-    }
-
-    const totalValue = matched.reduce((sum, m) => sum + (m.unitPrice ?? 0) * m.qty, 0)
-
-    const numRes = await pool.query("SELECT nextval('order_number_seq') AS n")
-    const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
-
-    const orderRes = await pool.query(`
-      INSERT INTO orders (number, contact_id, status, total_value, source)
-      VALUES ($1, $2, 'triagem', $3, 'whatsapp')
-      RETURNING id
-    `, [number, contactId, totalValue > 0 ? totalValue : null])
-
-    const orderId = orderRes.rows[0].id
-
-    for (const item of matched) {
-      await pool.query(`
-        INSERT INTO order_items (order_id, product_name, color, size, qty, variant_id, unit_price)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [orderId, item.productName, item.color || "", item.size || "", item.qty, item.variantId, item.unitPrice])
-    }
-
-    await pool.query(`
-      INSERT INTO order_events (order_id, status, actor, note)
-      VALUES ($1, 'triagem', 'chatbot', 'Pedido detectado automaticamente — modo manual ativo')
-    `, [orderId])
-  } catch (e) { console.error("[trySilentOrderCreate] falhou:", e) }
-}
 
 // ─── DTF media handler ───────────────────────────────────────────────────────
 
@@ -2419,20 +1841,6 @@ async function handleDtfMedia(
       RETURNING id
     `, [number, today, contactId, stateData.larguraCm ?? null])
     const pedidoId = pedidoRes.rows[0].id
-
-    // Auto-link the triggering wa_message to this order
-    const { rows: msgRows } = await cli8.query(`
-      SELECT id, file_name FROM wa_messages
-      WHERE contact_id = $1 AND media_type IN ('document', 'image') AND direction = 'in'
-        AND created_at > NOW() - INTERVAL '5 minutes'
-      ORDER BY id DESC LIMIT 1
-    `, [contactId])
-    if (msgRows[0]) {
-      await cli8.query(`
-        INSERT INTO dtf_order_attachments (pedido_id, wa_message_id, filename)
-        VALUES ($1, $2, $3)
-      `, [pedidoId, msgRows[0].id, msgRows[0].file_name]).catch(() => {})
-    }
 
     await cli8.query(
       `UPDATE wa_contacts

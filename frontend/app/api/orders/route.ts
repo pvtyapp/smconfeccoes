@@ -4,14 +4,16 @@ import { pool } from "@/lib/db"
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
-    const status = searchParams.get("status")
-    const source = searchParams.get("source")
+    const status     = searchParams.get("status")
+    const source     = searchParams.get("source")
+    const activeOnly = searchParams.get("activeOnly") === "true"
 
     const conditions: string[] = []
     const params: unknown[] = []
 
-    if (status) { params.push(status); conditions.push(`o.status = $${params.length}`) }
-    if (source) { params.push(source); conditions.push(`o.source = $${params.length}`) }
+    if (status)     { params.push(status); conditions.push(`o.status = $${params.length}`) }
+    if (source)     { params.push(source); conditions.push(`o.source = $${params.length}`) }
+    if (activeOnly) { conditions.push(`o.status NOT IN ('concluido', 'cancelado')`) }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""
 

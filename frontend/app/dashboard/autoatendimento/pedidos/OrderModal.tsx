@@ -12,7 +12,7 @@ type Props = {
 
 const STATUS_LABEL: Record<string, string> = {
   triagem:      "Triagem",
-  confirmando:  "Confirmando",
+  confirmando:  "Aguard. Confirmação",
   em_separacao: "Em Separação",
   pronto:       "Pronto",
   concluido:    "Concluído",
@@ -424,13 +424,13 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* TRIAGEM: dois avanços — salva automaticamente em ambos */}
+            {/* TRIAGEM: confirmar+notificar ou avançar direto */}
             {isTriagem && (
               <>
                 <button onClick={handleEnviarConfirmar} disabled={saving}
                   className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-purple-300 text-purple-600 text-sm font-semibold hover:bg-purple-50 disabled:opacity-50 transition-colors">
                   {saving ? <Loader2 size={13} className="animate-spin" /> : null}
-                  Enviar p/ Confirmar
+                  Confirmar e Notificar
                 </button>
                 <button onClick={handleMarcarSeparacao} disabled={saving}
                   className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">

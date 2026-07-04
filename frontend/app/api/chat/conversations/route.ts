@@ -39,7 +39,7 @@ export async function DELETE(req: Request) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
-    const limit  = Math.min(parseInt(searchParams.get("limit")  ?? "20"), 100)
+    const limit  = Math.min(parseInt(searchParams.get("limit")  ?? "20"), 500)
     const offset = Math.max(parseInt(searchParams.get("offset") ?? "0"), 0)
 
     const { rows } = await pool.query(`

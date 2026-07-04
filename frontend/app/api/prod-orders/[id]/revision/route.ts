@@ -147,20 +147,9 @@ export async function POST(
             WHERE id = $2
           `, [expiresAt, res.id])
 
-          await pool.query(`
-            UPDATE wa_contacts SET state = 'aguardando_reserva_resposta',
-              state_data = $1, updated_at = NOW()
-            WHERE id = $2
-          `, [JSON.stringify({
-            reservationId: res.id,
-            variantId:     res.variant_id,
-            variantName,
-            qty:           res.qty,
-          }), res.contact_id])
-
           sendWhatsApp(
             res.jid,
-            `🎉 Boa notícia! A *${variantName}* que você reservou chegou!\n\nAinda precisa? Responde *SIM* ou *NÃO*.`
+            `🎉 Boa notícia! A *${variantName}* que você reservou chegou! Entre em contato para confirmar o pedido. 😊`
           ).catch(() => {})
         }
       }

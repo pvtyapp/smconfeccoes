@@ -166,9 +166,10 @@ function getHistDates(key: HistPeriod, rs: string, re: string): [string, string]
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const PROD_COLS = [
-  { key: "triagem",      label: "Triagem",      hdr: "bg-amber-50 border-amber-200",   badge: "bg-amber-100 text-amber-700",   txt: "text-amber-700"   },
-  { key: "em_separacao", label: "Em Separação", hdr: "bg-blue-50 border-blue-200",     badge: "bg-blue-100 text-blue-700",     txt: "text-blue-700"    },
-  { key: "pronto",       label: "Pronto",       hdr: "bg-green-50 border-green-200",   badge: "bg-green-100 text-green-700",   txt: "text-green-700"   },
+  { key: "triagem",      label: "Triagem",                hdr: "bg-amber-50 border-amber-200",    badge: "bg-amber-100 text-amber-700",    txt: "text-amber-700"    },
+  { key: "confirmando",  label: "Aguard. Confirmação",    hdr: "bg-purple-50 border-purple-200",  badge: "bg-purple-100 text-purple-700",  txt: "text-purple-700"   },
+  { key: "em_separacao", label: "Em Separação",           hdr: "bg-blue-50 border-blue-200",      badge: "bg-blue-100 text-blue-700",      txt: "text-blue-700"     },
+  { key: "pronto",       label: "Pronto",                 hdr: "bg-green-50 border-green-200",    badge: "bg-green-100 text-green-700",    txt: "text-green-700"    },
 ]
 
 const DTF_COLS = [
@@ -327,9 +328,7 @@ export default function PedidosPage() {
 
   // Global bot settings
   const [chatbotAtivo,      setChatbotAtivo]      = useState(true)
-  const [pedidosAuto,       setPedidosAuto]        = useState(true)
   const [togglingBot,       setTogglingBot]        = useState(false)
-  const [togglingPed,       setTogglingPed]        = useState(false)
   const [resetting,         setResetting]          = useState(false)
   const [controleEstoque,   setControleEstoque]    = useState(false)
   const [togglingEstoque,   setTogglingEstoque]    = useState(false)
@@ -382,7 +381,6 @@ export default function PedidosPage() {
       .then(r => r.json())
       .then((s: Record<string, string>) => {
         if (s.chatbot_ativo           !== undefined) setChatbotAtivo(s.chatbot_ativo         !== "false")
-        if (s.pedidos_auto            !== undefined) setPedidosAuto(s.pedidos_auto           !== "false")
         if (s.dtf_ativo               !== undefined) setDtfAtivo(s.dtf_ativo                !== "false")
         if (s.controle_estoque_ativo  !== undefined) setControleEstoque(s.controle_estoque_ativo === "true")
         if (s.produto_horario_dias)   setProdDias(s.produto_horario_dias.split(",").map(Number))
@@ -423,18 +421,6 @@ export default function PedidosPage() {
       body: JSON.stringify({ chatbot_ativo: String(next) }),
     }).catch(() => setChatbotAtivo(!next))
     setTogglingBot(false)
-  }
-
-  async function togglePedidos() {
-    setTogglingPed(true)
-    const next = !pedidosAuto
-    setPedidosAuto(next)
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pedidos_auto: String(next) }),
-    }).catch(() => setPedidosAuto(!next))
-    setTogglingPed(false)
   }
 
   async function toggleDtf() {
@@ -505,7 +491,7 @@ export default function PedidosPage() {
   const loadOrders = useCallback(async () => {
     setLoadingOrders(true)
     try {
-      const res = await fetch("/api/orders?source=whatsapp")
+      const res = await fetch("/api/orders?source=whatsapp&activeOnly=true")
       const data = await res.json()
       const fresh: Order[] = Array.isArray(data) ? data : []
       setOrders(fresh)
@@ -1928,16 +1914,6 @@ export default function PedidosPage() {
               </button>
             </div>
 
-            {/* Toggle Pedidos auto */}
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] font-bold text-[#0F1E3C]/50">Auto</p>
-              <Tip text="Com o chatbot mudo, detecta pedidos nas mensagens e cria na triagem automaticamente, sem responder o cliente." />
-              <button onClick={togglePedidos} disabled={togglingPed}
-                className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${pedidosAuto ? "bg-amber-500" : "bg-[#0F1E3C]/15"}`}>
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${pedidosAuto ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
-            </div>
-
             <div className="w-px h-5 bg-[#0F1E3C]/8" />
 
             {/* Produto — lista por produto */}
@@ -2168,9 +2144,7 @@ export default function PedidosPage() {
             <div className="overflow-x-auto">
               <div className="flex gap-3 pb-2" style={{ minWidth: "max-content" }}>
                 {PROD_COLS.map(col => {
-                  const colOrders = col.key === "triagem"
-                    ? orders.filter(o => o.status === "triagem" || o.status === "confirmando")
-                    : orders.filter(o => o.status === col.key)
+                  const colOrders = orders.filter(o => o.status === col.key)
                   return (
                     <div key={col.key} className="w-64 flex-shrink-0">
                       <div className={`flex items-center justify-between mb-2 px-3 py-2 rounded-xl border ${col.hdr}`}>

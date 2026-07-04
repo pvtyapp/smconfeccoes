@@ -45,17 +45,17 @@ export async function POST(
         WHERE order_id = $1 AND variant_id IS NOT NULL
       `, [id])
 
-      // Evita baixa dupla se já foi baixado (is_partial já baixou no chatbot auto-advance)
+      // Evita baixa dupla se status route chamado duas vezes
       const { rows: alreadyDeducted } = await client.query(`
         SELECT 1 FROM stock_movements
-        WHERE channel = 'chatbot' AND notes = $1 LIMIT 1
+        WHERE notes = $1 AND type = 'out' LIMIT 1
       `, [`Pedido ${order.number}`])
 
       if (!alreadyDeducted.length) {
         for (const item of itemsRes.rows) {
           await client.query(`
             INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-            VALUES ($1, 'out', $2, 'venda', 'chatbot', $3)
+            VALUES ($1, 'out', $2, 'venda', 'dashboard', $3)
           `, [item.variant_id, item.qty, `Pedido ${order.number}`])
         }
       }
@@ -165,7 +165,7 @@ export async function POST(
         }
       }
 
-      const confirmMsg = `${intro}${lines.join("\n")}\n\nConfirme respondendo *SIM* para ir para separação ou *NÃO* se precisar ajustar.`
+      const confirmMsg = `${intro}${lines.join("\n")}\n\nEstamos conferindo tudo! Qualquer ajuste, avisamos aqui. 😊`
       sendWhatsApp(order.jid, confirmMsg).catch(() => {})
       pool.query(
         `UPDATE wa_contacts SET state = 'confirmando', state_data = $1, updated_at = NOW() WHERE id = $2`,
