@@ -780,7 +780,7 @@ export default function PedidosPage() {
 
   const loadOlderMsgs = useCallback(async (contactId: number, currentOffset: number) => {
     setLoadingOlderMsgs(true)
-    const newOffset = currentOffset + 60
+    const newOffset = currentOffset + 50
     const r = await fetch(`/api/chat/messages?contactId=${contactId}&offset=${newOffset}`)
     if (r.ok) {
       const data = await r.json()
@@ -811,7 +811,9 @@ export default function PedidosPage() {
       const existingIds = new Set(prev.map(m => m.id))
       const deduped = newMsgs.filter(m => !existingIds.has(m.id))
       if (deduped.length === 0) return prev
-      return [...prev, ...deduped]
+      return [...prev, ...deduped].sort((a, b) =>
+        a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id - b.id
+      )
     })
     const maxId = Math.max(...newMsgs.map(m => m.id))
     if (maxId > lastSeenId.current) lastSeenId.current = maxId
@@ -844,9 +846,10 @@ export default function PedidosPage() {
     latestMsgAt.current = null
     lastSeenId.current  = 0
     isFirstLoad.current = true
-    // Carrega do DB imediatamente; sync de saída em paralelo + poll rápido depois
-    loadMessages(chatContact.id)
-    syncOutgoing(chatContact.id, chatContact.jid).then(() => pollMessages(chatContact.id))
+    // sync primeiro para garantir que outgoing histórico está no DB antes do full load
+    syncOutgoing(chatContact.id, chatContact.jid)
+      .then(() => loadMessages(chatContact.id))
+      .then(() => pollMessages(chatContact.id))
     loadContactDtfOrders(chatContact.id)
     // Mark as read in DB + send read receipt to WA (bidirectional)
     fetch("/api/chat/mark-read", {
