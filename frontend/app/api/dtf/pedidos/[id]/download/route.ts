@@ -27,27 +27,34 @@ function getExt(filename: string | null, mimeType: string | null): string {
   return "bin"
 }
 
-// Handles both https:// URLs (Vercel Blob legacy) and data: base64 strings (PostgreSQL)
-async function fetchFileBuffer(blobUrl: string | null): Promise<{ buffer: ArrayBuffer; mimeType: string } | null> {
+// Returns a Node.js Buffer (Uint8Array subclass) — JSZip handles "nodebuffer" natively
+async function fetchFileBuffer(blobUrl: string | null): Promise<{ buffer: Buffer; mimeType: string } | null> {
   if (!blobUrl) return null
+
   if (blobUrl.startsWith("data:")) {
     const comma = blobUrl.indexOf(",")
     if (comma === -1) return null
-    const meta    = blobUrl.slice(5, comma)          // e.g. "image/png;base64"
-    const b64     = blobUrl.slice(comma + 1)
-    const mime    = meta.split(";")[0]
-    const bytes   = Buffer.from(b64, "base64")
-    return { buffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), mimeType: mime }
+    const meta  = blobUrl.slice(5, comma)   // e.g. "image/png;base64"
+    const b64   = blobUrl.slice(comma + 1)
+    const mime  = meta.split(";")[0]
+    return { buffer: Buffer.from(b64, "base64"), mimeType: mime }
   }
+
+  // Legacy https:// Vercel Blob URL
   try {
     const res = await fetch(blobUrl)
     if (!res.ok) return null
-    const buffer = await res.arrayBuffer()
+    const arrayBuf = await res.arrayBuffer()
     const mimeType = res.headers.get("content-type") ?? "application/octet-stream"
-    return { buffer, mimeType }
+    return { buffer: Buffer.from(arrayBuf), mimeType }
   } catch {
     return null
   }
+}
+
+// Extracts a concrete ArrayBuffer from a Buffer (needed for new Response())
+function toArrayBuffer(buf: Buffer): ArrayBuffer {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
 }
 
 export async function GET(
@@ -86,19 +93,21 @@ export async function GET(
       return NextResponse.json({ error: "Nenhum arquivo no pedido" }, { status: 404 })
 
     const clienteSlug = slugify(pedido.contactName ?? "cliente")
-    const dateStr: string = pedido.data
-    const [year, month, day] = dateStr.split("-")
-    void year
-    const ddMM   = `${day}${month}`
-    const prefix = `${clienteSlug}-${ddMM}`
+    const dateStr     = String(pedido.data ?? "")
+    const parts       = dateStr.split("-")
+    const day         = parts[2]?.slice(0, 2) ?? "00"
+    const month       = parts[1] ?? "00"
+    const ddMM        = `${day}${month}`
+    const prefix      = `${clienteSlug}-${ddMM}`
 
     if (attachments.length === 1) {
       const att    = attachments[0]
       const result = await fetchFileBuffer(att.blobUrl)
-      if (!result) return NextResponse.json({ error: "Falha ao ler arquivo" }, { status: 502 })
+      if (!result)
+        return NextResponse.json({ error: "Arquivo não encontrado (mídia expirada)" }, { status: 404 })
       const ext             = getExt(att.filename, att.mimeType ?? result.mimeType)
       const renamedFilename = `${prefix}-1.${ext}`
-      return new Response(result.buffer, {
+      return new Response(toArrayBuffer(result.buffer), {
         headers: {
           "Content-Type": att.mimeType ?? result.mimeType,
           "Content-Disposition": `attachment; filename="${renamedFilename}"`,
@@ -114,6 +123,7 @@ export async function GET(
       if (!result) continue
       const ext             = getExt(att.filename, att.mimeType ?? result.mimeType)
       const renamedFilename = `${prefix}-${i + 1}.${ext}`
+      // Pass Buffer directly — JSZip detects as "nodebuffer" and handles natively
       zip.file(renamedFilename, result.buffer)
       addedFiles++
     }
@@ -121,10 +131,11 @@ export async function GET(
     if (addedFiles === 0)
       return NextResponse.json({ error: "Arquivos não encontrados (mídia expirada)" }, { status: 404 })
 
-    const zipUint8 = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" })
-    const zipName  = `${prefix}-artes.zip`
+    // Use "nodebuffer" output — avoids the JSZip arraybuffer DataWorker bug
+    const zipBuf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
+    const zipName = `${prefix}-artes.zip`
 
-    return new Response(zipUint8, {
+    return new Response(toArrayBuffer(zipBuf), {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${zipName}"`,
