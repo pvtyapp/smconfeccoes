@@ -45,6 +45,21 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+    const body = await req.json().catch(() => ({})) as { isPaid?: boolean | null }
+    await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS is_paid BOOLEAN`).catch(() => {})
+    await pool.query(`UPDATE dtf_pedidos SET is_paid = $1 WHERE id = $2`, [body.isPaid ?? null, id])
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }

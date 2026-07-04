@@ -33,10 +33,8 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   const [metrosFinais,   setMetrosFinais]   = useState(order.metrosFinais ? String(order.metrosFinais) : "")
   const [precoPorMetro,  setPrecoPorMetro]  = useState<number | null>(null)
   const [precoCarregado, setPrecoCarregado] = useState(false)
-  const [usePrazo,       setUsePrazo]       = useState(false)
-  const [dueDate,        setDueDate]        = useState("")
   const [showConcluir,   setShowConcluir]   = useState(false)
-  const [isPaid,         setIsPaid]         = useState(true)
+  const [isPaid,         setIsPaid]         = useState(order.isPaid ?? true)
   const [error,          setError]          = useState("")
   const [showCancel,     setShowCancel]     = useState(false)
   const [notifyClient,   setNotifyClient]   = useState(true)
@@ -161,21 +159,23 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
     }
   }
 
+  function saveIsPaid(val: boolean) {
+    setIsPaid(val)
+    fetch(`/api/dtf/pedidos/${order.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isPaid: val }),
+    }).catch(() => {})
+  }
+
   async function concluir() {
-    if (usePrazo && !dueDate) {
-      setError("Informe a data de vencimento.")
-      return
-    }
     setSaving(true)
     setError("")
     try {
       const r = await fetch(`/api/dtf/pedidos/${order.id}/conclude`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          isPaid,
-          dueDate: usePrazo && dueDate ? dueDate : null,
-        }),
+        body: JSON.stringify({ isPaid }),
       })
       if (!r.ok) {
         const d = await r.json()
@@ -249,13 +249,6 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
                 <p className="text-xs font-bold text-green-700 uppercase tracking-wider">Pronto para retirada</p>
                 {order.metrosFinais && (
                   <p className="text-sm text-green-700 mt-0.5">{Number(order.metrosFinais).toFixed(2)} m</p>
-                )}
-                {order.dueDate ? (
-                  <p className="text-xs text-green-600 mt-0.5">
-                    Vence {new Date(order.dueDate + "T12:00:00").toLocaleDateString("pt-BR")}
-                  </p>
-                ) : (
-                  <p className="text-xs text-green-600 mt-0.5">À vista</p>
                 )}
               </div>
               {order.precoCobrado && (
@@ -446,45 +439,11 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
                 )}
               </div>
 
-              {/* Prazo toggle */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setUsePrazo(v => !v)}
-                    className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${usePrazo ? "bg-amber-500" : "bg-[#0F1E3C]/15"}`}
-                    style={{ height: "22px" }}
-                  >
-                    <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${usePrazo ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-                  </button>
-                  <p className="text-sm font-semibold text-[#0F1E3C]">Pagamento a prazo</p>
-                </div>
-
-                {usePrazo ? (
-                  <div>
-                    <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">
-                      Data de vencimento *
-                    </label>
-                    <input
-                      type="date"
-                      value={dueDate}
-                      onChange={e => setDueDate(e.target.value)}
-                      className="w-full border border-amber-300 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400/30"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
-                    <Check size={12} className="text-emerald-600 flex-shrink-0" />
-                    <p className="text-xs text-emerald-700">Pagamento à vista confirmado.</p>
-                  </div>
-                )}
-              </div>
-
               {/* Pago toggle */}
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsPaid(v => !v)}
+                  onClick={() => saveIsPaid(!isPaid)}
                   className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
                   style={{ height: "22px" }}
                 >
@@ -572,7 +531,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
               <>
                 <div
                   className="flex items-center gap-2 flex-1 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
-                  onClick={() => setIsPaid(v => !v)}
+                  onClick={() => saveIsPaid(!isPaid)}
                 >
                   <button
                     type="button"

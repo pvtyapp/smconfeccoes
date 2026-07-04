@@ -17,6 +17,7 @@ export type DtfOrder = {
   status: string
   source: string
   dueDate: string | null
+  isPaid: boolean | null
   impressoraId: number | null
   contactId: number | null
   contactName: string | null
@@ -133,6 +134,15 @@ export default function DtfOrderCard({ order, onClick }: Props) {
         {order.status === "em_producao" && order.impressoraId != null && (
           <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
             🖨 Imp. {order.impressoraId}
+          </span>
+        )}
+        {(order.status === "pronto" || order.status === "concluido") && order.isPaid !== null && (
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+            order.isPaid
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+              : "bg-amber-50 text-amber-700 border-amber-200"
+          }`}>
+            {order.isPaid ? "Pago" : "A cobrar"}
           </span>
         )}
       </div>
