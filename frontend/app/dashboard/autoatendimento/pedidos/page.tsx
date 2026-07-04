@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
+import AudioPlayer from "./AudioPlayer"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
 
@@ -1703,15 +1704,19 @@ export default function PedidosPage() {
                                 )
 
                                 if (m.mediaType === "audio") return (
-                                  <div className="px-3 py-2">
+                                  <div>
                                     {msgMediaData
-                                      // eslint-disable-next-line jsx-a11y/media-has-caption
-                                      ? <audio controls src={msgMediaData} className="w-full max-w-[220px]" style={{ height: "32px" }} />
+                                      ? <AudioPlayer src={msgMediaData} isOut={isOut} />
                                       : msgMediaExpired
-                                        ? <span className="text-[12px]" style={{ color: "#8696A0" }}>🎤 Áudio expirado</span>
-                                        : <span className="text-[12px]" style={{ color: "#667781" }}>🎤 Áudio</span>
+                                        ? <div className="px-3 py-2 text-[12px]" style={{ color: "#8696A0" }}>🎤 Áudio expirado</div>
+                                        : <div className="px-3 py-2 flex items-center gap-2">
+                                            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "#E9EDEF" }}>
+                                              <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#8696A0", borderTopColor: "transparent" }} />
+                                            </div>
+                                            <span className="text-[12px]" style={{ color: "#667781" }}>Carregando áudio…</span>
+                                          </div>
                                     }
-                                    {timeEl("mt-1")}
+                                    {timeEl("px-3 pb-1.5")}
                                   </div>
                                 )
 
