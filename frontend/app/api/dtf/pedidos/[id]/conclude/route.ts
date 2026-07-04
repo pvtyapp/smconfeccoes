@@ -9,8 +9,9 @@ export async function POST(
   const client = await pool.connect()
   try {
     const { id }    = await params
-    const body      = await req.json().catch(() => ({})) as { isPaid?: boolean }
+    const body      = await req.json().catch(() => ({})) as { isPaid?: boolean; dueDate?: string | null }
     const isPaid    = body.isPaid !== false  // default true
+    const dueDate   = body.dueDate ?? null
 
     await client.query("BEGIN")
 
@@ -28,13 +29,13 @@ export async function POST(
 
     const pedido = rows[0]
 
-    // Apenas colunas que existem na tabela
     await client.query(`
       UPDATE dtf_pedidos
       SET status       = 'concluido',
-          concluded_at = NOW()
+          concluded_at = NOW(),
+          due_date     = COALESCE($2, due_date)
       WHERE id = $1
-    `, [id])
+    `, [id, dueDate])
 
     if (pedido.contact_id) {
       await client.query(`
