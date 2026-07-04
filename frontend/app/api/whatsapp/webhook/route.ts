@@ -469,21 +469,51 @@ export async function POST(req: Request) {
       return trimmed
     })()
 
-    const contactRes = await pool.query(`
-      INSERT INTO wa_contacts (jid, name, phone, phone_jid)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (jid) DO UPDATE SET
-        name      = CASE
-                      WHEN wa_contacts.name IS NOT NULL THEN wa_contacts.name
-                      WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN NULL
-                      ELSE EXCLUDED.name
-                    END,
-        phone     = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
-        phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
-        updated_at = NOW()
-      RETURNING id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
-                updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
-    `, [jid, pushName, phone, phoneJid])
+    // For @s.whatsapp.net incoming: if a @lid twin exists, route to it — prevents ghost cycling
+    // when cleanup deleted the @s contact but client still messages via @s JID
+    let overrideContactId: number | null = null
+    if (jid.endsWith("@s.whatsapp.net") && phone.length >= 8) {
+      const { rows: lidRows } = await pool.query(
+        `SELECT id FROM wa_contacts
+         WHERE jid LIKE '%@lid' AND (phone = $1 OR phone_jid = $2)
+         LIMIT 1`,
+        [phone, jid]
+      ).catch(() => ({ rows: [] as { id: number }[] }))
+      if (lidRows[0]) {
+        overrideContactId = lidRows[0].id as number
+        pool.query(
+          `UPDATE wa_contacts
+           SET phone_jid = COALESCE(phone_jid, $1),
+               phone     = CASE WHEN phone ~ '^[0-9]{8,15}$' THEN phone ELSE $2 END,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [jid, phone, overrideContactId]
+        ).catch(() => {})
+      }
+    }
+
+    const contactRes = overrideContactId
+      ? await pool.query(
+          `SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
+                  updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+           FROM wa_contacts WHERE id = $1`,
+          [overrideContactId]
+        )
+      : await pool.query(`
+          INSERT INTO wa_contacts (jid, name, phone, phone_jid)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (jid) DO UPDATE SET
+            name      = CASE
+                          WHEN wa_contacts.name IS NOT NULL THEN wa_contacts.name
+                          WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN NULL
+                          ELSE EXCLUDED.name
+                        END,
+            phone     = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
+            phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
+            updated_at = NOW()
+          RETURNING id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
+                    updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+        `, [jid, pushName, phone, phoneJid])
 
     const contact = contactRes.rows[0]
     let state: string = contact.state ?? "idle"

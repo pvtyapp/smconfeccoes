@@ -60,7 +60,11 @@ export async function GET(req: Request) {
           lm.created_at            AS "lastAt",
           COALESCE(ur.unread, 0)   AS unread,
           ROW_NUMBER() OVER (
-            PARTITION BY COALESCE(NULLIF(c.phone,''), c.jid)
+            PARTITION BY COALESCE(
+              c.phone_jid,
+              CASE WHEN c.phone ~ '^[0-9]{8,15}$' THEN c.phone || '@s.whatsapp.net' ELSE NULL END,
+              c.jid
+            )
             ORDER BY lm.created_at DESC, c.id ASC
           ) AS rn
         FROM wa_contacts c
