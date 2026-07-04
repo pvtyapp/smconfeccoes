@@ -73,10 +73,10 @@ export async function GET(req: Request) {
                read_at, created_at, media_failed
         FROM wa_messages
         WHERE contact_id = $1
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT $2 OFFSET $3
       ) sub
-      ORDER BY created_at ASC
+      ORDER BY created_at ASC, id ASC
     `, [contactId, PAGE_SIZE + 1, offset])
 
     const hasMore  = rows.length > PAGE_SIZE

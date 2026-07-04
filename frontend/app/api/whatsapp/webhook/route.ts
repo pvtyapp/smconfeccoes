@@ -72,15 +72,20 @@ async function saveMediaBackground(
   } catch { /* silent — never crashes webhook */ }
 }
 
-// Parse Evolution v2 message — handles: data.messages[], data[] (array), or data (single obj)
-function parseEvolutionMsg(data: unknown): Record<string, unknown> | undefined {
-  if (Array.isArray(data)) return data[0] as Record<string, unknown>
+// Parse Evolution v2 message — returns ALL messages in the payload
+function parseEvolutionMsgs(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data as Record<string, unknown>[]
   if (data != null && typeof data === "object") {
     const d = data as Record<string, unknown>
-    if ("key" in d) return d
-    if (Array.isArray(d.messages)) return (d.messages as unknown[])[0] as Record<string, unknown>
+    if ("key" in d) return [d]
+    if (Array.isArray(d.messages)) return d.messages as Record<string, unknown>[]
   }
-  return undefined
+  return []
+}
+
+// Backwards compat — returns first message only (used for state machine)
+function parseEvolutionMsg(data: unknown): Record<string, unknown> | undefined {
+  return parseEvolutionMsgs(data)[0]
 }
 
 export async function POST(req: Request) {
@@ -222,8 +227,64 @@ export async function POST(req: Request) {
     // Ignore non-message events silently
     if (event !== "messages.upsert") return NextResponse.json({ ok: true })
 
-    const msg = parseEvolutionMsg(body?.data)
-    if (!msg) return NextResponse.json({ ok: true })
+    const allMsgs = parseEvolutionMsgs(body?.data)
+    if (allMsgs.length === 0) return NextResponse.json({ ok: true })
+
+    // When Evolution batches multiple messages in one call (e.g. 2 files sent simultaneously),
+    // persist ALL of them to wa_messages first so none are silently dropped.
+    // The state machine below only runs for the first message.
+    if (allMsgs.length > 1) {
+      for (const extraMsg of allMsgs.slice(1)) {
+        try {
+          const eKey  = extraMsg.key as Record<string, unknown> | undefined
+          const eJid  = (eKey?.remoteJid as string) || ""
+          if (!eJid || eJid.endsWith("@g.us") || eKey?.fromMe) continue
+          const eAlt  = (eKey?.remoteJidAlt as string) || ""
+          const ePJid: string | null = eJid.endsWith("@lid") && eAlt.endsWith("@s.whatsapp.net") ? eAlt : null
+          const ePhone = ePJid
+            ? ePJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+            : eJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+          const eBody = extraMsg.message as Record<string, unknown> | undefined
+          const eText: string =
+            (eBody?.conversation as string) ||
+            ((eBody?.extendedTextMessage as Record<string, unknown>)?.text as string) || ""
+          const eHasMedia = !!(eBody?.imageMessage || eBody?.documentMessage || eBody?.videoMessage || eBody?.audioMessage)
+          if (!eText.trim() && !eHasMedia) continue
+          const eMeta = (() => {
+            if (!eBody) return { mediaType: null as string | null, fileName: null as string | null, caption: null as string | null, thumbnail: null as string | null }
+            if (eBody.imageMessage)    return { mediaType: "image",    fileName: null as string | null, caption: (eBody.imageMessage as Record<string,unknown>).caption as string ?? null, thumbnail: bufferToBase64((eBody.imageMessage as Record<string,unknown>).jpegThumbnail) }
+            if (eBody.documentMessage) return { mediaType: "document", fileName: ((eBody.documentMessage as Record<string,unknown>).fileName as string) ?? null, caption: null as string | null, thumbnail: null as string | null }
+            if (eBody.videoMessage)    return { mediaType: "video",    fileName: null as string | null, caption: (eBody.videoMessage as Record<string,unknown>).caption as string ?? null, thumbnail: bufferToBase64((eBody.videoMessage as Record<string,unknown>).jpegThumbnail) }
+            if (eBody.audioMessage)    return { mediaType: "audio",    fileName: null as string | null, caption: null as string | null, thumbnail: null as string | null }
+            return { mediaType: null as string | null, fileName: null as string | null, caption: null as string | null, thumbnail: null as string | null }
+          })()
+          const eMsgId = (eKey?.id as string) ?? null
+          const eTs    = (extraMsg.messageTimestamp as number | undefined)
+          const eCreatedAt = eTs ? new Date(eTs * 1000).toISOString() : null
+          const { rows: eCRows } = await pool.query(
+            `INSERT INTO wa_contacts (jid, phone, phone_jid) VALUES ($1, $2, $3)
+             ON CONFLICT (jid) DO UPDATE SET phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid), updated_at = NOW()
+             RETURNING id`,
+            [eJid, ePhone, ePJid]
+          ).catch(() => ({ rows: [] as { id: number }[] }))
+          if (!eCRows[0]) continue
+          const eContactId = eCRows[0].id
+          await pool.query(
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, file_name, caption, created_at)
+             VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()))
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [eContactId, eMsgId, eText || (eHasMedia ? "[mídia]" : ""), eMeta.mediaType,
+             eMeta.thumbnail ? `data:image/jpeg;base64,${eMeta.thumbnail}` : null,
+             eMeta.fileName, eMeta.caption, eCreatedAt]
+          ).catch(() => {})
+          if (eHasMedia && eMeta.mediaType && eMeta.mediaType !== "sticker" && eMsgId) {
+            waitUntil(saveMediaBackground(extraMsg, eContactId, eMsgId, eMeta.mediaType, "idle"))
+          }
+        } catch { /* silent — never crash webhook */ }
+      }
+    }
+
+    const msg = allMsgs[0]
 
     const key = msg.key as Record<string, unknown>
     const jid: string = (key?.remoteJid as string) || ""
