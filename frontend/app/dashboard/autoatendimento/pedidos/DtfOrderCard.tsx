@@ -131,12 +131,12 @@ export default function DtfOrderCard({ order, onClick }: Props) {
             </>
           )}
         </div>
-        {order.status === "em_producao" && order.impressoraId != null && (
+        {(order.status === "em_producao" || order.status === "pronto") && order.impressoraId != null && (
           <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
             🖨 Imp. {order.impressoraId}
           </span>
         )}
-        {(order.status === "pronto" || order.status === "concluido") && order.isPaid !== null && (
+        {(order.status === "pronto" || order.status === "concluido") && (
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
             order.isPaid
               ? "bg-emerald-50 text-emerald-700 border-emerald-200"

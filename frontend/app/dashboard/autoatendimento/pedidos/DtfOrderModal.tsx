@@ -33,7 +33,6 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   const [metrosFinais,   setMetrosFinais]   = useState(order.metrosFinais ? String(order.metrosFinais) : "")
   const [precoPorMetro,  setPrecoPorMetro]  = useState<number | null>(null)
   const [precoCarregado, setPrecoCarregado] = useState(false)
-  const [showConcluir,   setShowConcluir]   = useState(false)
   const [isPaid,         setIsPaid]         = useState(order.isPaid ?? true)
   const [error,          setError]          = useState("")
   const [showCancel,     setShowCancel]     = useState(false)
@@ -165,6 +164,16 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isPaid: val }),
+    }).catch(() => {})
+  }
+
+  function saveImpressoraId(val: number) {
+    setImpressoraId(val)
+    setError("")
+    fetch(`/api/dtf/pedidos/${order.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ impressoraId: val }),
     }).catch(() => {})
   }
 
@@ -315,18 +324,18 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
             )}
           </div>
 
-          {/* Impressora selector — triagem com múltiplas */}
-          {isTriagem && numImpressoras > 1 && (
+          {/* Impressora selector — sempre visível com múltiplas impressoras */}
+          {!isDone && numImpressoras > 1 && (
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider block">
-                Impressora *
+                Impressora{isTriagem ? " *" : ""}
               </label>
               <div className="flex gap-2">
                 {Array.from({ length: numImpressoras }, (_, i) => i + 1).map(n => (
                   <button
                     key={n}
                     type="button"
-                    onClick={() => { setImpressoraId(n); setError("") }}
+                    onClick={() => saveImpressoraId(n)}
                     className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
                       impressoraId === n
                         ? "bg-blue-600 text-white border-blue-600"
@@ -416,70 +425,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
             </div>
           )}
 
-          {/* Confirmar Pagamento form */}
-          {showConcluir && (
-            <div className="border border-[#0F1E3C]/10 rounded-2xl p-4 space-y-4 bg-[#F4F6FB]">
-              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Confirmar Pagamento</p>
-
-              {/* Metros + valor */}
-              <div className="bg-white border border-[#0F1E3C]/8 rounded-xl px-4 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] text-[#0F1E3C]/40 uppercase tracking-wider">Metros</p>
-                  <p className="text-sm font-bold text-[#0F1E3C]">
-                    {order.metrosFinais ? `${Number(order.metrosFinais).toFixed(2)} m` : "—"}
-                  </p>
-                </div>
-                {order.precoCobrado && (
-                  <div className="text-right">
-                    <p className="text-[10px] text-[#0F1E3C]/40 uppercase tracking-wider">Valor total</p>
-                    <p className="text-xl font-black text-[#0F1E3C]">
-                      R$ {Number(order.precoCobrado).toFixed(2).replace(".", ",")}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Pago toggle */}
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => saveIsPaid(!isPaid)}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}
-                >
-                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isPaid ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-                </button>
-                <p className="text-sm font-semibold text-[#0F1E3C]">
-                  {isPaid ? "Pagamento recebido" : "Não pago (fiado / a cobrar)"}
-                </p>
-              </div>
-
-              {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-
-              <div className="flex gap-2">
-                <button
-                  onClick={concluir}
-                  disabled={saving}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 ${
-                    isPaid ? "bg-emerald-600 hover:bg-emerald-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"
-                  }`}
-                >
-                  {saving
-                    ? <Loader2 size={14} className="animate-spin" />
-                    : <><Check size={14} /> {isPaid ? "Confirmar Pagamento" : "Concluir sem Pagamento"}</>
-                  }
-                </button>
-                <button
-                  onClick={() => { setShowConcluir(false); setError("") }}
-                  className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors"
-                >
-                  Voltar
-                </button>
-              </div>
-            </div>
-          )}
-
-          {error && !showConcluir && (
+          {error && (
             <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
           )}
         </div>
@@ -526,11 +472,11 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
               </button>
             )}
 
-            {/* pronto — toggle pago + confirmar pagamento */}
-            {isProto && !showConcluir && (
+            {/* pronto — toggle pago + concluir direto */}
+            {isProto && (
               <>
                 <div
-                  className="flex items-center gap-2 flex-1 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
+                  className="flex items-center gap-2 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
                   onClick={() => saveIsPaid(!isPaid)}
                 >
                   <button
@@ -543,13 +489,19 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
                       style={{ width: "14px", height: "14px" }}
                     />
                   </button>
-                  <p className="text-xs font-semibold text-[#0F1E3C]">{isPaid ? "Pago" : "A cobrar"}</p>
+                  <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "Pago" : "A cobrar"}</p>
                 </div>
                 <button
-                  onClick={() => { setShowConcluir(true); setError("") }}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors"
+                  onClick={concluir}
+                  disabled={saving}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 ${
+                    isPaid ? "bg-emerald-600 hover:bg-emerald-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"
+                  }`}
                 >
-                  <Check size={14} /> Confirmar Pagamento
+                  {saving
+                    ? <Loader2 size={14} className="animate-spin" />
+                    : <><Check size={14} /> {isPaid ? "Confirmar e Concluir" : "Concluir sem Pagamento"}</>
+                  }
                 </button>
               </>
             )}

@@ -51,9 +51,16 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params
-    const body = await req.json().catch(() => ({})) as { isPaid?: boolean | null }
+    const body = await req.json().catch(() => ({})) as { isPaid?: boolean | null; impressoraId?: number | null }
     await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS is_paid BOOLEAN`).catch(() => {})
-    await pool.query(`UPDATE dtf_pedidos SET is_paid = $1 WHERE id = $2`, [body.isPaid ?? null, id])
+    const cols: string[]   = []
+    const vals: unknown[]  = []
+    if (body.isPaid !== undefined)     { vals.push(body.isPaid ?? null);      cols.push(`is_paid = $${vals.length}`) }
+    if (body.impressoraId !== undefined) { vals.push(body.impressoraId ?? null); cols.push(`impressora_id = $${vals.length}`) }
+    if (cols.length) {
+      vals.push(id)
+      await pool.query(`UPDATE dtf_pedidos SET ${cols.join(", ")} WHERE id = $${vals.length}`, vals)
+    }
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
