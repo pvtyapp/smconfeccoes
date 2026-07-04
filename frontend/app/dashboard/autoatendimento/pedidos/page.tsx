@@ -5,7 +5,7 @@ import {
   RefreshCw, ShoppingBag,
   Search, Send, MessageCircle, ChevronLeft, Printer, History,
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot, UserCheck,
-  Reply, Trash2, X, Phone, Paperclip, Download, PanelRight,
+  Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
@@ -288,10 +288,12 @@ export default function PedidosPage() {
   const [attLoading, setAttLoading] = useState(false)
 
   // DTF panel within chat modal
-  const [showDtfPanel,    setShowDtfPanel]    = useState(false)
-  const [contactDtfOrders,setContactDtfOrders]= useState<DtfOrder[]>([])
-  const [linkingDtfMsg,   setLinkingDtfMsg]   = useState<number | null>(null)
-  const [downloadingMsgId,setDownloadingMsgId]= useState<number | null>(null)
+  const [showDtfPanel,      setShowDtfPanel]      = useState(false)
+  const [contactDtfOrders,  setContactDtfOrders]  = useState<DtfOrder[]>([])
+  const [linkingDtfMsg,     setLinkingDtfMsg]     = useState<number | null>(null)
+  const [downloadingMsgId,  setDownloadingMsgId]  = useState<number | null>(null)
+  const [downloadingDtfId,  setDownloadingDtfId]  = useState<number | null>(null)
+  const [downloadedDtfIds,  setDownloadedDtfIds]  = useState<Set<number>>(new Set())
 
   // File upload (send media from PIV)
   const fileInputRef  = useRef<HTMLInputElement>(null)
@@ -1005,39 +1007,27 @@ export default function PedidosPage() {
     }
   }
 
-  async function downloadDtfOrder(orderId: number, attachments: DtfAttachment[], contactName: string) {
-    const slug = contactName.split(" ")[0]
+  async function downloadDtfOrder(orderId: number, contactName: string) {
+    if (downloadingDtfId === orderId) return
+    setDownloadingDtfId(orderId)
+    const slug = (contactName ?? "arte").split(" ")[0]
     try {
-      if (attachments.length === 1) {
-        // Single file: fetch directly from public blob URL
-        const att = attachments[0]
-        const ext = att.filename?.split(".").pop()?.toLowerCase() ?? "png"
-        const r   = await fetch(att.blobUrl)
-        if (!r.ok) return
-        const blob = await r.blob()
-        const url  = URL.createObjectURL(blob)
-        const a    = document.createElement("a")
-        a.href     = url
-        a.download = `${slug}-arte.${ext}`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-      } else {
-        // Multiple files: API builds ZIP
-        const r = await fetch(`/api/dtf/pedidos/${orderId}/download`)
-        if (!r.ok) return
-        const blob = await r.blob()
-        const url  = URL.createObjectURL(blob)
-        const a    = document.createElement("a")
-        a.href     = url
-        a.download = `${slug}-artes.zip`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-      }
+      const r = await fetch(`/api/dtf/pedidos/${orderId}/download`)
+      if (!r.ok) return
+      const contentType = r.headers.get("content-type") ?? ""
+      const isZip = contentType.includes("zip")
+      const blob  = await r.blob()
+      const url   = URL.createObjectURL(blob)
+      const a     = document.createElement("a")
+      a.href      = url
+      a.download  = isZip ? `${slug}-artes.zip` : `${slug}-arte`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setDownloadedDtfIds(prev => new Set(prev).add(orderId))
     } catch { /* silent */ }
+    finally { setDownloadingDtfId(null) }
   }
 
   async function downloadChatFile(msgId: number, url: string, filename: string | null) {
@@ -1743,32 +1733,74 @@ export default function PedidosPage() {
                   <button onClick={() => setDtfLinkToast(null)} className="text-gray-400"><X size={11} /></button>
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                {contactDtfOrders.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#0F1E3C]/20">
-                    <Printer size={22} strokeWidth={1.2} />
-                    <p className="text-[10px] text-center">Nenhum pedido DTF.<br />Vincule um arquivo para criar.</p>
-                  </div>
-                ) : contactDtfOrders.map(o => (
-                  <DtfOrderCard key={o.id} order={o} onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }} />
-                ))}
-              </div>
-              {contactDtfOrders.some(o => o.attachments.length > 0) && (
-                <div className="p-3 border-t bg-white space-y-1.5" style={{ borderColor: "rgba(15,30,60,0.08)" }}>
-                  {contactDtfOrders
-                    .filter(o => o.attachments.length > 0 && o.status !== "concluido" && o.status !== "cancelado")
-                    .slice(0, 1)
-                    .map(o => (
-                      <button key={o.id}
-                        onClick={() => downloadDtfOrder(o.id, o.attachments, o.contactName ?? chatContact?.name ?? "arte")}
-                        className="flex items-center justify-center gap-2 w-full py-2 text-white text-xs font-bold rounded-xl transition-colors hover:opacity-90"
-                        style={{ background: "#7C3AED" }}>
-                        <Download size={13} />
-                        {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte (renomeado)"}
-                      </button>
-                    ))}
-                </div>
-              )}
+              {(() => {
+                const activeOrders    = contactDtfOrders.filter(o => !["concluido", "cancelado"].includes(o.status))
+                const concludedOrders = contactDtfOrders.filter(o => ["concluido", "cancelado"].includes(o.status))
+                return (
+                  <>
+                    <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                      {contactDtfOrders.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#0F1E3C]/20">
+                          <Printer size={22} strokeWidth={1.2} />
+                          <p className="text-[10px] text-center">Nenhum pedido DTF.<br />Vincule um arquivo para criar.</p>
+                        </div>
+                      ) : (
+                        <>
+                          {activeOrders.map(o => (
+                            <DtfOrderCard key={o.id} order={o} onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }} />
+                          ))}
+                          {concludedOrders.length > 0 && (
+                            <div className="mt-1">
+                              <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1 mb-1.5">
+                                Histórico ({concludedOrders.length})
+                              </p>
+                              <div className="space-y-1">
+                                {concludedOrders.map(o => (
+                                  <button key={o.id}
+                                    onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }}
+                                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:bg-[#0F1E3C]/4 transition-colors text-left">
+                                    <div>
+                                      <span className="text-[10px] font-bold text-[#0F1E3C]/50">{o.number}</span>
+                                      {o.metrosFinais && <span className="text-[9px] text-[#0F1E3C]/30 ml-1.5">{Number(o.metrosFinais).toFixed(2)}m</span>}
+                                    </div>
+                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${o.status === "concluido" ? "bg-[#0F1E3C]/5 text-[#0F1E3C]/30" : "bg-red-50 text-red-400"}`}>
+                                      {o.status === "concluido" ? "Concluído" : "Cancelado"}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {activeOrders.some(o => o.attachments.length > 0) && (
+                      <div className="p-3 border-t bg-white space-y-1.5" style={{ borderColor: "rgba(15,30,60,0.08)" }}>
+                        {activeOrders
+                          .filter(o => o.attachments.length > 0)
+                          .slice(0, 1)
+                          .map(o => {
+                            const isDownloading = downloadingDtfId === o.id
+                            const wasDownloaded = downloadedDtfIds.has(o.id)
+                            return (
+                              <button key={o.id}
+                                onClick={() => downloadDtfOrder(o.id, o.contactName ?? chatContact?.name ?? "arte")}
+                                disabled={isDownloading}
+                                className="flex items-center justify-center gap-2 w-full py-2 text-white text-xs font-bold rounded-xl transition-colors hover:opacity-90 disabled:opacity-60"
+                                style={{ background: wasDownloaded ? "#059669" : "#7C3AED" }}>
+                                {isDownloading
+                                  ? <><Loader2 size={12} className="animate-spin" /> Baixando...</>
+                                  : wasDownloaded
+                                    ? <><Check size={12} /> Baixado — baixar novamente</>
+                                    : <><Download size={13} /> {o.attachments.length > 1 ? `Baixar ${o.attachments.length} artes (ZIP)` : "Baixar arte (renomeado)"}</>}
+                              </button>
+                            )
+                          })}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           )}
         </div>

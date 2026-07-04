@@ -72,7 +72,7 @@ export async function GET(
 
     const attRes = await pool.query(`
       SELECT a.id,
-             COALESCE(a.blob_url, wm.media_data) AS "blobUrl",
+             COALESCE(wm.media_data, a.blob_url) AS "blobUrl",
              COALESCE(a.filename, wm.file_name)  AS filename,
              a.mime_type                          AS "mimeType"
       FROM dtf_order_attachments a
@@ -107,6 +107,7 @@ export async function GET(
     }
 
     const zip = new JSZip()
+    let addedFiles = 0
     for (let i = 0; i < attachments.length; i++) {
       const att    = attachments[i]
       const result = await fetchFileBuffer(att.blobUrl)
@@ -114,7 +115,11 @@ export async function GET(
       const ext             = getExt(att.filename, att.mimeType ?? result.mimeType)
       const renamedFilename = `${prefix}-${i + 1}.${ext}`
       zip.file(renamedFilename, result.buffer)
+      addedFiles++
     }
+
+    if (addedFiles === 0)
+      return NextResponse.json({ error: "Arquivos não encontrados (mídia expirada)" }, { status: 404 })
 
     const zipUint8 = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" })
     const zipName  = `${prefix}-artes.zip`

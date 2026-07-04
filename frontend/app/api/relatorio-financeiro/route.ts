@@ -119,15 +119,26 @@ export async function GET(req: Request) {
         AND DATE(exhausted_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
     `, [from, to])
 
+    // DTF pedidos concluídos no período
+    const { rows: dtfRows } = await pool.query(`
+      SELECT COALESCE(SUM(preco_cobrado), 0)::float AS total,
+             COUNT(*)::int AS count
+      FROM dtf_pedidos
+      WHERE status = 'concluido'
+        AND DATE(concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+    const receitaDtf = Number(dtfRows[0]?.total ?? 0)
+    const dtfCount   = Number(dtfRows[0]?.count ?? 0)
+
     // ── Calcular DRE ──────────────────────────────────────────────────────────
     const concluded = orders.filter(o => o.status === "concluido")
 
     const receitaAvarias  = Number(avariaVendas[0]?.total   ?? 0)
     const perdasDescarte  = Number(avariaDescartes[0]?.total ?? 0)
 
-    // Receita bruta — pedidos concluídos + avarias vendidas
+    // Receita bruta — pedidos concluídos + DTF concluídos + avarias vendidas
     const receitaOrdens = concluded.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
-    const receitaBruta  = receitaOrdens + receitaAvarias
+    const receitaBruta  = receitaOrdens + receitaDtf + receitaAvarias
 
     // Custo de insumos (material_cost × qty) — só para pedidos concluídos
     let custoInsumos      = 0
@@ -176,6 +187,9 @@ export async function GET(req: Request) {
     for (const o of concluded) {
       byChannel[o.source] = (byChannel[o.source] ?? 0) + Number(o.totalValue ?? 0)
     }
+    if (receitaDtf > 0) {
+      byChannel["dtf"] = receitaDtf
+    }
 
     // Product ranking
     const productRanking = Array.from(byProduct.entries())
@@ -202,8 +216,8 @@ export async function GET(req: Request) {
         resultadoOp,
       },
       summary: {
-        pedidosTotal:      orders.length,
-        pedidosConcluidos: concluded.length,
+        pedidosTotal:      orders.length + dtfCount,
+        pedidosConcluidos: concluded.length + dtfCount,
         totalPecas,
         ticketMedio,
         margemBruta: lucroBruto !== null && receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : null,

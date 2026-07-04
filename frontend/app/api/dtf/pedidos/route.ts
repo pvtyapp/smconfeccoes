@@ -42,7 +42,7 @@ export async function GET(req: Request) {
           json_agg(
             json_build_object(
               'id',       a.id,
-              'blobUrl',  COALESCE(a.blob_url, wm.media_data),
+              'blobUrl',  COALESCE(wm.media_data, a.blob_url),
               'filename', COALESCE(a.filename, wm.file_name),
               'mimeType', a.mime_type
             ) ORDER BY a.id

@@ -68,7 +68,36 @@ export async function GET(req: Request) {
       ORDER BY COALESCE(ds.resolved_at, ds.created_at) DESC
     `, params)
 
-    return NextResponse.json({ orders, avarias })
+    // DTF pedidos no período
+    const dtfDateCond = hasDate ? `AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
+    const { rows: dtfPedidos } = await pool.query(`
+      SELECT
+        p.id,
+        p.number,
+        'dtf'        AS source,
+        p.status,
+        p.preco_cobrado AS "totalValue",
+        p.due_date   AS "dueDate",
+        p.concluded_at  AS "paidAt",
+        p.created_at AS "createdAt",
+        COALESCE(c.name, p.cliente) AS "contactName",
+        c.phone      AS "contactPhone",
+        json_build_array(
+          json_build_object(
+            'productName', 'Impressão DTF',
+            'qty',         1,
+            'unitPrice',   p.preco_cobrado,
+            'costPrice',   NULL
+          )
+        ) AS items
+      FROM dtf_pedidos p
+      LEFT JOIN wa_contacts c ON c.id = p.contact_id
+      WHERE p.status != 'cancelado'
+        ${dtfDateCond}
+      ORDER BY p.created_at DESC
+    `, params)
+
+    return NextResponse.json({ orders, avarias, dtfPedidos })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
