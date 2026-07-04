@@ -328,21 +328,27 @@ export async function POST(req: Request) {
           const outPhone = phoneJid
           ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
           : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-          // Lookup by phone first — prevents creating a @s.whatsapp.net ghost when @lid contact already exists
+          // Lookup by phone OR phone_jid — prevents ghost @s.whatsapp.net when @lid has garbage phone field
+          const sendJid = jid.endsWith("@s.whatsapp.net") ? jid : null
           const { rows: phoneRows } = await pool.query(
-            `SELECT id FROM wa_contacts WHERE phone = $1 LIMIT 1`,
-            [outPhone]
+            `SELECT id FROM wa_contacts
+             WHERE phone = $1 OR phone_jid = $2
+             ORDER BY CASE WHEN jid LIKE '%@lid' THEN 0 ELSE 1 END
+             LIMIT 1`,
+            [outPhone, sendJid]
           ).catch(() => ({ rows: [] as { id: number }[] }))
 
           let contactId0: number | null = null
           if (phoneRows[0]) {
             contactId0 = phoneRows[0].id as number
-            if (phoneJid) {
-              await pool.query(
-                `UPDATE wa_contacts SET phone_jid = COALESCE(phone_jid, $1), updated_at = NOW() WHERE id = $2`,
-                [phoneJid, contactId0]
-              ).catch(() => {})
-            }
+            // Patch phone + phone_jid on @lid contacts that have garbage phone
+            await pool.query(`
+              UPDATE wa_contacts
+              SET phone     = CASE WHEN phone IS NULL OR phone NOT SIMILAR TO '[0-9]{8,15}' THEN $2 ELSE phone END,
+                  phone_jid = COALESCE(phone_jid, $3),
+                  updated_at = NOW()
+              WHERE id = $1
+            `, [contactId0, outPhone, sendJid]).catch(() => {})
           } else {
             const { rows: cRows } = await pool.query(
               `INSERT INTO wa_contacts (jid, name, phone, phone_jid)
