@@ -760,12 +760,28 @@ async function tagContact(contactId: number, tag: string, value = "") {
 
 
 
-async function getCatalog(): Promise<Array<{ name: string; sale_price: number | null }>> {
+async function getCatalog(): Promise<Array<{ name: string; sale_price: number | null; isCategory: boolean }>> {
   const { rows } = await pool.query(`
-    SELECT name, sale_price
-    FROM products
-    WHERE status = 'active' AND chatbot_enabled = true AND chatbot_disponivel = true
-      AND LOWER(name) NOT LIKE '%dtf%'
+    WITH product_root AS (
+      SELECT
+        p.name        AS product_name,
+        p.sale_price,
+        COALESCE(root.name, cat.name, p.name) AS root_name
+      FROM products p
+      LEFT JOIN categories cat  ON cat.id  = p.category_id
+      LEFT JOIN categories root ON root.id = cat.parent_id
+      WHERE p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
+        AND LOWER(p.name) NOT LIKE '%dtf%'
+    ),
+    root_counts AS (
+      SELECT root_name, COUNT(*) AS cnt FROM product_root GROUP BY root_name
+    )
+    SELECT DISTINCT
+      CASE WHEN rc.cnt > 1 THEN pr.root_name ELSE pr.product_name END AS name,
+      (rc.cnt > 1)                                                      AS "isCategory",
+      CASE WHEN rc.cnt = 1 THEN pr.sale_price ELSE NULL END             AS sale_price
+    FROM product_root pr
+    JOIN root_counts rc ON rc.root_name = pr.root_name
     ORDER BY name
   `)
   return rows
@@ -811,27 +827,75 @@ async function getAllProductVariants(): Promise<Array<{ color: string; size: str
   return rows
 }
 
-async function resolveProductKeyword(text: string): Promise<string> {
+async function resolveProductKeyword(text: string, rootContext?: string): Promise<string> {
   const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
   const lower = norm(text)
+
   const { rows } = await pool.query(`
-    SELECT name FROM products
-    WHERE status = 'active' AND chatbot_enabled = true AND chatbot_disponivel = true
-      AND LOWER(name) NOT LIKE '%dtf%'
-    ORDER BY LENGTH(name) DESC
+    SELECT p.name, COALESCE(root.name, cat.name) AS root_category, COUNT(*) OVER (
+      PARTITION BY COALESCE(root.name, cat.name)
+    ) AS siblings
+    FROM products p
+    LEFT JOIN categories cat  ON cat.id  = p.category_id
+    LEFT JOIN categories root ON root.id = cat.parent_id
+    WHERE p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
+      AND LOWER(p.name) NOT LIKE '%dtf%'
+    ORDER BY LENGTH(p.name) DESC
   `)
-  // Pass 1: nome completo do produto está no texto do cliente (ex: "moletom adulto preto")
+
+  // Pass 1: nome completo do produto está no texto
   for (const row of rows) {
     if (lower.includes(norm(row.name as string))) return (row.name as string).toLowerCase()
   }
-  // Pass 2: primeira palavra do produto no texto (ex: "moletom" → "Moletom Adulto")
+
+  // Pass 1b: todas as palavras do produto aparecem no texto (trata singular/plural)
+  // Ex: "camiseta adulto" → bate em "Camisetas Adulto"
   for (const row of rows) {
+    const pWords = norm(row.name as string).split(/\s+/).filter(Boolean)
+    if (pWords.length > 1 && pWords.every(pw => {
+      const sing = pw.endsWith("s") ? pw.slice(0, -1) : pw
+      return lower.includes(pw) || (sing !== pw && lower.includes(sing))
+    })) return (row.name as string).toLowerCase()
+  }
+
+  // Pass 2: primeira palavra do produto no texto — só se raiz tem 1 produto
+  for (const row of rows) {
+    if (Number(row.siblings) > 1) continue  // deixa pass 4 tratar raízes com múltiplos filhos
     const firstWord = norm(row.name as string).split(/\s+/)[0]
     const singular  = firstWord.endsWith("s") ? firstWord.slice(0, -1) : firstWord
     if (lower.includes(firstWord) || (singular !== firstWord && lower.includes(singular))) {
       return (row.name as string).toLowerCase()
     }
   }
+
+  // Pass 3: rootContext ativo — busca palavra do texto dentro dos produtos da mesma raiz
+  if (rootContext) {
+    const normRoot = norm(rootContext)
+    const siblings = rows.filter(r => norm(r.root_category ?? "") === normRoot)
+    for (const row of siblings) {
+      const pWords = norm(row.name as string).split(/\s+/).filter(Boolean)
+      if (pWords.some(w => w.length > 2 && lower.includes(w))) {
+        return (row.name as string).toLowerCase()
+      }
+    }
+  }
+
+  // Pass 4: texto bate com nome de categoria raiz que tem múltiplos produtos → @CAT:
+  const roots = new Map<string, number>()
+  for (const row of rows) {
+    const rn = row.root_category as string | null
+    if (rn) roots.set(rn, (roots.get(rn) ?? 0) + 1)
+  }
+  for (const [rootName, cnt] of roots.entries()) {
+    if (cnt <= 1) continue
+    const rn = norm(rootName)
+    const rFirst = rn.split(/\s+/)[0]
+    const rSing  = rFirst.endsWith("s") ? rFirst.slice(0, -1) : rFirst
+    if (lower.includes(rn) || lower.includes(rFirst) || (rSing !== rFirst && lower.includes(rSing))) {
+      return `@CAT:${rootName}`
+    }
+  }
+
   return ""
 }
 
@@ -1001,6 +1065,63 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
   ).catch(() => {})
 }
 
+// ─── drill-down de categoria ─────────────────────────────────────────────────
+
+async function sendCategoryDrill(jid: string, contactId: number, rootCategoryName: string) {
+  const { rows } = await pool.query(`
+    SELECT p.name, COALESCE(pv_min.min_price, p.sale_price, 0)::float AS sale_price
+    FROM products p
+    JOIN categories cat  ON cat.id  = p.category_id
+    JOIN categories root ON root.id = cat.parent_id
+    LEFT JOIN (
+      SELECT product_id, MIN(sale_price) AS min_price
+      FROM product_variants WHERE status = 'active' GROUP BY product_id
+    ) pv_min ON pv_min.product_id = p.id
+    WHERE root.name ILIKE $1
+      AND p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
+    ORDER BY p.name
+  `, [rootCategoryName])
+
+  if (!rows.length) { await sendCatalog(jid, contactId, true); return }
+
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+  const emojiMap: Record<string, string> = {
+    moletom: "🧥", camiseta: "👕", bermuda: "🩳", calca: "👖", calça: "👖",
+    conjunto: "👗", blusa: "🧣", short: "🩳",
+  }
+  const rootWords = norm(rootCategoryName).split(/\s+/)
+
+  const lines = rows.map(p => {
+    const nl    = norm(p.name as string)
+    const emoji = Object.entries(emojiMap).find(([k]) => nl.includes(k))?.[1] ?? "📦"
+    // mostra só as palavras que diferenciam (remove palavras da raiz)
+    const unique = nl.split(/\s+/).filter(w => !rootWords.includes(w))
+    const label  = unique.length
+      ? unique.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+      : (p.name as string)
+    const price  = Number(p.sale_price) > 0
+      ? ` · R$ ${Number(p.sale_price).toFixed(2).replace(".", ",")}`
+      : ""
+    return `${emoji} ${label}${price}`
+  })
+
+  // Grava contexto de raiz no state_data — próxima mensagem do cliente resolve dentro desta raiz
+  pool.query(
+    `UPDATE wa_contacts
+     SET state_data = jsonb_build_object(
+       'awaitingCatalogResponse', true,
+       'rootCategoryContext', $2::text,
+       'chatbotObs', COALESCE(state_data->>'chatbotObs', null)
+     ),
+     updated_at = NOW()
+     WHERE id = $1`,
+    [contactId, rootCategoryName]
+  ).catch(() => {})
+
+  await replyAndSave(contactId, jid,
+    `*${rootCategoryName}* — qual tipo?\n\n${lines.join("\n")}\n\nMe fala qual você quer.`)
+}
+
 // ─── variação ────────────────────────────────────────────────────────────────
 
 function buildVariacaoBlock(productName: string, variants: Array<{ color: string; size: string; salePrice?: number }>): string {
@@ -1064,6 +1185,11 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
   }
 
   const keyword = await resolveProductKeyword(text)
+
+  if (keyword.startsWith("@CAT:")) {
+    await sendCategoryDrill(jid, contactId, keyword.slice(5))
+    return
+  }
 
   if (!keyword) {
     const catalog = await getCatalog()
@@ -1560,11 +1686,12 @@ async function handleColetando(
 
   // Aguardando seleção de produto do catálogo: interpreta a resposta como nome de produto
   const awaitingCatalog = Boolean(stateData.awaitingCatalogResponse)
+  const rootContext      = stateData.rootCategoryContext as string | undefined
   if (awaitingCatalog) {
     if (/\d/.test(text)) {
-      // Tem número = pedido real — limpa flag e cai no fluxo normal abaixo
+      // Tem número = pedido real — limpa flag e contexto de categoria
       pool.query(
-        `UPDATE wa_contacts SET state_data = state_data - 'awaitingCatalogResponse', updated_at = NOW() WHERE id = $1`,
+        `UPDATE wa_contacts SET state_data = state_data - 'awaitingCatalogResponse' - 'rootCategoryContext', updated_at = NOW() WHERE id = $1`,
         [contactId]
       ).catch(() => {})
       // não retorna — continua o processamento normal
@@ -1574,9 +1701,14 @@ async function handleColetando(
         await handleVariacao(jid, contactId, "todos")
         return
       }
-      const kw = await resolveProductKeyword(text)
+      const kw = await resolveProductKeyword(text, rootContext)
+      if (kw.startsWith("@CAT:")) {
+        await sendCategoryDrill(jid, contactId, kw.slice(5))
+        return
+      }
       if (kw) {
-        await handleVariacao(jid, contactId, text)
+        // Passa o keyword resolvido (não o texto) para não perder contexto de raiz
+        await handleVariacao(jid, contactId, kw)
         return
       }
       // Não reconheceu o produto → reapresenta a lista
@@ -1611,6 +1743,10 @@ async function handleColetando(
   const hasDigit = /\d/.test(text)
   if (!hasDigit) {
     const kw = await resolveProductKeyword(text)
+    if (kw.startsWith("@CAT:")) {
+      await sendCategoryDrill(jid, contactId, kw.slice(5))
+      return
+    }
     if (kw) {
       await handleVariacao(jid, contactId, text)
       return
