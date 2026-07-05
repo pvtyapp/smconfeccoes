@@ -1099,16 +1099,33 @@ async function handleText(
 
     const order = await getMostRecentOrder(contactId)
 
-    if (order?.status === "pronto") {
+    if (order?.status === "pago") {
       await pool.query(
         `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
-      replyWA(jid, `Seu pedido *${order.number}* já está separado. Preciso acionar a equipe — eles entram em contato agora.`)
+      replyWA(jid, `Seu pedido *${order.number}* já está pago e pronto para retirada. Preciso acionar a equipe — eles entram em contato agora.`)
       return
     }
 
     if (order?.status === "em_separacao") {
+      // Estorna estoque antes de cancelar
+      const { rows: alreadyReverted } = await pool.query(
+        `SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'in' LIMIT 1`,
+        [`Estorno ${order.number}`]
+      )
+      if (!alreadyReverted.length) {
+        const { rows: items } = await pool.query(
+          `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`,
+          [order.id]
+        )
+        for (const item of items) {
+          await pool.query(
+            `INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes) VALUES ($1, 'in', $2, 'estorno_cancelamento', 'chatbot', $3)`,
+            [item.variant_id, item.qty, `Estorno ${order.number}`]
+          )
+        }
+      }
       await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [order.id])
       await pool.query(`
         INSERT INTO order_events (order_id, status, actor, note)
@@ -1166,7 +1183,7 @@ async function handleText(
   if (state === "idle") {
     const { rows: activeRows } = await pool.query(`
       SELECT id, number, status FROM orders
-      WHERE contact_id = $1 AND status IN ('triagem', 'confirmando', 'em_separacao', 'pronto') AND paid_at IS NULL
+      WHERE contact_id = $1 AND status IN ('triagem', 'confirmando', 'em_separacao', 'pago')
       AND created_at > NOW() - INTERVAL '14 days'
       ORDER BY created_at DESC LIMIT 1
     `, [contactId])
@@ -1633,9 +1650,8 @@ async function handleActiveOrder(
 ) {
   const lower = text.toLowerCase().trim()
 
-  // confirmando — operador está gerenciando, informa o cliente e aguarda
+  // confirmando — operador gerencia manualmente, chatbot fica quieto
   if (state === "confirmando") {
-    replyWA(jid, "Seu pedido está em análise! Nossa equipe confirma em breve. 😊")
     return
   }
 
