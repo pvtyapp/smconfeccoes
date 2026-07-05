@@ -1556,11 +1556,13 @@ async function createOrderDirect(
     cli.release()
   }
 
+  const estoqueBot = globalSettings["controle_estoque_ativo"] !== "false"
+
   if (!isNewOrder) {
     const lines = matched.map(m => `• ${[m.productName, m.color, m.size].filter(Boolean).join(" ")} · *${m.qty} un*`)
     let reply = `✅ Adicionado ao pedido *${orderNumber}*:\n\n${lines.join("\n")}`
-    if (hasUnmatched)  reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
-    if (hasStockIssue) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
+    if (hasUnmatched)                reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
+    if (hasStockIssue && estoqueBot) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
     reply += `\n\nPode mandar mais itens se precisar!`
     replyWA(jid, reply)
     await setState(contactId, "triagem", { orderId, orderNumber })
@@ -1575,7 +1577,7 @@ async function createOrderDirect(
       warn = m.alternatives.length
         ? ` ⚠️ (disponível: ${m.alternatives.join(", ")})`
         : " ⚠️ não encontrado"
-    } else if (!m.stockOk) {
+    } else if (!m.stockOk && estoqueBot) {
       warn = m.currentStock === 0
         ? " ⚠️ sem estoque"
         : ` ⚠️ temos só ${m.currentStock} em estoque`
@@ -1584,8 +1586,8 @@ async function createOrderDirect(
   })
 
   let reply = `✅ Pedido *${orderNumber}* anotado!\n\n${lines.join("\n")}`
-  if (hasUnmatched)  reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
-  if (hasStockIssue) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
+  if (hasUnmatched)                reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
+  if (hasStockIssue && estoqueBot) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
 
   await setState(contactId, "triagem", { orderId, orderNumber })
   reply += `\n\nPode me mandar mais itens se precisar. Nossa equipe confirma e avisa quando estiver pronto!`

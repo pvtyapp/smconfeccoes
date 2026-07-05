@@ -1963,7 +1963,7 @@ export default function PedidosPage() {
             {/* Toggle Controle Estoque */}
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] font-bold text-[#0F1E3C]/50">Estoque</p>
-              <Tip text="Controle de estoque ON: chatbot verifica saldo na hora do pedido, avança para separação automaticamente se tiver estoque e imprime. OFF: operador confirma manualmente." />
+              <Tip text="ON: chatbot avisa o cliente quando item está sem estoque ou com quantidade limitada. OFF: chatbot vende livremente sem alertas de estoque (ex: produção sob demanda). A dedução do estoque ocorre normalmente nos dois casos." />
               <button onClick={toggleEstoque} disabled={togglingEstoque}
                 className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${controleEstoque ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}>
                 <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${controleEstoque ? "translate-x-4" : "translate-x-0.5"}`} />
