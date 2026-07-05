@@ -554,14 +554,17 @@ export async function POST(req: Request) {
     } catch { /* use defaults if columns not migrated yet */ }
 
     // Extract quoted (reply) context
+    // Evolution may hoist contextInfo to message level OR nest it inside each message type
     const contextInfo = (() => {
       if (!msgBody) return null
+      if (msgBody.contextInfo) return msgBody.contextInfo as Record<string, unknown>
       const sources = [
         msgBody.extendedTextMessage,
         msgBody.imageMessage,
         msgBody.videoMessage,
         msgBody.audioMessage,
         msgBody.documentMessage,
+        msgBody.stickerMessage,
       ]
       for (const s of sources) {
         const ci = (s as Record<string, unknown> | undefined)?.contextInfo
@@ -575,6 +578,13 @@ export async function POST(req: Request) {
       if (!qm) return null
       return (qm.conversation as string)
         || ((qm.extendedTextMessage as Record<string, unknown>)?.text as string)
+        || (qm.imageMessage    ? "🖼 Imagem"   : null)
+        || (qm.videoMessage    ? "🎥 Vídeo"    : null)
+        || (qm.audioMessage    ? "🎤 Áudio"    : null)
+        || (qm.stickerMessage  ? "🎨 Sticker"  : null)
+        || (qm.documentMessage
+              ? `📄 ${(qm.documentMessage as Record<string,unknown>)?.fileName ?? "Documento"}`
+              : null)
         || "[mídia]"
     })()
 
