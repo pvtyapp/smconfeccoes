@@ -20,6 +20,10 @@ function norm(s: string): string {
     .trim()
 }
 
+function wordMatch(a: string, b: string): boolean {
+  return a === b || b.startsWith(a) || a.startsWith(b)
+}
+
 function score(a: string, b: string): number {
   const na = norm(a)
   const nb = norm(b)
@@ -27,8 +31,8 @@ function score(a: string, b: string): number {
   const wa = na.split(/\s+/).filter(Boolean)
   const wb = nb.split(/\s+/).filter(Boolean)
   const [shorter, longer] = wa.length <= wb.length ? [wa, wb] : [wb, wa]
-  if (shorter.length > 0 && shorter.every(w => longer.includes(w))) return 0.85
-  const hits = wa.filter(w => w.length > 2 && wb.includes(w)).length
+  if (shorter.length > 0 && shorter.every(w => longer.some(bw => wordMatch(w, bw)))) return 0.85
+  const hits = wa.filter(w => w.length > 2 && wb.some(bw => wordMatch(w, bw))).length
   return hits / Math.max(wa.length, wb.length)
 }
 
