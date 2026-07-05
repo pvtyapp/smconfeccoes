@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+﻿import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { parseOrder } from "@/lib/ai/parseOrder"
@@ -30,6 +30,25 @@ function replyWA(jid: string, text: string): void {
     sendWhatsApp(jid, text).catch(e => {
       console.error("[WA-webhook] replyWA failed:", jid, e instanceof Error ? e.message : e)
     })
+  )
+}
+
+// Envia E salva direto no banco (não depende do fromMe callback)
+async function replyAndSave(contactId: number, jid: string, text: string): Promise<void> {
+  waitUntil(
+    sendWhatsApp(jid, text)
+      .then(async (result) => {
+        const msgId = (result as { key?: { id?: string } })?.key?.id ?? null
+        await pool.query(
+          `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+           VALUES ($1, $2, 'out', $3, NOW())
+           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+          [contactId, msgId, text]
+        ).catch(() => {})
+      })
+      .catch(e => {
+        console.error("[WA-webhook] replyAndSave failed:", jid, e instanceof Error ? e.message : e)
+      })
   )
 }
 
@@ -942,7 +961,7 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
     )
     const lastSent: Date | null = rateRows[0]?.last_catalog_sent_at ? new Date(rateRows[0].last_catalog_sent_at) : null
     if (lastSent && Date.now() - lastSent.getTime() < 24 * 60 * 60 * 1000) {
-      replyWA(jid, "Já enviamos nosso catálogo hoje! Alguma dúvida sobre um produto específico?")
+      await replyAndSave(contactId, jid, "Já enviamos nosso catálogo hoje! Alguma dúvida sobre um produto específico?")
       return
     }
   }
@@ -950,7 +969,7 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
   const catalog = await getCatalog()
 
   if (catalog.length === 0) {
-    replyWA(jid, "No momento não temos produtos disponíveis para pedido.")
+    await replyAndSave(contactId, jid, "No momento não temos produtos disponíveis para pedido.")
     return
   }
 
@@ -965,11 +984,17 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
     return `${emoji} ${p.name}`
   })
 
-  replyWA(jid, `Quer ver as cores de qual produto? 👇\n\n${lines.join("\n")}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
-  pool.query(`UPDATE wa_contacts SET last_catalog_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
-  // Marca que estamos aguardando seleção de produto do catálogo
+  await replyAndSave(contactId, jid, `Quer ver as cores de qual produto? 👇\n\n${lines.join("\n")}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
+  // Reseta rawMessages + marca awaiting + atualiza timestamp
   pool.query(
-    `UPDATE wa_contacts SET state_data = state_data || '{"awaitingCatalogResponse":true}'::jsonb, updated_at = NOW() WHERE id = $1`,
+    `UPDATE wa_contacts
+     SET last_catalog_sent_at = NOW(),
+         state_data = jsonb_build_object(
+           'awaitingCatalogResponse', true,
+           'chatbotObs', COALESCE(state_data->>'chatbotObs', null)
+         ),
+         updated_at = NOW()
+     WHERE id = $1`,
     [contactId]
   ).catch(() => {})
 }
@@ -987,9 +1012,16 @@ function buildVariacaoBlock(productName: string, variants: Array<{ color: string
 
 async function handleVariacao(jid: string, contactId: number, text: string) {
   await tagContact(contactId, "interessado_produto")
-  // Limpa flag de awaiting ao responder
+  // Mantém awaitingCatalogResponse ativo — limpa só quando vier dígito (pedido real)
+  // Reseta rawMessages para não acumular lixo de consulta
   pool.query(
-    `UPDATE wa_contacts SET state_data = state_data - 'awaitingCatalogResponse', updated_at = NOW() WHERE id = $1`,
+    `UPDATE wa_contacts
+     SET state_data = jsonb_build_object(
+       'awaitingCatalogResponse', true,
+       'chatbotObs', COALESCE(state_data->>'chatbotObs', null)
+     ),
+     updated_at = NOW()
+     WHERE id = $1`,
     [contactId]
   ).catch(() => {})
 
@@ -1001,7 +1033,7 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
   if (isTodos) {
     const allVariants = await getAllProductVariants()
     if (!allVariants.length) {
-      replyWA(jid, "No momento não temos produtos disponíveis.")
+      await replyAndSave(contactId, jid, "No momento não temos produtos disponíveis.")
       return
     }
     const byProduct: Record<string, Array<{ color: string; size: string }>> = {}
@@ -1016,7 +1048,7 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
     const exLine = exName2
       ? `_${exName.split(" ")[0]} 10 preto P 20 cinza M\n${exName2.split(" ")[0]} 5 preto G_`
       : `_${exName.split(" ")[0]} 10 preto P 20 cinza M_`
-    replyWA(jid, `${blocks.join("\n\n")}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
+    await replyAndSave(contactId, jid, `${blocks.join("\n\n")}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
     return
   }
 
@@ -1025,7 +1057,7 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
   if (!keyword) {
     const catalog = await getCatalog()
     if (catalog.length === 0) {
-      replyWA(jid, "No momento não temos produtos disponíveis.")
+      await replyAndSave(contactId, jid, "No momento não temos produtos disponíveis.")
       return
     }
     const emojiMap: Record<string, string> = {
@@ -1035,7 +1067,7 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
       const nl = norm(p.name); const emoji = Object.entries(emojiMap).find(([k]) => nl.includes(k))?.[1] ?? "📦"
       return `${emoji} ${p.name}`
     }).join("\n")
-    replyWA(jid, `Quer ver as cores de qual produto? 👇\n\n${nomes}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
+    await replyAndSave(contactId, jid, `Quer ver as cores de qual produto? 👇\n\n${nomes}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
     return
   }
 
@@ -1052,7 +1084,7 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
   const exSize    = exSizes[0] ?? "M"
   const exLine    = `_${keyword.split(" ")[0]} 10 ${exColor} ${exSize} 20 ${exColor} ${exSizes[1] ?? exSize}_`
 
-  replyWA(jid, `${block}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
+  await replyAndSave(contactId, jid, `${block}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
 }
 
 
@@ -1474,7 +1506,19 @@ async function handleColetando(
       `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'solicitou_atendimento', updated_at = NOW() WHERE id = $1`,
       [contactId]
     )
-    replyWA(jid, "Ok! Já aviso nossa equipe, em breve alguém te chama. 😊")
+    await replyAndSave(contactId, jid, "Ok! Já aviso nossa equipe, em breve alguém te chama. ��")
+    return
+  }
+
+  // Cancelar / alterar pedido — marca atenção
+  const cancelKw  = ["cancela", "cancelar", "quero cancelar", "cancelamento"]
+  const alterKw   = ["quero alterar", "alterar pedido", "mudar pedido", "remover item", "trocar item"]
+  if (cancelKw.some(k => lower.includes(k)) || alterKw.some(k => lower.includes(k))) {
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'pediu_alteracao', updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
+    await replyAndSave(contactId, jid, "Ok! Já aviso nossa equipe pra te ajudar com isso. 😊")
     return
   }
 
@@ -1542,12 +1586,29 @@ async function handleColetando(
     return
   }
 
+  // Sem dígito + produto identificado → consulta, não pedido
+  // Captura: "tem camiseta preta?", "e moletom?", "moletom adulto", "camisetas" etc.
+  const hasDigit = /\d/.test(text)
+  if (!hasDigit) {
+    const kw = await resolveProductKeyword(text)
+    if (kw) {
+      await handleVariacao(jid, contactId, text)
+      return
+    }
+  }
+
   // DTF intent dentro de coletando → resposta direta (não fazemos criação de arte)
   const dtfTriggers = ["dtf", "impressão", "impressao", "imprimir", "metro de dtf", "arte dtf", "arquivo dtf", "arquivo pronto", "monta o arquivo", "monta arquivo", "montar arquivo", "vc monta", "voce monta", "você monta", "faz o arquivo", "faz arquivo"]
   if (dtfTriggers.some(k => lower.includes(k))) {
-    replyWA(jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
+    await replyAndSave(contactId, jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
     return
   }
+
+  // Tem dígito → é pedido real: limpa awaiting e segue pro createOrderDirect
+  pool.query(
+    `UPDATE wa_contacts SET state_data = state_data - 'awaitingCatalogResponse', updated_at = NOW() WHERE id = $1`,
+    [contactId]
+  ).catch(() => {})
 
   await setState(contactId, "coletando", { rawMessages, chatbotObs })
   await createOrderDirect(jid, contactId, rawMessages, chatbotObs, undefined, chatbotDtfEnabled, globalSettings)
@@ -2143,3 +2204,4 @@ async function addFileToDtfPedido(jid: string, contactId: number, pedidoId: numb
     console.error("[addFileToDtfPedido]", e)
   }
 }
+
