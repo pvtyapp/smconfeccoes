@@ -170,7 +170,8 @@ const PROD_COLS = [
   { key: "triagem",      label: "Triagem",                hdr: "bg-amber-50 border-amber-200",    badge: "bg-amber-100 text-amber-700",    txt: "text-amber-700"    },
   { key: "confirmando",  label: "Aguard. Confirmação",    hdr: "bg-purple-50 border-purple-200",  badge: "bg-purple-100 text-purple-700",  txt: "text-purple-700"   },
   { key: "em_separacao", label: "Em Separação",           hdr: "bg-blue-50 border-blue-200",      badge: "bg-blue-100 text-blue-700",      txt: "text-blue-700"     },
-  { key: "pronto",       label: "Pronto",                 hdr: "bg-green-50 border-green-200",    badge: "bg-green-100 text-green-700",    txt: "text-green-700"    },
+  { key: "pago",         label: "Pago",                   hdr: "bg-green-50 border-green-200",    badge: "bg-green-100 text-green-700",    txt: "text-green-700"    },
+  { key: "pronto",       label: "Retirado",               hdr: "bg-[#0F1E3C]/5 border-[#0F1E3C]/10", badge: "bg-[#0F1E3C]/8 text-[#0F1E3C]/40", txt: "text-[#0F1E3C]/40" },
 ]
 
 const DTF_COLS = [
@@ -566,7 +567,7 @@ export default function PedidosPage() {
     const r = await fetch(`/api/dtf/pedidos`)
     if (r.ok) {
       const all: DtfOrder[] = await r.json()
-      const active = all.filter(p => !["concluido", "cancelado"].includes(p.status))
+      const active = all.filter(p => !["pronto", "cancelado"].includes(p.status))
       setDtfOrders(active)
       if (selectedDtfIdRef.current) {
         const refreshed = active.find(p => p.id === selectedDtfIdRef.current)
@@ -2198,10 +2199,13 @@ export default function PedidosPage() {
                         ) : colOrders.map(order => (
                           <OrderCard key={order.id} order={order}
                             onClick={() => { selectedIdRef.current = order.id; setSelected(order) }}
-                            onTogglePay={async (id, currentlyPaid) => {
-                              if (currentlyPaid) return
-                              await fetch(`/api/orders/${id}/pay`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method: "pix" }) })
-                              setOrders(prev => prev.map(o => o.id === id ? { ...o, paidAt: new Date().toISOString() } : o))
+                            onTogglePay={async (id) => {
+                              await fetch(`/api/orders/${id}/status`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ status: "pago" }),
+                              })
+                              setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "pago", paidAt: new Date().toISOString() } : o))
                             }}
                           />
                         ))}

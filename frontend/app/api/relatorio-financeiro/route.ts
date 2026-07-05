@@ -131,7 +131,7 @@ export async function GET(req: Request) {
     const dtfCount   = Number(dtfRows[0]?.count ?? 0)
 
     // ── Calcular DRE ──────────────────────────────────────────────────────────
-    const concluded = orders.filter(o => o.status === "concluido")
+    const concluded = orders.filter(o => o.status === "pronto" || o.status === "pago" || o.status === "concluido")
 
     const receitaAvarias  = Number(avariaVendas[0]?.total   ?? 0)
     const perdasDescarte  = Number(avariaDescartes[0]?.total ?? 0)

@@ -14,8 +14,8 @@ const STATUS_LABEL: Record<string, string> = {
   triagem:      "Triagem",
   confirmando:  "Aguard. Confirmação",
   em_separacao: "Em Separação",
-  pronto:       "Pronto",
-  concluido:    "Concluído",
+  pago:         "Pago",
+  pronto:       "Retirado",
   cancelado:    "Cancelado",
 }
 
@@ -23,8 +23,8 @@ const STATUS_COLOR: Record<string, string> = {
   triagem:      "bg-amber-100 text-amber-700",
   confirmando:  "bg-purple-100 text-purple-700",
   em_separacao: "bg-blue-100 text-blue-700",
-  pronto:       "bg-green-100 text-green-700",
-  concluido:    "bg-[#0F1E3C]/8 text-[#0F1E3C]/50",
+  pago:         "bg-green-100 text-green-700",
+  pronto:       "bg-[#0F1E3C]/8 text-[#0F1E3C]/50",
   cancelado:    "bg-red-100 text-red-600",
 }
 
@@ -59,10 +59,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
       }
     } catch { /* ignora */ }
   }, [order.id])
-  const [showConcluir,  setShowConcluir]  = useState(false)
-  const [usePrazo,      setUsePrazo]      = useState(order.paymentTermEnabled ?? false)
-  const [dueDate,       setDueDate]       = useState("")
-  const [concludeError, setConcludeError] = useState("")
   const [showCancel,    setShowCancel]    = useState(false)
   const [notifyClient,  setNotifyClient]  = useState(true)
   const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
@@ -84,8 +80,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const isTriagem    = order.status === "triagem"
   const isConfirm    = order.status === "confirmando"
   const isSeparacao  = order.status === "em_separacao"
-  const isProto      = order.status === "pronto"
-  const isDone       = order.status === "concluido" || order.status === "cancelado"
+  const isPago       = order.status === "pago"
+  const isDone       = order.status === "pronto" || order.status === "cancelado"
 
   const groups   = groupItems(items)
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
@@ -175,25 +171,18 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     } finally { setSaving(false) }
   }
 
-  async function handleMarcarSeparado() {
+  async function handleMarcarPago() {
     setSaving(true)
     try {
-      await postStatus("pronto")
+      await postStatus("pago")
       onRefresh()
     } finally { setSaving(false) }
   }
 
-  async function concludeOrder() {
-    if (usePrazo && !dueDate) { setConcludeError("Informe a data de vencimento."); return }
+  async function handleConfirmarRetirada() {
     setSaving(true)
-    setConcludeError("")
     try {
-      const r = await fetch(`/api/orders/${order.id}/conclude`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dueDate: usePrazo ? dueDate : null }),
-      })
-      if (!r.ok) { const d = await r.json(); setConcludeError(d.error ?? "Erro ao concluir"); return }
+      await postStatus("pronto")
       onRefresh()
       onClose()
     } finally { setSaving(false) }
@@ -246,17 +235,19 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               <div>
                 <p className="text-xs font-bold text-purple-700">Aguardando confirmação do cliente</p>
                 <p className="text-[10px] mt-0.5 text-purple-500">
-                  Mensagem enviada via WhatsApp. Cliente precisa responder SIM ou NÃO.
+                  Mensagem enviada via WhatsApp. Avance manualmente quando confirmar com o cliente.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Valor (pronto) */}
-          {isProto && order.totalValue && (
+          {/* Pago — aguardando retirada */}
+          {isPago && (
             <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center justify-between">
-              <p className="text-xs font-semibold text-green-700">Pedido pronto para retirada</p>
-              <p className="text-base font-black text-green-700">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</p>
+              <p className="text-xs font-semibold text-green-700">Pagamento confirmado — aguardando retirada</p>
+              {order.totalValue && (
+                <p className="text-base font-black text-green-700">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</p>
+              )}
             </div>
           )}
 
@@ -329,7 +320,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           </div>
 
           {/* Imprimir — disponível a partir do confirmando */}
-          {(isConfirm || isSeparacao || isProto) && (
+          {(isConfirm || isSeparacao || isPago) && (
             <div className="space-y-2 pt-1">
               {needsReprint && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
@@ -363,53 +354,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             </div>
           )}
 
-          {/* Concluir form */}
-          {showConcluir && (
-            <div className="border border-[#0F1E3C]/10 rounded-2xl p-4 space-y-3 bg-[#F4F6FB]">
-              <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Confirmar Pagamento</p>
-
-              {order.totalValue && (
-                <div className="flex items-center justify-between bg-white rounded-xl px-4 py-3 border border-[#0F1E3C]/8">
-                  <span className="text-sm text-[#0F1E3C]/60">Valor total</span>
-                  <span className="text-lg font-black text-[#0F1E3C]">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</span>
-                </div>
-              )}
-
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setUsePrazo(v => !v)}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${usePrazo ? "bg-amber-500" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}>
-                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${usePrazo ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-                </button>
-                <p className="text-sm font-semibold text-[#0F1E3C]">Pagamento a prazo</p>
-              </div>
-
-              {usePrazo ? (
-                <div>
-                  <label className="text-xs text-[#0F1E3C]/50 mb-1.5 block">Data de vencimento *</label>
-                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-                    className="w-full border border-amber-300 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400/30" />
-                </div>
-              ) : (
-                <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
-                  Pagamento à vista confirmado.
-                </p>
-              )}
-
-              {concludeError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{concludeError}</p>}
-
-              <div className="flex gap-2">
-                <button onClick={concludeOrder} disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50">
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Confirmar Pagamento
-                </button>
-                <button onClick={() => { setShowConcluir(false); setConcludeError("") }}
-                  className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
-                  Voltar
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Footer */}
@@ -440,7 +384,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             )}
 
             {/* CONFIRMANDO: só avançar manual */}
-            {isConfirm && !showConcluir && (
+            {isConfirm && (
               <button onClick={handleAvancarManual} disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -448,26 +392,27 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* EM SEPARAÇÃO: atualizar+reenviar ou marcar separado */}
-            {isSeparacao && !showConcluir && (
+            {/* EM SEPARAÇÃO: atualizar+reenviar ou marcar como pago */}
+            {isSeparacao && (
               <>
                 <button onClick={handleAtualizarReenviar} disabled={saving}
                   className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 text-sm font-semibold disabled:opacity-50 transition-colors">
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
                   Atualizar e Reenviar
                 </button>
-                <button onClick={handleMarcarSeparado} disabled={saving}
+                <button onClick={handleMarcarPago} disabled={saving}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar Separado <ChevronRight size={14} /></>}
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pago <ChevronRight size={14} /></>}
                 </button>
               </>
             )}
 
-            {/* PRONTO: concluir */}
-            {isProto && !showConcluir && (
-              <button onClick={() => setShowConcluir(true)}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl transition-colors">
-                <Check size={14} /> Confirmar Pagamento
+            {/* PAGO: confirmar retirada */}
+            {isPago && (
+              <button onClick={handleConfirmarRetirada} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Confirmar Retirada
               </button>
             )}
           </div>

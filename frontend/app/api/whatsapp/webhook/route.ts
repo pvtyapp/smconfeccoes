@@ -1639,8 +1639,8 @@ async function handleActiveOrder(
     return
   }
 
-  // ── pergunta de prazo → sinaliza para atendimento manual ──────────────────
-  if (state === "em_separacao" || state === "pronto") {
+  // ── pergunta de prazo → só marca atenção, sem resposta ────────────────────
+  if (state === "em_separacao" || state === "pago") {
     const prazoKw = ["quando", "quanto tempo", "cadê", "cade", "terminou",
       "entrega", "retirada", "posso buscar", "posso retirar",
       "ta pronto", "tá pronto", "ficou pronto", "status", "meu pedido"]
@@ -1649,9 +1649,13 @@ async function handleActiveOrder(
         `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'prazo', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
-      replyWA(jid, "Vou acionar a equipe agora! ⏰")
       return
     }
+  }
+
+  // ── pago — aguardando retirada ──────────────────────────────────────────────
+  if (state === "pago") {
+    return
   }
 
   const intent = await classifyIntent(text)

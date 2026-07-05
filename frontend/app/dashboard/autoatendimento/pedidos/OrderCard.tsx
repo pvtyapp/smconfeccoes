@@ -7,8 +7,8 @@ const STATUS_LABEL: Record<string, string> = {
   triagem:       "Triagem",
   confirmando:   "Aguard. Confirmação",
   em_separacao:  "Em Separação",
-  pronto:        "Pronto p/ Retirada",
-  concluido:     "Concluído",
+  pago:          "Pago",
+  pronto:        "Retirado",
   cancelado:     "Cancelado",
 }
 
@@ -16,8 +16,8 @@ const STATUS_COLOR: Record<string, string> = {
   triagem:       "bg-amber-50 text-amber-700 border-amber-200",
   confirmando:   "bg-purple-50 text-purple-700 border-purple-200",
   em_separacao:  "bg-blue-50 text-blue-700 border-blue-200",
-  pronto:        "bg-green-50 text-green-700 border-green-200",
-  concluido:     "bg-[#0F1E3C]/5 text-[#0F1E3C]/40 border-[#0F1E3C]/10",
+  pago:          "bg-green-50 text-green-700 border-green-200",
+  pronto:        "bg-[#0F1E3C]/5 text-[#0F1E3C]/40 border-[#0F1E3C]/10",
   cancelado:     "bg-red-50 text-red-600 border-red-200",
 }
 
@@ -38,13 +38,12 @@ type Props = {
 }
 
 export default function OrderCard({ order, onClick, onTogglePay }: Props) {
-  const totalQty = order.items.reduce((s, i) => s + i.qty, 0)
-  const isPago   = Boolean(order.paidAt)
-  const isPromo  = order.status === "pronto"
+  const totalQty  = order.items.reduce((s, i) => s + i.qty, 0)
+  const isEm      = order.status === "em_separacao"
 
   function handlePayToggle(e: React.MouseEvent) {
     e.stopPropagation()
-    onTogglePay?.(order.id, isPago)
+    onTogglePay?.(order.id, false)
   }
 
   return (
@@ -125,17 +124,13 @@ export default function OrderCard({ order, onClick, onTogglePay }: Props) {
         <span>{order.items.length} iten{order.items.length !== 1 ? "s" : ""}</span>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
-          {/* PAGO / NÃO PAGO badge — só aparece em Pronto */}
-          {isPromo && (
+          {/* Botão PAGO — aparece em Em Separação */}
+          {isEm && (
             <button
               onClick={handlePayToggle}
-              className={`text-[9px] font-black px-2 py-0.5 rounded-full border transition-colors ${
-                isPago
-                  ? "bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200"
-                  : "bg-red-100 text-red-600 border-red-200 hover:bg-red-200"
-              }`}
+              className="text-[9px] font-black px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 transition-colors"
             >
-              {isPago ? "✓ PAGO" : "NÃO PAGO"}
+              ✓ PAGO
             </button>
           )}
         </div>

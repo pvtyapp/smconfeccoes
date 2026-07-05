@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 
-const VALID_STATUSES = ["triagem", "confirmando", "em_separacao", "pronto", "cancelado"]
+const VALID_STATUSES = ["triagem", "confirmando", "em_separacao", "pago", "pronto", "cancelado"]
 
 export async function POST(
   req: Request,
@@ -23,7 +23,8 @@ export async function POST(
     await client.query("BEGIN")
 
     const orderRes = await client.query(`
-      SELECT o.id, o.number, o.contact_id, o.total_value,
+      SELECT o.id, o.number, o.contact_id, o.status AS "currentStatus",
+             o.total_value, c.name AS "contactName",
              COALESCE(c.phone_jid, c.jid) AS jid
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
@@ -35,20 +36,21 @@ export async function POST(
       return NextResponse.json({ error: "Pedido não encontrado" }, { status: 404 })
     }
 
-    const order = orderRes.rows[0]
+    const order = orderRes.rows[0] as {
+      id: number; number: string; contact_id: number; currentStatus: string
+      total_value: string | null; contactName: string | null; jid: string | null
+    }
 
     if (status === "em_separacao") {
-      // Baixa estoque quando entra em separação (não mais no pronto)
+      // Deduz estoque (anti-duplicata por notes)
       const itemsRes = await client.query(`
         SELECT variant_id, qty, product_name
         FROM order_items
         WHERE order_id = $1 AND variant_id IS NOT NULL
       `, [id])
 
-      // Evita baixa dupla se status route chamado duas vezes
       const { rows: alreadyDeducted } = await client.query(`
-        SELECT 1 FROM stock_movements
-        WHERE notes = $1 AND type = 'out' LIMIT 1
+        SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'out' LIMIT 1
       `, [`Pedido ${order.number}`])
 
       if (!alreadyDeducted.length) {
@@ -60,11 +62,19 @@ export async function POST(
         }
       }
 
-      await client.query(`
-        UPDATE orders SET status = $1, needs_print = true WHERE id = $2
-      `, [status, id])
+      await client.query(
+        `UPDATE orders SET status = $1, needs_print = true WHERE id = $2`,
+        [status, id]
+      )
+
+    } else if (status === "pago") {
+      await client.query(
+        `UPDATE orders SET status = $1, paid_at = NOW() WHERE id = $2`,
+        [status, id]
+      )
+
     } else if (status === "pronto") {
-      // Atualiza lifecycle do contato ao concluir
+      // Pedido retirado — fecha o ciclo
       await client.query(`
         UPDATE wa_contacts
         SET last_order_at        = NOW(),
@@ -74,11 +84,49 @@ export async function POST(
         WHERE id = $1
       `, [order.contact_id])
 
-      await client.query(`
-        UPDATE orders SET status = $1, completed_at = NOW() WHERE id = $2
-      `, [status, id])
+      await client.query(
+        `UPDATE orders SET status = $1, completed_at = NOW() WHERE id = $2`,
+        [status, id]
+      )
+
+    } else if (status === "cancelado") {
+      // Estorna estoque se já tinha saído (em_separacao, pago ou pronto)
+      const needsReversal = ["em_separacao", "pago", "pronto"].includes(order.currentStatus)
+      if (needsReversal) {
+        const { rows: alreadyReverted } = await client.query(`
+          SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'in' LIMIT 1
+        `, [`Estorno ${order.number}`])
+        if (!alreadyReverted.length) {
+          const itemsRes = await client.query(`
+            SELECT variant_id, qty FROM order_items
+            WHERE order_id = $1 AND variant_id IS NOT NULL
+          `, [id])
+          for (const item of itemsRes.rows) {
+            await client.query(`
+              INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+              VALUES ($1, 'in', $2, 'estorno_cancelamento', 'dashboard', $3)
+            `, [item.variant_id, item.qty, `Estorno ${order.number}`])
+          }
+        }
+      }
+      await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
+
     } else {
       await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
+    }
+
+    // Sincroniza state do chatbot
+    const stateMap: Record<string, string> = {
+      em_separacao: "em_separacao",
+      pago:         "pago",
+      pronto:       "idle",
+      cancelado:    "idle",
+    }
+    if (stateMap[status]) {
+      await client.query(
+        `UPDATE wa_contacts SET state = $1, updated_at = NOW() WHERE id = $2`,
+        [stateMap[status], order.contact_id]
+      )
     }
 
     await client.query(`
@@ -88,12 +136,49 @@ export async function POST(
 
     await client.query("COMMIT")
 
-    // Avisa o cliente que entrou em separação
+    // ── Notificações WA pós-commit ──────────────────────────────────────────
+
     if (status === "em_separacao" && order.jid) {
       sendWhatsApp(
         order.jid,
         `📦 Seu pedido *${order.number}* está em separação! Avisamos quando pronto para retirada.`
       ).catch(() => {})
+    }
+
+    if (status === "pago" && order.jid) {
+      const { rows: s } = await pool.query(
+        `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
+      )
+      const cfg: Record<string, string> = {}
+      for (const r of s) cfg[r.key] = r.value
+
+      const valor = order.total_value
+        ? `\n\n💰 Valor: *R$ ${Number(order.total_value).toFixed(2).replace(".", ",")}*`
+        : ""
+      const pix = cfg.pix_key ? `\n💳 Pix: \`${cfg.pix_key}\`` : ""
+      const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
+
+      sendWhatsApp(
+        order.jid,
+        `✅ Pagamento confirmado! Seu pedido *${order.number}* está pronto para retirada.${valor}${pix}${end}`
+      ).catch(() => {})
+    }
+
+    if (status === "pronto" && order.jid) {
+      const nome = order.contactName ? `, ${order.contactName.split(" ")[0]}` : ""
+      sendWhatsApp(
+        order.jid,
+        `✅ Pedido *${order.number}* entregue! Obrigado${nome} pela preferência 🙏 Até a próxima!`
+      ).catch(() => {})
+
+      // Tags de compra por produto (fire-and-forget)
+      pool.query(`
+        INSERT INTO wa_contact_tags (contact_id, tag, value)
+        SELECT $1, 'comprou_produto', oi.product_name
+        FROM order_items oi
+        WHERE oi.order_id = $2
+        ON CONFLICT DO NOTHING
+      `, [order.contact_id, id]).catch(() => {})
     }
 
     // Atualização de estoque em separação → volta pra triagem com WA contextual
@@ -131,7 +216,7 @@ export async function POST(
       ).catch(() => {})
     }
 
-    // Envia lista de confirmação ao cliente e sincroniza state do contato
+    // Lista de confirmação ao cliente
     if (status === "confirmando" && order.jid) {
       const { rows: itemRows } = await pool.query(`
         SELECT product_name, color, size, qty::int AS qty
@@ -173,27 +258,6 @@ export async function POST(
       ).catch(() => {})
     }
 
-    // Notifica cliente quando pedido fica separado (pronto para retirada)
-    if (status === "pronto" && order.jid) {
-      const { rows: s } = await pool.query(
-        `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
-      )
-      const cfg: Record<string, string> = {}
-      for (const r of s) cfg[r.key] = r.value
-
-      const valor = order.total_value
-        ? `\n\n💰 Valor: *R$ ${Number(order.total_value).toFixed(2).replace(".", ",")}*`
-        : ""
-      const pix = cfg.pix_key ? `\n💳 Pix: \`${cfg.pix_key}\`` : ""
-      const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
-
-      sendWhatsApp(
-        order.jid,
-        `✅ Seu pedido *${order.number}* está separado e pronto para retirada!${valor}${pix}${end}`
-      ).catch(() => {})
-    }
-
-    // Notifica cancelamento apenas se operador optou por notificar
     if (status === "cancelado" && notifyClient && order.jid) {
       const msg = (cancelMessage as string)?.trim()
         || `Seu pedido *${order.number}* foi cancelado. Qualquer dúvida é só chamar.`
