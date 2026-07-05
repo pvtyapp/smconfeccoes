@@ -1065,7 +1065,16 @@ async function handleMedia(
     await handleDtfMedia(jid, contactId, {})
   } else {
     void lifecycle
-    replyWA(jid, "Recebi! Isso é um comprovante de pagamento ou uma arte pra impressão? Me fala.")
+    // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repetir a pergunta
+    const { rows: recentInquiry } = await pool.query(
+      `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
+       AND content LIKE 'Recebi! Isso é um comprovante%'
+       AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
+      [contactId]
+    )
+    if (!recentInquiry.length) {
+      replyWA(jid, "Recebi! Isso é um comprovante de pagamento ou uma arte pra impressão? Me fala.")
+    }
   }
 }
 
@@ -1268,9 +1277,28 @@ async function handleIdle(
   void lifecycle
   const firstName = pushName.split(" ")[0] || pushName
   const greeting = getGreeting()
+  const lowerIdle = text.toLowerCase().trim()
+
+  // Atendimento humano — detecta antes de qualquer outro processamento
+  const atendimentoKwIdle = ["atendimento", "atendente", "falar com", "fala com", "humano", "responsável", "responsavel"]
+  if (atendimentoKwIdle.some(k => lowerIdle.includes(k))) {
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'solicitou_atendimento', updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
+    await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
+    replyWA(jid, "Ok! Já aviso nossa equipe, em breve alguém te chama. 😊")
+    return
+  }
 
   // Returning client — direct flow
   if (lastOrderAt) {
+    // Catálogo direto — não passa pelo classifyAndParse
+    if (["catalogo", "catálogo", "produtos", "cardapio", "cardápio"].includes(lowerIdle)) {
+      await sendCatalog(jid, contactId)
+      return
+    }
+
     const { intent, items: preParsed } = await classifyAndParse(text, chatbotObs)
 
     if (intent === "pedido") {
@@ -1285,7 +1313,7 @@ async function handleIdle(
       return
     }
 
-    if (intent === "dtf") {
+    if (intent === "dtf" || ["monta o arquivo", "monta arquivo", "vc monta", "voce monta", "você monta"].some(k => lowerIdle.includes(k))) {
       replyWA(jid, "Aqui a gente só faz a impressão — manda o arquivo direto aqui quando tiver pronto! 🖨️")
       return
     }
@@ -1340,7 +1368,7 @@ async function handleIdle(
     }
   }
 
-  if (newIntent === "dtf") {
+  if (newIntent === "dtf" || ["monta o arquivo", "monta arquivo", "vc monta", "voce monta", "você monta"].some(k => lowerIdle.includes(k))) {
     replyWA(jid, "Aqui a gente só faz a impressão — precisa do arquivo pronto pra rodar na máquina. Quando tiver, manda direto aqui! 🖨️")
     return
   }
@@ -1376,6 +1404,17 @@ async function handleColetando(
 
   const lower = text.toLowerCase().trim()
 
+  // Atendimento humano — marca atenção e responde
+  const atendimentoKw = ["atendimento", "atendente", "falar com", "fala com", "humano", "responsável", "responsavel"]
+  if (atendimentoKw.some(k => lower.includes(k))) {
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'solicitou_atendimento', updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
+    replyWA(jid, "Ok! Já aviso nossa equipe, em breve alguém te chama. 😊")
+    return
+  }
+
   // Se veio do smart greeting e é a primeira resposta do cliente, aceita negação graciosamente
   if (smartGreeted && (stateData.rawMessages as string[] ?? []).length === 0) {
     const isNegation = ["não", "nao", "n", "no", "não preciso", "nao preciso", "agora não", "agora nao", "hoje não", "hoje nao"]
@@ -1385,6 +1424,12 @@ async function handleColetando(
       replyWA(jid, "Ok! Me chama quando precisar.")
       return
     }
+  }
+
+  // Catálogo direto
+  if (lower === "catalogo" || lower === "catálogo" || lower === "produtos" || lower === "cardapio" || lower === "cardápio") {
+    await sendCatalog(jid, contactId, true)
+    return
   }
 
   // Pergunta de preço → mostra catálogo (keywords específicas pra evitar capturar "quanto vai dar de X moletom")
@@ -1403,6 +1448,13 @@ async function handleColetando(
     return
   }
 
+  // Saudação comprida ("boa noite", "bom dia" etc.) → não vai para createOrderDirect
+  const isGreeting = /^(boa (noite|tarde|dia)|bom dia|ol[aá]|tudo (bem|bom)|como vai|oi boa|hey|hello)/.test(lower)
+  if (isGreeting && (stateData.rawMessages as string[] ?? []).length === 0) {
+    replyWA(jid, "Me manda o pedido: produto, cor e tamanho. Ex: _20 moletom preto G_")
+    return
+  }
+
   // Pergunta de cor/tamanho → mostra variações sem sair do fluxo
   if (/\bcor\b/.test(lower) || /\bcores\b/.test(lower) || /\btamanho\b/.test(lower) || /\btamanhos\b/.test(lower) || lower.includes("disponivel") || lower.includes("disponível")) {
     await handleVariacao(jid, contactId, text)
@@ -1410,7 +1462,7 @@ async function handleColetando(
   }
 
   // DTF intent dentro de coletando → resposta direta (não fazemos criação de arte)
-  const dtfTriggers = ["dtf", "impressão", "impressao", "imprimir", "metro de dtf", "arte dtf", "arquivo dtf", "arquivo pronto"]
+  const dtfTriggers = ["dtf", "impressão", "impressao", "imprimir", "metro de dtf", "arte dtf", "arquivo dtf", "arquivo pronto", "monta o arquivo", "monta arquivo", "montar arquivo", "vc monta", "voce monta", "você monta", "faz o arquivo", "faz arquivo"]
   if (dtfTriggers.some(k => lower.includes(k))) {
     replyWA(jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
     return
@@ -1650,16 +1702,31 @@ async function handleActiveOrder(
 ) {
   const lower = text.toLowerCase().trim()
 
-  // confirmando — operador gerencia manualmente, chatbot fica quieto
+  const reminderSent  = Boolean(stateData.contextReminderSent)
+  const orderNumber   = (stateData.orderNumber as string) ?? ""
+
+  async function sendReminder(msg: string) {
+    replyWA(jid, msg)
+    await pool.query(
+      `UPDATE wa_contacts SET state_data = state_data || '{"contextReminderSent":true}'::jsonb, updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
+  }
+
+  // ── confirmando — informa uma vez, depois silêncio ─────────────────────────
   if (state === "confirmando") {
+    if (!reminderSent && orderNumber) {
+      await sendReminder(`Seu pedido *${orderNumber}* está sendo verificado pela equipe! Se precisar de alguma alteração, é só responder aqui. 😊`)
+    }
     return
   }
 
   // ── pergunta de prazo → só marca atenção, sem resposta ────────────────────
+  const prazoKw = ["quando", "quanto tempo", "cadê", "cade", "terminou",
+    "entrega", "retirada", "posso buscar", "posso retirar",
+    "ta pronto", "tá pronto", "ficou pronto", "status", "meu pedido"]
+
   if (state === "em_separacao" || state === "pago") {
-    const prazoKw = ["quando", "quanto tempo", "cadê", "cade", "terminou",
-      "entrega", "retirada", "posso buscar", "posso retirar",
-      "ta pronto", "tá pronto", "ficou pronto", "status", "meu pedido"]
     if (prazoKw.some(k => lower.includes(k))) {
       await pool.query(
         `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'prazo', updated_at = NOW() WHERE id = $1`,
@@ -1669,8 +1736,25 @@ async function handleActiveOrder(
     }
   }
 
-  // ── pago — aguardando retirada ──────────────────────────────────────────────
+  // ── em_separacao — informa uma vez, depois silêncio ────────────────────────
+  if (state === "em_separacao") {
+    if (!reminderSent && orderNumber) {
+      await sendReminder(`Seu pedido *${orderNumber}* já está em separação! ✂️ Se precisar de alguma alteração, é só responder aqui.`)
+    }
+    return
+  }
+
+  // ── pago — informa uma vez, depois silêncio ─────────────────────────────────
   if (state === "pago") {
+    if (!reminderSent && orderNumber) {
+      await sendReminder(`Seu pedido *${orderNumber}* está pago e pronto para retirada! Pode vir buscar quando quiser. 😊`)
+    }
+    return
+  }
+
+  // ── triagem — informa uma vez, depois processa intenção ────────────────────
+  if (state === "triagem" && !reminderSent && orderNumber) {
+    await sendReminder(`Seu pedido *${orderNumber}* está na lista! Nossa equipe está conferindo. Se precisar alterar algum item é só me falar. 😊`)
     return
   }
 
@@ -1859,7 +1943,7 @@ async function handleActiveOrder(
     }
     // em_separacao ou pronto → novo pedido vinculado ao anterior
     const parentOrderId = stateData?.orderId as number | undefined
-    const _raceOk = await setStateIf(contactId, "coletando", { rawMessages: [text] }, ["triagem", "em_separacao", "pronto"])
+    const _raceOk = await setStateIf(contactId, "coletando", { rawMessages: [text] }, ["triagem", "em_separacao", "pago"])
     if (!_raceOk) return
     if (parentOrderId) {
       await pool.query(
@@ -1899,7 +1983,11 @@ async function handleActiveOrder(
   }
 
   const firstName = pushName.split(" ")[0]
-  replyWA(jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida é só chamar.`)
+  await pool.query(
+    `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
+    [contactId]
+  )
+  replyWA(jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida nossa equipe já vai ver. 😊`)
 }
 
 // ─── Reserva: resposta do cliente (legado — estado nunca mais setado pelo chatbot) ──

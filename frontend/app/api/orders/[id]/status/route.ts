@@ -115,7 +115,7 @@ export async function POST(
       await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
     }
 
-    // Sincroniza state do chatbot
+    // Sincroniza state do chatbot — reseta state_data pra limpar contextReminderSent
     const stateMap: Record<string, string> = {
       em_separacao: "em_separacao",
       pago:         "pago",
@@ -123,9 +123,12 @@ export async function POST(
       cancelado:    "idle",
     }
     if (stateMap[status]) {
+      const newStateData = ["em_separacao", "pago"].includes(stateMap[status])
+        ? JSON.stringify({ orderId: Number(id), orderNumber: order.number })
+        : "{}"
       await client.query(
-        `UPDATE wa_contacts SET state = $1, updated_at = NOW() WHERE id = $2`,
-        [stateMap[status], order.contact_id]
+        `UPDATE wa_contacts SET state = $1, state_data = $2::jsonb, updated_at = NOW() WHERE id = $3`,
+        [stateMap[status], newStateData, order.contact_id]
       )
     }
 
