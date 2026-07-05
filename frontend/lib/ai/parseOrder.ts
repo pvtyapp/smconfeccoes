@@ -9,22 +9,39 @@ export type ParsedItem = {
   qty: number
 }
 
-const SYSTEM = `Você é um assistente especializado em extrair itens de pedidos de confecção/vestuário a partir de texto livre em português.
+const SYSTEM = `Você é um assistente especializado em extrair itens de pedidos de confecção/vestuário a partir de mensagens de WhatsApp em português.
 
 Retorne APENAS um JSON válido no formato abaixo, sem texto extra:
 [
   { "productName": "nome do produto", "color": "cor", "size": "tamanho", "qty": quantidade }
 ]
 
-Regras:
-- productName: nome do produto (ex: "moletom", "camiseta", "calça")
-- color: cor em português (ex: "preto", "branco", "cinza")
-- size: tamanho (P, M, G, GG, XG ou número como 34, 36...)
+Regras de extração:
+- productName: nome do produto em minúsculas (ex: "moletom", "camiseta", "calça")
+- color: cor em português minúsculas (ex: "preto", "branco", "cinza mescla")
+- size: tamanho em maiúsculas (P, M, G, GG, GGG ou número como 34, 36...)
 - qty: número inteiro de unidades
-- Se não houver cor ou tamanho explícito, use "" (string vazia)
+- Se cor ou tamanho não estiver explícito, use "" (string vazia) — nunca invente
 - Se a quantidade não estiver clara, use 1
-- Agrupe itens distintos em entradas separadas
-- Ignore texto que não seja pedido de produto`
+
+Herança de produto (IMPORTANTE):
+- Quando o produto é mencionado só uma vez e os itens seguintes não têm produto, herde o produto anterior
+- Exemplos que devem gerar DOIS itens com o mesmo produto:
+  "camiseta 10 preto P 20 cinza G" → [{camiseta,preto,P,10},{camiseta,cinza,G,20}]
+  "10 camiseta preto P, 10 cinza G" → [{camiseta,preto,P,10},{camiseta,cinza,G,10}]
+  "moletom: 5 preto P, 3 branco M" → [{moletom,preto,P,5},{moletom,branco,M,3}]
+  "camiseta preto P 10, cinza G 5" → [{camiseta,preto,P,10},{camiseta,cinza,G,5}]
+
+Formatos aceitos (todos equivalentes):
+- "QTD produto cor tamanho" → ex: "20 moletom preto G"
+- "produto QTD cor tamanho" → ex: "moletom 20 preto G"
+- Vírgula separando itens → ex: "10 preto P, 5 cinza G"
+- Quebra de linha separando itens
+- Produto no início seguido de lista → ex: "camiseta: 10 preto P, 5 branco M"
+
+Outros:
+- Agrupe entradas distintas separadamente
+- Ignore saudações, perguntas e texto que não seja pedido`
 
 export async function parseOrder(text: string, clientContext: string | null = null): Promise<ParsedItem[]> {
   const system = clientContext

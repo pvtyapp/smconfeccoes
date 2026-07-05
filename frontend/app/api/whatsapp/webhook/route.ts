@@ -1642,7 +1642,7 @@ async function createOrderDirect(
       ? preParsed
       : await parseOrder(fullText, chatbotObs)
   } catch {
-    replyWA(jid, "Não entendi direito. Me passa produto, cor e tamanho de cada item.")
+    await replyAndSave(contactId, jid, "Não entendi direito. Me passa produto, cor e tamanho de cada item.")
     return
   }
 
@@ -1655,7 +1655,7 @@ async function createOrderDirect(
         const colors  = [...new Set(variants.map(v => v.color).filter(Boolean))]
         const exSizes = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
         const exLine  = `_${kw.split(" ")[0]} 10 ${colors[0] ?? "preto"} ${exSizes[0] ?? "M"}_`
-        replyWA(jid, `${block}\n\nMe passa quantidade, cor e tamanho:\n${exLine}`)
+        await replyAndSave(contactId, jid, `${block}\n\nMe passa quantidade, cor e tamanho:\n${exLine}`)
         return
       }
     }
@@ -1694,7 +1694,7 @@ async function createOrderDirect(
     const header = incomplete.length === 1
       ? "Faltou informação:\n\n"
       : "Faltaram informações em alguns itens:\n\n"
-    replyWA(jid, `${header}${blocks.join("\n\n")}\n\nMe manda o pedido completo com todos os itens.`)
+    await replyAndSave(contactId, jid, `${header}${blocks.join("\n\n")}\n\nMe manda o pedido completo com todos os itens.`)
     return
   }
 
@@ -1783,7 +1783,7 @@ async function createOrderDirect(
     if (hasUnmatched)                reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
     if (hasStockIssue && estoqueBot) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
     reply += `\n\nPode mandar mais itens se precisar!`
-    replyWA(jid, reply)
+    await replyAndSave(contactId, jid, reply)
     await setState(contactId, "triagem", { orderId, orderNumber })
     return
   }
@@ -1811,7 +1811,7 @@ async function createOrderDirect(
   await setState(contactId, "triagem", { orderId, orderNumber })
   reply += `\n\nPode me mandar mais itens se precisar. Nossa equipe confirma e avisa quando estiver pronto!`
 
-  replyWA(jid, reply)
+  await replyAndSave(contactId, jid, reply)
 
   pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
     const opJid = rows[0]?.value
