@@ -1288,9 +1288,9 @@ async function handleMedia(
         INSERT INTO order_events (order_id, status, actor, note)
         VALUES ($1, $2, 'chatbot', 'Comprovante PIX recebido')
       `, [order.id, order.status])
-      replyWA(jid, `✅ Recebi o comprovante! Já anotei no pedido *${order.number}*. Nossa equipe confirma em breve.`)
+      await replyAndSave(contactId, jid, `✅ Recebi o comprovante! Já anotei no pedido *${order.number}*. Nossa equipe confirma em breve.`)
     } else {
-      replyWA(jid, "Recebi o comprovante! Assim que seu pedido for registrado nossa equipe já vincula.")
+      await replyAndSave(contactId, jid, "Recebi o comprovante! Assim que seu pedido for registrado nossa equipe já vincula.")
     }
   } else if (mediaType === "dtf") {
     void chatbotDtfEnabled; void dtfStatus; void produtoStatus; void globalSettings
@@ -1305,7 +1305,7 @@ async function handleMedia(
       [contactId]
     )
     if (!recentInquiry.length) {
-      replyWA(jid, "Recebi! Isso é um comprovante de pagamento ou uma arte pra impressão? Me fala.")
+      await replyAndSave(contactId, jid, "Recebi! Isso é um comprovante de pagamento ou uma arte pra impressão? Me fala.")
     }
   }
 }
@@ -1334,7 +1334,7 @@ async function handleText(
     // Estados DTF e cross-sell: apenas reseta para idle sem buscar pedido
     if (state === "dtf_coletando") {
       await setState(contactId, "idle")
-      replyWA(jid, "Ok! Me chama quando precisar. 😊")
+      await replyAndSave(contactId, jid, "Ok! Me chama quando precisar. 😊")
       return
     }
 
@@ -1345,7 +1345,7 @@ async function handleText(
         `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
-      replyWA(jid, `Seu pedido *${order.number}* já está pago e pronto para retirada. Preciso acionar a equipe — eles entram em contato agora.`)
+      await replyAndSave(contactId, jid, `Seu pedido *${order.number}* já está pago e pronto para retirada. Preciso acionar a equipe — eles entram em contato agora.`)
       return
     }
 
@@ -1376,7 +1376,7 @@ async function handleText(
         `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', state = 'idle', state_data = '{}', updated_at = NOW() WHERE id = $1`,
         [contactId]
       )
-      replyWA(jid, `Ok! Avisamos a equipe para parar a separação do pedido *${order.number}*.`)
+      await replyAndSave(contactId, jid, `Ok! Avisamos a equipe para parar a separação do pedido *${order.number}*.`)
       return
     }
 
@@ -1389,7 +1389,7 @@ async function handleText(
     }
 
     await setState(contactId, "idle")
-    replyWA(jid, "Ok, cancelado. Quando precisar é só chamar.")
+    await replyAndSave(contactId, jid, "Ok, cancelado. Quando precisar é só chamar.")
     return
   }
 
@@ -1665,7 +1665,7 @@ async function handleColetando(
       .some(w => lower === w || lower.startsWith(w + " "))
     if (isNegation) {
       await setState(contactId, "idle")
-      replyWA(jid, "Ok! Me chama quando precisar.")
+      await replyAndSave(contactId, jid, "Ok! Me chama quando precisar.")
       return
     }
   }
@@ -2092,7 +2092,7 @@ async function handleActiveOrder(
       [contactId]
     )
     if (!openRem[0]) {
-      replyWA(jid, "Não tem pedido aberto pra editar.")
+      await replyAndSave(contactId, jid, "Não tem pedido aberto pra editar.")
       return
     }
     const remOrderId  = openRem[0].id as number
@@ -2103,7 +2103,7 @@ async function handleActiveOrder(
       [remOrderId]
     )
     if (!remItems.length) {
-      replyWA(jid, "Pedido está vazio.")
+      await replyAndSave(contactId, jid, "Pedido está vazio.")
       return
     }
 
@@ -2143,16 +2143,16 @@ async function handleActiveOrder(
           [remOrderId]
         )
         await setState(contactId, "idle")
-        replyWA(jid, `Removido. Pedido *${remOrderNum}* ficou vazio e foi cancelado. Me chama quando precisar!`)
+        await replyAndSave(contactId, jid, `Removido. Pedido *${remOrderNum}* ficou vazio e foi cancelado. Me chama quando precisar!`)
       } else {
         const desc = [toRemove.product_name, toRemove.color, toRemove.size].filter(Boolean).join(" ")
-        replyWA(jid, `✅ Removido: *${toRemove.qty}x ${desc}* do pedido *${remOrderNum}*.`)
+        await replyAndSave(contactId, jid, `✅ Removido: *${toRemove.qty}x ${desc}* do pedido *${remOrderNum}*.`)
       }
     } else {
       const itemList = remItems.map((it, i) =>
         `${i + 1}. ${[it.product_name, it.color, it.size].filter(Boolean).join(" ")} · *${it.qty} un*`
       ).join("\n")
-      replyWA(jid, `Qual item quer remover do *${remOrderNum}*?\n\n${itemList}\n\nEx: _tira o moletom preto_ ou _remove o item 1_`)
+      await replyAndSave(contactId, jid, `Qual item quer remover do *${remOrderNum}*?\n\n${itemList}\n\nEx: _tira o moletom preto_ ou _remove o item 1_`)
     }
     return
   }
@@ -2165,7 +2165,7 @@ async function handleActiveOrder(
       [contactId]
     )
     if (!openAlt[0]) {
-      replyWA(jid, "Não tem pedido aberto pra alterar.")
+      await replyAndSave(contactId, jid, "Não tem pedido aberto pra alterar.")
       return
     }
     const altOrderId  = openAlt[0].id as number
@@ -2183,7 +2183,7 @@ async function handleActiveOrder(
       const itemList = altItems.map((it, i) =>
         `${i + 1}. ${[it.product_name, it.color, it.size].filter(Boolean).join(" ")} · *${it.qty} un*`
       ).join("\n")
-      replyWA(jid, `O que quer alterar no pedido *${altOrderNum}*?\n\n${itemList}\n\nEx: _muda pra 15 o moletom preto P_`)
+      await replyAndSave(contactId, jid, `O que quer alterar no pedido *${altOrderNum}*?\n\n${itemList}\n\nEx: _muda pra 15 o moletom preto P_`)
       return
     }
 
@@ -2214,12 +2214,12 @@ async function handleActiveOrder(
          ) WHERE id = $1`,
         [altOrderId]
       )
-      replyWA(jid, `✅ Pedido *${altOrderNum}* atualizado:\n\n${altUpdated.join("\n")}`)
+      await replyAndSave(contactId, jid, `✅ Pedido *${altOrderNum}* atualizado:\n\n${altUpdated.join("\n")}`)
     } else {
       const itemList = altItems.map((it, i) =>
         `${i + 1}. ${[it.product_name, it.color, it.size].filter(Boolean).join(" ")} · *${it.qty} un*`
       ).join("\n")
-      replyWA(jid, `Não consegui identificar o que mudar. Pedido atual:\n\n${itemList}\n\nMe fala o que mudou.`)
+      await replyAndSave(contactId, jid, `Não consegui identificar o que mudar. Pedido atual:\n\n${itemList}\n\nMe fala o que mudou.`)
     }
     return
   }
@@ -2245,11 +2245,11 @@ async function handleActiveOrder(
         } else {
           let parsed
           try { parsed = await parseOrder(text) } catch {
-            replyWA(jid, "Não entendi. Me passa: _10 moletom preto P_")
+            await replyAndSave(contactId, jid, "Não entendi. Me passa: _10 moletom preto P_")
             return
           }
           if (!parsed.length) {
-            replyWA(jid, "Não consegui identificar os itens. Me manda: _10 moletom preto P_")
+            await replyAndSave(contactId, jid, "Não consegui identificar os itens. Me manda: _10 moletom preto P_")
             return
           }
           const matched = await matchVariants(parsed)
@@ -2282,7 +2282,7 @@ async function handleActiveOrder(
   }
 
   if (intent === "dtf") {
-    replyWA(jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
+    await replyAndSave(contactId, jid, "Pode mandar o arquivo de DTF direto aqui! 🖨️")
     return
   }
 
@@ -2326,7 +2326,7 @@ async function handleActiveOrder(
     `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
     [contactId]
   )
-  replyWA(jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida nossa equipe já vai ver. 😊`)
+  await replyAndSave(contactId, jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida nossa equipe já vai ver. 😊`)
 }
 
 // ─── Reserva: resposta do cliente (legado — estado nunca mais setado pelo chatbot) ──
