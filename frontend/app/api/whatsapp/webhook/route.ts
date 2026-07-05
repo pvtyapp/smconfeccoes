@@ -785,9 +785,10 @@ function sortSizes(sizes: string[]): string[] {
   })
 }
 
-async function getProductVariants(keyword: string): Promise<Array<{ color: string; size: string; productName: string }>> {
+async function getProductVariants(keyword: string): Promise<Array<{ color: string; size: string; productName: string; salePrice: number }>> {
   const { rows } = await pool.query(`
-    SELECT DISTINCT pv.color, pv.size, p.name AS "productName"
+    SELECT DISTINCT pv.color, pv.size, p.name AS "productName",
+           COALESCE(pv.sale_price, p.sale_price, 0)::float AS "salePrice"
     FROM product_variants pv
     JOIN products p ON p.id = pv.product_id
     WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
@@ -797,9 +798,10 @@ async function getProductVariants(keyword: string): Promise<Array<{ color: strin
   return rows
 }
 
-async function getAllProductVariants(): Promise<Array<{ color: string; size: string; productName: string }>> {
+async function getAllProductVariants(): Promise<Array<{ color: string; size: string; productName: string; salePrice: number }>> {
   const { rows } = await pool.query(`
-    SELECT DISTINCT pv.color, pv.size, p.name AS "productName"
+    SELECT DISTINCT pv.color, pv.size, p.name AS "productName",
+           COALESCE(pv.sale_price, p.sale_price, 0)::float AS "salePrice"
     FROM product_variants pv
     JOIN products p ON p.id = pv.product_id
     WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
@@ -1001,10 +1003,19 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
 
 // ─── variação ────────────────────────────────────────────────────────────────
 
-function buildVariacaoBlock(productName: string, variants: Array<{ color: string; size: string }>): string {
+function buildVariacaoBlock(productName: string, variants: Array<{ color: string; size: string; salePrice?: number }>): string {
   const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
   const sizes  = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
+  const prices = variants.map(v => v.salePrice ?? 0).filter(p => p > 0)
+  const minP   = prices.length ? Math.min(...prices) : 0
+  const maxP   = prices.length ? Math.max(...prices) : 0
+  const priceStr = minP > 0
+    ? (minP === maxP
+        ? `R$ ${minP.toFixed(2).replace(".", ",")}`
+        : `R$ ${minP.toFixed(2).replace(".", ",")} – R$ ${maxP.toFixed(2).replace(".", ",")}`)
+    : null
   let block = `*${productName}*\n`
+  if (priceStr)      block += `💰 ${priceStr}\n`
   if (colors.length) block += `🎨 Cores: ${colors.join(", ")}\n`
   if (sizes.length)  block += `📏 Tamanhos: ${sizes.join(", ")}`
   return block
@@ -1681,7 +1692,14 @@ async function createOrderDirect(
           const name   = variants[0].productName
           const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
           const sizes  = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
+          const prices = variants.map(v => v.salePrice ?? 0).filter(p => p > 0)
+          const minP   = prices.length ? Math.min(...prices) : 0
+          const maxP   = prices.length ? Math.max(...prices) : 0
+          const priceStr = minP > 0
+            ? (minP === maxP ? `R$ ${minP.toFixed(2).replace(".", ",")}` : `R$ ${minP.toFixed(2).replace(".", ",")} – R$ ${maxP.toFixed(2).replace(".", ",")}`)
+            : null
           let block = `*${name}* — faltou ${missingParts.join(" e ")}\n`
+          if (priceStr)                     block += `💰 ${priceStr}\n`
           if (!item.color && colors.length) block += `🎨 ${colors.join(", ")}\n`
           if (!item.size  && sizes.length)  block += `📏 ${sizes.join(", ")}`
           blocks.push(block.trimEnd())
