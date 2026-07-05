@@ -326,8 +326,10 @@ export async function POST(req: Request) {
           const outMsgId: string | null = (key?.id as string) ?? null
           const ts = key?.timestamp ? new Date(Number(key.timestamp) * 1000) : null
           const outPhone = phoneJid
-          ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-          : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+            ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+            : jid.endsWith("@lid")
+              ? jid.replace(/@lid$/, "").replace(/:[0-9]+$/, "").replace(/\D/g, "")
+              : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
           // Lookup by phone OR phone_jid — prevents ghost @s.whatsapp.net when @lid has garbage phone field
           const sendJid = jid.endsWith("@s.whatsapp.net") ? jid : null
           const { rows: phoneRows } = await pool.query(

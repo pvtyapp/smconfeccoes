@@ -31,7 +31,11 @@ export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg
 
   await assertEvolutionOpen()
 
-  const number = jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
+  const number = jid
+    .replace("@s.whatsapp.net", "")
+    .replace("@g.us", "")
+    .replace(/@lid$/, "")   // strip @lid suffix
+    .replace(/:[0-9]+$/, "") // strip :15 device number
 
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 9_000)
