@@ -752,6 +752,20 @@ async function getCatalog(): Promise<Array<{ name: string; sale_price: number | 
   return rows
 }
 
+// Ordem padrão de vestuário para tamanhos
+const SIZE_ORDER = ["pp", "p", "m", "g", "gg", "ggg", "gggg", "único", "unico", "u",
+  "xs", "s", "l", "xl", "xxl", "xxxl", "2", "4", "6", "8", "10", "12", "14", "16"]
+function sortSizes(sizes: string[]): string[] {
+  return [...sizes].sort((a, b) => {
+    const ai = SIZE_ORDER.indexOf(a.toLowerCase().trim())
+    const bi = SIZE_ORDER.indexOf(b.toLowerCase().trim())
+    if (ai === -1 && bi === -1) return a.localeCompare(b)
+    if (ai === -1) return 1
+    if (bi === -1) return -1
+    return ai - bi
+  })
+}
+
 async function getProductVariants(keyword: string): Promise<Array<{ color: string; size: string; productName: string }>> {
   const { rows } = await pool.query(`
     SELECT DISTINCT pv.color, pv.size, p.name AS "productName"
@@ -759,8 +773,20 @@ async function getProductVariants(keyword: string): Promise<Array<{ color: strin
     JOIN products p ON p.id = pv.product_id
     WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
       AND LOWER(p.name) LIKE $1
-    ORDER BY pv.color, pv.size
+    ORDER BY pv.color
   `, [`%${keyword.toLowerCase()}%`])
+  return rows
+}
+
+async function getAllProductVariants(): Promise<Array<{ color: string; size: string; productName: string }>> {
+  const { rows } = await pool.query(`
+    SELECT DISTINCT pv.color, pv.size, p.name AS "productName"
+    FROM product_variants pv
+    JOIN products p ON p.id = pv.product_id
+    WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
+      AND LOWER(p.name) NOT LIKE '%dtf%'
+    ORDER BY p.name, pv.color
+  `)
   return rows
 }
 
@@ -936,33 +962,80 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
   const lines = catalog.map(p => {
     const nameLower = p.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
     const emoji = Object.entries(emojiMap).find(([k]) => nameLower.includes(k))?.[1] ?? "📦"
-    const price = p.sale_price
-      ? `R$ ${Number(p.sale_price).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}/un`
-      : "consultar"
-    return `${emoji} ${p.name} — ${price}`
+    return `${emoji} ${p.name}`
   })
 
-  const exName = catalog[0].name.toLowerCase()
-  replyWA(jid, `Nossos produtos:\n\n${lines.join("\n")}\n\nQual você quer? Me passa assim:\n_Ex: 20 ${exName} preto G_`)
+  replyWA(jid, `Quer ver as cores de qual produto? 👇\n\n${lines.join("\n")}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
   pool.query(`UPDATE wa_contacts SET last_catalog_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
+  // Marca que estamos aguardando seleção de produto do catálogo
+  pool.query(
+    `UPDATE wa_contacts SET state_data = state_data || '{"awaitingCatalogResponse":true}'::jsonb, updated_at = NOW() WHERE id = $1`,
+    [contactId]
+  ).catch(() => {})
 }
 
 // ─── variação ────────────────────────────────────────────────────────────────
 
+function buildVariacaoBlock(productName: string, variants: Array<{ color: string; size: string }>): string {
+  const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
+  const sizes  = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
+  let block = `*${productName}*\n`
+  if (colors.length) block += `🎨 Cores: ${colors.join(", ")}\n`
+  if (sizes.length)  block += `📏 Tamanhos: ${sizes.join(", ")}`
+  return block
+}
+
 async function handleVariacao(jid: string, contactId: number, text: string) {
   await tagContact(contactId, "interessado_produto")
+  // Limpa flag de awaiting ao responder
+  pool.query(
+    `UPDATE wa_contacts SET state_data = state_data - 'awaitingCatalogResponse', updated_at = NOW() WHERE id = $1`,
+    [contactId]
+  ).catch(() => {})
+
+  const norm   = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+  const lower  = norm(text)
+  const isTodos = ["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower.trim())
+
+  // "todos" → mostra todos os produtos
+  if (isTodos) {
+    const allVariants = await getAllProductVariants()
+    if (!allVariants.length) {
+      replyWA(jid, "No momento não temos produtos disponíveis.")
+      return
+    }
+    const byProduct: Record<string, Array<{ color: string; size: string }>> = {}
+    for (const v of allVariants) {
+      if (!byProduct[v.productName]) byProduct[v.productName] = []
+      byProduct[v.productName].push({ color: v.color, size: v.size })
+    }
+    const blocks = Object.entries(byProduct).map(([name, vars]) => buildVariacaoBlock(name, vars))
+    const productNames = Object.keys(byProduct)
+    const exName = productNames[0]?.toLowerCase() ?? "produto"
+    const exName2 = productNames[1]?.toLowerCase() ?? null
+    const exLine = exName2
+      ? `_${exName.split(" ")[0]} 10 preto P 20 cinza M\n${exName2.split(" ")[0]} 5 preto G_`
+      : `_${exName.split(" ")[0]} 10 preto P 20 cinza M_`
+    replyWA(jid, `${blocks.join("\n\n")}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
+    return
+  }
 
   const keyword = await resolveProductKeyword(text)
 
   if (!keyword) {
-    // Sem produto identificado na pergunta → pergunta qual produto
     const catalog = await getCatalog()
     if (catalog.length === 0) {
       replyWA(jid, "No momento não temos produtos disponíveis.")
       return
     }
-    const nomes = catalog.map(p => `• ${p.name}`).join("\n")
-    replyWA(jid, `Cor de qual produto?\n\n${nomes}\n\nMe fala o nome que mostro as cores disponíveis.`)
+    const emojiMap: Record<string, string> = {
+      moletom: "🧥", camiseta: "👕", bermuda: "🩳", calca: "👖", calça: "👖", conjunto: "👗", blusa: "🧣", short: "🩳",
+    }
+    const nomes = catalog.map(p => {
+      const nl = norm(p.name); const emoji = Object.entries(emojiMap).find(([k]) => nl.includes(k))?.[1] ?? "📦"
+      return `${emoji} ${p.name}`
+    }).join("\n")
+    replyWA(jid, `Quer ver as cores de qual produto? 👇\n\n${nomes}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
     return
   }
 
@@ -973,23 +1046,13 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
     return
   }
 
-  const productName = variants[0].productName
-  const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
-  const sizes  = [...new Set(variants.map(v => v.size).filter(Boolean))]
+  const block     = buildVariacaoBlock(variants[0].productName, variants)
+  const exColor   = variants.find(v => v.color)?.color ?? "Preto"
+  const exSizes   = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
+  const exSize    = exSizes[0] ?? "M"
+  const exLine    = `_${keyword.split(" ")[0]} 10 ${exColor} ${exSize} 20 ${exColor} ${exSizes[1] ?? exSize}_`
 
-  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
-  const lowerText = norm(text)
-  const askedColor = colors.find(c => lowerText.includes(norm(c)))
-    ?? colors.find(c => c.toLowerCase().includes("preto"))
-    ?? colors[0] ?? "Preto"
-  const exSize = sizes[0] ?? "M"
-
-  let msg = `*${productName}*\n`
-  if (colors.length) msg += `🎨 Cores: ${colors.join(", ")}\n`
-  if (sizes.length)  msg += `📏 Tamanhos: ${sizes.join(", ")}\n`
-  msg += `\nMe manda assim: _20 ${keyword} ${askedColor} ${exSize}_`
-
-  replyWA(jid, msg)
+  replyWA(jid, `${block}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
 }
 
 
@@ -1440,6 +1503,24 @@ async function handleColetando(
     return
   }
 
+  // Aguardando seleção de produto do catálogo: interpreta a resposta como nome de produto
+  const awaitingCatalog = Boolean(stateData.awaitingCatalogResponse)
+  if (awaitingCatalog) {
+    const isTodos = ["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower.trim())
+    if (isTodos) {
+      await handleVariacao(jid, contactId, "todos")
+      return
+    }
+    const kw = await resolveProductKeyword(text)
+    if (kw) {
+      await handleVariacao(jid, contactId, text)
+      return
+    }
+    // Não reconheceu o produto → reapresenta a lista
+    await sendCatalog(jid, contactId, true)
+    return
+  }
+
   // Ruído: saudações e mensagens sem conteúdo de pedido → não acumula em rawMessages
   const isNoise = /^(oi|olá|ola|ok|okay|blz|beleza|tá|ta|sim|s|👍|✅|😊|🙏|valeu|obg|obrigad|pi|pe|po|pu|né|ne|aí|ai|hm|hmm|ah|eh|é|e|opa|eae|eaí|eai)$/.test(lower)
     || (lower.length <= 3 && !/^\d/.test(lower) && !["não","nao"].includes(lower))
@@ -1500,14 +1581,11 @@ async function createOrderDirect(
     if (kw) {
       const variants = await getProductVariants(kw)
       if (variants.length > 0) {
-        const name   = variants[0].productName
-        const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
-        const sizes  = [...new Set(variants.map(v => v.size).filter(Boolean))]
-        let msg = `*${name}*\n`
-        if (colors.length) msg += `🎨 Cores: ${colors.join(", ")}\n`
-        if (sizes.length)  msg += `📏 Tamanhos: ${sizes.join(", ")}\n`
-        msg += `\nMe passa quantidade, cor e tamanho. Ex: _20 ${kw} ${colors[0] ?? "preto"} ${sizes[0] ?? "M"}_`
-        replyWA(jid, msg)
+        const block   = buildVariacaoBlock(variants[0].productName, variants)
+        const colors  = [...new Set(variants.map(v => v.color).filter(Boolean))]
+        const exSizes = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
+        const exLine  = `_${kw.split(" ")[0]} 10 ${colors[0] ?? "preto"} ${exSizes[0] ?? "M"}_`
+        replyWA(jid, `${block}\n\nMe passa quantidade, cor e tamanho:\n${exLine}`)
         return
       }
     }
@@ -1532,7 +1610,7 @@ async function createOrderDirect(
         if (variants.length > 0) {
           const name   = variants[0].productName
           const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
-          const sizes  = [...new Set(variants.map(v => v.size).filter(Boolean))]
+          const sizes  = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
           let block = `*${name}* — faltou ${missingParts.join(" e ")}\n`
           if (!item.color && colors.length) block += `🎨 ${colors.join(", ")}\n`
           if (!item.size  && sizes.length)  block += `📏 ${sizes.join(", ")}`
