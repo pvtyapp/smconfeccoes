@@ -1726,7 +1726,7 @@ async function handleActiveOrder(
     "entrega", "retirada", "posso buscar", "posso retirar",
     "ta pronto", "tá pronto", "ficou pronto", "status", "meu pedido"]
 
-  if (state === "em_separacao" || state === "pago") {
+  if (state === "em_separacao" || state === "pronto" || state === "pago") {
     if (prazoKw.some(k => lower.includes(k))) {
       await pool.query(
         `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'prazo', updated_at = NOW() WHERE id = $1`,
@@ -1739,16 +1739,21 @@ async function handleActiveOrder(
   // ── em_separacao — informa uma vez, depois silêncio ────────────────────────
   if (state === "em_separacao") {
     if (!reminderSent && orderNumber) {
-      await sendReminder(`Seu pedido *${orderNumber}* já está em separação! ✂️ Se precisar de alguma alteração, é só responder aqui.`)
+      await sendReminder(`Seu pedido *${orderNumber}* já está em separação! ✂️ Avisamos quando estiver pronto.`)
     }
     return
   }
 
-  // ── pago — informa uma vez, depois silêncio ─────────────────────────────────
-  if (state === "pago") {
+  // ── pronto — informa uma vez, depois silêncio ───────────────────────────────
+  if (state === "pronto") {
     if (!reminderSent && orderNumber) {
-      await sendReminder(`Seu pedido *${orderNumber}* está pago e pronto para retirada! Pode vir buscar quando quiser. 😊`)
+      await sendReminder(`Seu pedido *${orderNumber}* está pronto para retirada! Pode vir buscar quando quiser. 😊`)
     }
+    return
+  }
+
+  // ── pago — silêncio (ação interna do operador) ──────────────────────────────
+  if (state === "pago") {
     return
   }
 

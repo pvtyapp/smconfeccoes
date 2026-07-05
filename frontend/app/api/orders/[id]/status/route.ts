@@ -2,7 +2,21 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 
-const VALID_STATUSES = ["triagem", "confirmando", "em_separacao", "pago", "pronto", "cancelado"]
+const VALID_STATUSES = ["triagem", "confirmando", "em_separacao", "pronto", "pago", "concluido", "cancelado"]
+
+// Envia WA e salva direto no banco — não depende do fromMe callback
+async function sendAndSave(contactId: number, jid: string, text: string): Promise<void> {
+  try {
+    const result = await sendWhatsApp(jid, text) as { key?: { id?: string } }
+    const msgId = result?.key?.id ?? null
+    await pool.query(
+      `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+       VALUES ($1, $2, 'out', $3, NOW())
+       ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+      [contactId, msgId, text]
+    )
+  } catch { /* Evolution down — swallow */ }
+}
 
 export async function POST(
   req: Request,
@@ -41,18 +55,18 @@ export async function POST(
       total_value: string | null; contactName: string | null; jid: string | null
     }
 
+    // ── Lógica de cada stage ──────────────────────────────────────────────────
+
     if (status === "em_separacao") {
-      // Deduz estoque (anti-duplicata por notes)
+      // Deduz estoque (anti-duplicata)
       const itemsRes = await client.query(`
-        SELECT variant_id, qty, product_name
-        FROM order_items
+        SELECT variant_id, qty FROM order_items
         WHERE order_id = $1 AND variant_id IS NOT NULL
       `, [id])
-
-      const { rows: alreadyDeducted } = await client.query(`
-        SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'out' LIMIT 1
-      `, [`Pedido ${order.number}`])
-
+      const { rows: alreadyDeducted } = await client.query(
+        `SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'out' LIMIT 1`,
+        [`Pedido ${order.number}`]
+      )
       if (!alreadyDeducted.length) {
         for (const item of itemsRes.rows) {
           await client.query(`
@@ -61,20 +75,24 @@ export async function POST(
           `, [item.variant_id, item.qty, `Pedido ${order.number}`])
         }
       }
-
       await client.query(
         `UPDATE orders SET status = $1, needs_print = true WHERE id = $2`,
         [status, id]
       )
 
+    } else if (status === "pronto") {
+      // Pronto para retirada — sem mudança de DB especial
+      await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
+
     } else if (status === "pago") {
+      // Pagamento recebido pelo operador
       await client.query(
         `UPDATE orders SET status = $1, paid_at = NOW() WHERE id = $2`,
         [status, id]
       )
 
-    } else if (status === "pronto") {
-      // Pedido retirado — fecha o ciclo
+    } else if (status === "concluido") {
+      // Entregue — fecha o ciclo
       await client.query(`
         UPDATE wa_contacts
         SET last_order_at        = NOW(),
@@ -83,19 +101,19 @@ export async function POST(
             ausente_seq          = 0
         WHERE id = $1
       `, [order.contact_id])
-
       await client.query(
         `UPDATE orders SET status = $1, completed_at = NOW() WHERE id = $2`,
         [status, id]
       )
 
     } else if (status === "cancelado") {
-      // Estorna estoque se já tinha saído (em_separacao, pago ou pronto)
-      const needsReversal = ["em_separacao", "pago", "pronto"].includes(order.currentStatus)
+      // Estorna estoque se já tinha saído (em_separacao, pronto, pago ou concluido)
+      const needsReversal = ["em_separacao", "pronto", "pago", "concluido"].includes(order.currentStatus)
       if (needsReversal) {
-        const { rows: alreadyReverted } = await client.query(`
-          SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'in' LIMIT 1
-        `, [`Estorno ${order.number}`])
+        const { rows: alreadyReverted } = await client.query(
+          `SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'in' LIMIT 1`,
+          [`Estorno ${order.number}`]
+        )
         if (!alreadyReverted.length) {
           const itemsRes = await client.query(`
             SELECT variant_id, qty FROM order_items
@@ -112,18 +130,21 @@ export async function POST(
       await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
 
     } else {
+      // triagem, confirmando — só atualiza status
       await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
     }
 
-    // Sincroniza state do chatbot — reseta state_data pra limpar contextReminderSent
+    // ── Sincroniza state do chatbot ───────────────────────────────────────────
     const stateMap: Record<string, string> = {
       em_separacao: "em_separacao",
+      pronto:       "pronto",
       pago:         "pago",
-      pronto:       "idle",
+      concluido:    "idle",
       cancelado:    "idle",
     }
     if (stateMap[status]) {
-      const newStateData = ["em_separacao", "pago"].includes(stateMap[status])
+      const activeStates = ["em_separacao", "pronto", "pago"]
+      const newStateData = activeStates.includes(stateMap[status])
         ? JSON.stringify({ orderId: Number(id), orderNumber: order.number })
         : "{}"
       await client.query(
@@ -139,16 +160,16 @@ export async function POST(
 
     await client.query("COMMIT")
 
-    // ── Notificações WA pós-commit ──────────────────────────────────────────
+    // ── Notificações WA pós-commit ────────────────────────────────────────────
 
     if (status === "em_separacao" && order.jid) {
-      sendWhatsApp(
-        order.jid,
-        `📦 Seu pedido *${order.number}* está em separação! Avisamos quando pronto para retirada.`
-      ).catch(() => {})
+      await sendAndSave(
+        order.contact_id, order.jid,
+        `📦 Seu pedido *${order.number}* está sendo separado! Avisamos quando estiver pronto para retirada.`
+      )
     }
 
-    if (status === "pago" && order.jid) {
+    if (status === "pronto" && order.jid) {
       const { rows: s } = await pool.query(
         `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
       )
@@ -161,25 +182,23 @@ export async function POST(
       const pix = cfg.pix_key ? `\n💳 Pix: \`${cfg.pix_key}\`` : ""
       const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
 
-      sendWhatsApp(
-        order.jid,
-        `✅ Pagamento confirmado! Seu pedido *${order.number}* está pronto para retirada.${valor}${pix}${end}`
-      ).catch(() => {})
+      await sendAndSave(
+        order.contact_id, order.jid,
+        `✅ Seu pedido *${order.number}* está pronto para retirada!${valor}${pix}${end}`
+      )
     }
 
-    if (status === "pronto" && order.jid) {
+    if (status === "concluido" && order.jid) {
       const nome = order.contactName ? `, ${order.contactName.split(" ")[0]}` : ""
-      sendWhatsApp(
-        order.jid,
+      await sendAndSave(
+        order.contact_id, order.jid,
         `✅ Pedido *${order.number}* entregue! Obrigado${nome} pela preferência 🙏 Até a próxima!`
-      ).catch(() => {})
-
-      // Tags de compra por produto (fire-and-forget)
+      )
+      // Tags por produto (fire-and-forget)
       pool.query(`
         INSERT INTO wa_contact_tags (contact_id, tag, value)
         SELECT $1, 'comprou_produto', oi.product_name
-        FROM order_items oi
-        WHERE oi.order_id = $2
+        FROM order_items oi WHERE oi.order_id = $2
         ON CONFLICT DO NOTHING
       `, [order.contact_id, id]).catch(() => {})
     }
@@ -195,13 +214,13 @@ export async function POST(
         return `${idx + 1}. ${desc} · *${it.qty} un*`
       })
       type Change = { productName: string; color: string | null; size: string | null; oldQty: number; newQty: number }
-      function itemLabelT(c: Change) { return [c.productName, c.color, c.size].filter(Boolean).join(" ") }
       const zeroed  = (changes as Change[]).filter(c => c.newQty === 0)
       const reduced = (changes as Change[]).filter(c => c.newQty > 0 && c.newQty < c.oldQty)
       const total   = zeroed.length + reduced.length
+      function itemLabelT(c: Change) { return [c.productName, c.color, c.size].filter(Boolean).join(" ") }
       let intro: string
       if (total === 1 && zeroed.length === 1) {
-        intro = `A *${itemLabelT(zeroed[0])}* estamos sem estoque, mas o restante do pedido ficou assim:\n\n`
+        intro = `A *${itemLabelT(zeroed[0])}* estamos sem estoque, mas o restante ficou assim:\n\n`
       } else if (total === 1 && reduced.length === 1) {
         intro = `Olha, a *${itemLabelT(reduced[0])}* vou ter somente *${reduced[0].newQty}*, seu pedido atualizado ficou:\n\n`
       } else {
@@ -212,7 +231,7 @@ export async function POST(
         intro = `Atenção, atualizamos alguns itens do pedido *${order.number}*:\n${bullets.join("\n")}\n\nSeu pedido ficou assim:\n\n`
       }
       const msg = `${intro}${lines.join("\n")}\n\nResponde *confirmar* quando estiver certo 👍`
-      sendWhatsApp(order.jid, msg).catch(() => {})
+      await sendAndSave(order.contact_id, order.jid, msg)
       pool.query(
         `UPDATE wa_contacts SET state = 'triagem', state_data = $1, updated_at = NOW() WHERE id = $2`,
         [JSON.stringify({ orderId: Number(id), orderNumber: order.number }), order.contact_id]
@@ -231,17 +250,14 @@ export async function POST(
       })
 
       type Change = { productName: string; color: string | null; size: string | null; oldQty: number; newQty: number }
-      function itemLabel(c: Change) {
-        return [c.productName, c.color, c.size].filter(Boolean).join(" ")
-      }
-
+      function itemLabel(c: Change) { return [c.productName, c.color, c.size].filter(Boolean).join(" ") }
       let intro = `Olá! Seu pedido *${order.number}* está na lista:\n\n`
       if (Array.isArray(changes) && changes.length > 0) {
         const zeroed  = (changes as Change[]).filter(c => c.newQty === 0)
         const reduced = (changes as Change[]).filter(c => c.newQty > 0 && c.newQty < c.oldQty)
         const total   = zeroed.length + reduced.length
         if (total === 1 && zeroed.length === 1) {
-          intro = `A *${itemLabel(zeroed[0])}* estamos sem estoque, mas o restante do pedido ficou assim:\n\n`
+          intro = `A *${itemLabel(zeroed[0])}* estamos sem estoque, mas o restante ficou assim:\n\n`
         } else if (total === 1 && reduced.length === 1) {
           intro = `Olha, a *${itemLabel(reduced[0])}* vou ter somente *${reduced[0].newQty}*, seu pedido atualizado ficou:\n\n`
         } else {
@@ -252,9 +268,8 @@ export async function POST(
           intro = `Atenção, atualizamos alguns itens do pedido *${order.number}*:\n${bullets.join("\n")}\n\nSeu pedido ficou assim:\n\n`
         }
       }
-
       const confirmMsg = `${intro}${lines.join("\n")}\n\nEstamos conferindo tudo! Qualquer ajuste, avisamos aqui. 😊`
-      sendWhatsApp(order.jid, confirmMsg).catch(() => {})
+      await sendAndSave(order.contact_id, order.jid, confirmMsg)
       pool.query(
         `UPDATE wa_contacts SET state = 'confirmando', state_data = $1, updated_at = NOW() WHERE id = $2`,
         [JSON.stringify({ orderId: Number(id), orderNumber: order.number }), order.contact_id]
@@ -264,7 +279,7 @@ export async function POST(
     if (status === "cancelado" && notifyClient && order.jid) {
       const msg = (cancelMessage as string)?.trim()
         || `Seu pedido *${order.number}* foi cancelado. Qualquer dúvida é só chamar.`
-      sendWhatsApp(order.jid, msg).catch(() => {})
+      await sendAndSave(order.contact_id, order.jid, msg)
     }
 
     return NextResponse.json({ success: true, status })

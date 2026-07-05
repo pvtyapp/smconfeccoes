@@ -7,8 +7,9 @@ const STATUS_LABEL: Record<string, string> = {
   triagem:       "Triagem",
   confirmando:   "Aguard. Confirmação",
   em_separacao:  "Em Separação",
+  pronto:        "Pronto p/ Retirada",
   pago:          "Pago",
-  pronto:        "Retirado",
+  concluido:     "Retirado",
   cancelado:     "Cancelado",
 }
 
@@ -16,8 +17,9 @@ const STATUS_COLOR: Record<string, string> = {
   triagem:       "bg-amber-50 text-amber-700 border-amber-200",
   confirmando:   "bg-purple-50 text-purple-700 border-purple-200",
   em_separacao:  "bg-blue-50 text-blue-700 border-blue-200",
+  pronto:        "bg-orange-50 text-orange-700 border-orange-200",
   pago:          "bg-green-50 text-green-700 border-green-200",
-  pronto:        "bg-[#0F1E3C]/5 text-[#0F1E3C]/40 border-[#0F1E3C]/10",
+  concluido:     "bg-[#0F1E3C]/5 text-[#0F1E3C]/40 border-[#0F1E3C]/10",
   cancelado:     "bg-red-50 text-red-600 border-red-200",
 }
 
@@ -39,7 +41,7 @@ type Props = {
 
 export default function OrderCard({ order, onClick, onTogglePay }: Props) {
   const totalQty  = order.items.reduce((s, i) => s + i.qty, 0)
-  const isEm      = order.status === "em_separacao"
+  const isEm      = order.status === "pronto"
 
   function handlePayToggle(e: React.MouseEvent) {
     e.stopPropagation()

@@ -167,11 +167,11 @@ function getHistDates(key: HistPeriod, rs: string, re: string): [string, string]
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const PROD_COLS = [
-  { key: "triagem",      label: "Triagem",                hdr: "bg-amber-50 border-amber-200",    badge: "bg-amber-100 text-amber-700",    txt: "text-amber-700"    },
-  { key: "confirmando",  label: "Aguard. Confirmação",    hdr: "bg-purple-50 border-purple-200",  badge: "bg-purple-100 text-purple-700",  txt: "text-purple-700"   },
-  { key: "em_separacao", label: "Em Separação",           hdr: "bg-blue-50 border-blue-200",      badge: "bg-blue-100 text-blue-700",      txt: "text-blue-700"     },
-  { key: "pago",         label: "Pago",                   hdr: "bg-green-50 border-green-200",    badge: "bg-green-100 text-green-700",    txt: "text-green-700"    },
-  { key: "pronto",       label: "Retirado",               hdr: "bg-[#0F1E3C]/5 border-[#0F1E3C]/10", badge: "bg-[#0F1E3C]/8 text-[#0F1E3C]/40", txt: "text-[#0F1E3C]/40" },
+  { key: "triagem",      label: "Triagem",             hdr: "bg-amber-50 border-amber-200",       badge: "bg-amber-100 text-amber-700",      txt: "text-amber-700"      },
+  { key: "confirmando",  label: "Aguard. Confirmação", hdr: "bg-purple-50 border-purple-200",     badge: "bg-purple-100 text-purple-700",    txt: "text-purple-700"     },
+  { key: "em_separacao", label: "Em Separação",        hdr: "bg-blue-50 border-blue-200",         badge: "bg-blue-100 text-blue-700",        txt: "text-blue-700"       },
+  { key: "pronto",       label: "Pronto p/ Retirada",  hdr: "bg-orange-50 border-orange-200",     badge: "bg-orange-100 text-orange-700",    txt: "text-orange-700"     },
+  { key: "pago",         label: "Pago",                hdr: "bg-green-50 border-green-200",       badge: "bg-green-100 text-green-700",      txt: "text-green-700"      },
 ]
 
 const DTF_COLS = [
@@ -2207,6 +2207,7 @@ export default function PedidosPage() {
                               })
                               setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "pago", paidAt: new Date().toISOString() } : o))
                             }}
+
                           />
                         ))}
                         {/* Reservas — seção colapsável na Triagem */}

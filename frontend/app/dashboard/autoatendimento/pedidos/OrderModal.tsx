@@ -14,8 +14,9 @@ const STATUS_LABEL: Record<string, string> = {
   triagem:      "Triagem",
   confirmando:  "Aguard. Confirmação",
   em_separacao: "Em Separação",
+  pronto:       "Pronto p/ Retirada",
   pago:         "Pago",
-  pronto:       "Retirado",
+  concluido:    "Retirado",
   cancelado:    "Cancelado",
 }
 
@@ -23,8 +24,9 @@ const STATUS_COLOR: Record<string, string> = {
   triagem:      "bg-amber-100 text-amber-700",
   confirmando:  "bg-purple-100 text-purple-700",
   em_separacao: "bg-blue-100 text-blue-700",
+  pronto:       "bg-orange-100 text-orange-700",
   pago:         "bg-green-100 text-green-700",
-  pronto:       "bg-[#0F1E3C]/8 text-[#0F1E3C]/50",
+  concluido:    "bg-[#0F1E3C]/8 text-[#0F1E3C]/50",
   cancelado:    "bg-red-100 text-red-600",
 }
 
@@ -41,6 +43,11 @@ function groupItems(items: OrderItem[]): Group[] {
   return Object.values(map)
 }
 
+type ProductOption = {
+  id: number; name: string; salePrice: number | null
+  sizes: string[]; colors: string[]; status: string; chatbotEnabled: boolean
+}
+
 export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [items,         setItems]         = useState<OrderItem[]>(order.items.map(i => ({ ...i })))
   const [saving,        setSaving]        = useState(false)
@@ -48,6 +55,14 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [showPrint,     setShowPrint]     = useState(false)
   const [hasPrinted,    setHasPrinted]    = useState(false)
   const [printedHash,   setPrintedHash]   = useState("")
+
+  // Product picker (confirmando)
+  const [showPicker,    setShowPicker]    = useState(false)
+  const [products,      setProducts]      = useState<ProductOption[]>([])
+  const [pickerProd,    setPickerProd]    = useState<ProductOption | null>(null)
+  const [pickerColor,   setPickerColor]   = useState("")
+  const [pickerSize,    setPickerSize]    = useState("")
+  const [pickerQty,     setPickerQty]     = useState(1)
 
   useEffect(() => {
     try {
@@ -80,8 +95,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const isTriagem    = order.status === "triagem"
   const isConfirm    = order.status === "confirmando"
   const isSeparacao  = order.status === "em_separacao"
+  const isPronte     = order.status === "pronto"
   const isPago       = order.status === "pago"
-  const isDone       = order.status === "pronto" || order.status === "cancelado"
+  const isDone       = order.status === "concluido" || order.status === "cancelado"
 
   const groups   = groupItems(items)
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
@@ -103,6 +119,28 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
       id: 0, productId: null, productName: "Novo item", color: "", size: "",
       qty: 1, qtyConfirmed: null, isService: false, variantNote: null,
     }])
+  }
+
+  async function openPicker() {
+    if (!products.length) {
+      const res = await fetch("/api/products")
+      if (res.ok) {
+        const all: ProductOption[] = await res.json()
+        setProducts(all.filter(p => p.status === "active"))
+      }
+    }
+    setPickerProd(null); setPickerColor(""); setPickerSize(""); setPickerQty(1)
+    setShowPicker(true)
+  }
+
+  function confirmPicker() {
+    if (!pickerProd || !pickerColor || !pickerSize) return
+    setItems(prev => [...prev, {
+      id: 0, productId: String(pickerProd.id), productName: pickerProd.name,
+      color: pickerColor, size: pickerSize, qty: pickerQty,
+      qtyConfirmed: null, isService: false, variantNote: null,
+    }])
+    setShowPicker(false)
   }
 
   async function saveItems() {
@@ -171,6 +209,15 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     } finally { setSaving(false) }
   }
 
+  async function handleMarcarPronte() {
+    setSaving(true)
+    try {
+      await saveItems()
+      await postStatus("pronto")
+      onRefresh()
+    } finally { setSaving(false) }
+  }
+
   async function handleMarcarPago() {
     setSaving(true)
     try {
@@ -182,7 +229,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   async function handleConfirmarRetirada() {
     setSaving(true)
     try {
-      await postStatus("pronto")
+      await postStatus("concluido")
       onRefresh()
       onClose()
     } finally { setSaving(false) }
@@ -241,10 +288,20 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             </div>
           )}
 
-          {/* Pago — aguardando retirada */}
+          {/* Pronto p/ Retirada */}
+          {isPronte && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center justify-between">
+              <p className="text-xs font-semibold text-orange-700">Pronto para retirada — aguardando cliente</p>
+              {order.totalValue && (
+                <p className="text-base font-black text-orange-700">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</p>
+              )}
+            </div>
+          )}
+
+          {/* Pago — aguardando confirmação de entrega */}
           {isPago && (
             <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center justify-between">
-              <p className="text-xs font-semibold text-green-700">Pagamento confirmado — aguardando retirada</p>
+              <p className="text-xs font-semibold text-green-700">Pagamento confirmado — confirme a entrega</p>
               {order.totalValue && (
                 <p className="text-base font-black text-green-700">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</p>
               )}
@@ -311,6 +368,12 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                 <Plus size={13} /> Adicionar item
               </button>
             )}
+            {isConfirm && (
+              <button onClick={openPicker}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-purple-200 text-xs text-purple-500 hover:bg-purple-50 transition-colors">
+                <Plus size={13} /> Adicionar item do catálogo
+              </button>
+            )}
           </div>
 
           {/* Total */}
@@ -320,7 +383,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           </div>
 
           {/* Imprimir — disponível a partir do confirmando */}
-          {(isConfirm || isSeparacao || isPago) && (
+          {(isConfirm || isSeparacao || isPronte || isPago) && (
             <div className="space-y-2 pt-1">
               {needsReprint && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
@@ -383,7 +446,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </>
             )}
 
-            {/* CONFIRMANDO: só avançar manual */}
+            {/* CONFIRMANDO: adicionar item + avançar */}
             {isConfirm && (
               <button onClick={handleAvancarManual} disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
@@ -392,7 +455,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* EM SEPARAÇÃO: atualizar+reenviar ou marcar como pago */}
+            {/* EM SEPARAÇÃO: atualizar+reenviar ou marcar como pronto */}
             {isSeparacao && (
               <>
                 <button onClick={handleAtualizarReenviar} disabled={saving}
@@ -400,24 +463,121 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
                   Atualizar e Reenviar
                 </button>
-                <button onClick={handleMarcarPago} disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pago <ChevronRight size={14} /></>}
+                <button onClick={handleMarcarPronte} disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pronto <ChevronRight size={14} /></>}
                 </button>
               </>
             )}
 
-            {/* PAGO: confirmar retirada */}
+            {/* PRONTO: confirmar pagamento */}
+            {isPronte && (
+              <button onClick={handleMarcarPago} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                ✓ Confirmar Pagamento
+              </button>
+            )}
+
+            {/* PAGO: confirmar entrega */}
             {isPago && (
               <button onClick={handleConfirmarRetirada} disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                Confirmar Retirada
+                Confirmar Entrega
               </button>
             )}
           </div>
         </div>
       </div>
+
+      {/* Product Picker — confirmando */}
+      {showPicker && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#0F1E3C]">Adicionar item</h3>
+              <button onClick={() => setShowPicker(false)} className="text-[#0F1E3C]/30 hover:text-[#0F1E3C]"><X size={16} /></button>
+            </div>
+
+            {/* Produto */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[#0F1E3C]/60">Produto</label>
+              <select
+                value={pickerProd?.id ?? ""}
+                onChange={e => {
+                  const p = products.find(p => p.id === Number(e.target.value)) ?? null
+                  setPickerProd(p); setPickerColor(""); setPickerSize("")
+                }}
+                className="w-full border border-[#0F1E3C]/10 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-[#F4F6FB] focus:outline-none">
+                <option value="">Selecionar produto...</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+
+            {pickerProd && (
+              <>
+                {/* Cor */}
+                {pickerProd.colors.length > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-[#0F1E3C]/60">Cor</label>
+                    <select value={pickerColor} onChange={e => setPickerColor(e.target.value)}
+                      className="w-full border border-[#0F1E3C]/10 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-[#F4F6FB] focus:outline-none">
+                      <option value="">Selecionar cor...</option>
+                      {pickerProd.colors.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {/* Tamanho */}
+                {pickerProd.sizes.length > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-[#0F1E3C]/60">Tamanho</label>
+                    <div className="flex flex-wrap gap-2">
+                      {pickerProd.sizes.map(s => (
+                        <button key={s} type="button"
+                          onClick={() => setPickerSize(s)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+                            pickerSize === s
+                              ? "bg-[#4361EE] text-white border-[#4361EE]"
+                              : "border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+                          }`}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Qty */}
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-[#0F1E3C]/60">Quantidade</label>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setPickerQty(q => Math.max(1, q - 1))}
+                      className="w-8 h-8 rounded-full border border-[#0F1E3C]/15 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-lg font-bold flex items-center justify-center">−</button>
+                    <span className="text-base font-black text-[#0F1E3C] w-8 text-center">{pickerQty}</span>
+                    <button type="button" onClick={() => setPickerQty(q => q + 1)}
+                      className="w-8 h-8 rounded-full border border-[#0F1E3C]/15 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-lg font-bold flex items-center justify-center">+</button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowPicker(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6">
+                Cancelar
+              </button>
+              <button
+                onClick={confirmPicker}
+                disabled={!pickerProd || !pickerColor || !pickerSize}
+                className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-xl disabled:opacity-40 transition-colors">
+                Adicionar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Print */}
       {showPrint && (
