@@ -1992,6 +1992,23 @@ async function handleAguardandoCliente1(
   replyWA(jid, "Me manda o pedido de novo pra eu registrar! 😊")
 }
 
+async function buildOrderList(orderId: number, orderNumber: string): Promise<string> {
+  const { rows: items } = await pool.query(
+    `SELECT product_name, color, size, qty::int AS qty, unit_price::float AS unit_price
+     FROM order_items WHERE order_id = $1 ORDER BY id`,
+    [orderId]
+  )
+  if (!items.length) return `Pedido *${orderNumber}* — sem itens.`
+  const lines = items.map((it, i) => {
+    const desc  = [it.product_name, it.color, it.size].filter(Boolean).join(" ")
+    const price = it.unit_price ? ` · R$ ${(it.unit_price * it.qty).toFixed(2).replace(".", ",")}` : ""
+    return `${i + 1}. ${desc} · *${it.qty} un*${price}`
+  })
+  const total    = items.reduce((s, it) => s + (it.unit_price ?? 0) * it.qty, 0)
+  const totalStr = total > 0 ? `\n\n💰 *Total: R$ ${total.toFixed(2).replace(".", ",")}*` : ""
+  return `📋 Pedido *${orderNumber}*:\n\n${lines.join("\n")}${totalStr}`
+}
+
 async function handleActiveOrder(
   jid: string,
   contactId: number,
@@ -2008,7 +2025,7 @@ async function handleActiveOrder(
   const orderNumber   = (stateData.orderNumber as string) ?? ""
 
   async function sendReminder(msg: string) {
-    replyWA(jid, msg)
+    await replyAndSave(contactId, jid, msg)
     await pool.query(
       `UPDATE wa_contacts SET state_data = state_data || '{"contextReminderSent":true}'::jsonb, updated_at = NOW() WHERE id = $1`,
       [contactId]
@@ -2059,10 +2076,10 @@ async function handleActiveOrder(
     return
   }
 
-  // ── triagem — informa uma vez, depois processa intenção ────────────────────
+  // ── triagem — informa uma vez, mas CONTINUA processando a mensagem ──────────
   if (state === "triagem" && !reminderSent && orderNumber) {
     await sendReminder(`Seu pedido *${orderNumber}* está na lista! Nossa equipe está conferindo. Se precisar alterar algum item é só me falar. 😊`)
-    return
+    // não retorna — a mensagem que disparou o reminder também é processada abaixo
   }
 
   const intent = await classifyIntent(text)
@@ -2242,8 +2259,10 @@ async function handleActiveOrder(
               VALUES ($1, $2, $3, $4, $5, $6, $7)
             `, [openOrders[0].id, item.productName, item.color || "", item.size || "", item.qty, item.variantId, item.unitPrice])
           }
-          const lines = matched.map(m => `• ${[m.productName, m.color, m.size].filter(Boolean).join(" ")} · *${m.qty} un*`)
-          replyWA(jid, `✅ Anotado! Adicionei ao pedido *${openOrders[0].number}*:\n\n${lines.join("\n")}`)
+          const newLines  = matched.map(m => `• ${[m.productName, m.color, m.size].filter(Boolean).join(" ")} · *${m.qty} un*`)
+          const fullList  = await buildOrderList(openOrders[0].id as number, openOrders[0].number as string)
+          await replyAndSave(contactId, jid,
+            `✅ Adicionei ao *${openOrders[0].number}*:\n${newLines.join("\n")}\n\n${fullList}\n\nPode continuar adicionando!`)
           return
         }
       }
@@ -2277,6 +2296,19 @@ async function handleActiveOrder(
     return
   }
 
+  if (intent === "ver_pedido" || (intent === "status" && state === "triagem")) {
+    const { rows: openOrders } = await pool.query(
+      `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId]
+    )
+    if (openOrders[0]) {
+      const msg = await buildOrderList(openOrders[0].id as number, openOrders[0].number as string)
+      await replyAndSave(contactId, jid, `${msg}\n\nPode continuar adicionando ou me fala se quiser alterar algo.`)
+    }
+    return
+  }
+
   if (intent === "status") {
     const res = await pool.query(`
       SELECT number, status FROM orders
@@ -2284,7 +2316,7 @@ async function handleActiveOrder(
       ORDER BY created_at DESC LIMIT 1
     `, [contactId])
     if (res.rows[0]) {
-      replyWA(jid, `Seu pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
+      await replyAndSave(contactId, jid, `Seu pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
     }
     return
   }
