@@ -1550,19 +1550,28 @@ async function handleColetando(
   // Aguardando seleção de produto do catálogo: interpreta a resposta como nome de produto
   const awaitingCatalog = Boolean(stateData.awaitingCatalogResponse)
   if (awaitingCatalog) {
-    const isTodos = ["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower.trim())
-    if (isTodos) {
-      await handleVariacao(jid, contactId, "todos")
+    if (/\d/.test(text)) {
+      // Tem número = pedido real — limpa flag e cai no fluxo normal abaixo
+      pool.query(
+        `UPDATE wa_contacts SET state_data = state_data - 'awaitingCatalogResponse', updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      ).catch(() => {})
+      // não retorna — continua o processamento normal
+    } else {
+      const isTodos = ["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower.trim())
+      if (isTodos) {
+        await handleVariacao(jid, contactId, "todos")
+        return
+      }
+      const kw = await resolveProductKeyword(text)
+      if (kw) {
+        await handleVariacao(jid, contactId, text)
+        return
+      }
+      // Não reconheceu o produto → reapresenta a lista
+      await sendCatalog(jid, contactId, true)
       return
     }
-    const kw = await resolveProductKeyword(text)
-    if (kw) {
-      await handleVariacao(jid, contactId, text)
-      return
-    }
-    // Não reconheceu o produto → reapresenta a lista
-    await sendCatalog(jid, contactId, true)
-    return
   }
 
   // Ruído: saudações e mensagens sem conteúdo de pedido → não acumula em rawMessages
