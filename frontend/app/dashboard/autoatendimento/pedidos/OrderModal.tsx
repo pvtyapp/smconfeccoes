@@ -44,7 +44,7 @@ function groupItems(items: OrderItem[]): Group[] {
 }
 
 type ProductOption = {
-  id: number; name: string; salePrice: number | null
+  id: string; name: string; salePrice: number | null
   sizes: string[]; colors: string[]; status: string; chatbotEnabled: boolean
 }
 
@@ -135,7 +135,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   function finalizeNewItem(prod: ProductOption, color: string, size: string, variants: VariantOption[]) {
     const variant = variants.find(v => v.color === color && v.size === size)
     setItems(prev => [...prev, {
-      id: 0, productId: String(prod.id), productName: prod.name,
+      id: 0, productId: prod.id, productName: prod.name,
       color, size, qty: 1,
       qtyConfirmed: null, isService: false, variantNote: null,
       variantId: variant?.id ?? null,
@@ -391,7 +391,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                       autoFocus
                       value=""
                       onChange={e => {
-                        const p = products.find(p => p.id === Number(e.target.value)) ?? null
+                        const p = products.find(p => p.id === e.target.value) ?? null
                         if (p) selectAddProduct(p)
                       }}
                       className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-white focus:outline-none">
