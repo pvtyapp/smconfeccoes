@@ -5,7 +5,7 @@ import {
   RefreshCw, ShoppingBag,
   Search, Send, MessageCircle, ChevronLeft, Printer, History,
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot, UserCheck,
-  Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check, GitMerge,
+  Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
@@ -2011,18 +2011,6 @@ export default function PedidosPage() {
               </button>
             </div>
 
-            {/* Toggle DTF */}
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] font-bold text-[#0F1E3C]/50">DTF</p>
-              <Tip text="Liga ou desliga o serviço de impressão DTF no chatbot. Quando desligado, o bot não aceita artes nem cria pedidos DTF." />
-              <button onClick={toggleDtf} disabled={togglingDtf}
-                className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${dtfAtivo ? "bg-[#7C3AED]" : "bg-[#0F1E3C]/15"}`}>
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${dtfAtivo ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
-            </div>
-
-            <div className="w-px h-5 bg-[#0F1E3C]/8" />
-
             {/* Horários */}
             <div className="flex items-center gap-1">
               <Tip text="Define dias e horários de funcionamento por serviço, e permite programar um fechamento temporário com data de retorno." />
@@ -2039,24 +2027,6 @@ export default function PedidosPage() {
             <button onClick={() => { loadOrders(); loadDtf() }}
               className="p-2 rounded-xl text-[#0F1E3C]/40 hover:bg-white hover:text-[#0F1E3C] transition-colors">
               <RefreshCw size={14} className={loadingOrders ? "animate-spin" : ""} />
-            </button>
-
-            <button
-              onClick={mergeDupeContacts}
-              disabled={mergingDupes}
-              title="Juntar conversas duplicadas"
-              className="p-2 rounded-xl text-orange-400/60 hover:bg-orange-50 hover:text-orange-500 transition-colors disabled:opacity-40"
-            >
-              <GitMerge size={14} className={mergingDupes ? "animate-spin" : ""} />
-            </button>
-
-            <button
-              onClick={resetWA}
-              disabled={resetting}
-              title="Limpar histórico WA"
-              className="p-2 rounded-xl text-red-400/60 hover:bg-red-50 hover:text-red-500 transition-colors disabled:opacity-40"
-            >
-              <Trash2 size={14} className={resetting ? "animate-spin" : ""} />
             </button>
           </div>
         </div>
