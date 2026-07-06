@@ -293,6 +293,7 @@ export default function PedidosPage() {
   // DTF panel within chat modal
   const [showDtfPanel,      setShowDtfPanel]      = useState(false)
   const [contactDtfOrders,  setContactDtfOrders]  = useState<DtfOrder[]>([])
+  const contactProductOrders = chatContact ? orders.filter(o => o.contactId === chatContact.id) : []
   const [linkingDtfMsg,     setLinkingDtfMsg]     = useState<number | null>(null)
   const [downloadingMsgId,  setDownloadingMsgId]  = useState<number | null>(null)
   const [downloadingDtfId,  setDownloadingDtfId]  = useState<number | null>(null)
@@ -1524,7 +1525,7 @@ export default function PedidosPage() {
                   style={{ color: "#AEBAC1" }}>
                   <Bot size={16} />
                 </button>
-                <button onClick={() => setShowDtfPanel(v => !v)} title="Pedidos DTF"
+                <button onClick={() => setShowDtfPanel(v => !v)} title="Gerenciador de Pedidos"
                   className="w-8 h-8 rounded-full flex items-center justify-center transition-colors"
                   style={{ background: showDtfPanel ? "#7C3AED" : "transparent", color: showDtfPanel ? "#fff" : "#AEBAC1" }}>
                   <PanelRight size={16} />
@@ -1813,15 +1814,17 @@ export default function PedidosPage() {
             </div>
           </div>
 
-          {/* DTF side panel */}
+          {/* Gerenciador de Pedidos — produto + DTF, unificado */}
           {showDtfPanel && (
             <div className="w-72 flex-shrink-0 border-l flex flex-col" style={{ background: "#F4F6FB", borderColor: "rgba(0,0,0,0.1)" }}>
               <div className="px-4 py-3 border-b flex items-center justify-between flex-shrink-0 bg-white" style={{ borderColor: "rgba(15,30,60,0.08)" }}>
                 <div className="flex items-center gap-2">
                   <Printer size={13} style={{ color: "#7C3AED" }} />
-                  <p className="text-xs font-bold text-[#0F1E3C]">Pedidos DTF</p>
+                  <p className="text-xs font-bold text-[#0F1E3C]">Gerenciador de Pedidos</p>
                 </div>
-                <span className="text-[10px] font-semibold text-[#0F1E3C]/30">{contactDtfOrders.length} pedido{contactDtfOrders.length !== 1 ? "s" : ""}</span>
+                <span className="text-[10px] font-semibold text-[#0F1E3C]/30">
+                  {contactProductOrders.length + contactDtfOrders.length} pedido{(contactProductOrders.length + contactDtfOrders.length) !== 1 ? "s" : ""}
+                </span>
               </div>
               {dtfLinkToast && (
                 <div className="mx-3 mt-2 px-3 py-2 rounded-xl flex items-center justify-between gap-2 flex-shrink-0 border"
@@ -1831,25 +1834,60 @@ export default function PedidosPage() {
                 </div>
               )}
               {(() => {
+                const activeProductOrders    = contactProductOrders.filter(o => !["concluido", "cancelado"].includes(o.status))
+                const concludedProductOrders = contactProductOrders.filter(o => ["concluido", "cancelado"].includes(o.status))
                 const activeOrders    = contactDtfOrders.filter(o => !["concluido", "cancelado"].includes(o.status))
                 const concludedOrders = contactDtfOrders.filter(o => ["concluido", "cancelado"].includes(o.status))
+                const isEmpty = contactProductOrders.length === 0 && contactDtfOrders.length === 0
                 return (
                   <>
                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                      {contactDtfOrders.length === 0 ? (
+                      {isEmpty ? (
                         <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#0F1E3C]/20">
                           <Printer size={22} strokeWidth={1.2} />
-                          <p className="text-[10px] text-center">Nenhum pedido DTF.<br />Vincule um arquivo para criar.</p>
+                          <p className="text-[10px] text-center">Nenhum pedido ainda.</p>
                         </div>
                       ) : (
                         <>
+                          {activeProductOrders.length > 0 && (
+                            <div className="space-y-2">
+                              {(activeOrders.length > 0 || concludedProductOrders.length > 0) && (
+                                <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1">Produtos</p>
+                              )}
+                              {activeProductOrders.map(o => (
+                                <OrderCard key={o.id} order={o} onClick={() => { selectedIdRef.current = o.id; setSelected(o) }} />
+                              ))}
+                            </div>
+                          )}
+                          {concludedProductOrders.length > 0 && (
+                            <div className="mt-1">
+                              <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1 mb-1.5">
+                                Histórico produtos ({concludedProductOrders.length})
+                              </p>
+                              <div className="space-y-1">
+                                {concludedProductOrders.map(o => (
+                                  <button key={o.id}
+                                    onClick={() => { selectedIdRef.current = o.id; setSelected(o) }}
+                                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:bg-[#0F1E3C]/4 transition-colors text-left">
+                                    <span className="text-[10px] font-bold text-[#0F1E3C]/50">{o.number}</span>
+                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${o.status === "concluido" ? "bg-[#0F1E3C]/5 text-[#0F1E3C]/30" : "bg-red-50 text-red-400"}`}>
+                                      {o.status === "concluido" ? "Concluído" : "Cancelado"}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {activeOrders.length > 0 && (
+                            <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1 pt-1">DTF</p>
+                          )}
                           {activeOrders.map(o => (
                             <DtfOrderCard key={o.id} order={o} onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }} />
                           ))}
                           {concludedOrders.length > 0 && (
                             <div className="mt-1">
                               <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1 mb-1.5">
-                                Histórico ({concludedOrders.length})
+                                Histórico DTF ({concludedOrders.length})
                               </p>
                               <div className="space-y-1">
                                 {concludedOrders.map(o => (
