@@ -4,7 +4,6 @@ import { pool } from "@/lib/db"
 import { parseOrder } from "@/lib/ai/parseOrder"
 import { classifyIntent } from "@/lib/ai/classifyIntent"
 import { classifyAndParse } from "@/lib/ai/classifyAndParse"
-import { classifyMedia } from "@/lib/ai/classifyMedia"
 import { downloadEvolutionMedia, classifyMediaCategory, type MediaCategory } from "@/lib/whatsapp/media"
 import { matchVariants, type MatchedItem } from "@/lib/whatsapp/matchVariant"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
@@ -699,7 +698,7 @@ export async function POST(req: Request) {
     }
 
     if (hasMedia) {
-      await handleMedia(jid, contact.id, msg, text, lifecycle, state, chatbotDtfEnabled, chatbotProdutoEnabled, produtoStatus, dtfStatus, globalSettings)
+      await handleMedia(jid, contact.id, msg, state)
     } else {
       await handleText(
         jid, contact.id, state, stateData, text.trim(), lifecycle, pushName ?? "",
@@ -1219,14 +1218,7 @@ async function handleMedia(
   jid: string,
   contactId: number,
   msg: unknown,
-  conversationContext: string,
-  lifecycle: string,
   state: string,
-  chatbotDtfEnabled = true,
-  chatbotProdutoEnabled = true,
-  produtoStatus: ServiceStatus = { available: true, reason: null },
-  dtfStatus: ServiceStatus     = { available: true, reason: null },
-  globalSettings: Record<string, string> = {}
 ) {
   if (state === "dtf_coletando") {
     const contactRes = await pool.query(`SELECT state_data FROM wa_contacts WHERE id = $1`, [contactId])
@@ -1254,47 +1246,35 @@ async function handleMedia(
     return
   }
 
-  const media = await downloadEvolutionMedia(msg)
-  if (!media) {
-    replyWA(jid, "Recebi, mas não consegui abrir o arquivo. Pode mandar de novo?")
-    return
-  }
-
-  const context = conversationContext || state
-  const mediaType = await classifyMedia(media.base64, media.mimeType, context)
-  const order = await getMostRecentOrder(contactId)
-
-  if (mediaType === "pix") {
-    const dataUrl = `data:${media.mimeType};base64,${media.base64}`
-    if (order) {
-      await pool.query(`
-        INSERT INTO order_attachments (order_id, type, blob_url, filename, mime_type)
-        VALUES ($1, 'pix_comprovante', $2, $3, $4)
-      `, [order.id, dataUrl, media.filename, media.mimeType])
-      await pool.query(`UPDATE orders SET has_attachment = true WHERE id = $1`, [order.id])
-      await pool.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, $2, 'chatbot', 'Comprovante PIX recebido')
-      `, [order.id, order.status])
-      await replyAndSave(contactId, jid, `✅ Recebi o comprovante! Já anotei no pedido *${order.number}*. Nossa equipe confirma em breve.`)
-    } else {
-      await replyAndSave(contactId, jid, "Recebi o comprovante! Assim que seu pedido for registrado nossa equipe já vincula.")
-    }
-  } else if (mediaType === "dtf") {
-    void chatbotDtfEnabled; void dtfStatus; void produtoStatus; void globalSettings
-    await handleDtfMedia(jid, contactId, {})
-  } else {
-    void lifecycle
-    // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repetir a pergunta
-    const { rows: recentInquiry } = await pool.query(
-      `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
-       AND content LIKE 'Recebi! Isso é um comprovante%'
-       AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
-      [contactId]
+  // Arquivo solto, fora de qualquer fluxo — não tenta adivinhar o que é (comprovante, arte, etc).
+  // Acha ou cria um pedido DTF virgem só pra aparecer no kanban; operador vincula o arquivo manualmente.
+  const { rows: openPedido } = await pool.query(
+    `SELECT id FROM dtf_pedidos
+     WHERE contact_id = $1 AND status NOT IN ('em_producao', 'pronto', 'concluido', 'cancelado')
+     ORDER BY created_at DESC LIMIT 1`,
+    [contactId]
+  )
+  if (!openPedido[0]) {
+    const numRes = await pool.query(`SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`)
+    await pool.query(
+      `INSERT INTO dtf_pedidos (number, data, contact_id, status, source) VALUES ($1, $2, $3, 'triagem', 'whatsapp')`,
+      [numRes.rows[0].num, todayBR(), contactId]
     )
-    if (!recentInquiry.length) {
-      await replyAndSave(contactId, jid, "Recebi! Isso é um comprovante de pagamento ou uma arte pra impressão? Me fala.")
-    }
+  }
+  await pool.query(
+    `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'arquivo_recebido', updated_at = NOW() WHERE id = $1`,
+    [contactId]
+  )
+
+  // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repete a mensagem
+  const { rows: recentAck } = await pool.query(
+    `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
+     AND content = 'Recebi seu arquivo! Já vou te atender. 😊'
+     AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
+    [contactId]
+  )
+  if (!recentAck.length) {
+    await replyAndSave(contactId, jid, "Recebi seu arquivo! Já vou te atender. 😊")
   }
 }
 
