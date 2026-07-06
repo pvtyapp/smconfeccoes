@@ -29,7 +29,7 @@ export default function RootLayout({
       lang="pt-BR"
       className={`${playfair.variable} ${dmSans.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
+      <body className="h-full flex flex-col" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
         {children}
       </body>
     </html>
