@@ -216,6 +216,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   async function handleAvancarManual() {
     setSaving(true)
     try {
+      await saveItems()
       await postStatus("em_separacao")
       onRefresh()
     } finally { setSaving(false) }
@@ -343,8 +344,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                         {!item.color && !item.size && <span className="text-xs text-[#0F1E3C]/30 italic">sem variação</span>}
                       </div>
 
-                      {/* Qty stepper — triagem e em_separacao */}
-                      {(isTriagem || isSeparacao) && (
+                      {/* Qty stepper — triagem, confirmação e em_separacao */}
+                      {(isTriagem || isConfirm || isSeparacao) && (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button onClick={() => setQty(item._idx, item.qty - 1)}
                             className="w-7 h-7 rounded-lg bg-white border border-[#0F1E3C]/10 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-sm font-bold flex items-center justify-center">−</button>
@@ -355,14 +356,14 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                       )}
 
                       {/* Qty somente leitura */}
-                      {!isTriagem && !isSeparacao && (
+                      {!isTriagem && !isConfirm && !isSeparacao && (
                         <span className="text-sm font-black text-[#0F1E3C] flex-shrink-0 w-10 text-right">
                           {item.qtyConfirmed ?? item.qty}
                         </span>
                       )}
 
-                      {/* Delete — triagem e em_separacao */}
-                      {(isTriagem || isSeparacao) && (
+                      {/* Delete — triagem, confirmação e em_separacao */}
+                      {(isTriagem || isConfirm || isSeparacao) && (
                         <button onClick={() => removeItem(item._idx)}
                           className="w-7 h-7 rounded-lg text-[#0F1E3C]/20 hover:text-red-400 hover:bg-red-50 flex items-center justify-center flex-shrink-0 transition-colors">
                           <Trash2 size={12} />
