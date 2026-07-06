@@ -526,7 +526,7 @@ export default function PedidosPage() {
 
   useEffect(() => { loadOrders(); loadReservations() }, [loadOrders, loadReservations])
   useEffect(() => {
-    const t = setInterval(() => { loadOrders(); loadReservations() }, 30_000)
+    const t = setInterval(() => { loadOrders(); loadReservations() }, 10_000)
     return () => clearInterval(t)
   }, [loadOrders, loadReservations])
 
@@ -599,7 +599,7 @@ export default function PedidosPage() {
   useEffect(() => { loadDtf() }, [loadDtf])
   useEffect(() => { loadFilmBobinas() }, [loadFilmBobinas])
   useEffect(() => {
-    const t = setInterval(() => { loadDtf(); loadFilmBobinas() }, 30_000)
+    const t = setInterval(() => { loadDtf(); loadFilmBobinas() }, 10_000)
     return () => clearInterval(t)
   }, [loadDtf, loadFilmBobinas])
   useEffect(() => {
