@@ -2107,23 +2107,26 @@ async function handleActiveOrder(
       return
     }
 
-    // Tenta referência numérica: "remove o 2", "tira o item 3"
-    const numRef = text.match(/\b([1-9])\b/)
-    const byIndex = numRef ? (remItems[parseInt(numRef[1]) - 1] ?? null) : null
-
-    // Tenta match por nome de produto
+    // Tenta match por nome de produto primeiro — mais confiável que número solto no texto
+    // (ex: "remover 1 moletom rosa p" tem um "1" que é quantidade, não índice)
     let byName: typeof remItems[0] | null = null
-    if (!byIndex) {
-      let pText: import("@/lib/ai/parseOrder").ParsedItem[] = []
-      try { pText = await parseOrder(text) } catch { /* */ }
-      if (pText.length) {
-        byName = remItems.find(it =>
-          pText.some(p => p.productName && it.product_name.toLowerCase().includes(p.productName.toLowerCase().split(" ")[0]))
-        ) ?? null
-      }
+    let pText: import("@/lib/ai/parseOrder").ParsedItem[] = []
+    try { pText = await parseOrder(text) } catch { /* */ }
+    if (pText.length) {
+      byName = remItems.find(it =>
+        pText.some(p => p.productName && it.product_name.toLowerCase().includes(p.productName.toLowerCase().split(" ")[0]))
+      ) ?? null
     }
 
-    const toRemove = byIndex ?? byName
+    // Só usa número como referência de posição se não achou por nome e o texto
+    // referencia claramente um índice: "item 2" ou a mensagem inteira é só um número solto ("2", "tira o 2")
+    let byIndex: typeof remItems[0] | null = null
+    if (!byName) {
+      const idxRef = text.match(/\bitem\s*([1-9])\b/i) ?? text.match(/^\D*([1-9])\D*$/)
+      if (idxRef) byIndex = remItems[parseInt(idxRef[1], 10) - 1] ?? null
+    }
+
+    const toRemove = byName ?? byIndex
     if (toRemove) {
       await pool.query(`DELETE FROM order_items WHERE id = $1`, [toRemove.id])
       await pool.query(
