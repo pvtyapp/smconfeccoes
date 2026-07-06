@@ -1345,7 +1345,7 @@ async function handleText(
       )
       if (!alreadyReverted.length) {
         const { rows: items } = await pool.query(
-          `SELECT variant_id, qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`,
+          `SELECT variant_id, qty::int AS qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`,
           [order.id]
         )
         for (const item of items) {

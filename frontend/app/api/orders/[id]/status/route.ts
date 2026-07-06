@@ -60,7 +60,7 @@ export async function POST(
     if (status === "em_separacao") {
       // Deduz estoque (anti-duplicata)
       const itemsRes = await client.query(`
-        SELECT variant_id, qty FROM order_items
+        SELECT variant_id, qty::int AS qty FROM order_items
         WHERE order_id = $1 AND variant_id IS NOT NULL
       `, [id])
       const { rows: alreadyDeducted } = await client.query(
@@ -116,7 +116,7 @@ export async function POST(
         )
         if (!alreadyReverted.length) {
           const itemsRes = await client.query(`
-            SELECT variant_id, qty FROM order_items
+            SELECT variant_id, qty::int AS qty FROM order_items
             WHERE order_id = $1 AND variant_id IS NOT NULL
           `, [id])
           for (const item of itemsRes.rows) {
