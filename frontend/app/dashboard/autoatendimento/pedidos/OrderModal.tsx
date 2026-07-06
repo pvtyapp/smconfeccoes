@@ -58,14 +58,13 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [hasPrinted,    setHasPrinted]    = useState(false)
   const [printedHash,   setPrintedHash]   = useState("")
 
-  // Product picker (produto → cor → tamanho, mapeado ao estoque)
-  const [showPicker,    setShowPicker]    = useState(false)
+  // Adicionar item inline (produto → cor → tamanho, mapeado ao estoque; qtd ajusta depois pelo stepper)
+  const [addingItem,   setAddingItem]     = useState(false)
   const [products,      setProducts]      = useState<ProductOption[]>([])
-  const [pickerProd,    setPickerProd]    = useState<ProductOption | null>(null)
-  const [pickerColor,   setPickerColor]   = useState("")
-  const [pickerSize,    setPickerSize]    = useState("")
-  const [pickerQty,     setPickerQty]     = useState(1)
-  const [pickerVariants, setPickerVariants] = useState<VariantOption[]>([])
+  const [addProd,       setAddProd]       = useState<ProductOption | null>(null)
+  const [addColor,      setAddColor]      = useState("")
+  const [addSize,       setAddSize]       = useState("")
+  const [addVariants,   setAddVariants]   = useState<VariantOption[]>([])
 
   useEffect(() => {
     try {
@@ -117,7 +116,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     setItems(prev => prev.filter((_, i) => i !== idx))
   }
 
-  async function openPicker() {
+  async function startAddItem() {
     if (!products.length) {
       const res = await fetch("/api/products")
       if (res.ok) {
@@ -125,28 +124,44 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         setProducts(all.filter(p => p.status === "active"))
       }
     }
-    setPickerProd(null); setPickerColor(""); setPickerSize(""); setPickerQty(1); setPickerVariants([])
-    setShowPicker(true)
+    setAddProd(null); setAddColor(""); setAddSize(""); setAddVariants([])
+    setAddingItem(true)
   }
 
-  async function selectPickerProduct(p: ProductOption | null) {
-    setPickerProd(p); setPickerColor(""); setPickerSize(""); setPickerVariants([])
-    if (!p) return
-    const res = await fetch(`/api/variants?productId=${p.id}`)
-    if (res.ok) setPickerVariants(await res.json())
+  function cancelAddItem() {
+    setAddingItem(false); setAddProd(null); setAddColor(""); setAddSize(""); setAddVariants([])
   }
 
-  function confirmPicker() {
-    if (!pickerProd || !pickerColor || !pickerSize) return
-    const variant = pickerVariants.find(v => v.color === pickerColor && v.size === pickerSize)
+  function finalizeNewItem(prod: ProductOption, color: string, size: string, variants: VariantOption[]) {
+    const variant = variants.find(v => v.color === color && v.size === size)
     setItems(prev => [...prev, {
-      id: 0, productId: String(pickerProd.id), productName: pickerProd.name,
-      color: pickerColor, size: pickerSize, qty: pickerQty,
+      id: 0, productId: String(prod.id), productName: prod.name,
+      color, size, qty: 1,
       qtyConfirmed: null, isService: false, variantNote: null,
       variantId: variant?.id ?? null,
-      unitPrice: variant?.salePrice ?? pickerProd.salePrice ?? null,
+      unitPrice: variant?.salePrice ?? prod.salePrice ?? null,
     }])
-    setShowPicker(false)
+    cancelAddItem()
+  }
+
+  async function selectAddProduct(p: ProductOption) {
+    setAddProd(p); setAddColor(""); setAddSize("")
+    const res = await fetch(`/api/variants?productId=${p.id}`)
+    const variants: VariantOption[] = res.ok ? await res.json() : []
+    setAddVariants(variants)
+    if (p.colors.length === 0 && p.sizes.length === 0) finalizeNewItem(p, "", "", variants)
+  }
+
+  function chooseAddColor(c: string) {
+    setAddColor(c)
+    if (!addProd) return
+    if (addProd.sizes.length === 0 || addSize) finalizeNewItem(addProd, c, addSize, addVariants)
+  }
+
+  function chooseAddSize(s: string) {
+    setAddSize(s)
+    if (!addProd) return
+    if (addProd.colors.length === 0 || addColor) finalizeNewItem(addProd, addColor, s, addVariants)
   }
 
   async function saveItems() {
@@ -360,10 +375,68 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             ))}
 
             {(isTriagem || isSeparacao || isConfirm) && (
-              <button onClick={openPicker}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-purple-200 text-xs text-purple-500 hover:bg-purple-50 transition-colors">
-                <Plus size={13} /> Adicionar item
-              </button>
+              addingItem ? (
+                <div className="rounded-2xl border border-dashed border-purple-300 bg-purple-50/50 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-purple-700">
+                      {addProd ? addProd.name : "Selecionar produto"}
+                    </span>
+                    <button onClick={cancelAddItem} className="text-[#0F1E3C]/30 hover:text-[#0F1E3C]">
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  {!addProd ? (
+                    <select
+                      autoFocus
+                      value=""
+                      onChange={e => {
+                        const p = products.find(p => p.id === Number(e.target.value)) ?? null
+                        if (p) selectAddProduct(p)
+                      }}
+                      className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-white focus:outline-none">
+                      <option value="">Selecionar produto...</option>
+                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  ) : (
+                    <>
+                      {addProd.colors.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {addProd.colors.map(c => (
+                            <button key={c} type="button" onClick={() => chooseAddColor(c)}
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+                                addColor === c
+                                  ? "bg-purple-600 text-white border-purple-600"
+                                  : "bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-purple-300"
+                              }`}>
+                              {c}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {addProd.sizes.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {addProd.sizes.map(s => (
+                            <button key={s} type="button" onClick={() => chooseAddSize(s)}
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+                                addSize === s
+                                  ? "bg-purple-600 text-white border-purple-600"
+                                  : "bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-purple-300"
+                              }`}>
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <button onClick={startAddItem}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-purple-200 text-xs text-purple-500 hover:bg-purple-50 transition-colors">
+                  <Plus size={13} /> Adicionar item
+                </button>
+              )
             )}
           </div>
 
@@ -475,94 +548,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           </div>
         </div>
       </div>
-
-      {/* Product Picker — confirmando */}
-      {showPicker && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#0F1E3C]">Adicionar item</h3>
-              <button onClick={() => setShowPicker(false)} className="text-[#0F1E3C]/30 hover:text-[#0F1E3C]"><X size={16} /></button>
-            </div>
-
-            {/* Produto */}
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-[#0F1E3C]/60">Produto</label>
-              <select
-                value={pickerProd?.id ?? ""}
-                onChange={e => {
-                  const p = products.find(p => p.id === Number(e.target.value)) ?? null
-                  selectPickerProduct(p)
-                }}
-                className="w-full border border-[#0F1E3C]/10 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-[#F4F6FB] focus:outline-none">
-                <option value="">Selecionar produto...</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
-
-            {pickerProd && (
-              <>
-                {/* Cor */}
-                {pickerProd.colors.length > 0 && (
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-[#0F1E3C]/60">Cor</label>
-                    <select value={pickerColor} onChange={e => setPickerColor(e.target.value)}
-                      className="w-full border border-[#0F1E3C]/10 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-[#F4F6FB] focus:outline-none">
-                      <option value="">Selecionar cor...</option>
-                      {pickerProd.colors.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                {/* Tamanho */}
-                {pickerProd.sizes.length > 0 && (
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-[#0F1E3C]/60">Tamanho</label>
-                    <div className="flex flex-wrap gap-2">
-                      {pickerProd.sizes.map(s => (
-                        <button key={s} type="button"
-                          onClick={() => setPickerSize(s)}
-                          className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
-                            pickerSize === s
-                              ? "bg-[#4361EE] text-white border-[#4361EE]"
-                              : "border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
-                          }`}>
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Qty */}
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-[#0F1E3C]/60">Quantidade</label>
-                  <div className="flex items-center gap-3">
-                    <button type="button" onClick={() => setPickerQty(q => Math.max(1, q - 1))}
-                      className="w-8 h-8 rounded-full border border-[#0F1E3C]/15 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-lg font-bold flex items-center justify-center">−</button>
-                    <span className="text-base font-black text-[#0F1E3C] w-8 text-center">{pickerQty}</span>
-                    <button type="button" onClick={() => setPickerQty(q => q + 1)}
-                      className="w-8 h-8 rounded-full border border-[#0F1E3C]/15 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-lg font-bold flex items-center justify-center">+</button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowPicker(false)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6">
-                Cancelar
-              </button>
-              <button
-                onClick={confirmPicker}
-                disabled={!pickerProd || !pickerColor || !pickerSize}
-                className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded-xl disabled:opacity-40 transition-colors">
-                Adicionar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Print */}
       {showPrint && (
