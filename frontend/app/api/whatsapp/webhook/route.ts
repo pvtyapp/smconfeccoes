@@ -1799,8 +1799,6 @@ async function createOrderDirect(
 
   // Item sem cor/tamanho é aceito como veio — operador completa no Gerenciador de Pedidos
   const matched = await matchVariants(parsed)
-  const hasUnmatched  = matched.some(m => !m.matched)
-  const hasStockIssue = matched.some(m => m.matched && !m.stockOk)
   const totalValue = matched.reduce((sum, m) => sum + (m.unitPrice ?? 0) * m.qty, 0)
 
   // Seção crítica: advisory lock por contactId evita que webhooks paralelos
@@ -1875,43 +1873,14 @@ async function createOrderDirect(
     cli.release()
   }
 
-  const estoqueBot = globalSettings["controle_estoque_ativo"] !== "false"
-
   if (!isNewOrder) {
-    const lines = matched.map(m => `• ${[m.productName, m.color, m.size].filter(Boolean).join(" ")} · *${m.qty} un*`)
-    let reply = `✅ Adicionado ao pedido *${orderNumber}*:\n\n${lines.join("\n")}`
-    if (hasUnmatched)                reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
-    if (hasStockIssue && estoqueBot) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
-    reply += `\n\nPode mandar mais itens se precisar!`
-    await replyAndSave(contactId, jid, reply)
+    // Mensagem já em triagem — continuação silenciosa. Operador vê tudo no Gerenciador de Pedidos.
     await setState(contactId, "triagem", { orderId, orderNumber })
     return
   }
 
-  const lines = matched.map((m, idx) => {
-    const desc  = [m.productName, m.color, m.size].filter(Boolean).join(" ")
-    const price = m.unitPrice ? ` · R$ ${(m.unitPrice * m.qty).toFixed(2)}` : ""
-    let warn = ""
-    if (!m.matched) {
-      warn = m.alternatives.length
-        ? ` ⚠️ (disponível: ${m.alternatives.join(", ")})`
-        : " ⚠️ não encontrado"
-    } else if (!m.stockOk && estoqueBot) {
-      warn = m.currentStock === 0
-        ? " ⚠️ sem estoque"
-        : ` ⚠️ temos só ${m.currentStock} em estoque`
-    }
-    return `${idx + 1}. ${desc} · *${m.qty} un*${price}${warn}`
-  })
-
-  let reply = `✅ Pedido *${orderNumber}* anotado!\n\n${lines.join("\n")}`
-  if (hasUnmatched)                reply += `\n\n⚠️ Itens não encontrados serão verificados pela equipe.`
-  if (hasStockIssue && estoqueBot) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
-
   await setState(contactId, "triagem", { orderId, orderNumber })
-  reply += `\n\nVamos organizar! Se precisar ajustar algo é só falar.`
-
-  await replyAndSave(contactId, jid, reply)
+  await replyAndSave(contactId, jid, `✅ Pedido *${orderNumber}* anotado!\n\nVamos organizar! Se precisar ajustar algo é só falar.`)
 
   pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
     const opJid = rows[0]?.value

@@ -368,7 +368,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                 <Plus size={13} /> Adicionar item
               </button>
             )}
-            {isConfirm && (
+            {(isTriagem || isSeparacao || isConfirm) && (
               <button onClick={openPicker}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-purple-200 text-xs text-purple-500 hover:bg-purple-50 transition-colors">
                 <Plus size={13} /> Adicionar item do catálogo
