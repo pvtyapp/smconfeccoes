@@ -48,6 +48,8 @@ type ProductOption = {
   sizes: string[]; colors: string[]; status: string; chatbotEnabled: boolean
 }
 
+type VariantOption = { id: string; color: string; size: string; salePrice: number | null }
+
 export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [items,         setItems]         = useState<OrderItem[]>(order.items.map(i => ({ ...i })))
   const [saving,        setSaving]        = useState(false)
@@ -56,13 +58,14 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [hasPrinted,    setHasPrinted]    = useState(false)
   const [printedHash,   setPrintedHash]   = useState("")
 
-  // Product picker (confirmando)
+  // Product picker (produto → cor → tamanho, mapeado ao estoque)
   const [showPicker,    setShowPicker]    = useState(false)
   const [products,      setProducts]      = useState<ProductOption[]>([])
   const [pickerProd,    setPickerProd]    = useState<ProductOption | null>(null)
   const [pickerColor,   setPickerColor]   = useState("")
   const [pickerSize,    setPickerSize]    = useState("")
   const [pickerQty,     setPickerQty]     = useState(1)
+  const [pickerVariants, setPickerVariants] = useState<VariantOption[]>([])
 
   useEffect(() => {
     try {
@@ -114,13 +117,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     setItems(prev => prev.filter((_, i) => i !== idx))
   }
 
-  function addItem() {
-    setItems(prev => [...prev, {
-      id: 0, productId: null, productName: "Novo item", color: "", size: "",
-      qty: 1, qtyConfirmed: null, isService: false, variantNote: null,
-    }])
-  }
-
   async function openPicker() {
     if (!products.length) {
       const res = await fetch("/api/products")
@@ -129,16 +125,26 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         setProducts(all.filter(p => p.status === "active"))
       }
     }
-    setPickerProd(null); setPickerColor(""); setPickerSize(""); setPickerQty(1)
+    setPickerProd(null); setPickerColor(""); setPickerSize(""); setPickerQty(1); setPickerVariants([])
     setShowPicker(true)
+  }
+
+  async function selectPickerProduct(p: ProductOption | null) {
+    setPickerProd(p); setPickerColor(""); setPickerSize(""); setPickerVariants([])
+    if (!p) return
+    const res = await fetch(`/api/variants?productId=${p.id}`)
+    if (res.ok) setPickerVariants(await res.json())
   }
 
   function confirmPicker() {
     if (!pickerProd || !pickerColor || !pickerSize) return
+    const variant = pickerVariants.find(v => v.color === pickerColor && v.size === pickerSize)
     setItems(prev => [...prev, {
       id: 0, productId: String(pickerProd.id), productName: pickerProd.name,
       color: pickerColor, size: pickerSize, qty: pickerQty,
       qtyConfirmed: null, isService: false, variantNote: null,
+      variantId: variant?.id ?? null,
+      unitPrice: variant?.salePrice ?? pickerProd.salePrice ?? null,
     }])
     setShowPicker(false)
   }
@@ -168,15 +174,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     } finally { setSaving(false) }
   }
 
-  async function handleMarcarSeparacao() {
-    setSaving(true)
-    try {
-      await saveItems()
-      await postStatus("em_separacao")
-      onRefresh()
-    } finally { setSaving(false) }
-  }
-
   async function handleAtualizarReenviar() {
     setSaving(true)
     try {
@@ -196,7 +193,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         }
       }
       await saveItems()
-      await postStatus("triagem", changes.length ? { changes } : {})
+      await postStatus("em_separacao", changes.length ? { changes } : {})
       onRefresh()
     } finally { setSaving(false) }
   }
@@ -362,16 +359,10 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </div>
             ))}
 
-            {(isTriagem || isSeparacao) && (
-              <button onClick={addItem}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-[#0F1E3C]/15 text-xs text-[#0F1E3C]/40 hover:text-[#4361EE] hover:border-[#4361EE]/30 transition-colors">
-                <Plus size={13} /> Adicionar item
-              </button>
-            )}
             {(isTriagem || isSeparacao || isConfirm) && (
               <button onClick={openPicker}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border border-dashed border-purple-200 text-xs text-purple-500 hover:bg-purple-50 transition-colors">
-                <Plus size={13} /> Adicionar item do catálogo
+                <Plus size={13} /> Adicionar item
               </button>
             )}
           </div>
@@ -431,19 +422,13 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* TRIAGEM: confirmar+notificar ou avançar direto */}
+            {/* TRIAGEM: confirmar pedido — manda lista pro cliente confirmar */}
             {isTriagem && (
-              <>
-                <button onClick={handleEnviarConfirmar} disabled={saving}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-purple-300 text-purple-600 text-sm font-semibold hover:bg-purple-50 disabled:opacity-50 transition-colors">
-                  {saving ? <Loader2 size={13} className="animate-spin" /> : null}
-                  Confirmar e Notificar
-                </button>
-                <button onClick={handleMarcarSeparacao} disabled={saving}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                  Em Separação <ChevronRight size={14} />
-                </button>
-              </>
+              <button onClick={handleEnviarConfirmar} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                {saving ? <Loader2 size={13} className="animate-spin" /> : null}
+                Confirmar Pedido
+              </button>
             )}
 
             {/* CONFIRMANDO: adicionar item + avançar */}
@@ -507,7 +492,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                 value={pickerProd?.id ?? ""}
                 onChange={e => {
                   const p = products.find(p => p.id === Number(e.target.value)) ?? null
-                  setPickerProd(p); setPickerColor(""); setPickerSize("")
+                  selectPickerProduct(p)
                 }}
                 className="w-full border border-[#0F1E3C]/10 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-[#F4F6FB] focus:outline-none">
                 <option value="">Selecionar produto...</option>

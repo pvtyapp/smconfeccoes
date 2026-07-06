@@ -39,6 +39,8 @@ export type OrderItem = {
   qtyConfirmed: number | null
   isService: boolean
   variantNote: string | null
+  variantId: string | null
+  unitPrice: number | null
 }
 
 export type Order = {

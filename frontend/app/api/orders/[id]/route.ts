@@ -23,7 +23,11 @@ async function getOrder(id: string) {
             'color',        i.color,
             'size',         i.size,
             'qty',          i.qty::int,
-            'qtyConfirmed', i.qty_confirmed
+            'qtyConfirmed', i.qty_confirmed,
+            'isService',    i.is_service,
+            'variantNote',  i.variant_note,
+            'variantId',    i.variant_id,
+            'unitPrice',    i.unit_price::float
           ) ORDER BY i.id
         ) FILTER (WHERE i.id IS NOT NULL),
         '[]'
@@ -72,10 +76,19 @@ export async function PUT(
       await client.query("DELETE FROM order_items WHERE order_id = $1", [id])
       for (const item of items) {
         await client.query(`
-          INSERT INTO order_items (order_id, product_id, product_name, color, size, qty, qty_confirmed)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `, [id, item.productId ?? null, item.productName, item.color ?? null, item.size ?? null, item.qty, item.qtyConfirmed ?? null])
+          INSERT INTO order_items (order_id, product_id, product_name, color, size, qty, qty_confirmed, variant_id, unit_price, is_service, variant_note)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `, [
+          id, item.productId ?? null, item.productName, item.color ?? null, item.size ?? null, item.qty, item.qtyConfirmed ?? null,
+          item.variantId ?? null, item.unitPrice ?? null, item.isService ?? false, item.variantNote ?? null,
+        ])
       }
+      await client.query(
+        `UPDATE orders SET total_value = (
+           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
+         ) WHERE id = $1`,
+        [id]
+      )
     }
 
     await client.query("COMMIT")

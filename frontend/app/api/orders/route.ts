@@ -57,7 +57,9 @@ export async function GET(req: Request) {
               'qty',          i.qty::int,
               'qtyConfirmed', i.qty_confirmed,
               'isService',    i.is_service,
-              'variantNote',  i.variant_note
+              'variantNote',  i.variant_note,
+              'variantId',    i.variant_id,
+              'unitPrice',    i.unit_price::float
             ) ORDER BY i.id
           ) FILTER (WHERE i.id IS NOT NULL),
           '[]'
