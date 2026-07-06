@@ -189,30 +189,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     } finally { setSaving(false) }
   }
 
-  async function handleAtualizarReenviar() {
-    setSaving(true)
-    try {
-      const changes: Array<{
-        productName: string; color: string | null; size: string | null
-        oldQty: number; newQty: number
-      }> = []
-      for (const orig of order.items) {
-        const cur = items.find(i =>
-          i.productName === orig.productName &&
-          (i.color ?? "") === (orig.color ?? "") &&
-          (i.size ?? "") === (orig.size ?? "")
-        )
-        const newQty = cur ? cur.qty : 0
-        if (newQty !== orig.qty) {
-          changes.push({ productName: orig.productName, color: orig.color ?? null, size: orig.size ?? null, oldQty: orig.qty, newQty })
-        }
-      }
-      await saveItems()
-      await postStatus("em_separacao", changes.length ? { changes } : {})
-      onRefresh()
-    } finally { setSaving(false) }
-  }
-
   async function handleAvancarManual() {
     setSaving(true)
     try {
@@ -514,19 +490,12 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* EM SEPARAÇÃO: atualizar+reenviar ou marcar como pronto */}
+            {/* EM SEPARAÇÃO: marcar como pronto */}
             {isSeparacao && (
-              <>
-                <button onClick={handleAtualizarReenviar} disabled={saving}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 text-sm font-semibold disabled:opacity-50 transition-colors">
-                  {saving ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-                  Atualizar e Reenviar
-                </button>
-                <button onClick={handleMarcarPronte} disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pronto <ChevronRight size={14} /></>}
-                </button>
-              </>
+              <button onClick={handleMarcarPronte} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pronto <ChevronRight size={14} /></>}
+              </button>
             )}
 
             {/* PRONTO: confirmar pagamento */}

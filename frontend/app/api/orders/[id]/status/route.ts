@@ -163,39 +163,10 @@ export async function POST(
     // ── Notificações WA pós-commit ────────────────────────────────────────────
 
     if (status === "em_separacao" && order.jid) {
-      if (Array.isArray(changes) && changes.length > 0) {
-        const { rows: itemRows } = await pool.query(`
-          SELECT product_name, color, size, qty::int AS qty
-          FROM order_items WHERE order_id = $1 ORDER BY id
-        `, [id])
-        const lines = itemRows.map((it: { product_name: string; color: string; size: string; qty: number }, idx: number) => {
-          const desc = [it.product_name, it.color, it.size].filter(Boolean).join(" ")
-          return `${idx + 1}. ${desc} · *${it.qty} un*`
-        })
-        type Change = { productName: string; color: string | null; size: string | null; oldQty: number; newQty: number }
-        const zeroed  = (changes as Change[]).filter(c => c.newQty === 0)
-        const reduced = (changes as Change[]).filter(c => c.newQty > 0 && c.newQty < c.oldQty)
-        const total   = zeroed.length + reduced.length
-        function itemLabel(c: Change) { return [c.productName, c.color, c.size].filter(Boolean).join(" ") }
-        let intro: string
-        if (total === 1 && zeroed.length === 1) {
-          intro = `A *${itemLabel(zeroed[0])}* estamos sem estoque, mas o restante ficou assim:\n\n`
-        } else if (total === 1 && reduced.length === 1) {
-          intro = `Olha, a *${itemLabel(reduced[0])}* vou ter somente *${reduced[0].newQty}*, seu pedido atualizado ficou:\n\n`
-        } else {
-          const bullets = [
-            ...zeroed.map(c  => `• *${itemLabel(c)}*: sem estoque`),
-            ...reduced.map(c => `• *${itemLabel(c)}*: somente *${c.newQty}*`),
-          ]
-          intro = `Atenção, atualizamos alguns itens do pedido *${order.number}*:\n${bullets.join("\n")}\n\nSeu pedido ficou assim:\n\n`
-        }
-        await sendAndSave(order.contact_id, order.jid, `${intro}${lines.join("\n")}\n\nSeguimos com a separação do restante. Qualquer dúvida é só chamar!`)
-      } else {
-        await sendAndSave(
-          order.contact_id, order.jid,
-          `📦 Seu pedido *${order.number}* está sendo separado! Avisamos quando estiver pronto para retirada.`
-        )
-      }
+      await sendAndSave(
+        order.contact_id, order.jid,
+        `📦 Seu pedido *${order.number}* está sendo separado! Avisamos quando estiver pronto para retirada.`
+      )
     }
 
     if (status === "pronto" && order.jid) {
