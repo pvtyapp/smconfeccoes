@@ -128,7 +128,7 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
   function isActive(href: string) { return pathname === href }
 
   return (
-    <aside className={`${collapsed ? "w-[60px]" : "w-64"} min-h-screen bg-[#0F1E3C] text-white flex flex-col flex-shrink-0 transition-[width] duration-200`}>
+    <aside className={`${collapsed ? "w-[60px]" : "w-64"} h-screen bg-[#0F1E3C] text-white flex flex-col flex-shrink-0 transition-[width] duration-200`}>
 
       {/* Logo */}
       <div className={`flex items-center border-b border-white/8 flex-shrink-0 ${collapsed ? "justify-center px-3 py-4" : "gap-3 px-5 py-5"}`}>
