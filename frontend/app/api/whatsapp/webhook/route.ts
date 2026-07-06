@@ -1261,10 +1261,7 @@ async function handleMedia(
       [numRes.rows[0].num, todayBR(), contactId]
     )
   }
-  await pool.query(
-    `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'arquivo_recebido', updated_at = NOW() WHERE id = $1`,
-    [contactId]
-  )
+  // O próprio pedido virgem no kanban já é o alerta — não marca needs_attention na conversa
 
   // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repete a mensagem
   const { rows: recentAck } = await pool.query(
