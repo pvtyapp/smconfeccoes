@@ -49,7 +49,7 @@ export async function GET() {
         SELECT oi.variant_id, SUM(oi.qty) AS locked_qty
         FROM order_items oi
         JOIN orders o ON o.id = oi.order_id
-        WHERE o.status IN ('triagem', 'confirmando') AND oi.variant_id IS NOT NULL
+        WHERE o.status IN ('triagem', 'confirmando', 'em_separacao') AND oi.variant_id IS NOT NULL
         GROUP BY oi.variant_id
       ) locked ON locked.variant_id = pv.id
       WHERE pv.status = 'active' AND p.status = 'active'

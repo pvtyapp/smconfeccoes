@@ -913,18 +913,6 @@ async function getMostRecentOrder(contactId: number) {
   return res.rows[0] ?? null
 }
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    triagem:      "em triagem",
-    confirmando:  "confirmando quantidades",
-    em_separacao: "em separação",
-    pronto:       "pronto para retirada",
-    cancelado:    "cancelado",
-  }
-  return map[status] ?? status
-}
-
-
 // ─── service availability ─────────────────────────────────────────────────────
 
 type ServiceStatus = {
@@ -1561,18 +1549,15 @@ async function handleIdle(
     }
 
     if (intent === "status") {
-      const res = await pool.query(`
-        SELECT number, status FROM orders
-        WHERE contact_id = $1
-        ORDER BY created_at DESC LIMIT 1
-      `, [contactId])
+      const res = await pool.query(`SELECT id FROM orders WHERE contact_id = $1 ORDER BY created_at DESC LIMIT 1`, [contactId])
       if (res.rows[0]) {
-        replyWA(jid, `Seu pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
-      } else {
-        await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-        replyWA(jid, `${greeting}, ${firstName}! Qual o pedido de hoje?`)
+        await pool.query(
+          `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'status', updated_at = NOW() WHERE id = $1`,
+          [contactId]
+        )
+        return
       }
-      return
+      // sem pedido nenhum ainda — cai no fluxo normal de começar um pedido
     }
 
     // saudacao ou outro — retornando
@@ -1812,46 +1797,7 @@ async function createOrderDirect(
     return
   }
 
-  // Rejeitar itens sem cor ou tamanho — pede detalhes de TODOS os incompletos antes de criar
-  const incomplete = parsed.filter(p => !p.color || !p.size)
-  if (incomplete.length > 0) {
-    const blocks: string[] = []
-    for (const item of incomplete) {
-      const kw = await resolveProductKeyword(item.productName)
-      const missingParts: string[] = []
-      if (!item.color) missingParts.push("cor")
-      if (!item.size)  missingParts.push("tamanho")
-
-      if (kw) {
-        const variants = await getProductVariants(kw)
-        if (variants.length > 0) {
-          const name   = variants[0].productName
-          const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
-          const sizes  = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
-          const prices = variants.map(v => v.salePrice ?? 0).filter(p => p > 0)
-          const minP   = prices.length ? Math.min(...prices) : 0
-          const maxP   = prices.length ? Math.max(...prices) : 0
-          const priceStr = minP > 0
-            ? (minP === maxP ? `R$ ${minP.toFixed(2).replace(".", ",")}` : `R$ ${minP.toFixed(2).replace(".", ",")} – R$ ${maxP.toFixed(2).replace(".", ",")}`)
-            : null
-          let block = `*${name}* — faltou ${missingParts.join(" e ")}\n`
-          if (priceStr)                     block += `💰 ${priceStr}\n`
-          if (!item.color && colors.length) block += `🎨 ${colors.join(", ")}\n`
-          if (!item.size  && sizes.length)  block += `📏 ${sizes.join(", ")}`
-          blocks.push(block.trimEnd())
-          continue
-        }
-      }
-      blocks.push(`*${item.productName}* — me passa ${missingParts.join(" e ")}`)
-    }
-
-    const header = incomplete.length === 1
-      ? "Faltou informação:\n\n"
-      : "Faltaram informações em alguns itens:\n\n"
-    await replyAndSave(contactId, jid, `${header}${blocks.join("\n\n")}\n\nMe manda o pedido completo com todos os itens.`)
-    return
-  }
-
+  // Item sem cor/tamanho é aceito como veio — operador completa no Gerenciador de Pedidos
   const matched = await matchVariants(parsed)
   const hasUnmatched  = matched.some(m => !m.matched)
   const hasStockIssue = matched.some(m => m.matched && !m.stockOk)
@@ -1963,7 +1909,7 @@ async function createOrderDirect(
   if (hasStockIssue && estoqueBot) reply += `\n\n⚠️ Alguns itens com estoque insuficiente — equipe confirma.`
 
   await setState(contactId, "triagem", { orderId, orderNumber })
-  reply += `\n\nPode me mandar mais itens se precisar. Nossa equipe confirma e avisa quando estiver pronto!`
+  reply += `\n\nVamos organizar! Se precisar ajustar algo é só falar.`
 
   await replyAndSave(contactId, jid, reply)
 
@@ -2078,152 +2024,20 @@ async function handleActiveOrder(
 
   // ── triagem — informa uma vez, mas CONTINUA processando a mensagem ──────────
   if (state === "triagem" && !reminderSent && orderNumber) {
-    await sendReminder(`Seu pedido *${orderNumber}* está na lista! Nossa equipe está conferindo. Se precisar alterar algum item é só me falar. 😊`)
+    await sendReminder(`Seu pedido *${orderNumber}* está na lista! Nossa equipe já está conferindo. 😊`)
     // não retorna — a mensagem que disparou o reminder também é processada abaixo
   }
 
   const intent = await classifyIntent(text)
 
-  // ── remover item do pedido em triagem ──────────────────────────────────────
-  if (intent === "remover" && state === "triagem") {
-    const { rows: openRem } = await pool.query(
-      `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       ORDER BY created_at DESC LIMIT 1`,
-      [contactId]
+  // ── remover / alterar pedido em triagem — edição não é mais por texto ───────
+  // Operador resolve no Gerenciador de Pedidos, vendo a conversa aberta.
+  if ((intent === "remover" || intent === "alterar") && state === "triagem") {
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = $1, updated_at = NOW() WHERE id = $2`,
+      [intent === "remover" ? "remover" : "pediu_alteracao", contactId]
     )
-    if (!openRem[0]) {
-      await replyAndSave(contactId, jid, "Não tem pedido aberto pra editar.")
-      return
-    }
-    const remOrderId  = openRem[0].id as number
-    const remOrderNum = openRem[0].number as string
-
-    const { rows: remItems } = await pool.query(
-      `SELECT id, product_name, color, size, qty::int AS qty FROM order_items WHERE order_id = $1 ORDER BY id`,
-      [remOrderId]
-    )
-    if (!remItems.length) {
-      await replyAndSave(contactId, jid, "Pedido está vazio.")
-      return
-    }
-
-    // Tenta match por nome de produto primeiro — mais confiável que número solto no texto
-    // (ex: "remover 1 moletom rosa p" tem um "1" que é quantidade, não índice)
-    let byName: typeof remItems[0] | null = null
-    let pText: import("@/lib/ai/parseOrder").ParsedItem[] = []
-    try { pText = await parseOrder(text) } catch { /* */ }
-    if (pText.length) {
-      byName = remItems.find(it =>
-        pText.some(p => p.productName && it.product_name.toLowerCase().includes(p.productName.toLowerCase().split(" ")[0]))
-      ) ?? null
-    }
-
-    // Só usa número como referência de posição se não achou por nome e o texto
-    // referencia claramente um índice: "item 2" ou a mensagem inteira é só um número solto ("2", "tira o 2")
-    let byIndex: typeof remItems[0] | null = null
-    if (!byName) {
-      const idxRef = text.match(/\bitem\s*([1-9])\b/i) ?? text.match(/^\D*([1-9])\D*$/)
-      if (idxRef) byIndex = remItems[parseInt(idxRef[1], 10) - 1] ?? null
-    }
-
-    const toRemove = byName ?? byIndex
-    if (toRemove) {
-      await pool.query(`DELETE FROM order_items WHERE id = $1`, [toRemove.id])
-      await pool.query(
-        `UPDATE orders SET total_value = (
-           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
-         ) WHERE id = $1`,
-        [remOrderId]
-      )
-      const { rows: remCount } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM order_items WHERE order_id = $1`, [remOrderId]
-      )
-      if (Number(remCount[0].cnt) === 0) {
-        await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [remOrderId])
-        await pool.query(
-          `INSERT INTO order_events (order_id, status, actor, note)
-           VALUES ($1, 'cancelado', 'chatbot', 'Pedido cancelado — todos os itens removidos')`,
-          [remOrderId]
-        )
-        await setState(contactId, "idle")
-        await replyAndSave(contactId, jid, `Removido. Pedido *${remOrderNum}* ficou vazio e foi cancelado. Me chama quando precisar!`)
-      } else {
-        const desc = [toRemove.product_name, toRemove.color, toRemove.size].filter(Boolean).join(" ")
-        await replyAndSave(contactId, jid, `✅ Removido: *${toRemove.qty}x ${desc}* do pedido *${remOrderNum}*.`)
-      }
-    } else {
-      const itemList = remItems.map((it, i) =>
-        `${i + 1}. ${[it.product_name, it.color, it.size].filter(Boolean).join(" ")} · *${it.qty} un*`
-      ).join("\n")
-      await replyAndSave(contactId, jid, `Qual item quer remover do *${remOrderNum}*?\n\n${itemList}\n\nEx: _tira o moletom preto_ ou _remove o item 1_`)
-    }
-    return
-  }
-
-  // ── alterar item do pedido em triagem ──────────────────────────────────────
-  if (intent === "alterar" && state === "triagem") {
-    const { rows: openAlt } = await pool.query(
-      `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       ORDER BY created_at DESC LIMIT 1`,
-      [contactId]
-    )
-    if (!openAlt[0]) {
-      await replyAndSave(contactId, jid, "Não tem pedido aberto pra alterar.")
-      return
-    }
-    const altOrderId  = openAlt[0].id as number
-    const altOrderNum = openAlt[0].number as string
-
-    const { rows: altItems } = await pool.query(
-      `SELECT id, product_name, color, size, qty::int AS qty FROM order_items WHERE order_id = $1 ORDER BY id`,
-      [altOrderId]
-    )
-
-    let altParsed: import("@/lib/ai/parseOrder").ParsedItem[] = []
-    try { altParsed = await parseOrder(text) } catch { /* */ }
-
-    if (!altParsed.length) {
-      const itemList = altItems.map((it, i) =>
-        `${i + 1}. ${[it.product_name, it.color, it.size].filter(Boolean).join(" ")} · *${it.qty} un*`
-      ).join("\n")
-      await replyAndSave(contactId, jid, `O que quer alterar no pedido *${altOrderNum}*?\n\n${itemList}\n\nEx: _muda pra 15 o moletom preto P_`)
-      return
-    }
-
-    const altUpdated: string[] = []
-    for (const p of altParsed) {
-      if (!p.productName) continue
-      const match = altItems.find(it =>
-        it.product_name.toLowerCase().includes(p.productName.toLowerCase().split(" ")[0])
-      )
-      if (match) {
-        await pool.query(
-          `UPDATE order_items
-           SET qty   = $1,
-               color = COALESCE(NULLIF($2,''), color),
-               size  = COALESCE(NULLIF($3,''), size)
-           WHERE id  = $4`,
-          [p.qty, p.color ?? "", p.size ?? "", match.id]
-        )
-        const desc = [p.productName, p.color ?? match.color, p.size ?? match.size].filter(Boolean).join(" ")
-        altUpdated.push(`• ${desc} · *${p.qty} un*`)
-      }
-    }
-
-    if (altUpdated.length) {
-      await pool.query(
-        `UPDATE orders SET total_value = (
-           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
-         ) WHERE id = $1`,
-        [altOrderId]
-      )
-      await replyAndSave(contactId, jid, `✅ Pedido *${altOrderNum}* atualizado:\n\n${altUpdated.join("\n")}`)
-    } else {
-      const itemList = altItems.map((it, i) =>
-        `${i + 1}. ${[it.product_name, it.color, it.size].filter(Boolean).join(" ")} · *${it.qty} un*`
-      ).join("\n")
-      await replyAndSave(contactId, jid, `Não consegui identificar o que mudar. Pedido atual:\n\n${itemList}\n\nMe fala o que mudou.`)
-    }
+    await replyAndSave(contactId, jid, "Ok! Já aviso nossa equipe pra ajustar isso pra você. 😊")
     return
   }
 
@@ -2299,28 +2113,11 @@ async function handleActiveOrder(
     return
   }
 
-  if (intent === "ver_pedido" || (intent === "status" && state === "triagem")) {
-    const { rows: openOrders } = await pool.query(
-      `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       ORDER BY created_at DESC LIMIT 1`,
+  if (intent === "ver_pedido" || intent === "status") {
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'status', updated_at = NOW() WHERE id = $1`,
       [contactId]
     )
-    if (openOrders[0]) {
-      const msg = await buildOrderList(openOrders[0].id as number, openOrders[0].number as string)
-      await replyAndSave(contactId, jid, `${msg}\n\nPode continuar adicionando ou me fala se quiser alterar algo.`)
-    }
-    return
-  }
-
-  if (intent === "status") {
-    const res = await pool.query(`
-      SELECT number, status FROM orders
-      WHERE contact_id = $1
-      ORDER BY created_at DESC LIMIT 1
-    `, [contactId])
-    if (res.rows[0]) {
-      await replyAndSave(contactId, jid, `Seu pedido *${res.rows[0].number}* está: *${statusLabel(res.rows[0].status)}*`)
-    }
     return
   }
 
