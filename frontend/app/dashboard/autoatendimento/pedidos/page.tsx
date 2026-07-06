@@ -1207,7 +1207,7 @@ export default function PedidosPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-88px)] -m-6 overflow-hidden">
+    <div className="flex h-full -m-6 overflow-hidden">
 
       {/* ── LEFT: WA-style contact panel ── */}
       <div className="w-[360px] flex-shrink-0 flex flex-col border-r border-black/30" style={{ background: "#111B21" }}>
