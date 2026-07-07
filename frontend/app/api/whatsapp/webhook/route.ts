@@ -1413,6 +1413,13 @@ async function handleText(
   }
 
   // ── Interpreta a mensagem: pedido, arquivo (menção) ou pergunta ─────────────
+  // "todos" sozinho é ambíguo demais pra IA classificar sem contexto de conversa —
+  // atalho direto pro catálogo completo (mesma lista de palavras que handleVariacao usa)
+  if (["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower)) {
+    await handleVariacao(jid, contactId, "todos")
+    return
+  }
+
   const { intent, items: parsed } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
 
   if (intent === "pedido") {
@@ -1440,7 +1447,7 @@ async function handleText(
   }
 
   // Saudação, ruído, ou qualquer outra coisa não reconhecida
-  await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
+  await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou me manda o *arquivo* de DTF\n• Ou diga *catálogo* para ver os produtos`)
 }
 
 async function createOrderDirect(
