@@ -93,7 +93,7 @@ export async function GET(req: Request) {
 
     let dtfPedidos: unknown[] = []
     try {
-      const dtfDateCond = hasDate ? `AND DATE(created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
+      const dtfDateCond = hasDate ? `AND DATE(p.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
       const r = await pool.query(`
         SELECT
           p.id,
