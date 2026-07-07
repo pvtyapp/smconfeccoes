@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Clock, Download, Printer } from "lucide-react"
 
-export type DtfAttachment = { id: number; blobUrl: string; filename: string | null; mimeType: string | null }
+export type DtfAttachment = { id: number; filename: string | null; mimeType: string | null }
 
 export type DtfOrder = {
   id: number

@@ -4,16 +4,17 @@ import { pool } from "@/lib/db"
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
-    const status = searchParams.get("status")
-    const source = searchParams.get("source")
-
-    const contactId = searchParams.get("contactId")
+    const status     = searchParams.get("status")
+    const source     = searchParams.get("source")
+    const contactId  = searchParams.get("contactId")
+    const activeOnly = searchParams.get("activeOnly")
 
     let where = "WHERE 1=1"
     const params: string[] = []
-    if (status)    { params.push(status);    where += ` AND p.status = $${params.length}` }
-    if (source)    { params.push(source);    where += ` AND p.source = $${params.length}` }
-    if (contactId) { params.push(contactId); where += ` AND p.contact_id = $${params.length}` }
+    if (status)     { params.push(status);    where += ` AND p.status = $${params.length}` }
+    if (source)     { params.push(source);    where += ` AND p.source = $${params.length}` }
+    if (contactId)  { params.push(contactId); where += ` AND p.contact_id = $${params.length}` }
+    if (activeOnly) { where += ` AND p.status NOT IN ('pronto', 'cancelado')` }
 
     const { rows } = await pool.query(`
       SELECT
@@ -43,7 +44,6 @@ export async function GET(req: Request) {
           json_agg(
             json_build_object(
               'id',       a.id,
-              'blobUrl',  COALESCE(wm.media_data, a.blob_url),
               'filename', COALESCE(a.filename, wm.file_name),
               'mimeType', a.mime_type
             ) ORDER BY a.id
