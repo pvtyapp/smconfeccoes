@@ -1055,8 +1055,19 @@ async function sendCatalog(jid: string, contactId: number, bypassRateLimit = fal
   const lines = catalog.map(p => {
     const nameLower = p.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
     const emoji = Object.entries(emojiMap).find(([k]) => nameLower.includes(k))?.[1] ?? "📦"
-    return `${emoji} ${p.name}`
+    const price = p.sale_price && p.sale_price > 0
+      ? ` · R$ ${Number(p.sale_price).toFixed(2).replace(".", ",")}`
+      : ""
+    return `${emoji} ${p.name}${price}`
   })
+
+  const { rows: dtfRows } = await pool.query(
+    `SELECT sale_price FROM products WHERE LOWER(name) LIKE 'dtf%' AND status = 'active' AND chatbot_enabled = true LIMIT 1`
+  )
+  const dtfPrice = dtfRows[0]?.sale_price
+  if (dtfPrice > 0) {
+    lines.push(`🖨️ Impressão DTF · R$ ${Number(dtfPrice).toFixed(2).replace(".", ",")}/metro`)
+  }
 
   await replyAndSave(contactId, jid, `Quer ver as cores de qual produto? 👇\n\n${lines.join("\n")}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
   pool.query(
