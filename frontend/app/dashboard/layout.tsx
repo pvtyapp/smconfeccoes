@@ -29,7 +29,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen bg-[#F4F6FB] overflow-hidden" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
       <Sidebar collapsed={collapsed} onToggle={handleToggle} />
-      <main className="flex-1 overflow-y-auto p-6 min-w-0">{children}</main>
+      <main className="relative flex-1 overflow-y-auto p-6 min-w-0">{children}</main>
     </div>
   )
 }
