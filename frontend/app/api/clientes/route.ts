@@ -1,28 +1,17 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-
-function normalizePhone(raw: string): { phone: string; jid: string } {
-  const digits = raw.replace(/\D/g, "")
-  // Already has country code (55 + 12 or 13 digits total)
-  const withCC = digits.startsWith("55") && digits.length >= 12 ? digits : `55${digits}`
-  return { phone: withCC, jid: `${withCC}@s.whatsapp.net` }
-}
+import { findOrCreateManualContact } from "@/lib/whatsapp/resolveContact"
 
 export async function POST(req: Request) {
   try {
     const { name, phone } = await req.json()
     if (!phone?.trim()) return NextResponse.json({ error: "Telefone é obrigatório" }, { status: 400 })
 
-    const { phone: normalizedPhone, jid } = normalizePhone(phone.trim())
-
-    const { rows } = await pool.query(`
-      INSERT INTO wa_contacts (name, phone, jid)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (jid) DO UPDATE SET
-        name = CASE WHEN $1 IS NOT NULL AND $1 != '' THEN $1 ELSE wa_contacts.name END,
-        updated_at = NOW()
-      RETURNING id, name, phone, jid
-    `, [name?.trim() || null, normalizedPhone, jid])
+    const id = await findOrCreateManualContact(pool, name, phone)
+    const { rows } = await pool.query(
+      `SELECT id, name, phone, jid FROM wa_contacts WHERE id = $1`,
+      [id]
+    )
 
     return NextResponse.json(rows[0], { status: 201 })
   } catch (err) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { findOrCreateManualContact } from "@/lib/whatsapp/resolveContact"
 
 export async function GET(req: Request) {
   try {
@@ -35,11 +36,11 @@ export async function POST(req: Request) {
     if (!name?.trim())  return NextResponse.json({ error: "Nome é obrigatório" },     { status: 400 })
     if (!phone?.trim()) return NextResponse.json({ error: "Telefone é obrigatório" }, { status: 400 })
 
-    const { rows } = await pool.query(`
-      INSERT INTO wa_contacts (name, phone)
-      VALUES ($1, $2)
-      RETURNING id, jid, name, phone, created_at AS "createdAt"
-    `, [name.trim(), phone.replace(/\D/g, "").trim()])
+    const id = await findOrCreateManualContact(pool, name, phone)
+    const { rows } = await pool.query(
+      `SELECT id, jid, name, phone, created_at AS "createdAt" FROM wa_contacts WHERE id = $1`,
+      [id]
+    )
 
     return NextResponse.json(rows[0], { status: 201 })
   } catch (err) {

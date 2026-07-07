@@ -434,6 +434,11 @@ export async function POST(req: Request) {
           }
 
           if (contactId0 !== null) {
+            // Você iniciou a conversa por fora (celular) com um @lid ainda não
+            // resolvido — mesma correção em background do caminho de entrada
+            if (jid.endsWith("@lid") && !phoneJid) {
+              waitUntil(resolveLidPhoneInBackground(jid, contactId0))
+            }
             await pool.query(
               `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
                VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))

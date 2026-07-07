@@ -66,6 +66,20 @@ export async function POST(req: Request) {
     // Clear any numeric-only names — name must be a real human name or NULL
     await pool.query(`UPDATE wa_contacts SET name = NULL WHERE name ~ '^[0-9]+$'`).catch(() => {})
 
+    // ── Backfill jid em contatos órfãos (criados sem jid antes do fix) ──────────
+    // Sem jid, esse contato é invisível pro merge/limpeza abaixo (que só reconhece
+    // jid '%@lid' ou '%@s.whatsapp.net'). Gera o jid a partir do telefone salvo,
+    // pulando se já existir outro contato dono desse jid (fica pra correção manual).
+    await pool.query(`
+      UPDATE wa_contacts
+      SET jid = phone || '@s.whatsapp.net', updated_at = NOW()
+      WHERE jid IS NULL
+        AND phone ~ '^[0-9]{8,15}$'
+        AND NOT EXISTS (
+          SELECT 1 FROM wa_contacts w2 WHERE w2.jid = wa_contacts.phone || '@s.whatsapp.net'
+        )
+    `).catch(() => {})
+
     // ── Fix @lid contacts whose phone column stores the opaque @lid hash ─────────
     // phone_jid stores the real @s.whatsapp.net JID → derive real phone from it
     await pool.query(`

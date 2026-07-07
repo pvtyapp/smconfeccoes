@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-
-function normalizePhone(raw: string): { phone: string; jid: string } {
-  const digits = raw.replace(/\D/g, "")
-  const withCC = digits.startsWith("55") && digits.length >= 12 ? digits : `55${digits}`
-  return { phone: withCC, jid: `${withCC}@s.whatsapp.net` }
-}
+import { findOrCreateManualContact } from "@/lib/whatsapp/resolveContact"
 
 // GET /api/pdv — last 5 PDV orders
 export async function GET() {
@@ -40,17 +35,9 @@ export async function POST(req: Request) {
     let resolvedContactId: number | null = contactId ?? null
 
     if (!resolvedContactId && newContact?.phone) {
-      const { phone: normalizedPhone, jid } = normalizePhone(String(newContact.phone).trim())
-      // G4 — upsert by jid (same as /api/clientes) to avoid duplicates
-      const { rows } = await client.query(`
-        INSERT INTO wa_contacts (name, phone, jid)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (jid) DO UPDATE SET
-          name = CASE WHEN $1 IS NOT NULL AND $1 != '' THEN $1 ELSE wa_contacts.name END,
-          updated_at = NOW()
-        RETURNING id
-      `, [newContact.name?.trim() || null, normalizedPhone, jid])
-      resolvedContactId = rows[0].id
+      // G4 — upsert por jid E por telefone (evita duplicar cliente que já existe
+      // sob outro jid, ex: @lid ainda não resolvido)
+      resolvedContactId = await findOrCreateManualContact(client, newContact.name, String(newContact.phone))
     }
 
     // Fallback: anonymous "Balcão" contact — ON CONFLICT (jid) prevents race condition
