@@ -60,6 +60,70 @@ async function resolveLidPhoneInBackground(jid: string, contactId: number): Prom
   } catch { /* best-effort — próxima tentativa na mensagem seguinte ou no cron diário */ }
 }
 
+function cleanPushName(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const lower = trimmed.toLowerCase()
+  if (lower === "você" || lower === "voce") return null
+  if (/^\d+$/.test(trimmed)) return null
+  return trimmed
+}
+
+// Cria/atualiza o contato a partir de uma mensagem recebida. Usado tanto pela mensagem
+// principal quanto pelas mensagens extras de um lote (Evolution agrupa várias no mesmo
+// webhook) — antes eram 2 implementações divergentes, uma delas nunca salvava nome nem
+// tentava resolver telefone @lid.
+async function upsertContactFromMessage(jid: string, rawPushName: string, remoteJidAlt: string) {
+  const phoneJid: string | null = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net") ? remoteJidAlt : null
+  const phone = phoneJid
+    ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+    : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+  const pushName = cleanPushName(rawPushName)
+
+  // @s.whatsapp.net mas já existe @lid gêmeo pro mesmo número — funde nele em vez de
+  // criar um contato separado. Corrige phone/phone_jid e (diferente de antes) o nome.
+  if (jid.endsWith("@s.whatsapp.net") && phone.length >= 8) {
+    const { rows } = await pool.query(`
+      SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
+             updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+      FROM wa_contacts WHERE jid LIKE '%@lid' AND (phone = $1 OR phone_jid = $2) LIMIT 1
+    `, [phone, jid]).catch(() => ({ rows: [] as Record<string, unknown>[] }))
+    if (rows[0]) {
+      await pool.query(`
+        UPDATE wa_contacts SET
+          phone_jid = COALESCE(phone_jid, $1),
+          phone     = CASE WHEN phone ~ '^[0-9]{8,15}$' THEN phone ELSE $2 END,
+          name      = CASE WHEN name IS NOT NULL THEN name
+                           WHEN $4::text IS NULL THEN name
+                           ELSE $4 END,
+          updated_at = NOW()
+        WHERE id = $3
+      `, [jid, phone, rows[0].id, pushName]).catch(() => {})
+      return rows[0]
+    }
+  }
+
+  const { rows } = await pool.query(`
+    INSERT INTO wa_contacts (jid, name, phone, phone_jid)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (jid) DO UPDATE SET
+      name      = CASE
+                    WHEN wa_contacts.name IS NOT NULL THEN wa_contacts.name
+                    WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN NULL
+                    ELSE EXCLUDED.name
+                  END,
+      phone     = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
+      phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
+      updated_at = NOW()
+    RETURNING id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
+              updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+  `, [jid, pushName, phone, phoneJid])
+
+  const contact = rows[0]
+  if (jid.endsWith("@lid") && !phoneJid) waitUntil(resolveLidPhoneInBackground(jid, contact.id as number))
+  return contact
+}
+
 // Evolution sends jpegThumbnail as a Buffer serialized to {"0":255,"1":216,...} — convert to base64
 function bufferToBase64(raw: unknown): string | null {
   if (!raw) return null
@@ -309,10 +373,6 @@ export async function POST(req: Request) {
           const eJid  = (eKey?.remoteJid as string) || ""
           if (!eJid || eJid.endsWith("@g.us") || eKey?.fromMe) continue
           const eAlt  = (eKey?.remoteJidAlt as string) || ""
-          const ePJid: string | null = eJid.endsWith("@lid") && eAlt.endsWith("@s.whatsapp.net") ? eAlt : null
-          const ePhone = ePJid
-            ? ePJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-            : eJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
           const eBody = extraMsg.message as Record<string, unknown> | undefined
           const eText: string =
             (eBody?.conversation as string) ||
@@ -330,14 +390,10 @@ export async function POST(req: Request) {
           const eMsgId = (eKey?.id as string) ?? null
           const eTs    = (extraMsg.messageTimestamp as number | undefined)
           const eCreatedAt = eTs ? new Date(eTs * 1000).toISOString() : null
-          const { rows: eCRows } = await pool.query(
-            `INSERT INTO wa_contacts (jid, phone, phone_jid) VALUES ($1, $2, $3)
-             ON CONFLICT (jid) DO UPDATE SET phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid), updated_at = NOW()
-             RETURNING id`,
-            [eJid, ePhone, ePJid]
-          ).catch(() => ({ rows: [] as { id: number }[] }))
-          if (!eCRows[0]) continue
-          const eContactId = eCRows[0].id
+          const eContact = await upsertContactFromMessage(eJid, (extraMsg.pushName as string) || "", eAlt)
+            .catch(() => null) as { id: number } | null
+          if (!eContact) continue
+          const eContactId = eContact.id
           await pool.query(
             `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, file_name, caption, created_at)
              VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()))
@@ -532,71 +588,11 @@ export async function POST(req: Request) {
 
     if (!text.trim() && !hasMedia) return NextResponse.json({ ok: true })
 
-    const phone = phoneJid
-      ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-      : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
     const rawPushName = (msg.pushName as string) || ""
-    const pushName: string | null = (() => {
-      const trimmed = rawPushName.trim()
-      if (!trimmed) return null
-      const lower = trimmed.toLowerCase()
-      if (lower === "você" || lower === "voce") return null
-      if (/^\d+$/.test(trimmed)) return null
-      return trimmed
-    })()
-
-    // For @s.whatsapp.net incoming: if a @lid twin exists, route to it — prevents ghost cycling
-    // when cleanup deleted the @s contact but client still messages via @s JID
-    let overrideContactId: number | null = null
-    if (jid.endsWith("@s.whatsapp.net") && phone.length >= 8) {
-      const { rows: lidRows } = await pool.query(
-        `SELECT id FROM wa_contacts
-         WHERE jid LIKE '%@lid' AND (phone = $1 OR phone_jid = $2)
-         LIMIT 1`,
-        [phone, jid]
-      ).catch(() => ({ rows: [] as { id: number }[] }))
-      if (lidRows[0]) {
-        overrideContactId = lidRows[0].id as number
-        pool.query(
-          `UPDATE wa_contacts
-           SET phone_jid = COALESCE(phone_jid, $1),
-               phone     = CASE WHEN phone ~ '^[0-9]{8,15}$' THEN phone ELSE $2 END,
-               updated_at = NOW()
-           WHERE id = $3`,
-          [jid, phone, overrideContactId]
-        ).catch(() => {})
-      }
-    }
-
-    const contactRes = overrideContactId
-      ? await pool.query(
-          `SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
-                  updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
-           FROM wa_contacts WHERE id = $1`,
-          [overrideContactId]
-        )
-      : await pool.query(`
-          INSERT INTO wa_contacts (jid, name, phone, phone_jid)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (jid) DO UPDATE SET
-            name      = CASE
-                          WHEN wa_contacts.name IS NOT NULL THEN wa_contacts.name
-                          WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN NULL
-                          ELSE EXCLUDED.name
-                        END,
-            phone     = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
-            phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
-            updated_at = NOW()
-          RETURNING id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
-                    updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
-        `, [jid, pushName, phone, phoneJid])
-
-    const contact = contactRes.rows[0]
-
-    // Essa mensagem não trouxe o número real — tenta resolver em background sem
-    // esperar o cron diário (ver resolveLidPhoneInBackground no topo do arquivo)
-    if (jid.endsWith("@lid") && !phoneJid) {
-      waitUntil(resolveLidPhoneInBackground(jid, contact.id))
+    const pushName = cleanPushName(rawPushName)
+    const contact = await upsertContactFromMessage(jid, rawPushName, remoteJidAlt) as {
+      id: number; state: string | null; stateData: Record<string, unknown> | null
+      lifecycleState: string | null; updatedAt: string | null; lastOrderAt: string | null
     }
 
     let state: string = contact.state ?? "idle"
@@ -779,9 +775,10 @@ export async function POST(req: Request) {
 
 // ─── helpers gerais ──────────────────────────────────────────────────────────
 
-function semNome(pushName: string): boolean {
-  const t = pushName.trim()
-  return t === "" || /^\d+$/.test(t)
+// ", Nome" se o pushName trouxer nome, "" se não trouxer — saudação nunca quebra
+function nameSuffix(pushName: string): string {
+  const first = pushName.trim().split(" ")[0]
+  return first ? `, ${first}` : ""
 }
 
 async function setState(contactId: number, state: string, data: Record<string, unknown> = {}) {
@@ -1436,15 +1433,9 @@ async function handleText(
           ausente_last_sent_at = NULL
       WHERE id = $1
     `, [contactId])
-    if (semNome(pushName)) {
-      await setState(contactId, "aguardando_nome")
-      replyWA(jid, "Oi! Como posso te chamar?")
-      return
-    }
     const greetingFrio = getGreeting()
-    const firstNameFrio = pushName.split(" ")[0]
     await setState(contactId, "coletando", { rawMessages: [] })
-    replyWA(jid, `${greetingFrio}, ${firstNameFrio}! Que bom te ver de volta. Me manda o pedido direto ou responde *catálogo* para ver os produtos.`)
+    replyWA(jid, `${greetingFrio}${nameSuffix(pushName)}! Que bom te ver de volta. Me manda o pedido direto ou responde *catálogo* para ver os produtos.`)
     return
   }
 
@@ -1497,27 +1488,10 @@ async function handleText(
       break
     }
 
-    case "aguardando_nome":
-      await handleAguardandoNome(jid, contactId, text)
-      break
-
     default:
       // triagem / confirmando / em_separacao / pronto — pedido ativo
       await handleActiveOrder(jid, contactId, state, stateData, text, pushName, chatbotDtfEnabled, globalSettings)
   }
-}
-
-async function handleAguardandoNome(jid: string, contactId: number, text: string) {
-  const nome = text.trim().replace(/[^a-zA-ZÀ-ÿ\s]/g, "").trim()
-  if (!nome || nome.length < 2) {
-    replyWA(jid, "Pode me passar seu nome pra eu te atender melhor?")
-    return
-  }
-  await pool.query("UPDATE wa_contacts SET name = $1, updated_at = NOW() WHERE id = $2", [nome, contactId])
-  const firstName = nome.split(" ")[0]
-  const greeting = getGreeting()
-  await setState(contactId, "coletando", { rawMessages: [] })
-  replyWA(jid, `${greeting}, ${firstName}! 👋 Em breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
 }
 
 async function handleIdle(
@@ -1535,7 +1509,7 @@ async function handleIdle(
   globalSettings: Record<string, string> = {}
 ) {
   void lifecycle
-  const firstName = pushName.split(" ")[0] || pushName
+  const greetSuffix = nameSuffix(pushName)
   const greeting = getGreeting()
   const lowerIdle = text.toLowerCase().trim()
 
@@ -1568,7 +1542,7 @@ async function handleIdle(
       }
       const ok = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
       if (!ok) return
-      replyWA(jid, `${greeting}, ${firstName}! Já vou organizar seu pedido. 📋`)
+      replyWA(jid, `${greeting}${greetSuffix}! Já vou organizar seu pedido. 📋`)
       await createOrderDirect(jid, contactId, [text], chatbotObs, preParsed, chatbotDtfEnabled, globalSettings)
       return
     }
@@ -1602,24 +1576,17 @@ async function handleIdle(
 
     // saudacao ou outro — retornando
     await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-    replyWA(jid, `${greeting}, ${firstName}! Qual o pedido de hoje?`)
+    replyWA(jid, `${greeting}${greetSuffix}! Qual o pedido de hoje?`)
     return
   }
 
-  // New client — ask name if missing
-  if (semNome(pushName)) {
-    await setState(contactId, "aguardando_nome")
-    replyWA(jid, "Oi! Como posso te chamar?")
-    return
-  }
-
-  // New client with name — detect intent
+  // New client — detecta intenção direto, sem perguntar nome (usa só o do perfil do WhatsApp)
   const { intent: newIntent, items: newParsed } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
 
   if (newIntent === "pedido" && chatbotProdutoEnabled && produtoStatus.available) {
     const ok = await setStateIf(contactId, "coletando", { rawMessages: [text], chatbotObs }, ["idle"])
     if (ok) {
-      replyWA(jid, `${greeting}, ${firstName}! Já vou organizar seu pedido. 📋`)
+      replyWA(jid, `${greeting}${greetSuffix}! Já vou organizar seu pedido. 📋`)
       await createOrderDirect(jid, contactId, [text], chatbotObs, newParsed, chatbotDtfEnabled, globalSettings)
       return
     }
@@ -1644,7 +1611,7 @@ async function handleIdle(
 
   // Generic greeting → intro message
   await setState(contactId, "coletando", { rawMessages: [], chatbotObs })
-  replyWA(jid, `${greeting}, ${firstName}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
+  replyWA(jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
 }
 
 async function handleColetando(
@@ -2195,12 +2162,11 @@ async function handleActiveOrder(
     return
   }
 
-  const firstName = pushName.split(" ")[0]
   await pool.query(
     `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
     [contactId]
   )
-  await replyAndSave(contactId, jid, `Oi ${firstName}! Seu pedido está em andamento. Qualquer dúvida nossa equipe já vai ver. 😊`)
+  await replyAndSave(contactId, jid, `Oi${nameSuffix(pushName)}! Seu pedido está em andamento. Qualquer dúvida nossa equipe já vai ver. 😊`)
 }
 
 // ─── Reserva: resposta do cliente (legado — estado nunca mais setado pelo chatbot) ──
