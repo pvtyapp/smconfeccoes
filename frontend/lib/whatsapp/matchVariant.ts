@@ -108,6 +108,7 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
     const currentStock = best?.currentStock ?? 0
     return {
       ...item,
+      productName:  best?.productName ?? item.productName,
       variantId:    best?.id ?? null,
       unitPrice:    best ? Number(best.salePrice) : null,
       sku:          best?.sku ?? null,
