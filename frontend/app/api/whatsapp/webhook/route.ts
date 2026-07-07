@@ -694,7 +694,7 @@ export async function POST(req: Request) {
           `UPDATE wa_contacts SET marketing_optout = true, updated_at = NOW() WHERE id = $1`,
           [contact.id]
         ).catch(() => {})
-        replyWA(jid, "✅ Pronto! Você não receberá mais mensagens de marketing. Para reativar, é só nos chamar.")
+        await replyAndSave(contact.id, jid, "✅ Pronto! Você não receberá mais mensagens de marketing. Para reativar, é só nos chamar.")
         return NextResponse.json({ ok: true })
       }
     }
@@ -733,7 +733,7 @@ export async function POST(req: Request) {
             `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
             [contact.id]
           )
-          replyWA(jid, "Recebi! Nossa equipe entra em contato agora. 👋")
+          await replyAndSave(contact.id, jid, "Recebi! Nossa equipe entra em contato agora. 👋")
         }
       }
       return NextResponse.json({ ok: true })
@@ -1216,7 +1216,7 @@ async function handleMedia(
   // Áudio: não conseguimos processar, pede texto
   const msgAudio = (msg as Record<string, unknown>).message as Record<string, unknown> | undefined
   if (msgAudio?.audioMessage) {
-    replyWA(jid, "Recebi o áudio, mas não consigo ouvir por aqui! 😅\n\nMe passa o pedido em texto:\n_Ex: 20 moletom preto G_")
+    await replyAndSave(contactId, jid, "Recebi o áudio, mas não consigo ouvir por aqui! 😅\n\nMe passa o pedido em texto:\n_Ex: 20 moletom preto G_")
     return
   }
 
@@ -1340,9 +1340,9 @@ async function handleText(
     const done = ["pronto", "ok", "é só isso", "e so isso", "isso", "finalizar", "fim", "só isso", "so isso"]
     if (done.some(w => lower === w || lower.startsWith(w))) {
       await setState(contactId, "idle")
-      replyWA(jid, "✅ Pedido finalizado! Nossa equipe analisa e entra em contato em breve. 🖨️")
+      await replyAndSave(contactId, jid, "✅ Pedido finalizado! Nossa equipe analisa e entra em contato em breve. 🖨️")
     } else {
-      replyWA(jid, "Pode mandar mais arquivos ou responda *pronto* para finalizar.")
+      await replyAndSave(contactId, jid, "Pode mandar mais arquivos ou responda *pronto* para finalizar.")
     }
     return
   }
@@ -1354,7 +1354,7 @@ async function handleText(
       `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'solicitou_atendimento', updated_at = NOW() WHERE id = $1`,
       [contactId]
     )
-    replyWA(jid, "Ok! Já aviso nossa equipe, em breve alguém te chama. 😊")
+    await replyAndSave(contactId, jid, "Ok! Já aviso nossa equipe, em breve alguém te chama. 😊")
     return
   }
 
@@ -1417,7 +1417,7 @@ async function handleText(
 
   if (intent === "pedido") {
     if (!chatbotProdutoEnabled || !produtoStatus.available) {
-      replyWA(jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
+      await replyAndSave(contactId, jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
       return
     }
     await createOrderDirect(jid, contactId, [text], chatbotObs, parsed, chatbotDtfEnabled, globalSettings)
@@ -1425,7 +1425,7 @@ async function handleText(
   }
 
   if (intent === "dtf" || ["monta o arquivo", "monta arquivo", "vc monta", "voce monta", "você monta"].some(k => lower.includes(k))) {
-    replyWA(jid, "Aqui a gente só faz a impressão — precisa do arquivo pronto pra rodar na máquina. Quando tiver, manda direto aqui! 🖨️")
+    await replyAndSave(contactId, jid, "Trabalhamos com DTF de 57cm de largura. Aqui a gente só faz a impressão — precisa do arquivo pronto pra rodar na máquina. Quando tiver, manda direto aqui! 🖨️")
     return
   }
 
@@ -1440,7 +1440,7 @@ async function handleText(
   }
 
   // Saudação, ruído, ou qualquer outra coisa não reconhecida
-  replyWA(jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
+  await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou responde *catálogo* para ver os produtos`)
 }
 
 async function createOrderDirect(
@@ -1683,7 +1683,7 @@ async function handleDtfMedia(
     await cli8.query("COMMIT")
 
     await setState(contactId, "dtf_coletando_arquivos", { pedidoId, pedidoNumber: number })
-    replyWA(jid, `📎 Arte *${number}* recebida! Tem mais arquivos pra adicionar?\nManda agora ou responda *pronto* para finalizar.`)
+    await replyAndSave(contactId, jid, `📎 Arte *${number}* recebida! Tem mais arquivos pra adicionar?\nManda agora ou responda *pronto* para finalizar.`)
   } catch (e) {
     await cli8.query("ROLLBACK").catch(() => {})
     console.error("[handleDtfMedia] falhou — migration dtf_pedidos/dtf_order_number_seq não rodou?", e)
@@ -1710,7 +1710,7 @@ async function addFileToDtfPedido(jid: string, contactId: number, pedidoId: numb
     }
 
     void msg
-    replyWA(jid, `📎 Arquivo adicionado! Mais algum ou responda *pronto* para finalizar.`)
+    await replyAndSave(contactId, jid, `📎 Arquivo adicionado! Mais algum ou responda *pronto* para finalizar.`)
   } catch (e) {
     console.error("[addFileToDtfPedido]", e)
   }
