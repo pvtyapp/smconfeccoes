@@ -12,6 +12,11 @@ export async function GET(req: Request) {
     const avariDateCond  = hasDate ? `AND DATE(COALESCE(ds.resolved_at, ds.created_at) AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
     const params = hasDate ? [from, to] : []
 
+    // defect_stock.resolved_at/sale_price só existem depois que alguém marca uma
+    // avaria como vendida pela 1a vez (criadas sob demanda em /api/defect-stock/[id])
+    await pool.query(`ALTER TABLE defect_stock ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`).catch(() => {})
+    await pool.query(`ALTER TABLE defect_stock ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10,2)`).catch(() => {})
+
     const { rows: orders } = await pool.query(`
       SELECT
         o.id,

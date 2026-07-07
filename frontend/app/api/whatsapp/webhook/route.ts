@@ -1446,6 +1446,11 @@ async function handleText(
     return
   }
 
+  if (intent === "agradecimento") {
+    await replyAndSave(contactId, jid, `De nada${greetSuffix}! Qualquer coisa é só chamar. 😊`)
+    return
+  }
+
   // Saudação, ruído, ou qualquer outra coisa não reconhecida
   await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou me manda o *arquivo* de DTF\n• Ou diga *catálogo* para ver os produtos`)
 }

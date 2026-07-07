@@ -16,6 +16,11 @@ export async function GET(req: Request) {
       (new Date(to).getTime() - new Date(from).getTime()) / 86400000
     ) + 1)
 
+    // defect_stock.resolved_at/sale_price só existem depois que alguém marca uma
+    // avaria como vendida pela 1a vez (criadas sob demanda em /api/defect-stock/[id])
+    await pool.query(`ALTER TABLE defect_stock ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`).catch(() => {})
+    await pool.query(`ALTER TABLE defect_stock ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10,2)`).catch(() => {})
+
     // 1. Orders no período (status != cancelado, source pdv/whatsapp/manual, sem COB-)
     const { rows: orders } = await pool.query(`
       SELECT
