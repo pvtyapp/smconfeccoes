@@ -3,6 +3,7 @@ import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { campaignSend } from "@/lib/whatsapp/campaignSend"
+import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 import { todayBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 
@@ -389,59 +390,11 @@ export async function GET(req: Request) {
     results.messagesDeleted = messagesDeleted
   } catch { results.errors++ }
 
-  // ── 11. Campaigns — processa até 30 mensagens da campanha mais antiga ──────────
-  type CampRecipient = { jid: string; id?: number; name: string; isGroup?: boolean }
+  // ── 11. Campaigns — processa até 8 mensagens da campanha mais antiga em fila ───
   try {
-    const { rows: [camp] } = await pool.query(`
-      SELECT id, content, media_url, recipients_json, sent_count, total_count
-      FROM marketing_campaigns
-      WHERE status = 'sending'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `)
-    if (camp) {
-      const recipients = (camp.recipients_json ?? []) as CampRecipient[]
-      const BATCH = 8
-      for (let i = 0; i < BATCH; i++) {
-        const idx = (camp.sent_count as number) + i
-        if (idx >= recipients.length) {
-          await pool.query(`UPDATE marketing_campaigns SET status = 'sent', executed_at = NOW() WHERE id = $1`, [camp.id]).catch(() => {})
-          break
-        }
-        const r = recipients[idx]
-        let sendJid = r.jid as string
-        let skip = false
-        if (r.id && !r.isGroup) {
-          const { rows: g } = await pool.query(
-            `SELECT COALESCE(phone_jid, CASE WHEN jid NOT LIKE '%@lid' THEN jid ELSE NULL END) AS sjid,
-                    COALESCE(marketing_optout, false) AS optout, last_marketing_sent_at
-             FROM wa_contacts WHERE id = $1`, [r.id]
-          ).catch(() => ({ rows: [] as {sjid:string|null; optout:boolean; last_marketing_sent_at:Date|null}[] }))
-          const row = g[0]
-          if (!row || row.optout) { skip = true }
-          else if (row.last_marketing_sent_at && (Date.now() - new Date(row.last_marketing_sent_at).getTime()) < 20*3600*1000) { skip = true }
-          else if (row.sjid) { sendJid = row.sjid }
-        }
-        if (!skip && sendJid.endsWith("@lid")) skip = true
-        let hasError = false
-        if (!skip) {
-          try {
-            const msg = r.isGroup ? (camp.content as string) : (camp.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
-            await campaignSend(sendJid, msg, camp.media_url as string | null)
-            if (r.id) await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})
-            results.campaignSent = (results.campaignSent ?? 0) + 1
-          } catch { hasError = true; results.errors++ }
-        }
-        await pool.query(
-          `UPDATE marketing_campaigns SET sent_count = $1, error_count = error_count + $2,
-           status = CASE WHEN $1 >= total_count THEN 'sent' ELSE status END,
-           executed_at = CASE WHEN $1 >= total_count THEN NOW() ELSE executed_at END WHERE id = $3`,
-          [idx + 1, hasError ? 1 : 0, camp.id]
-        ).catch(() => {})
-        if (idx + 1 >= recipients.length) break
-        if (!skip) await randDelay()
-      }
-    }
+    const { processed, errors } = await processCampaignBatch(8)
+    results.campaignSent = (results.campaignSent ?? 0) + processed
+    results.errors += errors
   } catch { results.errors++ }
 
   // ── 12. Schedules — dispara schedules do dia (horário BR) ───────────────────────
