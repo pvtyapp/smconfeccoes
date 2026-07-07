@@ -6,6 +6,7 @@ import {
   Search, Send, MessageCircle, ChevronLeft, Printer, History,
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot, UserCheck,
   Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
+  Image as ImageIcon, Video as VideoIcon,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
@@ -1589,7 +1590,7 @@ export default function PedidosPage() {
                                   </span>
                                 )
 
-                                if ((m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") && (msgMediaData || m.mediaThumb)) {
+                                if (m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") {
                                   const displaySrc = msgMediaData || m.mediaThumb
                                   const isReady    = !!msgMediaData
                                   const isFetching = fetchingMedia.has(m.id)
@@ -1601,13 +1602,33 @@ export default function PedidosPage() {
                                   return (
                                   <div>
                                     <div className="relative">
-                                      {m.mediaType === "video" && isReady ? (
+                                      {!displaySrc ? (
+                                        // Sem thumb nem mídia carregada ainda (ex: toda foto/vídeo enviada
+                                        // pelo operador nunca teve thumb gerado) — placeholder clicável
+                                        msgMediaExpired ? (
+                                          <div className="w-full max-w-[240px] h-32 rounded flex items-center justify-center" style={{ background: "#0000000d" }}>
+                                            <span className="text-[11px]" style={{ color: "#667781" }}>Mídia expirada</span>
+                                          </div>
+                                        ) : (
+                                          <div className="w-full max-w-[240px] h-32 rounded flex flex-col items-center justify-center gap-1.5 cursor-pointer"
+                                            style={{ background: "#0000000d" }} onClick={handleClick}>
+                                            {isFetching ? (
+                                              <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#8696A0", borderTopColor: "transparent" }} />
+                                            ) : (
+                                              <>
+                                                {m.mediaType === "video" ? <VideoIcon size={22} style={{ color: "#667781" }} /> : <ImageIcon size={22} style={{ color: "#667781" }} />}
+                                                <span className="text-[11px]" style={{ color: "#667781" }}>Toque para ver</span>
+                                              </>
+                                            )}
+                                          </div>
+                                        )
+                                      ) : m.mediaType === "video" && isReady ? (
                                         // eslint-disable-next-line jsx-a11y/media-has-caption
                                         <video controls src={msgMediaData!} className="w-full max-w-[240px] object-cover rounded" />
                                       ) : (
                                         <>
                                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                                          <img src={displaySrc!} alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
+                                          <img src={displaySrc} alt={m.mediaType === "video" ? "Vídeo" : "Foto"}
                                             className="w-full max-w-[240px] object-cover cursor-zoom-in"
                                             onClick={handleClick} />
                                           {m.mediaType === "video" && !isReady && (
@@ -1617,10 +1638,10 @@ export default function PedidosPage() {
                                           )}
                                         </>
                                       )}
-                                      {!isReady && isFetching && !msgMediaExpired && (
+                                      {displaySrc && !isReady && isFetching && !msgMediaExpired && (
                                         <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.4)" }}>carregando...</div>
                                       )}
-                                      {!isReady && msgMediaExpired && (
+                                      {displaySrc && !isReady && msgMediaExpired && (
                                         <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.55)" }}>Mídia expirada</div>
                                       )}
                                     </div>
