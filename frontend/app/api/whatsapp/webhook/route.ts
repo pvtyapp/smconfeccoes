@@ -9,6 +9,57 @@ import { matchVariants, type MatchedItem } from "@/lib/whatsapp/matchVariant"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
 
+const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
+const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
+const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+
+// Contato @lid cuja 1ª mensagem não trouxe remoteJidAlt fica com phone_jid NULL e o
+// campo "phone" com o hash interno do @lid (parece telefone, não é). Antes disso só era
+// corrigido pelo cron diário (/api/chat/sync, 09h BRT). Aqui tentamos resolver na hora,
+// consultando a mesma lista de chats que o sync usa — throttle de 10min por contato pra
+// não bater na Evolution a cada mensagem de quem ainda não resolveu.
+async function resolveLidPhoneInBackground(jid: string, contactId: number): Promise<void> {
+  if (!EVO_URL || !EVO_KEY || !EVO_INSTANCE) return
+  try {
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS phone_jid_synced_at TIMESTAMPTZ`).catch(() => {})
+
+    const { rows } = await pool.query(
+      `SELECT phone_jid AS "phoneJid", phone_jid_synced_at AS "syncedAt" FROM wa_contacts WHERE id = $1`,
+      [contactId]
+    )
+    const row = rows[0] as { phoneJid: string | null; syncedAt: Date | null } | undefined
+    if (!row || row.phoneJid) return
+    if (row.syncedAt && Date.now() - new Date(row.syncedAt).getTime() < 10 * 60 * 1000) return
+
+    await pool.query(`UPDATE wa_contacts SET phone_jid_synced_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
+
+    const r = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
+      method: "POST",
+      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ skip: 0, limit: 500 }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!r.ok) return
+    const d = await r.json()
+    const chats: Record<string, unknown>[] = Array.isArray(d) ? d
+      : Array.isArray(d?.chats)   ? d.chats
+      : Array.isArray(d?.records) ? d.records
+      : []
+
+    const match  = chats.find(c => ((c.remoteJid ?? c.id) as string) === jid)
+    const lastMsg = match?.lastMessage as Record<string, unknown> | undefined
+    const lastKey = lastMsg?.key as Record<string, unknown> | undefined
+    const alt: string = (lastKey?.remoteJidAlt as string) || ""
+    if (!alt.endsWith("@s.whatsapp.net")) return
+
+    const realPhone = alt.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+    await pool.query(
+      `UPDATE wa_contacts SET phone_jid = $1, phone = $2, updated_at = NOW() WHERE id = $3 AND phone_jid IS NULL`,
+      [alt, realPhone, contactId]
+    ).catch(() => {})
+  } catch { /* best-effort — próxima tentativa na mensagem seguinte ou no cron diário */ }
+}
+
 // Evolution sends jpegThumbnail as a Buffer serialized to {"0":255,"1":216,...} — convert to base64
 function bufferToBase64(raw: unknown): string | null {
   if (!raw) return null
@@ -536,6 +587,13 @@ export async function POST(req: Request) {
         `, [jid, pushName, phone, phoneJid])
 
     const contact = contactRes.rows[0]
+
+    // Essa mensagem não trouxe o número real — tenta resolver em background sem
+    // esperar o cron diário (ver resolveLidPhoneInBackground no topo do arquivo)
+    if (jid.endsWith("@lid") && !phoneJid) {
+      waitUntil(resolveLidPhoneInBackground(jid, contact.id))
+    }
+
     let state: string = contact.state ?? "idle"
     const stateData: Record<string, unknown> = contact.stateData ?? {}
     const lifecycle: string = contact.lifecycleState ?? "new"
