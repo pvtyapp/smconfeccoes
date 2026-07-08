@@ -775,6 +775,7 @@ export async function POST(req: Request) {
     }
 
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS chatbot_silenced BOOLEAN NOT NULL DEFAULT false`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_greeting_sent_at TIMESTAMPTZ`).catch(() => {})
 
     // Fetch chatbot flags (graceful — columns may not exist yet)
     let chatbotProdutoEnabled = true
@@ -1508,8 +1509,23 @@ async function handleText(
     return
   }
 
-  // Saudação, ruído, ou qualquer outra coisa não reconhecida
-  await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou me manda o *arquivo* de DTF\n• Ou diga *catálogo* para ver os produtos`)
+  // Saudação, ruído, ou qualquer outra coisa não reconhecida — a introdução completa
+  // só vai 1x por dia por contato; nas próximas vezes no mesmo dia, manda só um
+  // redirecionamento curto (evita repetir a apresentação inteira toda hora que o
+  // bot não entende algo).
+  const { rows: greetRows } = await pool.query(
+    `SELECT (DATE(last_greeting_sent_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE) AS "sentToday"
+     FROM wa_contacts WHERE id = $1`,
+    [contactId]
+  ).catch(() => ({ rows: [] as { sentToday: boolean }[] }))
+  const alreadyGreetedToday = greetRows[0]?.sentToday === true
+
+  if (alreadyGreetedToday) {
+    await replyAndSave(contactId, jid, "Não entendi 🤔 Pode mandar o *pedido* direto, o *arquivo* de DTF, ou dizer *catálogo* pra ver os produtos.")
+  } else {
+    await pool.query(`UPDATE wa_contacts SET last_greeting_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
+    await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou me manda o *arquivo* de DTF\n• Ou diga *catálogo* para ver os produtos`)
+  }
 }
 
 async function createOrderDirect(
