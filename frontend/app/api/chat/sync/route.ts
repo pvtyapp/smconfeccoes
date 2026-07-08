@@ -210,15 +210,18 @@ export async function POST(req: Request) {
         if (lidExists.length > 0) continue
       }
 
+      // Só ATUALIZA contato que já existe (ou seja, que já trocou mensagem de verdade
+      // com a loja pelo webhook) — nunca CRIA um novo aqui. Antes isso importava toda
+      // a agenda de conversas da Evolution (até 500 de uma vez) pra dentro de Clientes,
+      // incluindo gente que nunca falou com a gente, virando lixo sem nome/telefone.
       await pool.query(
-        `INSERT INTO wa_contacts (jid, name, phone, profile_pic, phone_jid)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (jid) DO UPDATE SET
-           name        = CASE WHEN EXCLUDED.name IS NULL OR EXCLUDED.name ~ '^[0-9]+$' OR EXCLUDED.name = '' THEN wa_contacts.name ELSE EXCLUDED.name END,
-           phone       = CASE WHEN EXCLUDED.phone ~ '^[0-9]{8,15}$' THEN EXCLUDED.phone ELSE wa_contacts.phone END,
-           profile_pic = COALESCE(EXCLUDED.profile_pic, wa_contacts.profile_pic),
-           phone_jid   = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
-           updated_at  = NOW()`,
+        `UPDATE wa_contacts SET
+           name        = CASE WHEN $2::text IS NULL OR $2 ~ '^[0-9]+$' OR $2 = '' THEN name ELSE $2 END,
+           phone       = CASE WHEN $3 ~ '^[0-9]{8,15}$' THEN $3 ELSE phone END,
+           profile_pic = COALESCE($4, profile_pic),
+           phone_jid   = COALESCE($5, phone_jid),
+           updated_at  = NOW()
+         WHERE jid = $1`,
         [jid, name || null, phone, pic, phoneJid]
       ).catch(() => {})
     }
