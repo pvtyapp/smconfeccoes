@@ -494,8 +494,17 @@ function replyWA(jid: string, text: string): void {
   )
 }
 
-// Envia E salva direto no banco (não depende do fromMe callback)
+// Envia E salva direto no banco (não depende do fromMe callback) — único ponto por
+// onde passa toda resposta automática ao cliente. Chatbot desligado (chatbot_ativo
+// = false) vira mudo aqui: nada é enviado nem salvo. Captura de pedido continua
+// funcionando normalmente (ela roda antes de chegar numa chamada de reply), só a
+// resposta pro cliente é que some.
 async function replyAndSave(contactId: number, jid: string, text: string): Promise<void> {
+  const { rows } = await pool.query(
+    `SELECT value FROM app_settings WHERE key = 'chatbot_ativo'`
+  ).catch(() => ({ rows: [] as { value: string }[] }))
+  if (rows[0]?.value === "false") return
+
   waitUntil(
     sendWhatsApp(jid, text)
       .then(async (result) => {
@@ -803,15 +812,14 @@ export async function POST(req: Request) {
       }
     } catch { /* use defaults if columns not migrated yet */ }
 
-    // Fetch global chatbot settings
-    let globalChatbotAtivo = false  // OFF by default — ativar via Settings
+    // Fetch global settings (produto/dtf disponibilidade, horários, etc.). Chatbot
+    // desligado não bloqueia mais aqui — a captura de pedido continua rodando; quem
+    // vira mudo é o replyAndSave (único ponto de resposta ao cliente), que já checa
+    // chatbot_ativo sozinho antes de responder.
     const globalSettings: Record<string, string> = {}
     try {
       const { rows: gs } = await pool.query(`SELECT key, value FROM app_settings`)
-      for (const r of gs) {
-        globalSettings[r.key] = r.value
-        if (r.key === "chatbot_ativo") globalChatbotAtivo = r.value === "true"
-      }
+      for (const r of gs) globalSettings[r.key] = r.value
     } catch { /* use defaults */ }
 
     const produtoDispo   = await hasProdutoDisponivel()
@@ -820,10 +828,6 @@ export async function POST(req: Request) {
       ? produtoBase
       : { available: false, reason: "desativado" }
     const dtfStatus      = getServiceStatus("dtf", globalSettings)
-
-    if (!globalChatbotAtivo) {
-      return NextResponse.json({ ok: true })
-    }
 
     // Bot silenciado (toggle manual do operador) ou em pausa temporária (auto, após
     // operador mandar mensagem manual pelo celular) — fica em silêncio total.

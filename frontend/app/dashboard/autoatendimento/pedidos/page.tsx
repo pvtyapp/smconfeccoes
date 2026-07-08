@@ -1935,7 +1935,7 @@ export default function PedidosPage() {
             {/* Toggle Chatbot */}
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] font-bold text-[#0F1E3C]/50">Chatbot</p>
-              <Tip text="Liga ou desliga as respostas automáticas do bot para todos os contatos." />
+              <Tip text="Liga ou desliga as respostas automáticas do bot para todos os contatos. Desligado, o bot fica mudo — mas pedidos continuam sendo capturados e entrando na triagem normalmente, sem confirmação." />
               <button onClick={toggleChatbot} disabled={togglingBot}
                 className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${chatbotAtivo ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}>
                 <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${chatbotAtivo ? "translate-x-4" : "translate-x-0.5"}`} />
