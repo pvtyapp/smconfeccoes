@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { X, Download, Check, ChevronRight, AlertCircle, Loader2, FileImage, Printer, RotateCcw } from "lucide-react"
 import type { DtfOrder } from "./DtfOrderCard"
+import { subDaysBR } from "@/lib/tz"
 
 type Props = {
   order: DtfOrder
@@ -34,6 +35,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   const [precoPorMetro,  setPrecoPorMetro]  = useState<number | null>(null)
   const [precoCarregado, setPrecoCarregado] = useState(false)
   const [isPaid,         setIsPaid]         = useState(order.isPaid ?? true)
+  const [dueDate,        setDueDate]        = useState("")
   const [error,          setError]          = useState("")
   const [showCancel,     setShowCancel]     = useState(false)
   const [notifyClient,   setNotifyClient]   = useState(true)
@@ -158,15 +160,6 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
     }
   }
 
-  function saveIsPaid(val: boolean) {
-    setIsPaid(val)
-    fetch(`/api/dtf/pedidos/${order.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isPaid: val }),
-    }).catch(() => {})
-  }
-
   function saveImpressoraId(val: number) {
     setImpressoraId(val)
     setError("")
@@ -178,13 +171,17 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   }
 
   async function concluir() {
+    if (!isPaid && !dueDate) {
+      setError("Informe a data de vencimento pra concluir a prazo.")
+      return
+    }
     setSaving(true)
     setError("")
     try {
       const r = await fetch(`/api/dtf/pedidos/${order.id}/conclude`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPaid }),
+        body: JSON.stringify({ isPaid, dueDate: isPaid ? undefined : dueDate }),
       })
       if (!r.ok) {
         const d = await r.json()
@@ -431,7 +428,20 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#0F1E3C]/8">
+        <div className="px-6 py-4 border-t border-[#0F1E3C]/8 space-y-2.5">
+          {isProto && !isPaid && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
+                Vencimento *
+              </label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={e => { setDueDate(e.target.value); setError("") }}
+                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+              />
+            </div>
+          )}
           <div className="flex gap-2 items-center">
 
             {!isDone && (
@@ -472,25 +482,34 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
               </button>
             )}
 
-            {/* pronto — toggle pago + concluir direto */}
+            {/* pronto — toggle à vista/prazo + concluir direto */}
             {isProto && (
               <>
-                <div
-                  className="flex items-center gap-2 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
-                  onClick={() => saveIsPaid(!isPaid)}
-                >
-                  <button
-                    type="button"
-                    className={`relative rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
-                    style={{ width: "32px", height: "18px" }}
+                {order.paymentTermEnabled && (
+                  <div
+                    className="flex items-center gap-2 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
+                    onClick={() => {
+                      const next = !isPaid
+                      setIsPaid(next)
+                      if (!next && !dueDate && order.paymentTermType === "days" && order.paymentTermDays) {
+                        setDueDate(subDaysBR(-order.paymentTermDays))
+                      }
+                      setError("")
+                    }}
                   >
-                    <span
-                      className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isPaid ? "translate-x-3.5" : "translate-x-0.5"}`}
-                      style={{ width: "14px", height: "14px" }}
-                    />
-                  </button>
-                  <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "Pago" : "A cobrar"}</p>
-                </div>
+                    <button
+                      type="button"
+                      className={`relative rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
+                      style={{ width: "32px", height: "18px" }}
+                    >
+                      <span
+                        className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isPaid ? "translate-x-3.5" : "translate-x-0.5"}`}
+                        style={{ width: "14px", height: "14px" }}
+                      />
+                    </button>
+                    <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "À vista" : "A prazo"}</p>
+                  </div>
+                )}
                 <button
                   onClick={concluir}
                   disabled={saving}
@@ -500,7 +519,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
                 >
                   {saving
                     ? <Loader2 size={14} className="animate-spin" />
-                    : <><Check size={14} /> {isPaid ? "Confirmar e Concluir" : "Concluir sem Pagamento"}</>
+                    : <><Check size={14} /> {isPaid ? "Confirmar e Concluir" : "Concluir a Prazo"}</>
                   }
                 </button>
               </>

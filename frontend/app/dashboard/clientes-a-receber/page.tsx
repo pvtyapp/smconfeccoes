@@ -21,7 +21,11 @@ type PendingOrder = {
   contactName: string
   contactPhone: string
   contactJid: string
+  kind: "produto" | "dtf"
 }
+
+function payUrl(o: PendingOrder)    { return o.kind === "dtf" ? `/api/dtf/pedidos/${o.id}/pay`    : `/api/orders/${o.id}/pay` }
+function statusUrl(o: PendingOrder) { return o.kind === "dtf" ? `/api/dtf/pedidos/${o.id}/status` : `/api/orders/${o.id}/status` }
 
 type SortKey = "dueDate" | "totalValue" | "contactName"
 type SortDir = "asc" | "desc"
@@ -122,7 +126,7 @@ export default function ClientesAReceberPage() {
     })
 
   async function handleCancelConfirm(order: PendingOrder) {
-    await fetch(`/api/orders/${order.id}/status`, {
+    await fetch(statusUrl(order), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "cancelado", actor: "dashboard" }),
@@ -432,7 +436,7 @@ function DarBaixaModal({
     setSaving(true)
     setError("")
     try {
-      const res = await fetch(`/api/orders/${order.id}/pay`, {
+      const res = await fetch(payUrl(order), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ method, notes: notes.trim(), notifyClient: notify }),

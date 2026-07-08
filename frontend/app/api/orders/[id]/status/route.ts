@@ -25,7 +25,7 @@ export async function POST(
   const client = await pool.connect()
   try {
     const { id } = await params
-    const { status, actor, note, notifyClient, cancelMessage, changes } = await req.json()
+    const { status, actor, note, notifyClient, cancelMessage, changes, dueDate } = await req.json()
 
     if (!VALID_STATUSES.includes(status)) {
       return NextResponse.json(
@@ -102,8 +102,8 @@ export async function POST(
         WHERE id = $1
       `, [order.contact_id])
       await client.query(
-        `UPDATE orders SET status = $1, completed_at = NOW() WHERE id = $2`,
-        [status, id]
+        `UPDATE orders SET status = $1, completed_at = NOW(), due_date = $3 WHERE id = $2`,
+        [status, id, dueDate ?? null]
       )
 
     } else if (status === "cancelado") {
@@ -190,10 +190,13 @@ export async function POST(
 
     if (status === "concluido" && order.jid) {
       const nome = order.contactName ? `, ${order.contactName.split(" ")[0]}` : ""
-      await sendAndSave(
-        order.contact_id, order.jid,
-        `✅ Pedido *${order.number}* entregue! Obrigado${nome} pela preferência 🙏 Até a próxima!`
-      )
+      const msg = dueDate
+        ? (() => {
+            const [y, m, d] = (dueDate as string).split("-")
+            return `Obrigado${nome}! Seu pedido *${order.number}* foi retirado com pagamento até *${d}/${m}/${y}*. Qualquer dúvida é só chamar 😊`
+          })()
+        : `✅ Pedido *${order.number}* entregue! Obrigado${nome} pela preferência 🙏 Até a próxima!`
+      await sendAndSave(order.contact_id, order.jid, msg)
       // Tags por produto (fire-and-forget)
       pool.query(`
         INSERT INTO wa_contact_tags (contact_id, tag, value)

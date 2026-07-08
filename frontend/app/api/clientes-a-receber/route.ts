@@ -14,13 +14,35 @@ export async function GET() {
         c.id                  AS "contactId",
         c.name                AS "contactName",
         c.phone               AS "contactPhone",
-        COALESCE(c.phone_jid, c.jid) AS "contactJid"
+        COALESCE(c.phone_jid, c.jid) AS "contactJid",
+        'produto'             AS "kind"
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.paid_at IS NULL
         AND o.status != 'cancelado'
         AND o.due_date IS NOT NULL
-      ORDER BY o.due_date ASC NULLS LAST, c.name ASC, o.created_at ASC
+
+      UNION ALL
+
+      SELECT
+        p.id,
+        p.number,
+        p.status,
+        p.preco_cobrado::float AS "totalValue",
+        p.due_date::text       AS "dueDate",
+        p.created_at           AS "createdAt",
+        c.id                   AS "contactId",
+        COALESCE(c.name, p.cliente) AS "contactName",
+        c.phone                AS "contactPhone",
+        COALESCE(c.phone_jid, c.jid) AS "contactJid",
+        'dtf'                  AS "kind"
+      FROM dtf_pedidos p
+      LEFT JOIN wa_contacts c ON c.id = p.contact_id
+      WHERE p.paid_at IS NULL
+        AND p.status != 'cancelado'
+        AND p.due_date IS NOT NULL
+
+      ORDER BY "dueDate" ASC NULLS LAST, "contactName" ASC, "createdAt" ASC
     `)
     return NextResponse.json(rows)
   } catch (err) {

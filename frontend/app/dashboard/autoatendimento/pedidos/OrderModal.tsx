@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw } from "lucide-react"
 import type { Order, OrderItem } from "./page"
+import { subDaysBR } from "@/lib/tz"
 
 type Props = {
   order: Order
@@ -79,6 +80,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [showCancel,    setShowCancel]    = useState(false)
   const [notifyClient,  setNotifyClient]  = useState(true)
   const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
+  const [isPaid,        setIsPaid]        = useState(true)
+  const [dueDate,       setDueDate]       = useState("")
+  const [error,         setError]         = useState("")
 
   function itemsHash(list: OrderItem[]) {
     return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}`).join(",")
@@ -212,6 +216,17 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     try {
       await postStatus("pago")
       onRefresh()
+    } finally { setSaving(false) }
+  }
+
+  async function handleConcluirPrazo() {
+    if (!dueDate) { setError("Informe a data de vencimento pra concluir a prazo."); return }
+    setSaving(true)
+    setError("")
+    try {
+      await postStatus("concluido", { dueDate })
+      onRefresh()
+      onClose()
     } finally { setSaving(false) }
   }
 
@@ -461,7 +476,21 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#0F1E3C]/8">
+        <div className="px-6 py-4 border-t border-[#0F1E3C]/8 space-y-2.5">
+          {isPronte && !isPaid && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
+                Vencimento *
+              </label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={e => { setDueDate(e.target.value); setError("") }}
+                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+              />
+            </div>
+          )}
+          {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <div className="flex gap-2">
 
             {/* Cancelar — não mostra em concluido/cancelado */}
@@ -498,13 +527,42 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* PRONTO: confirmar pagamento */}
+            {/* PRONTO: à vista → confirmar pagamento | a prazo → concluir direto */}
             {isPronte && (
-              <button onClick={handleMarcarPago} disabled={saving}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                ✓ Confirmar Pagamento
-              </button>
+              <>
+                {order.paymentTermEnabled && (
+                  <div
+                    className="flex items-center gap-2 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
+                    onClick={() => {
+                      const next = !isPaid
+                      setIsPaid(next)
+                      if (!next && !dueDate && order.paymentTermType === "days" && order.paymentTermDays) {
+                        setDueDate(subDaysBR(-order.paymentTermDays))
+                      }
+                      setError("")
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className={`relative rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
+                      style={{ width: "32px", height: "18px" }}
+                    >
+                      <span
+                        className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isPaid ? "translate-x-3.5" : "translate-x-0.5"}`}
+                        style={{ width: "14px", height: "14px" }}
+                      />
+                    </button>
+                    <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "À vista" : "A prazo"}</p>
+                  </div>
+                )}
+                <button onClick={isPaid ? handleMarcarPago : handleConcluirPrazo} disabled={saving}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors ${
+                    isPaid ? "bg-green-600 hover:bg-green-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"
+                  }`}>
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  {isPaid ? "Confirmar Pagamento" : "Concluir a Prazo"}
+                </button>
+              </>
             )}
 
             {/* PAGO: confirmar entrega */}

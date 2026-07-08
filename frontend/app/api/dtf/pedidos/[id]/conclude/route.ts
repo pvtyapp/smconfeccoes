@@ -8,8 +8,9 @@ export async function POST(
   const client = await pool.connect()
   try {
     const { id }    = await params
-    const body      = await req.json().catch(() => ({})) as { isPaid?: boolean }
+    const body      = await req.json().catch(() => ({})) as { isPaid?: boolean; dueDate?: string }
     const isPaid    = body.isPaid !== false  // default true
+    const dueDate   = !isPaid ? (body.dueDate ?? null) : null
 
     await client.query("BEGIN")
 
@@ -55,9 +56,10 @@ export async function POST(
       pool.query(`
         UPDATE dtf_pedidos
         SET is_paid = $2,
-            paid_at = CASE WHEN $2 THEN NOW() ELSE NULL END
+            paid_at  = CASE WHEN $2 THEN NOW() ELSE NULL END,
+            due_date = $3
         WHERE id = $1
-      `, [id, isPaid])
+      `, [id, isPaid, dueDate])
     ).catch(() => {})
 
     // Saída automática de film
