@@ -509,7 +509,7 @@ export default function PedidosPage() {
   const loadOrders = useCallback(async () => {
     setLoadingOrders(true)
     try {
-      const res = await fetch("/api/orders?source=whatsapp&activeOnly=true")
+      const res = await fetch("/api/orders?source=whatsapp,manual&activeOnly=true")
       const data = await res.json()
       const fresh: Order[] = Array.isArray(data) ? data : []
       setOrders(fresh)

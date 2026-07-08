@@ -12,7 +12,13 @@ export async function GET(req: Request) {
     const params: unknown[] = []
 
     if (status)     { params.push(status); conditions.push(`o.status = $${params.length}`) }
-    if (source)     { params.push(source); conditions.push(`o.source = $${params.length}`) }
+    if (source) {
+      // Aceita lista separada por vírgula (ex: "whatsapp,manual") — pedido criado
+      // manualmente pelo operador precisa aparecer na mesma triagem que o do chatbot.
+      const sources = source.split(",").map(s => s.trim()).filter(Boolean)
+      params.push(sources)
+      conditions.push(`o.source = ANY($${params.length}::text[])`)
+    }
     if (activeOnly) { conditions.push(`o.status NOT IN ('concluido', 'cancelado')`) }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""
