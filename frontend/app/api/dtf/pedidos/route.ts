@@ -14,7 +14,7 @@ export async function GET(req: Request) {
     if (status)     { params.push(status);    where += ` AND p.status = $${params.length}` }
     if (source)     { params.push(source);    where += ` AND p.source = $${params.length}` }
     if (contactId)  { params.push(contactId); where += ` AND p.contact_id = $${params.length}` }
-    if (activeOnly) { where += ` AND p.status NOT IN ('pronto', 'cancelado')` }
+    if (activeOnly) { where += ` AND p.status NOT IN ('concluido', 'cancelado')` }
 
     const { rows } = await pool.query(`
       SELECT
