@@ -843,14 +843,12 @@ export default function DTFDashboardPage() {
                 </div>
                 <p className={`text-2xl font-black ${ins.lowStock ? "text-red-600" : clr.text}`}>
                   {ins.unidade === "metro"
-                    ? `${parseFloat((ins.saldoAtual / filmTamanhoM).toFixed(2))} bobina${ins.saldoAtual / filmTamanhoM !== 1 ? "s" : ""}`
+                    ? (() => {
+                        const bobinas = Math.floor(ins.saldoAtual / filmTamanhoM)
+                        return `${bobinas} bobina${bobinas !== 1 ? "s" : ""}`
+                      })()
                     : fmtQtd(ins.saldoAtual, ins.unidade)}
                 </p>
-                {ins.unidade === "metro" && (
-                  <p className={`text-[10px] mt-0.5 opacity-40 ${ins.lowStock ? "text-red-600" : clr.text}`}>
-                    {parseFloat(Number(ins.saldoAtual).toFixed(1))} m no total
-                  </p>
-                )}
                 {(() => {
                   const cpm = relatorio?.insumos.find(r => r.id === ins.id)?.custoPorMetroAtual
                   return cpm != null ? (

@@ -86,9 +86,11 @@ function groupColor(grupo: string) {
 function fmtData(s: string) {
   return new Date(s.slice(0, 10) + "T12:00:00").toLocaleDateString("pt-BR")
 }
+// Bobina é unidade inteira — nunca mostra fração (a metragem parcial de uma bobina
+// aberta é assunto só do Film Monitor, não do saldo de estoque).
 function fmtFilm(metros: number, tamanhoM: number) {
-  const bobinas = metros / tamanhoM
-  return `${parseFloat(bobinas.toFixed(2))} bobina${bobinas !== 1 ? "s" : ""} (${parseFloat(Number(metros).toFixed(1))} m)`
+  const bobinas = Math.floor(metros / tamanhoM)
+  return `${bobinas} bobina${bobinas !== 1 ? "s" : ""}`
 }
 function getToday() { return todayBR() }
 

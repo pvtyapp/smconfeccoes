@@ -84,17 +84,10 @@ export async function POST(
       `, [id, isPaid, dueDate])
     ).catch(() => {})
 
-    // Saída automática de film
-    if (pedido.metros_finais && Number(pedido.metros_finais) > 0) {
-      pool.query(`
-        INSERT INTO dtf_insumo_saidas (insumo_id, impressora_id, quantidade, data, observacao)
-        SELECT id, $1::int, $2::numeric, CURRENT_DATE, 'Auto: Pedido DTF #' || $3
-        FROM dtf_insumos
-        WHERE LOWER(grupo) = 'film'
-        ORDER BY id LIMIT 1
-      `, [pedido.impressora_id ?? null, pedido.metros_finais, pedido.number])
-        .catch(() => {})
-    }
+    // Film não é descontado aqui — o consumo por pedido é só marcador visual do
+    // Film Monitor (soma metros_finais direto dos pedidos). O desconto de verdade
+    // (1 bobina inteira) só acontece quando uma bobina nova é instalada na
+    // impressora (/api/dtf/film-bobinas), igual qualquer outro insumo.
 
     return NextResponse.json({ ok: true })
   } catch (err) {
