@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { campaignSend } from "@/lib/whatsapp/campaignSend"
 import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 import { todayBR } from "@/lib/tz"
@@ -107,10 +108,19 @@ export async function GET(req: Request) {
           SET novo_seq = 1, novo_last_sent_at = NOW(), last_marketing_sent_at = NOW(), updated_at = NOW()
           WHERE id = $1
         `, [c.id])
-        await sendWhatsApp(c.send_jid as string, t(
-          s.novo_d2_msg || "Oi {nome}! Quando quiser fazer um pedido é só me chamar — produto, cor e tamanho que eu registro na hora.",
-          c.name
-        ))
+        {
+          const msg = t(
+            s.novo_d2_msg || "Oi {nome}! Quando quiser fazer um pedido é só me chamar — produto, cor e tamanho que eu registro na hora.",
+            c.name
+          )
+          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
+          await cli.query(
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+             VALUES ($1, $2, 'out', $3, NOW())
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [c.id, result?.key?.id ?? null, msg]
+          )
+        }
         await cli.query("COMMIT")
         await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D2')`, [c.id]).catch(() => {})
         results.novo++
@@ -165,10 +175,19 @@ export async function GET(req: Request) {
               ausente_seq = 1, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW()
           WHERE id = $1
         `, [c.id])
-        await sendWhatsApp(c.send_jid as string, t(
-          s.ausente_d15_msg || "Oi {nome}, faz um tempo! Estoque renovado aqui. Quando quiser pedir é só chamar.",
-          c.name
-        ))
+        {
+          const msg = t(
+            s.ausente_d15_msg || "Oi {nome}, faz um tempo! Estoque renovado aqui. Quando quiser pedir é só chamar.",
+            c.name
+          )
+          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
+          await cli.query(
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+             VALUES ($1, $2, 'out', $3, NOW())
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [c.id, result?.key?.id ?? null, msg]
+          )
+        }
         await cli.query("COMMIT")
         await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D15')`, [c.id]).catch(() => {})
         results.ausente++
@@ -200,10 +219,19 @@ export async function GET(req: Request) {
       try {
         await cli.query("BEGIN")
         await cli.query(`UPDATE wa_contacts SET ausente_seq = 2, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW() WHERE id = $1`, [c.id])
-        await sendWhatsApp(c.send_jid as string, t(
-          s.ausente_d30_msg || "{nome}, chegaram peças novas esse mês. Me chama quando precisar.",
-          c.name
-        ))
+        {
+          const msg = t(
+            s.ausente_d30_msg || "{nome}, chegaram peças novas esse mês. Me chama quando precisar.",
+            c.name
+          )
+          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
+          await cli.query(
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+             VALUES ($1, $2, 'out', $3, NOW())
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [c.id, result?.key?.id ?? null, msg]
+          )
+        }
         await cli.query("COMMIT")
         await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D30')`, [c.id]).catch(() => {})
         results.ausente++
@@ -235,10 +263,19 @@ export async function GET(req: Request) {
       try {
         await cli.query("BEGIN")
         await cli.query(`UPDATE wa_contacts SET ausente_seq = 3, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW() WHERE id = $1`, [c.id])
-        await sendWhatsApp(c.send_jid as string, t(
-          s.ausente_d45_msg || "Oi {nome}! Uma última mensagem — quando precisar de estoque, pode contar comigo.",
-          c.name
-        ))
+        {
+          const msg = t(
+            s.ausente_d45_msg || "Oi {nome}! Uma última mensagem — quando precisar de estoque, pode contar comigo.",
+            c.name
+          )
+          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
+          await cli.query(
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+             VALUES ($1, $2, 'out', $3, NOW())
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [c.id, result?.key?.id ?? null, msg]
+          )
+        }
         await cli.query("COMMIT")
         await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D45')`, [c.id]).catch(() => {})
         results.ausente++
@@ -272,7 +309,7 @@ export async function GET(req: Request) {
   // ── 7. Cobrança dias corridos ─────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT o.id, o.number, o.total_value, c.jid, c.name, COALESCE(c.phone_jid, c.jid) AS send_jid
+      SELECT o.id, o.number, o.total_value, c.id AS "contactId", c.jid, c.name, COALESCE(c.phone_jid, c.jid) AS send_jid
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.due_date = $1
@@ -285,7 +322,7 @@ export async function GET(req: Request) {
       try {
         const firstName = (row.name as string).split(" ")[0]
         const total = row.total_value ? `R$ ${Number(row.total_value).toFixed(2)}` : "o valor do pedido"
-        await sendWhatsApp(row.send_jid as string, `Oi ${firstName}, o pagamento do pedido *${row.number}* vence hoje — *${total}*. Qualquer dúvida é só chamar!`)
+        await sendAndSave(row.contactId as number, row.send_jid as string, `Oi ${firstName}, o pagamento do pedido *${row.number}* vence hoje — *${total}*. Qualquer dúvida é só chamar!`)
         results.cobranca++
       } catch { results.errors++ }
     }
@@ -294,7 +331,7 @@ export async function GET(req: Request) {
   // ── 8. Cobrança data fixa ─────────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT c.jid, c.name, COALESCE(c.phone_jid, c.jid) AS send_jid,
+      SELECT c.id AS "contactId", c.jid, c.name, COALESCE(c.phone_jid, c.jid) AS send_jid,
              array_agg(o.number ORDER BY o.created_at) AS numbers,
              SUM(o.total_value) AS total_sum
       FROM orders o
@@ -304,14 +341,14 @@ export async function GET(req: Request) {
         AND o.status != 'cancelado'
         AND c.payment_term_enabled = true
         AND c.payment_term_type = 'fixed_date'
-      GROUP BY c.jid, c.name, c.phone_jid
+      GROUP BY c.id, c.jid, c.name, c.phone_jid
     `, [today])
     for (const row of rows.rows) {
       try {
         const firstName = (row.name as string).split(" ")[0]
         const nums = (row.numbers as string[]).join(", ")
         const total = row.total_sum ? `R$ ${Number(row.total_sum).toFixed(2)}` : "o valor total"
-        await sendWhatsApp(row.send_jid as string, `Oi ${firstName}! Os pedidos *${nums}* vencem hoje — total: *${total}*. Pode efetuar o pagamento quando puder!`)
+        await sendAndSave(row.contactId as number, row.send_jid as string, `Oi ${firstName}! Os pedidos *${nums}* vencem hoje — total: *${total}*. Pode efetuar o pagamento quando puder!`)
         results.cobranca++
       } catch { results.errors++ }
     }
@@ -375,7 +412,8 @@ export async function GET(req: Request) {
           WHERE id = $2
         `, [newExpiresAt, next.id])
 
-        sendWhatsApp(
+        sendAndSave(
+          next.contact_id,
           next.jid,
           `🎉 *${variantName}* disponível! Você estava na lista de espera. Entre em contato para confirmar! 😊`
         ).catch(() => {})

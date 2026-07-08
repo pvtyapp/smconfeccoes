@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 
 // Called hourly via cron-job.org: POST /api/orders/expire
 // Authorization: Bearer {CRON_SECRET}
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
     `).catch(() => {})
 
     const { rows: dtfRows } = await pool.query(`
-      SELECT dp.id, dp.number,
+      SELECT dp.id, dp.number, dp.contact_id,
              COALESCE(c.phone_jid, c.jid) AS jid
       FROM dtf_pedidos dp
       JOIN wa_contacts c ON c.id = dp.contact_id
@@ -83,7 +83,8 @@ export async function POST(req: Request) {
     for (const row of dtfRows) {
       try {
         if (row.jid) {
-          await sendWhatsApp(
+          await sendAndSave(
+            row.contact_id,
             row.jid,
             `⏳ Seu pedido DTF *${row.number}* está aguardando há 2 horas! Por favor, envie o arquivo de arte para agilizar a produção.`
           )

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { cleanDtfBlobsOnConclude } from "@/lib/blob-cleanup"
 
 const VALID = ["triagem", "em_producao", "pronto", "concluido", "cancelado"]
@@ -92,7 +92,7 @@ export async function POST(
 
         if (cfg.endereco_retirada) msg += `\n\n📍 ${cfg.endereco_retirada}`
 
-        sendWhatsApp(pedido.jid, msg).catch(() => {})
+        sendAndSave(pedido.contact_id, pedido.jid, msg).catch(() => {})
       }
 
     } else if (status === "em_producao") {
@@ -112,7 +112,7 @@ export async function POST(
         if (metrosFinais) msg += `\n📐 Metragem: *${Number(metrosFinais).toFixed(2)} m*`
         if (precoCobrado) msg += `\n💰 Valor estimado: *R$ ${Number(precoCobrado).toFixed(2).replace(".", ",")}*`
         msg += `\n\nAvisamos quando estiver pronto!`
-        sendWhatsApp(pedido.jid, msg).catch(() => {})
+        sendAndSave(pedido.contact_id, pedido.jid, msg).catch(() => {})
       }
 
     } else {
@@ -128,7 +128,7 @@ export async function POST(
       if (status === "cancelado" && pedido.jid && notifyClient !== false) {
         const msg = cancelMessage?.trim()
           || `❌ Seu pedido DTF *${pedido.number}* foi cancelado. Qualquer dúvida, entre em contato.`
-        sendWhatsApp(pedido.jid, msg).catch(() => {})
+        sendAndSave(pedido.contact_id, pedido.jid, msg).catch(() => {})
       }
     }
 

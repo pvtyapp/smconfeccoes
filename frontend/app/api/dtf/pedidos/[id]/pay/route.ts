@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 
 export async function POST(
   req: Request,
@@ -12,7 +12,7 @@ export async function POST(
     const { notifyClient } = body as { notifyClient?: boolean }
 
     const { rows } = await pool.query(`
-      SELECT p.id, p.number, p.paid_at, p.preco_cobrado,
+      SELECT p.id, p.number, p.paid_at, p.preco_cobrado, p.contact_id AS "contactId",
              COALESCE(c.phone_jid, c.jid) AS jid, c.name AS "contactName"
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
@@ -31,7 +31,8 @@ export async function POST(
       const valor = rows[0].preco_cobrado
         ? ` de *R$ ${Number(rows[0].preco_cobrado).toFixed(2).replace(".", ",")}*`
         : ""
-      sendWhatsApp(
+      sendAndSave(
+        rows[0].contactId as number,
         rows[0].jid,
         `Pagamento${valor} do pedido *${rows[0].number}* confirmado! Obrigado${nome ? `, ${nome}` : ""} 🙏`
       ).catch(() => {})

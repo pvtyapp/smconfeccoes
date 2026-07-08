@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 
 // POST /api/prod-orders/[id]/revision
 // body: {
@@ -147,7 +147,8 @@ export async function POST(
             WHERE id = $2
           `, [expiresAt, res.id])
 
-          sendWhatsApp(
+          sendAndSave(
+            res.contact_id,
             res.jid,
             `🎉 Boa notícia! A *${variantName}* que você reservou chegou! Entre em contato para confirmar o pedido. 😊`
           ).catch(() => {})

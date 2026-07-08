@@ -500,7 +500,7 @@ export default function PDVPage() {
         fetch("/api/whatsapp/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jid, text: lines }),
+          body: JSON.stringify({ jid, text: lines, contactId: effectiveContact.id }),
         }).catch(() => {})
       }
 
