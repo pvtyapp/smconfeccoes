@@ -414,6 +414,63 @@ async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<Save
   }
 }
 
+// Confere as últimas mensagens desse contato direto na Evolution contra o que temos
+// salvo — se alguma sumiu (ex: 2 arquivos chegando quase juntos, um se perde por
+// algum motivo), recupera na hora. Roda em background (waitUntil) depois de toda
+// mensagem processada, então qualquer "irmã perdida" é resgatada em segundos, não
+// precisa esperar um cron passar depois.
+async function reconcileRecentMessages(jid: string): Promise<void> {
+  if (!EVO_URL || !EVO_KEY || !EVO_INSTANCE || jid.endsWith("@g.us")) return
+  try {
+    const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
+      method: "POST",
+      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: 15 }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    const records: Record<string, unknown>[] = data?.messages?.records ?? []
+    if (records.length === 0) return
+
+    const evoIds = records
+      .map(r => (r.key as Record<string, unknown> | undefined)?.id as string | undefined)
+      .filter((id): id is string => !!id)
+    if (evoIds.length === 0) return
+
+    // Resolve contactId por jid OU phone_jid (contato @lid pode ter o jid real diferente)
+    const { rows: contactRows } = await pool.query(
+      `SELECT id FROM wa_contacts WHERE jid = $1 OR phone_jid = $1 LIMIT 1`,
+      [jid]
+    )
+    const contactId = contactRows[0]?.id as number | undefined
+    if (!contactId) return
+
+    const { rows: known } = await pool.query(
+      `SELECT message_id FROM wa_messages WHERE contact_id = $1 AND message_id = ANY($2::text[])`,
+      [contactId, evoIds]
+    )
+    const knownIds = new Set(known.map(r => r.message_id as string))
+    const missing = records.filter(r => {
+      const id = (r.key as Record<string, unknown> | undefined)?.id as string | undefined
+      return id && !knownIds.has(id)
+    })
+    if (missing.length === 0) return
+
+    console.error(`[webhook] reconcile: ${missing.length} mensagem(ns) recuperada(s) pra ${jid}`)
+    for (const rec of missing) {
+      const key = rec.key as Record<string, unknown> | undefined
+      if (key?.fromMe) {
+        await handleFromMeMessage(rec, jid, key)
+      } else {
+        await saveInboundMessage(rec)
+      }
+    }
+  } catch (e) {
+    console.error("[webhook] reconcileRecentMessages falhou:", jid, e instanceof Error ? e.message : e)
+  }
+}
+
 // Evolution sends jpegThumbnail as a Buffer serialized to {"0":255,"1":216,...} — convert to base64
 function bufferToBase64(raw: unknown): string | null {
   if (!raw) return null
@@ -663,7 +720,10 @@ export async function POST(req: Request) {
       if (!jid) continue
 
       if (key.fromMe) {
-        if (!jid.endsWith("@g.us")) await handleFromMeMessage(m, jid, key)
+        if (!jid.endsWith("@g.us")) {
+          await handleFromMeMessage(m, jid, key)
+          waitUntil(reconcileRecentMessages(jid))
+        }
         continue
       }
 
@@ -674,6 +734,7 @@ export async function POST(req: Request) {
 
       const saved = await saveInboundMessage(m)
       if (i === 0 && saved) first = { msg: m, jid, saved }
+      waitUntil(reconcileRecentMessages(jid))
     }
 
     // Só a primeira mensagem do lote dispara o chatbot (evita responder ou criar
