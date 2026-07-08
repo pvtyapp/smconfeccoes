@@ -6,7 +6,7 @@ import {
   Search, Send, MessageCircle, ChevronLeft, Printer, History,
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot, UserCheck,
   Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
-  Image as ImageIcon, Video as VideoIcon,
+  Image as ImageIcon, Video as VideoIcon, Plus,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
@@ -14,6 +14,7 @@ import PrintSheet from "./PrintSheet"
 import AudioPlayer from "./AudioPlayer"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
+import NewManualOrderForm from "./NewManualOrderForm"
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
 
@@ -297,6 +298,7 @@ export default function PedidosPage() {
 
   // DTF panel within chat modal
   const [showDtfPanel,      setShowDtfPanel]      = useState(false)
+  const [showNewOrderForm,  setShowNewOrderForm]  = useState(false)
   const [contactDtfOrders,  setContactDtfOrders]  = useState<DtfOrder[]>([])
   const contactProductOrders = chatContact ? orders.filter(o => o.contactId === chatContact.id) : []
   const [linkingDtfMsg,     setLinkingDtfMsg]     = useState<number | null>(null)
@@ -1803,6 +1805,12 @@ export default function PedidosPage() {
                   {contactProductOrders.length + contactDtfOrders.length} pedido{(contactProductOrders.length + contactDtfOrders.length) !== 1 ? "s" : ""}
                 </span>
               </div>
+              <div className="px-3 pt-3 flex-shrink-0 bg-white">
+                <button onClick={() => setShowNewOrderForm(true)}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-[#4361EE] hover:bg-[#3451D4] text-white text-xs font-bold transition-colors">
+                  <Plus size={13} /> Novo Pedido
+                </button>
+              </div>
               {dtfLinkToast && (
                 <div className="mx-3 mt-2 px-3 py-2 rounded-xl flex items-center justify-between gap-2 flex-shrink-0 border"
                   style={{ background: "rgba(124,58,237,0.06)", borderColor: "rgba(124,58,237,0.25)" }}>
@@ -1914,6 +1922,14 @@ export default function PedidosPage() {
                 )
               })()}
             </div>
+          )}
+
+          {showNewOrderForm && (
+            <NewManualOrderForm
+              contactId={chatContact.id}
+              onClose={() => setShowNewOrderForm(false)}
+              onCreated={() => { loadOrders(); loadContactDtfOrders(chatContact.id) }}
+            />
           )}
         </div>
 
