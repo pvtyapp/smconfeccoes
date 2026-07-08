@@ -5,6 +5,7 @@ import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock,
 import type { Order, OrderItem } from "./page"
 import { subDaysBR } from "@/lib/tz"
 import PrintSheet from "./PrintSheet"
+import Toggle from "@/components/Toggle"
 
 type Props = {
   order: Order
@@ -543,16 +544,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                       setError("")
                     }}
                   >
-                    <button
-                      type="button"
-                      className={`relative rounded-full transition-colors flex-shrink-0 ${isPaid ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}
-                      style={{ width: "32px", height: "18px" }}
-                    >
-                      <span
-                        className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isPaid ? "translate-x-3.5" : "translate-x-0.5"}`}
-                        style={{ width: "14px", height: "14px" }}
-                      />
-                    </button>
+                    <Toggle on={isPaid} onChange={() => {}} onColor="bg-emerald-500" />
                     <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "À vista" : "A prazo"}</p>
                   </div>
                 )}
@@ -589,11 +581,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <h3 className="text-base font-bold text-[#0F1E3C]">Cancelar pedido {order.number}?</h3>
             <div className="flex items-center gap-3">
-              <button type="button" onClick={() => setNotifyClient(v => !v)}
-                className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${notifyClient ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}
-                style={{ height: "22px" }}>
-                <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${notifyClient ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-              </button>
+              <Toggle on={notifyClient} onChange={() => setNotifyClient(v => !v)} />
               <p className="text-sm font-medium text-[#0F1E3C]">Notificar cliente via WhatsApp</p>
             </div>
             {notifyClient && (

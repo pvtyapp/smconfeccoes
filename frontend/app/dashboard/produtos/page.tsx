@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Plus, Pencil, Power, Loader2, ChevronRight, ChevronDown, X, Trash2 } from "lucide-react"
 import type { Category, Product } from "@/lib/types"
+import Toggle from "@/components/Toggle"
 
 const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 
@@ -291,17 +292,7 @@ export default function ProdutosPage() {
             {/* Toggles */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
-                <button
-                  type="button"
-                  onClick={() => set("chatbotEnabled", !form.chatbotEnabled)}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.chatbotEnabled ? "bg-[#25D366]" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}
-                >
-                  <span
-                    className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.chatbotEnabled ? "translate-x-5" : "translate-x-0.5"}`}
-                    style={{ width: "18px", height: "18px" }}
-                  />
-                </button>
+                <Toggle on={form.chatbotEnabled} onChange={() => set("chatbotEnabled", !form.chatbotEnabled)} onColor="bg-[#25D366]" />
                 <div>
                   <p className="text-sm font-semibold text-[#0F1E3C]">Disponível no chatbot</p>
                   <p className="text-xs text-[#0F1E3C]/45">Clientes podem pedir via WhatsApp</p>
@@ -309,23 +300,13 @@ export default function ProdutosPage() {
               </div>
 
               <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !form.stockEnabled
-                    if (editing && form.stockEnabled && !next) {
-                      if (!confirm("Desativar o estoque vai inativar todas as variantes deste produto. Continuar?")) return
-                    }
-                    set("stockEnabled", next)
-                  }}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.stockEnabled ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}
-                >
-                  <span
-                    className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.stockEnabled ? "translate-x-5" : "translate-x-0.5"}`}
-                    style={{ width: "18px", height: "18px" }}
-                  />
-                </button>
+                <Toggle on={form.stockEnabled} onChange={() => {
+                  const next = !form.stockEnabled
+                  if (editing && form.stockEnabled && !next) {
+                    if (!confirm("Desativar o estoque vai inativar todas as variantes deste produto. Continuar?")) return
+                  }
+                  set("stockEnabled", next)
+                }} />
                 <div>
                   <p className="text-sm font-semibold text-[#0F1E3C]">Controle de estoque</p>
                   <p className="text-xs text-[#0F1E3C]/45">Gera variantes cores × tamanhos</p>
@@ -333,17 +314,7 @@ export default function ProdutosPage() {
               </div>
 
               <div className="flex items-center gap-3 p-4 bg-[#F4F6FB] rounded-xl border border-[#0F1E3C]/8">
-                <button
-                  type="button"
-                  onClick={() => set("precoPorMetro", !form.precoPorMetro)}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${form.precoPorMetro ? "bg-[#7C3AED]" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}
-                >
-                  <span
-                    className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${form.precoPorMetro ? "translate-x-5" : "translate-x-0.5"}`}
-                    style={{ width: "18px", height: "18px" }}
-                  />
-                </button>
+                <Toggle on={form.precoPorMetro} onChange={() => set("precoPorMetro", !form.precoPorMetro)} onColor="bg-[#7C3AED]" />
                 <div>
                   <p className="text-sm font-semibold text-[#0F1E3C]">Cobrar por metro</p>
                   <p className="text-xs text-[#0F1E3C]/45">PDV cobra proporcional ao tamanho</p>

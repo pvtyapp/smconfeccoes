@@ -7,6 +7,7 @@ import {
   Banknote, CreditCard, Smartphone, ArrowRightLeft, Bell, XCircle,
 } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import Toggle from "@/components/Toggle"
 
 type Contact = { id: number; name: string | null; phone: string; paymentTermEnabled: boolean }
 
@@ -535,14 +536,7 @@ function DarBaixaModal({
             {/* Notificar WA */}
             {order.contactJid && (
               <div className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6">
-                <button
-                  type="button"
-                  onClick={() => setNotify(v => !v)}
-                  className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${notify ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}
-                  style={{ height: "22px" }}
-                >
-                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${notify ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-                </button>
+                <Toggle on={notify} onChange={() => setNotify(v => !v)} />
                 <div className="flex items-center gap-2 min-w-0">
                   <Bell size={13} className="text-[#0F1E3C]/40 flex-shrink-0" />
                   <div>

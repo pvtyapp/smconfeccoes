@@ -6,6 +6,7 @@ import {
   Calendar, ShoppingBag, CheckCircle, Save, User, Bot,
   Printer, Download, Tag, Plus, Trash2, UserPlus, Phone, Pencil,
 } from "lucide-react"
+import Toggle from "@/components/Toggle"
 
 type Contact = {
   id: number
@@ -106,15 +107,6 @@ function fmtPhone(phone: string | null | undefined) {
 
 function isLidUnresolved(c: { jid: string; phoneJid: string | null }) {
   return c.jid?.endsWith("@lid") && !c.phoneJid
-}
-
-function Toggle({ on, onChange, color = "bg-[#4361EE]" }: { on: boolean; onChange: () => void; color?: string }) {
-  return (
-    <div onClick={onChange}
-      className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${on ? color : "bg-[#0F1E3C]/15"}`}>
-      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? "left-4" : "left-0.5"}`} />
-    </div>
-  )
 }
 
 export default function ClientesPage() {
@@ -627,7 +619,7 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Toggle on={chatbotDtf} onChange={() => setChatbotDtf(v => !v)} color="bg-purple-600" />
+              <Toggle on={chatbotDtf} onChange={() => setChatbotDtf(v => !v)} onColor="bg-purple-600" />
               <div>
                 <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot DTF</p>
                 <p className="text-[10px] text-[#0F1E3C]/40">Pedidos de impressão via WhatsApp</p>
@@ -668,7 +660,7 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
           )}
 
           <div className="flex items-center gap-3 pt-1 border-t border-[#0F1E3C]/6">
-            <Toggle on={precoExclusivo} onChange={() => setPrecoExclusivo(v => !v)} color="bg-amber-500" />
+            <Toggle on={precoExclusivo} onChange={() => setPrecoExclusivo(v => !v)} onColor="bg-amber-500" />
             <div>
               <p className="text-sm font-semibold text-[#0F1E3C]">Preço Exclusivo</p>
               <p className="text-[10px] text-[#0F1E3C]/40">PDV exige confirmação de preço</p>

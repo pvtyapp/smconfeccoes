@@ -15,6 +15,7 @@ import AudioPlayer from "./AudioPlayer"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
 import NewManualOrderForm from "./NewManualOrderForm"
+import Toggle from "@/components/Toggle"
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
 
@@ -1952,10 +1953,7 @@ export default function PedidosPage() {
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] font-bold text-[#0F1E3C]/50">Chatbot</p>
               <Tip text="Liga ou desliga as respostas automáticas do bot para todos os contatos. Desligado, o bot fica mudo — mas pedidos continuam sendo capturados e entrando na triagem normalmente, sem confirmação." />
-              <button onClick={toggleChatbot} disabled={togglingBot}
-                className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${chatbotAtivo ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`}>
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${chatbotAtivo ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
+              <Toggle on={chatbotAtivo} onChange={toggleChatbot} disabled={togglingBot} />
             </div>
 
             <div className="w-px h-5 bg-[#0F1E3C]/8" />
@@ -1985,10 +1983,7 @@ export default function PedidosPage() {
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] font-bold text-[#0F1E3C]/50">Estoque</p>
               <Tip text="ON: chatbot avisa o cliente quando item está sem estoque ou com quantidade limitada. OFF: chatbot vende livremente sem alertas de estoque (ex: produção sob demanda). A dedução do estoque ocorre normalmente nos dois casos." />
-              <button onClick={toggleEstoque} disabled={togglingEstoque}
-                className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${controleEstoque ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`}>
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${controleEstoque ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
+              <Toggle on={controleEstoque} onChange={toggleEstoque} onColor="bg-emerald-500" disabled={togglingEstoque} />
             </div>
 
             {/* Horários */}

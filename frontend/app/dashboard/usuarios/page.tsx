@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { Plus, X, Loader2, Check, ShieldCheck, UserX, Pencil } from "lucide-react"
+import Toggle from "@/components/Toggle"
 import {
   navTop, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
   type NavItem,
@@ -250,9 +251,7 @@ function UserModal({ user, onClose, onSaved }: {
               className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6 cursor-pointer select-none"
               onClick={() => setIsAdmin(v => !v)}
             >
-              <button type="button" className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${isAdmin ? "bg-[#4361EE]" : "bg-[#0F1E3C]/15"}`} style={{ height: "22px" }}>
-                <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${isAdmin ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-              </button>
+              <Toggle on={isAdmin} onChange={() => {}} />
               <div>
                 <p className="text-sm font-semibold text-[#0F1E3C]">Administrador</p>
                 <p className="text-[10px] text-[#0F1E3C]/40">Vê e acessa todas as abas, sem precisar marcar cada uma</p>
@@ -301,9 +300,7 @@ function UserModal({ user, onClose, onSaved }: {
                 className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6 cursor-pointer select-none"
                 onClick={() => setActive(v => !v)}
               >
-                <button type="button" className={`relative w-10 rounded-full transition-colors flex-shrink-0 ${active ? "bg-emerald-500" : "bg-[#0F1E3C]/15"}`} style={{ height: "22px" }}>
-                  <span className={`absolute top-0.5 bg-white rounded-full shadow transition-transform ${active ? "translate-x-5" : "translate-x-0.5"}`} style={{ width: "18px", height: "18px" }} />
-                </button>
+                <Toggle on={active} onChange={() => {}} onColor="bg-emerald-500" />
                 <div className="flex items-center gap-2">
                   {!active && <UserX size={13} className="text-red-400" />}
                   <div>
