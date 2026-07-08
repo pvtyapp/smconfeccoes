@@ -2,14 +2,15 @@
 
 import { useState, useCallback, useEffect } from "react"
 import {
-  RefreshCw, TrendingUp, Package,
+  RefreshCw, TrendingUp, Package, FileDown,
   ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Layers,
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
+import RelatorioPrintSheet from "./RelatorioPrintSheet"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type DRE = {
+export type DRE = {
   receitaBruta:   number
   receitaAvarias: number
   custoInsumos:   number | null
@@ -18,10 +19,11 @@ type DRE = {
   custoFixo:      number
   custoVariavel:  number
   perdasDescarte: number
+  custoInsumoDtf: number
   resultadoOp:    number | null
 }
 
-type Summary = {
+export type Summary = {
   pedidosTotal:      number
   pedidosConcluidos: number
   totalPecas:        number
@@ -30,7 +32,7 @@ type Summary = {
   margemOp:          number | null
 }
 
-type ProductRow = {
+export type ProductRow = {
   name:    string
   revenue: number
   cost:    number | null
@@ -38,22 +40,22 @@ type ProductRow = {
   qty:     number
 }
 
-type MaterialFlow = {
+export type MaterialFlow = {
   entradas: { total: number; count: number }
   saidas:   { total: number; count: number }
 }
 
-type ReportData = {
+export type ReportData = {
   period:         { from: string; to: string; days: number }
   dre:            DRE
   summary:        Summary
   byChannel:      Record<string, number>
   productRanking: ProductRow[]
   materialFlow:   MaterialFlow
-  diagnostico:    { semCusto: string[] }
+  diagnostico:    { semCusto: string[]; dtfSemCusto: boolean }
 }
 
-type StockItem = {
+export type StockItem = {
   productName: string
   qty:         number
   costPrice:   number
@@ -61,11 +63,11 @@ type StockItem = {
   totalCost:   number
   totalSale:   number
 }
-type RawItem = {
+export type RawItem = {
   materialName: string; variantName: string; unit: string
   qty: number; unitPrice: number; totalCost: number
 }
-type StockValuation = {
+export type StockValuation = {
   products:     { items: StockItem[]; totalCost: number; totalSale: number }
   rawMaterials: { items: RawItem[];   totalCost: number }
   grandTotalCost: number
@@ -84,16 +86,18 @@ const PRESETS: { key: PresetKey; label: string }[] = [
   { key: "range",        label: "Período"      },
 ]
 
-const CHANNEL_LABEL: Record<string, string> = {
+export const CHANNEL_LABEL: Record<string, string> = {
   pdv:      "PDV",
   whatsapp: "WhatsApp",
   manual:   "Manual",
+  dtf:      "DTF",
 }
 
 const CHANNEL_COLOR: Record<string, string> = {
   pdv:      "#4361EE",
   whatsapp: "#10B981",
   manual:   "#F59E0B",
+  dtf:      "#7C3AED",
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -194,6 +198,12 @@ export default function RelatorioFinanceiroPage() {
   const [dreOpen,    setDreOpen]    = useState(false)
   const [stockOpen,  setStockOpen]  = useState(true)
   const [stockVal,   setStockVal]   = useState<StockValuation | null>(null)
+  const [showReport, setShowReport] = useState(false)
+
+  function handleExtrairRelatorio() {
+    setShowReport(true)
+    setTimeout(() => window.print(), 300)
+  }
 
   const load = useCallback(async () => {
     const dates = getPresetDates(preset, rangeStart, rangeEnd)
@@ -232,9 +242,19 @@ export default function RelatorioFinanceiroPage() {
           </h1>
           <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Receita · Insumos · Margens · Ranking</p>
         </div>
-        <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors border border-[#0F1E3C]/8">
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2">
+          {data && (
+            <button
+              onClick={handleExtrairRelatorio}
+              className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+            >
+              <FileDown size={14} /> Extrair Relatório
+            </button>
+          )}
+          <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors border border-[#0F1E3C]/8">
+            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       {/* Period selector */}
@@ -288,6 +308,18 @@ export default function RelatorioFinanceiroPage() {
             </div>
           )}
 
+          {data.diagnostico.dtfSemCusto && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <p className="text-xs font-bold text-amber-700 mb-1">
+                Custo de insumo DTF indisponível no período — teve venda de DTF, mas nenhum ciclo de consumo
+                (bobina de film ou refil de tinta) com custo registrado ainda.
+              </p>
+              <p className="text-[10px] text-amber-500 mt-1">
+                Acesse Insumos DTF e registre o custo de compra dos insumos consumidos.
+              </p>
+            </div>
+          )}
+
           {/* ── 1. Receita por Canal — TOPO ─────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
@@ -302,8 +334,8 @@ export default function RelatorioFinanceiroPage() {
               ) : (
                 <>
                   {/* Canal cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                    {(["pdv", "whatsapp", "manual"] as const).map(ch => {
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    {(["pdv", "whatsapp", "manual", "dtf"] as const).map(ch => {
                       const val   = data.byChannel[ch] ?? 0
                       const share = channelTotal > 0 ? (val / channelTotal) * 100 : 0
                       const color = CHANNEL_COLOR[ch]
@@ -648,6 +680,10 @@ export default function RelatorioFinanceiroPage() {
                   <DRERow label="(-) Perdas por Descarte" value={-(dre?.perdasDescarte ?? 0)} indent negative
                     sub="qty × custo médio · avarias descartadas no período" />
                 )}
+                {(dre?.custoInsumoDtf ?? 0) > 0 && (
+                  <DRERow label="(-) Custo de Insumo DTF" value={-(dre?.custoInsumoDtf ?? 0)} indent negative
+                    sub="metros produzidos × custo por metro atual (film + tinta)" />
+                )}
                 <DRERow separator />
                 <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}
                   sub={dre?.resultadoOp != null ? `margem op. ${pct(summary?.margemOp ?? null)}` : undefined} />
@@ -773,6 +809,14 @@ export default function RelatorioFinanceiroPage() {
           )}
 
         </>
+      )}
+
+      {showReport && data && (
+        <RelatorioPrintSheet
+          data={data}
+          stockVal={stockVal}
+          onDone={() => setShowReport(false)}
+        />
       )}
     </div>
   )

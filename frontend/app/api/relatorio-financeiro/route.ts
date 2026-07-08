@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getDtfCustoPorMetroAtual } from "@/lib/dtf/custoPorMetro"
 
 // GET /api/relatorio-financeiro?from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: Request) {
@@ -127,13 +128,21 @@ export async function GET(req: Request) {
     // DTF pedidos concluídos no período
     const { rows: dtfRows } = await pool.query(`
       SELECT COALESCE(SUM(preco_cobrado), 0)::float AS total,
-             COUNT(*)::int AS count
+             COUNT(*)::int AS count,
+             COALESCE(SUM(COALESCE(metros_finais, metros, 0)), 0)::float AS metros
       FROM dtf_pedidos
       WHERE status = 'concluido'
         AND DATE(concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
     `, [from, to])
     const receitaDtf = Number(dtfRows[0]?.total ?? 0)
     const dtfCount   = Number(dtfRows[0]?.count ?? 0)
+    const metrosDtf  = Number(dtfRows[0]?.metros ?? 0)
+
+    // Custo de insumo DTF (film + tintas/poliamida) no período — custo atual por
+    // metro (ciclo de consumo mais recente) × metros produzidos no período. Antes
+    // a receita de DTF entrava no faturamento mas o custo nunca era descontado.
+    const custoPorMetroDtf = metrosDtf > 0 ? await getDtfCustoPorMetroAtual() : null
+    const custoInsumoDtf   = custoPorMetroDtf != null ? custoPorMetroDtf * metrosDtf : 0
 
     // ── Calcular DRE ──────────────────────────────────────────────────────────
     const concluded = orders.filter(o => o.status === "pago" || o.status === "concluido")
@@ -180,7 +189,7 @@ export async function GET(req: Request) {
     const custoVariavel = Number(varCosts[0]?.total ?? 0)
     const lucroBruto    = custoInsumosKnown ? receitaBruta - custoInsumos : null
     const resultadoOp   = lucroBruto !== null
-      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte
+      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte - custoInsumoDtf
       : null
 
     const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
@@ -218,6 +227,7 @@ export async function GET(req: Request) {
         custoFixo,
         custoVariavel,
         perdasDescarte,
+        custoInsumoDtf,
         resultadoOp,
       },
       summary: {
@@ -236,6 +246,7 @@ export async function GET(req: Request) {
       },
       diagnostico: {
         semCusto: semCustoRows.map(r => r.product_name as string),
+        dtfSemCusto: metrosDtf > 0 && custoPorMetroDtf === null,
       },
     })
   } catch (err) {
