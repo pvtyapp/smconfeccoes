@@ -123,6 +123,296 @@ async function upsertContactFromMessage(jid: string, rawPushName: string, remote
   return contact
 }
 
+// Mensagem enviada do próprio celular/WA Desktop (fromMe) — salva no histórico da
+// conversa. Extraído do laço principal pra rodar igual em toda mensagem de um lote,
+// não só na primeira (antes, se viesse como 2ª+ mensagem do lote, era ignorada).
+async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, key: Record<string, unknown>): Promise<void> {
+  try {
+    const msgBody0 = msg.message as Record<string, unknown> | undefined
+    let text0: string =
+      (msgBody0?.conversation as string) ||
+      ((msgBody0?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
+      ""
+    let outMediaType: string | null = null
+    let outFileName: string | null  = null
+    if (!text0 && msgBody0) {
+      if (msgBody0.imageMessage) {
+        text0 = "[📸 imagem]"; outMediaType = "image"
+      } else if (msgBody0.audioMessage) {
+        text0 = "[🎤 áudio]"; outMediaType = "audio"
+      } else if (msgBody0.videoMessage) {
+        const cap = (msgBody0.videoMessage as Record<string, unknown>)?.caption as string
+        text0 = cap ? `[🎥 vídeo] ${cap}` : "[🎥 vídeo]"; outMediaType = "video"
+      } else if (msgBody0.documentMessage) {
+        const d = msgBody0.documentMessage as Record<string, unknown>
+        outFileName = (d.fileName as string) ?? null
+        text0 = outFileName || "[📄 documento]"; outMediaType = "document"
+      } else if (msgBody0.stickerMessage) {
+        text0 = "[🎨 sticker]"; outMediaType = "sticker"
+      }
+    }
+    if (!text0) return
+
+    const remoteJidAlt = (key?.remoteJidAlt as string) || ""
+    const phoneJid: string | null = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net") ? remoteJidAlt : null
+    const outMsgId: string | null = (key?.id as string) ?? null
+    const ts = key?.timestamp ? new Date(Number(key.timestamp) * 1000) : null
+    const outPhone = phoneJid
+      ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+      : jid.endsWith("@lid")
+        ? jid.replace(/@lid$/, "").replace(/:[0-9]+$/, "").replace(/\D/g, "")
+        : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
+    // Lookup by phone OR phone_jid — prevents ghost @s.whatsapp.net when @lid has garbage phone field
+    const sendJid = jid.endsWith("@s.whatsapp.net") ? jid : null
+    const { rows: phoneRows } = await pool.query(
+      `SELECT id FROM wa_contacts
+       WHERE phone = $1 OR phone_jid = $2
+       ORDER BY CASE WHEN jid LIKE '%@lid' THEN 0 ELSE 1 END
+       LIMIT 1`,
+      [outPhone, sendJid]
+    ).catch(() => ({ rows: [] as { id: number }[] }))
+
+    let contactId0: number | null = null
+    if (phoneRows[0]) {
+      contactId0 = phoneRows[0].id as number
+      // Patch phone + phone_jid on @lid contacts that have garbage phone
+      await pool.query(`
+        UPDATE wa_contacts
+        SET phone     = CASE WHEN phone IS NULL OR phone NOT SIMILAR TO '[0-9]{8,15}' THEN $2 ELSE phone END,
+            phone_jid = COALESCE(phone_jid, $3),
+            updated_at = NOW()
+        WHERE id = $1
+      `, [contactId0, outPhone, sendJid]).catch(() => {})
+    } else {
+      const { rows: cRows } = await pool.query(
+        `INSERT INTO wa_contacts (jid, name, phone, phone_jid)
+         VALUES ($1, NULL, $2, $3)
+         ON CONFLICT (jid) DO UPDATE SET
+           phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
+           updated_at = NOW()
+         RETURNING id`,
+        [jid, outPhone, phoneJid]
+      ).catch(() => ({ rows: [] as { id: number }[] }))
+      contactId0 = cRows[0]?.id ?? null
+    }
+
+    if (contactId0 === null) return
+
+    // Você iniciou a conversa por fora (celular) com um @lid ainda não
+    // resolvido — mesma correção em background do caminho de entrada
+    if (jid.endsWith("@lid") && !phoneJid) {
+      waitUntil(resolveLidPhoneInBackground(jid, contactId0))
+    }
+    await pool.query(
+      `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
+       VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))
+       ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
+         media_type = COALESCE(wa_messages.media_type, EXCLUDED.media_type),
+         file_name  = COALESCE(wa_messages.file_name,  EXCLUDED.file_name)`,
+      [contactId0, outMsgId, text0, outMediaType, outFileName, ts]
+    )
+    if (outMediaType && outMediaType !== "sticker" && outMsgId) {
+      waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
+    }
+    // Operator sent manual message → extend chatbot pause by configured minutes
+    pool.query(`
+      UPDATE wa_contacts
+      SET chatbot_paused_until = NOW() + (
+            COALESCE((SELECT value FROM app_settings WHERE key = 'chatbot_idle_return_minutes'), '30')
+            || ' minutes')::INTERVAL,
+          updated_at = NOW()
+      WHERE id = $1
+    `, [contactId0]).catch(() => {})
+  } catch (e) {
+    console.error("[webhook] handleFromMeMessage falhou:", jid, e instanceof Error ? e.message : e)
+  }
+}
+
+// Mensagem de grupo — salva em wa_group_messages. Mesmo motivo do handleFromMeMessage:
+// roda por mensagem, não só na primeira do lote.
+async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key: Record<string, unknown>): Promise<void> {
+  try {
+    const msgObj = msg.message as Record<string, unknown> | undefined
+    const content: string =
+      (msgObj?.conversation as string) ||
+      ((msgObj?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
+      ""
+    const hasMedia = !!(msgObj?.imageMessage || msgObj?.videoMessage || msgObj?.audioMessage || msgObj?.documentMessage || msgObj?.stickerMessage)
+    if (!content && !hasMedia) return
+
+    // participantAlt = real @s.whatsapp.net when participant is @lid
+    const participantLid = key?.participant as string | undefined
+    const participantAlt = key?.participantAlt as string | undefined
+    const senderJid = participantAlt ||
+      (participantLid && !participantLid.endsWith("@lid") ? participantLid : "") ||
+      ""
+    const senderName: string = (msg.pushName as string) || senderJid
+
+    const groupSubject = (msg as Record<string, unknown>).pushName as string || jid
+    await pool.query(`
+      INSERT INTO wa_groups (jid, name, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (jid) DO UPDATE SET updated_at = NOW()
+    `, [jid, groupSubject]).catch(() => {})
+    await pool.query(`
+      INSERT INTO wa_group_messages (group_id, message_id, sender_jid, sender_name, content, media_type)
+      SELECT g.id, $1, $2, $3, $4, $5
+      FROM wa_groups g WHERE g.jid = $6
+      ON CONFLICT (message_id) DO NOTHING
+    `, [key?.id ?? null, senderJid, senderName, content || "[mídia]", hasMedia ? "media" : null, jid]).catch(() => {})
+  } catch (e) {
+    console.error("[webhook] handleGroupMessage falhou:", jid, e instanceof Error ? e.message : e)
+  }
+}
+
+type SavedInbound = {
+  contactId: number
+  state: string
+  lifecycle: string
+  text: string
+  hasMedia: boolean
+  pushName: string | null
+}
+
+// Salva 1 mensagem recebida de contato normal (contato + wa_messages + download de
+// mídia em background). Usado pra TODA mensagem do webhook, seja a primeira ou não —
+// antes, mensagens além da primeira de um lote passavam por uma implementação
+// separada e mais fraca, sem log de erro nenhum (foi assim que 2 arquivos sumiram
+// sem deixar rastro). Agora é o mesmo código pra todo mundo, com erro sempre logado.
+async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<SavedInbound | null> {
+  const key = evtMsg.key as Record<string, unknown> | undefined
+  const jid: string = (key?.remoteJid as string) || ""
+  const remoteJidAlt = (key?.remoteJidAlt as string) || ""
+  const msgBody = evtMsg.message as Record<string, unknown> | undefined
+
+  const text: string =
+    (msgBody?.conversation as string) ||
+    ((msgBody?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
+    ""
+  const hasMedia = !!(msgBody?.imageMessage || msgBody?.documentMessage || msgBody?.videoMessage || msgBody?.audioMessage || msgBody?.stickerMessage)
+  if (!text.trim() && !hasMedia) return null
+
+  const mediaMeta = (() => {
+    if (!msgBody) return { mediaType: null as string | null, thumbnail: null as string | null, fileName: null as string | null, caption: null as string | null }
+    if (msgBody.imageMessage) {
+      const m = msgBody.imageMessage as Record<string, unknown>
+      return { mediaType: "image", thumbnail: bufferToBase64(m.jpegThumbnail), fileName: null as string | null, caption: (m.caption as string) ?? null }
+    }
+    if (msgBody.videoMessage) {
+      const m = msgBody.videoMessage as Record<string, unknown>
+      return { mediaType: "video", thumbnail: bufferToBase64(m.jpegThumbnail), fileName: null as string | null, caption: (m.caption as string) ?? null }
+    }
+    if (msgBody.audioMessage) return { mediaType: "audio", thumbnail: null as string | null, fileName: null as string | null, caption: null as string | null }
+    if (msgBody.documentMessage) {
+      const m = msgBody.documentMessage as Record<string, unknown>
+      return { mediaType: "document", thumbnail: null as string | null, fileName: (m.fileName as string) ?? null, caption: (m.caption as string) ?? null }
+    }
+    if (msgBody.stickerMessage) {
+      const m = msgBody.stickerMessage as Record<string, unknown>
+      return { mediaType: "sticker", thumbnail: bufferToBase64(m.jpegThumbnail), fileName: null as string | null, caption: null as string | null }
+    }
+    return { mediaType: null as string | null, thumbnail: null as string | null, fileName: null as string | null, caption: null as string | null }
+  })()
+
+  try {
+    const rawPushName = (evtMsg.pushName as string) || ""
+    const pushName = cleanPushName(rawPushName)
+    const contact = await upsertContactFromMessage(jid, rawPushName, remoteJidAlt) as {
+      id: number; state: string | null; stateData: Record<string, unknown> | null
+      lifecycleState: string | null; updatedAt: string | null; lastOrderAt: string | null
+    }
+
+    // Extract quoted (reply) context
+    // Evolution may hoist contextInfo to message level OR nest it inside each message type
+    const contextInfo = (() => {
+      if (!msgBody) return null
+      if (msgBody.contextInfo) return msgBody.contextInfo as Record<string, unknown>
+      const sources = [
+        msgBody.extendedTextMessage,
+        msgBody.imageMessage,
+        msgBody.videoMessage,
+        msgBody.audioMessage,
+        msgBody.documentMessage,
+        msgBody.stickerMessage,
+      ]
+      for (const s of sources) {
+        const ci = (s as Record<string, unknown> | undefined)?.contextInfo
+        if (ci) return ci as Record<string, unknown>
+      }
+      return null
+    })()
+    const quotedMsgId: string | null = (contextInfo?.stanzaId as string) ?? null
+    const quotedContent: string | null = (() => {
+      const qm = contextInfo?.quotedMessage as Record<string, unknown> | undefined
+      if (!qm) return null
+      return (qm.conversation as string)
+        || ((qm.extendedTextMessage as Record<string, unknown>)?.text as string)
+        || (qm.imageMessage    ? "🖼 Imagem"   : null)
+        || (qm.videoMessage    ? "🎥 Vídeo"    : null)
+        || (qm.audioMessage    ? "🎤 Áudio"    : null)
+        || (qm.stickerMessage  ? "🎨 Sticker"  : null)
+        || (qm.documentMessage
+              ? `📄 ${(qm.documentMessage as Record<string,unknown>)?.fileName ?? "Documento"}`
+              : null)
+        || "[mídia]"
+    })()
+
+    const incomingMsgId: string | null = (key?.id as string) ?? null
+    const msgContent = text || (hasMedia ? "[mídia]" : "")
+    // Usa o timestamp real do WhatsApp para que o horário mostrado no dashboard
+    // bata com o WhatsApp mesmo quando o webhook chega com atraso.
+    const incomingTs = (evtMsg.messageTimestamp as number | undefined)
+    const incomingCreatedAt = incomingTs ? new Date(incomingTs * 1000).toISOString() : null
+
+    try {
+      await pool.query(
+        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, file_name, caption, quoted_id, quoted_text, created_at)
+         VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, NOW()))
+         ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+        [
+          contact.id, incomingMsgId, msgContent,
+          mediaMeta.mediaType,
+          mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
+          mediaMeta.fileName, mediaMeta.caption,
+          quotedMsgId, quotedContent,
+          incomingCreatedAt,
+        ]
+      )
+    } catch (e) {
+      console.error("[webhook] INSERT completo em wa_messages falhou, tentando versão simples:", jid, mediaMeta.mediaType, e instanceof Error ? e.message : e)
+      try {
+        await pool.query(
+          `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, created_at)
+           VALUES ($1, $2, 'in', $3, $4, $5, COALESCE($6::timestamptz, NOW()))
+           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+          [contact.id, incomingMsgId, msgContent, mediaMeta.mediaType,
+           mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
+           incomingCreatedAt]
+        )
+      } catch (e2) {
+        console.error("[webhook] wa_messages INSERT falhou mesmo na versão simples:", jid, mediaMeta.mediaType, e2 instanceof Error ? e2.message : e2)
+      }
+    }
+
+    // Register background media download — waitUntil keeps function alive after response
+    if (hasMedia && mediaMeta.mediaType) {
+      waitUntil(saveMediaBackground(evtMsg, contact.id, incomingMsgId, mediaMeta.mediaType, contact.state ?? "idle"))
+    }
+
+    return {
+      contactId: contact.id,
+      state: contact.state ?? "idle",
+      lifecycle: contact.lifecycleState ?? "new",
+      text,
+      hasMedia,
+      pushName,
+    }
+  } catch (e) {
+    console.error("[webhook] saveInboundMessage falhou:", jid, e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
 // Evolution sends jpegThumbnail as a Buffer serialized to {"0":255,"1":216,...} — convert to base64
 function bufferToBase64(raw: unknown): string | null {
   if (!raw) return null
@@ -201,7 +491,9 @@ async function saveMediaBackground(
         [dataUrl, category, contactId]
       ).catch(() => {})
     }
-  } catch { /* silent — never crashes webhook */ }
+  } catch (e) {
+    console.error("[webhook] saveMediaBackground falhou:", messageId, mediaType, e instanceof Error ? e.message : e)
+  }
 }
 
 // Parse Evolution v2 message — returns ALL messages in the payload
@@ -357,240 +649,53 @@ export async function POST(req: Request) {
     const allMsgs = parseEvolutionMsgs(body?.data)
     if (allMsgs.length === 0) return NextResponse.json({ ok: true })
 
-    // When Evolution batches multiple messages in one call (e.g. 2 files sent simultaneously),
-    // persist ALL of them to wa_messages first so none are silently dropped.
-    // The state machine below only runs for the first message.
-    if (allMsgs.length > 1) {
-      for (const extraMsg of allMsgs.slice(1)) {
-        try {
-          const eKey  = extraMsg.key as Record<string, unknown> | undefined
-          const eJid  = (eKey?.remoteJid as string) || ""
-          if (!eJid || eJid.endsWith("@g.us") || eKey?.fromMe) continue
-          const eAlt  = (eKey?.remoteJidAlt as string) || ""
-          const eBody = extraMsg.message as Record<string, unknown> | undefined
-          const eText: string =
-            (eBody?.conversation as string) ||
-            ((eBody?.extendedTextMessage as Record<string, unknown>)?.text as string) || ""
-          const eHasMedia = !!(eBody?.imageMessage || eBody?.documentMessage || eBody?.videoMessage || eBody?.audioMessage)
-          if (!eText.trim() && !eHasMedia) continue
-          const eMeta = (() => {
-            if (!eBody) return { mediaType: null as string | null, fileName: null as string | null, caption: null as string | null, thumbnail: null as string | null }
-            if (eBody.imageMessage)    return { mediaType: "image",    fileName: null as string | null, caption: (eBody.imageMessage as Record<string,unknown>).caption as string ?? null, thumbnail: bufferToBase64((eBody.imageMessage as Record<string,unknown>).jpegThumbnail) }
-            if (eBody.documentMessage) return { mediaType: "document", fileName: ((eBody.documentMessage as Record<string,unknown>).fileName as string) ?? null, caption: null as string | null, thumbnail: null as string | null }
-            if (eBody.videoMessage)    return { mediaType: "video",    fileName: null as string | null, caption: (eBody.videoMessage as Record<string,unknown>).caption as string ?? null, thumbnail: bufferToBase64((eBody.videoMessage as Record<string,unknown>).jpegThumbnail) }
-            if (eBody.audioMessage)    return { mediaType: "audio",    fileName: null as string | null, caption: null as string | null, thumbnail: null as string | null }
-            return { mediaType: null as string | null, fileName: null as string | null, caption: null as string | null, thumbnail: null as string | null }
-          })()
-          const eMsgId = (eKey?.id as string) ?? null
-          const eTs    = (extraMsg.messageTimestamp as number | undefined)
-          const eCreatedAt = eTs ? new Date(eTs * 1000).toISOString() : null
-          const eContact = await upsertContactFromMessage(eJid, (extraMsg.pushName as string) || "", eAlt)
-            .catch(() => null) as { id: number } | null
-          if (!eContact) continue
-          const eContactId = eContact.id
-          await pool.query(
-            `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, file_name, caption, created_at)
-             VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()))
-             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-            [eContactId, eMsgId, eText || (eHasMedia ? "[mídia]" : ""), eMeta.mediaType,
-             eMeta.thumbnail ? `data:image/jpeg;base64,${eMeta.thumbnail}` : null,
-             eMeta.fileName, eMeta.caption, eCreatedAt]
-          ).catch(() => {})
-          if (eHasMedia && eMeta.mediaType && eMeta.mediaType !== "sticker" && eMsgId) {
-            waitUntil(saveMediaBackground(extraMsg, eContactId, eMsgId, eMeta.mediaType, "idle"))
-          }
-        } catch { /* silent — never crash webhook */ }
+    // Evolution pode agrupar várias mensagens numa única chamada (ex: cliente manda
+    // vários arquivos quase juntos). TODA mensagem do lote passa pelo mesmo código —
+    // antes só a primeira tinha tratamento completo, as demais caíam numa implementação
+    // separada e mais fraca, sem log de erro, que já deixou mensagem sumir sem rastro.
+    let first: { msg: Record<string, unknown>; jid: string; saved: SavedInbound } | null = null
+
+    for (let i = 0; i < allMsgs.length; i++) {
+      const m = allMsgs[i]
+      const key = (m.key as Record<string, unknown> | undefined) ?? {}
+      const jid: string = (key.remoteJid as string) || ""
+      if (!jid) continue
+
+      if (key.fromMe) {
+        if (!jid.endsWith("@g.us")) await handleFromMeMessage(m, jid, key)
+        continue
       }
+
+      if (jid.endsWith("@g.us")) {
+        await handleGroupMessage(m, jid, key)
+        continue
+      }
+
+      const saved = await saveInboundMessage(m)
+      if (i === 0 && saved) first = { msg: m, jid, saved }
     }
 
-    const msg = allMsgs[0]
+    // Só a primeira mensagem do lote dispara o chatbot (evita responder ou criar
+    // pedido duplicado numa rajada quase simultânea) — mas agora TODA mensagem do
+    // lote fica salva de verdade, não só a que dispara a resposta.
+    if (!first) return NextResponse.json({ ok: true })
 
-    const key = msg.key as Record<string, unknown>
-    const jid: string = (key?.remoteJid as string) || ""
-    if (!jid) return NextResponse.json({ ok: true })
+    const { jid, msg } = first
+    const { contactId, state, lifecycle, text, hasMedia, pushName } = first.saved
 
-    // Resolve real @s.whatsapp.net JID for @lid contacts (Evolution 2.3.7 privacy mode)
-    const remoteJidAlt = (key?.remoteJidAlt as string) || ""
-    const phoneJid: string | null = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net")
-      ? remoteJidAlt : null
-
-    // Save messages sent from our own WhatsApp (phone / WA Desktop) to chat history
-    if (key?.fromMe) {
-      if (!jid.endsWith("@g.us")) {
-        const msgBody0 = msg.message as Record<string, unknown> | undefined
-        let text0: string =
-          (msgBody0?.conversation as string) ||
-          ((msgBody0?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
-          ""
-        // Capture media sent from phone
-        let outMediaType: string | null = null
-        let outFileName: string | null  = null
-        if (!text0 && msgBody0) {
-          if (msgBody0.imageMessage) {
-            text0 = "[📸 imagem]"; outMediaType = "image"
-          } else if (msgBody0.audioMessage) {
-            text0 = "[🎤 áudio]"; outMediaType = "audio"
-          } else if (msgBody0.videoMessage) {
-            const cap = (msgBody0.videoMessage as Record<string, unknown>)?.caption as string
-            text0 = cap ? `[🎥 vídeo] ${cap}` : "[🎥 vídeo]"; outMediaType = "video"
-          } else if (msgBody0.documentMessage) {
-            const d = msgBody0.documentMessage as Record<string, unknown>
-            outFileName = (d.fileName as string) ?? null
-            text0 = outFileName || "[📄 documento]"; outMediaType = "document"
-          } else if (msgBody0.stickerMessage) {
-            text0 = "[🎨 sticker]"; outMediaType = "sticker"
-          }
-        }
-        if (text0) {
-          const outMsgId: string | null = (key?.id as string) ?? null
-          const ts = key?.timestamp ? new Date(Number(key.timestamp) * 1000) : null
-          const outPhone = phoneJid
-            ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-            : jid.endsWith("@lid")
-              ? jid.replace(/@lid$/, "").replace(/:[0-9]+$/, "").replace(/\D/g, "")
-              : jid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
-          // Lookup by phone OR phone_jid — prevents ghost @s.whatsapp.net when @lid has garbage phone field
-          const sendJid = jid.endsWith("@s.whatsapp.net") ? jid : null
-          const { rows: phoneRows } = await pool.query(
-            `SELECT id FROM wa_contacts
-             WHERE phone = $1 OR phone_jid = $2
-             ORDER BY CASE WHEN jid LIKE '%@lid' THEN 0 ELSE 1 END
-             LIMIT 1`,
-            [outPhone, sendJid]
-          ).catch(() => ({ rows: [] as { id: number }[] }))
-
-          let contactId0: number | null = null
-          if (phoneRows[0]) {
-            contactId0 = phoneRows[0].id as number
-            // Patch phone + phone_jid on @lid contacts that have garbage phone
-            await pool.query(`
-              UPDATE wa_contacts
-              SET phone     = CASE WHEN phone IS NULL OR phone NOT SIMILAR TO '[0-9]{8,15}' THEN $2 ELSE phone END,
-                  phone_jid = COALESCE(phone_jid, $3),
-                  updated_at = NOW()
-              WHERE id = $1
-            `, [contactId0, outPhone, sendJid]).catch(() => {})
-          } else {
-            const { rows: cRows } = await pool.query(
-              `INSERT INTO wa_contacts (jid, name, phone, phone_jid)
-               VALUES ($1, NULL, $2, $3)
-               ON CONFLICT (jid) DO UPDATE SET
-                 phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
-                 updated_at = NOW()
-               RETURNING id`,
-              [jid, outPhone, phoneJid]
-            ).catch(() => ({ rows: [] as { id: number }[] }))
-            contactId0 = cRows[0]?.id ?? null
-          }
-
-          if (contactId0 !== null) {
-            // Você iniciou a conversa por fora (celular) com um @lid ainda não
-            // resolvido — mesma correção em background do caminho de entrada
-            if (jid.endsWith("@lid") && !phoneJid) {
-              waitUntil(resolveLidPhoneInBackground(jid, contactId0))
-            }
-            await pool.query(
-              `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, file_name, status, created_at)
-               VALUES ($1, $2, 'out', $3, $4, $5, 'sent', COALESCE($6, NOW()))
-               ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO UPDATE SET
-                 media_type = COALESCE(wa_messages.media_type, EXCLUDED.media_type),
-                 file_name  = COALESCE(wa_messages.file_name,  EXCLUDED.file_name)`,
-              [contactId0, outMsgId, text0, outMediaType, outFileName, ts]
-            ).catch(() => {})
-            if (outMediaType && outMediaType !== "sticker" && outMsgId) {
-              waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
-            }
-            // Operator sent manual message → extend chatbot pause by configured minutes
-            pool.query(`
-              UPDATE wa_contacts
-              SET chatbot_paused_until = NOW() + (
-                    COALESCE((SELECT value FROM app_settings WHERE key = 'chatbot_idle_return_minutes'), '30')
-                    || ' minutes')::INTERVAL,
-                  updated_at = NOW()
-              WHERE id = $1
-            `, [contactId0]).catch(() => {})
-          }
-        }
+    // Marketing opt-out — detect stop words before any chatbot logic
+    if (text.trim() && !hasMedia) {
+      const lower = text.toLowerCase().trim()
+      const OPTOUT = ["stop", "descadastrar", "parar mensagens", "nao quero mensagens", "não quero mensagens"]
+      if (OPTOUT.includes(lower)) {
+        await pool.query(
+          `UPDATE wa_contacts SET marketing_optout = true, updated_at = NOW() WHERE id = $1`,
+          [contactId]
+        ).catch(() => {})
+        await replyAndSave(contactId, jid, "✅ Pronto! Você não receberá mais mensagens de marketing. Para reativar, é só nos chamar.")
+        return NextResponse.json({ ok: true })
       }
-      return NextResponse.json({ ok: true })
     }
-
-    // Groups — save message, use participantAlt to resolve @lid → real number
-    if (jid.endsWith("@g.us")) {
-      const msgObj = msg.message as Record<string, unknown> | undefined
-      const content: string =
-        (msgObj?.conversation as string) ||
-        ((msgObj?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
-        ""
-      const hasMedia = !!(msgObj?.imageMessage || msgObj?.videoMessage || msgObj?.audioMessage || msgObj?.documentMessage || msgObj?.stickerMessage)
-      if (!content && !hasMedia) return NextResponse.json({ ok: true })
-
-      // participantAlt = real @s.whatsapp.net when participant is @lid
-      const participantLid = key?.participant as string | undefined
-      const participantAlt = key?.participantAlt as string | undefined
-      const senderJid = participantAlt ||
-        (participantLid && !participantLid.endsWith("@lid") ? participantLid : "") ||
-        ""
-      const senderName: string = (msg.pushName as string) || senderJid
-
-      const groupSubject = (msg as Record<string, unknown>).pushName as string || jid
-      pool.query(`
-        INSERT INTO wa_groups (jid, name, updated_at)
-        VALUES ($1, $2, NOW())
-        ON CONFLICT (jid) DO UPDATE SET updated_at = NOW()
-      `, [jid, groupSubject]).catch(() => {})
-      pool.query(`
-        INSERT INTO wa_group_messages (group_id, message_id, sender_jid, sender_name, content, media_type)
-        SELECT g.id, $1, $2, $3, $4, $5
-        FROM wa_groups g WHERE g.jid = $6
-        ON CONFLICT (message_id) DO NOTHING
-      `, [key?.id ?? null, senderJid, senderName, content || "[mídia]", hasMedia ? "media" : null, jid]).catch(() => {})
-
-      return NextResponse.json({ ok: true })
-    }
-
-    const msgBody = msg.message as Record<string, unknown> | undefined
-    const text: string =
-      (msgBody?.conversation as string) ||
-      ((msgBody?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
-      ""
-
-    const hasMedia = !!(msgBody?.imageMessage || msgBody?.documentMessage || msgBody?.videoMessage || msgBody?.audioMessage || msgBody?.stickerMessage)
-
-    // Extract media type, thumbnail, filename, caption for storage
-    const mediaMeta = (() => {
-      if (!msgBody) return { mediaType: null as string | null, thumbnail: null as string | null, fileName: null as string | null, caption: null as string | null }
-      if (msgBody.imageMessage) {
-        const m = msgBody.imageMessage as Record<string, unknown>
-        return { mediaType: "image", thumbnail: bufferToBase64(m.jpegThumbnail), fileName: null as string | null, caption: (m.caption as string) ?? null }
-      }
-      if (msgBody.videoMessage) {
-        const m = msgBody.videoMessage as Record<string, unknown>
-        return { mediaType: "video", thumbnail: bufferToBase64(m.jpegThumbnail), fileName: null as string | null, caption: (m.caption as string) ?? null }
-      }
-      if (msgBody.audioMessage) return { mediaType: "audio", thumbnail: null as string | null, fileName: null as string | null, caption: null as string | null }
-      if (msgBody.documentMessage) {
-        const m = msgBody.documentMessage as Record<string, unknown>
-        return { mediaType: "document", thumbnail: null as string | null, fileName: (m.fileName as string) ?? null, caption: (m.caption as string) ?? null }
-      }
-      if (msgBody.stickerMessage) {
-        const m = msgBody.stickerMessage as Record<string, unknown>
-        return { mediaType: "sticker", thumbnail: bufferToBase64(m.jpegThumbnail), fileName: null as string | null, caption: null as string | null }
-      }
-      return { mediaType: null as string | null, thumbnail: null as string | null, fileName: null as string | null, caption: null as string | null }
-    })()
-
-    if (!text.trim() && !hasMedia) return NextResponse.json({ ok: true })
-
-    const rawPushName = (msg.pushName as string) || ""
-    const pushName = cleanPushName(rawPushName)
-    const contact = await upsertContactFromMessage(jid, rawPushName, remoteJidAlt) as {
-      id: number; state: string | null; stateData: Record<string, unknown> | null
-      lifecycleState: string | null; updatedAt: string | null; lastOrderAt: string | null
-    }
-
-    const state: string = contact.state ?? "idle"
-    const lifecycle: string = contact.lifecycleState ?? "new"
 
     // Fetch chatbot flags (graceful — columns may not exist yet)
     let chatbotProdutoEnabled = true
@@ -605,7 +710,7 @@ export async function POST(req: Request) {
           chatbot_obs                              AS "chatbotObs",
           chatbot_paused_until                     AS "chatbotPausedUntil"
         FROM wa_contacts WHERE id = $1
-      `, [contact.id])
+      `, [contactId])
       if (flagsRes.rows[0]) {
         chatbotProdutoEnabled = flagsRes.rows[0].chatbotProdutoEnabled
         chatbotDtfEnabled     = flagsRes.rows[0].chatbotDtfEnabled
@@ -614,90 +719,6 @@ export async function POST(req: Request) {
           ? new Date(flagsRes.rows[0].chatbotPausedUntil) : null
       }
     } catch { /* use defaults if columns not migrated yet */ }
-
-    // Extract quoted (reply) context
-    // Evolution may hoist contextInfo to message level OR nest it inside each message type
-    const contextInfo = (() => {
-      if (!msgBody) return null
-      if (msgBody.contextInfo) return msgBody.contextInfo as Record<string, unknown>
-      const sources = [
-        msgBody.extendedTextMessage,
-        msgBody.imageMessage,
-        msgBody.videoMessage,
-        msgBody.audioMessage,
-        msgBody.documentMessage,
-        msgBody.stickerMessage,
-      ]
-      for (const s of sources) {
-        const ci = (s as Record<string, unknown> | undefined)?.contextInfo
-        if (ci) return ci as Record<string, unknown>
-      }
-      return null
-    })()
-    const quotedMsgId: string | null = (contextInfo?.stanzaId as string) ?? null
-    const quotedContent: string | null = (() => {
-      const qm = contextInfo?.quotedMessage as Record<string, unknown> | undefined
-      if (!qm) return null
-      return (qm.conversation as string)
-        || ((qm.extendedTextMessage as Record<string, unknown>)?.text as string)
-        || (qm.imageMessage    ? "🖼 Imagem"   : null)
-        || (qm.videoMessage    ? "🎥 Vídeo"    : null)
-        || (qm.audioMessage    ? "🎤 Áudio"    : null)
-        || (qm.stickerMessage  ? "🎨 Sticker"  : null)
-        || (qm.documentMessage
-              ? `📄 ${(qm.documentMessage as Record<string,unknown>)?.fileName ?? "Documento"}`
-              : null)
-        || "[mídia]"
-    })()
-
-    // Save incoming message — await garante que o INSERT completa antes do 200
-    const incomingMsgId: string | null = (key?.id as string) ?? null
-    const msgContent = text || (hasMedia ? "[mídia]" : "")
-    // Usa o timestamp real do WhatsApp para que o horário mostrado no dashboard
-    // bata com o WhatsApp mesmo quando o webhook chega com atraso.
-    const incomingTs = (msg.messageTimestamp as number | undefined)
-    const incomingCreatedAt = incomingTs ? new Date(incomingTs * 1000).toISOString() : null
-    await pool.query(
-      `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, file_name, caption, quoted_id, quoted_text, created_at)
-       VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, NOW()))
-       ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-      [
-        contact.id, incomingMsgId, msgContent,
-        mediaMeta.mediaType,
-        mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
-        mediaMeta.fileName, mediaMeta.caption,
-        quotedMsgId, quotedContent,
-        incomingCreatedAt,
-      ]
-    ).catch(() =>
-      pool.query(
-        `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_type, media_thumb, created_at)
-         VALUES ($1, $2, 'in', $3, $4, $5, COALESCE($6::timestamptz, NOW()))
-         ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-        [contact.id, incomingMsgId, msgContent, mediaMeta.mediaType,
-         mediaMeta.thumbnail ? `data:image/jpeg;base64,${mediaMeta.thumbnail}` : null,
-         incomingCreatedAt]
-      ).catch(e => console.error("[webhook] wa_messages INSERT falhou:", e instanceof Error ? e.message : e))
-    )
-
-    // Register background media download — waitUntil keeps function alive after response
-    if (hasMedia && mediaMeta.mediaType) {
-      waitUntil(saveMediaBackground(msg, contact.id, incomingMsgId, mediaMeta.mediaType, state))
-    }
-
-    // Marketing opt-out — detect stop words before any chatbot logic
-    if (text.trim() && !hasMedia) {
-      const lower = text.toLowerCase().trim()
-      const OPTOUT = ["stop", "descadastrar", "parar mensagens", "nao quero mensagens", "não quero mensagens"]
-      if (OPTOUT.includes(lower)) {
-        await pool.query(
-          `UPDATE wa_contacts SET marketing_optout = true, updated_at = NOW() WHERE id = $1`,
-          [contact.id]
-        ).catch(() => {})
-        await replyAndSave(contact.id, jid, "✅ Pronto! Você não receberá mais mensagens de marketing. Para reativar, é só nos chamar.")
-        return NextResponse.json({ ok: true })
-      }
-    }
 
     // Fetch global chatbot settings
     let globalChatbotAtivo = false  // OFF by default — ativar via Settings
@@ -731,19 +752,19 @@ export async function POST(req: Request) {
         if (["cancelar", "cancel", "sair", "voltar"].includes(lcCancel)) {
           await pool.query(
             `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
-            [contact.id]
+            [contactId]
           )
-          await replyAndSave(contact.id, jid, "Recebi! Nossa equipe entra em contato agora. 👋")
+          await replyAndSave(contactId, jid, "Recebi! Nossa equipe entra em contato agora. 👋")
         }
       }
       return NextResponse.json({ ok: true })
     }
 
     if (hasMedia) {
-      await handleMedia(jid, contact.id, msg, state)
+      await handleMedia(jid, contactId, msg, state)
     } else {
       await handleText(
-        jid, contact.id, state, text.trim(), lifecycle, pushName ?? "",
+        jid, contactId, state, text.trim(), lifecycle, pushName ?? "",
         chatbotProdutoEnabled, chatbotDtfEnabled, chatbotObs,
         produtoStatus, dtfStatus, globalSettings
       )
