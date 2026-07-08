@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, name, login, password_hash, is_admin, allowed_pages, active
+      `SELECT id, name, login, password_hash, funcao, is_admin, allowed_pages, active
        FROM users WHERE login = $1`,
       [login]
     )
@@ -31,6 +31,7 @@ export async function POST(req: Request) {
       userId: user.id,
       login: user.login,
       name: user.name,
+      funcao: user.funcao ?? null,
       isAdmin: user.is_admin,
       allowedPages: user.allowed_pages ?? [],
     })

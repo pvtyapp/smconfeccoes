@@ -5,6 +5,7 @@ export type SessionPayload = {
   userId: number
   login: string
   name: string
+  funcao: string | null
   isAdmin: boolean
   allowedPages: string[]
 }
@@ -42,6 +43,7 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
       userId: payload.userId,
       login: payload.login,
       name: payload.name,
+      funcao: (payload.funcao as string | null | undefined) ?? null,
       isAdmin: payload.isAdmin,
       allowedPages: payload.allowedPages as string[],
     }

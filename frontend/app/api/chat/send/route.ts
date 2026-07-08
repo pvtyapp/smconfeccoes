@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendWhatsApp, type QuotedMsg } from "@/lib/whatsapp/send"
+import { getSessionFromRequest } from "@/lib/session"
 
 export async function POST(req: Request) {
   try {
@@ -17,7 +18,14 @@ export async function POST(req: Request) {
     if (!jid || !content?.trim())
       return NextResponse.json({ error: "jid e content são obrigatórios" }, { status: 400 })
 
-    const text = content.trim()
+    // Assina a mensagem com quem está logado — nome em negrito, função em itálico.
+    // Vem da sessão validada no servidor, não do que o navegador manda, então
+    // ninguém consegue enviar em nome de outro operador.
+    const session = await getSessionFromRequest()
+    const signature = session
+      ? `*${session.name}*${session.funcao ? ` _${session.funcao}_` : ""}\n`
+      : ""
+    const text = `${signature}${content.trim()}`
 
     // Resolve the actual send JID: for @lid contacts, use phone_jid (@s.whatsapp.net)
     // so Evolution sends using the real phone number and fromMe webhook comes back correctly
