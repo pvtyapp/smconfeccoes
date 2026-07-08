@@ -1029,14 +1029,22 @@ export default function PDVPage() {
                         className="w-full pl-7 pr-3 py-2 rounded-xl border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                       />
                     </div>
-                    {/* Quick Balcão button below search */}
+                    {/* Quick Cadastrar novo + Balcão buttons below search */}
                     {!showDrop && (
-                      <button
-                        onClick={selectBalcao}
-                        className="mt-1 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-[#0F1E3C]/15 text-[10px] font-semibold text-[#0F1E3C]/40 hover:text-[#0F1E3C]/70 hover:border-[#0F1E3C]/30 transition-colors"
-                      >
-                        <Store size={11} /> Venda Balcão (sem cliente)
-                      </button>
+                      <div className="mt-1 flex gap-1.5">
+                        <button
+                          onClick={() => { setNewMode(true); setShowDrop(false); setContactSearch("") }}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-[#0F1E3C]/15 text-[10px] font-semibold text-[#0F1E3C]/40 hover:text-[#0F1E3C]/70 hover:border-[#0F1E3C]/30 transition-colors"
+                        >
+                          <UserPlus size={11} /> Cadastrar novo
+                        </button>
+                        <button
+                          onClick={selectBalcao}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-[#0F1E3C]/15 text-[10px] font-semibold text-[#0F1E3C]/40 hover:text-[#0F1E3C]/70 hover:border-[#0F1E3C]/30 transition-colors"
+                        >
+                          <Store size={11} /> Venda Balcão
+                        </button>
+                      </div>
                     )}
                     {showDrop && (
                       <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-[#0F1E3C]/10 rounded-xl shadow-lg z-20 overflow-hidden max-h-48 overflow-y-auto">
