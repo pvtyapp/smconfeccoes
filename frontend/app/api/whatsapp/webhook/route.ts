@@ -1464,6 +1464,10 @@ async function handleText(
   }
 
   if (intent === "dtf" || ["monta o arquivo", "monta arquivo", "vc monta", "voce monta", "você monta"].some(k => lower.includes(k))) {
+    if (!chatbotDtfEnabled || !dtfStatus.available) {
+      await replyAndSave(contactId, jid, buildUnavailableMsg("dtf", dtfStatus, produtoStatus, globalSettings))
+      return
+    }
     await replyAndSave(contactId, jid, "Trabalhamos com DTF de 57cm de largura. Aqui a gente só faz a impressão — precisa do arquivo pronto pra rodar na máquina. Quando tiver, manda direto aqui! 🖨️")
     return
   }
