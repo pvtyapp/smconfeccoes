@@ -28,3 +28,17 @@ export function getSession(): AuthSession | null {
 export function isAuthenticated(): boolean {
   return getSession() !== null
 }
+
+// Busca a sessão real (nome, isAdmin, allowedPages) do usuário logado — chamado
+// logo após o login, já que o cookie httpOnly não pode ser lido direto pelo front.
+export async function fetchAndStoreSession(): Promise<AuthSession | null> {
+  try {
+    const res = await fetch("/api/auth/me")
+    if (!res.ok) return null
+    const session = await res.json() as AuthSession
+    setLocalSession(session)
+    return session
+  } catch {
+    return null
+  }
+}

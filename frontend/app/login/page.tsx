@@ -1,13 +1,22 @@
 "use client"
 
 import Image from "next/image"
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { setLocalSession } from "@/lib/auth"
+import { Suspense, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { fetchAndStoreSession } from "@/lib/auth"
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
-  const [email, setEmail] = useState("")
+  const searchParams = useSearchParams()
+  const [login, setLoginField] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
@@ -20,14 +29,16 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ login, password }),
       })
       if (res.ok) {
-        setLocalSession({ email, role: "admin", name: "Administrador", company: "SM Confecções" })
-        router.push("/dashboard")
+        const session = await fetchAndStoreSession()
+        const from = searchParams.get("from")
+        const canGoFrom = from && session && (session.isAdmin || session.allowedPages.some(p => from === p || from.startsWith(p + "/")))
+        router.push(canGoFrom ? from : "/dashboard")
       } else {
         const d = await res.json().catch(() => ({}))
-        setError(d.error ?? "Email ou senha incorretos.")
+        setError(d.error ?? "Login ou senha incorretos.")
       }
     } catch {
       setError("Erro de conexão. Tente novamente.")
@@ -71,14 +82,15 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">
-                Email
+                Login
               </label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="dev@smconfeccoes.app"
+                type="text"
+                value={login}
+                onChange={(e) => setLoginField(e.target.value)}
+                placeholder="seu usuário"
                 required
+                autoCapitalize="none"
                 className="w-full bg-white/8 border border-white/15 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/25 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/50 focus:border-[#4361EE] transition-colors"
               />
             </div>

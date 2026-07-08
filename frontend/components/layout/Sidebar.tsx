@@ -13,24 +13,24 @@ import {
   Settings, Signal, ChevronLeft, ChevronRight, LogOut,
 } from "lucide-react"
 
-type NavItem = { href: string; label: string; icon: React.ElementType }
+export type NavItem = { href: string; label: string; icon: React.ElementType }
 type Props   = { collapsed: boolean; onToggle: () => void }
 
-const navTop: NavItem[] = [
+export const navTop: NavItem[] = [
   { href: "/dashboard",                         label: "Dashboard",       icon: LayoutDashboard },
   { href: "/dashboard/pdv",                     label: "PDV de Vendas",   icon: Store           },
   { href: "/dashboard/autoatendimento/pedidos", label: "Autoatendimento", icon: ShoppingBag     },
   { href: "/dashboard/marketing",               label: "Marketing",       icon: Megaphone       },
 ]
 
-const navGestao: NavItem[] = [
+export const navGestao: NavItem[] = [
   { href: "/dashboard/categorias",      label: "Categorias",         icon: FolderTree    },
   { href: "/dashboard/produtos",        label: "Produtos",           icon: Package       },
   { href: "/dashboard/estoque",         label: "Estoque",            icon: Boxes         },
   { href: "/dashboard/estoque-avarias", label: "Estoque de Avarias", icon: AlertTriangle },
 ]
 
-const navFinanceiro: NavItem[] = [
+export const navFinanceiro: NavItem[] = [
   { href: "/dashboard/relatorio-vendas",     label: "Relatório de Vendas",   icon: BarChart2    },
   { href: "/dashboard/relatorio-financeiro", label: "Relatório Financeiro",  icon: PieChart     },
   { href: "/dashboard/clientes-a-receber",   label: "Clientes a Receber",    icon: Receipt      },
@@ -38,13 +38,13 @@ const navFinanceiro: NavItem[] = [
   { href: "/dashboard/custo-variavel",       label: "Custo Variável",        icon: TrendingDown },
 ]
 
-const navDTF: NavItem[] = [
+export const navDTF: NavItem[] = [
   { href: "/dashboard/dtf/pedidos",   label: "Dashboard DTF", icon: Printer      },
   { href: "/dashboard/dtf/insumos",   label: "Insumos",       icon: FlaskConical },
   { href: "/dashboard/dtf/relatorio", label: "Relatório DTF", icon: FileBarChart },
 ]
 
-const navProducao: NavItem[] = [
+export const navProducao: NavItem[] = [
   { href: "/dashboard/metricas",        label: "Métricas Produção x Vendas", icon: TrendingUp     },
   { href: "/dashboard/materias-primas", label: "Matéria Prima",              icon: Layers         },
   { href: "/dashboard/programacao",     label: "Programação de Produção",    icon: CalendarClock  },
@@ -53,22 +53,23 @@ const navProducao: NavItem[] = [
   { href: "/dashboard/semaforo",        label: "Semáforo de Produção",       icon: Signal         },
 ]
 
-const navCadastros: NavItem[] = [
+export const navCadastros: NavItem[] = [
   { href: "/dashboard/clientes", label: "Clientes", icon: UserRound },
   { href: "/dashboard/usuarios", label: "Usuários", icon: Users     },
 ]
 
-const navLP: NavItem[] = [
+export const navLP: NavItem[] = [
   { href: "/dashboard/catalogo", label: "Produtos na LP", icon: Images },
 ]
 
-const navSistema: NavItem[] = [
+export const navSistema: NavItem[] = [
   { href: "/dashboard/settings", label: "Configurações", icon: Settings },
 ]
 
 function NavSection({ label, items, isActive, collapsed }: {
   label: string; items: NavItem[]; isActive: (href: string) => boolean; collapsed: boolean
 }) {
+  if (items.length === 0) return null
   return (
     <div className="pt-3 mt-2 border-t border-white/8">
       {!collapsed && (
@@ -104,6 +105,10 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
   const pathname     = usePathname()
   const router       = useRouter()
   const session      = getSession()
+  const isAdmin      = session?.isAdmin ?? false
+  const allowedPages = session?.allowedPages ?? []
+  const canSee       = (href: string) => isAdmin || allowedPages.includes(href)
+  const filterNav    = (items: NavItem[]) => items.filter(i => canSee(i.href))
   const [totalUnread, setTotalUnread] = useState(0)
 
   useEffect(() => {
@@ -149,7 +154,7 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
 
       {/* Nav */}
       <nav className={`flex-1 py-4 space-y-0.5 overflow-y-auto ${collapsed ? "px-2" : "px-3"}`}>
-        {navTop.map(({ href, label, icon: Icon }) => {
+        {filterNav(navTop).map(({ href, label, icon: Icon }) => {
           const active           = isActive(href)
           const isAutoatendimento = href === "/dashboard/autoatendimento/pedidos"
           return (
@@ -181,13 +186,13 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
           )
         })}
 
-        <NavSection label="Gestão"       items={navGestao}     isActive={isActive} collapsed={collapsed} />
-        <NavSection label="Financeiro"   items={navFinanceiro} isActive={isActive} collapsed={collapsed} />
-        <NavSection label="DTF"          items={navDTF}        isActive={isActive} collapsed={collapsed} />
-        <NavSection label="Produção"     items={navProducao}   isActive={isActive} collapsed={collapsed} />
-        <NavSection label="Cadastros"    items={navCadastros}  isActive={isActive} collapsed={collapsed} />
-        <NavSection label="Landing Page" items={navLP}         isActive={isActive} collapsed={collapsed} />
-        <NavSection label="Sistema"      items={navSistema}    isActive={isActive} collapsed={collapsed} />
+        <NavSection label="Gestão"       items={filterNav(navGestao)}     isActive={isActive} collapsed={collapsed} />
+        <NavSection label="Financeiro"   items={filterNav(navFinanceiro)} isActive={isActive} collapsed={collapsed} />
+        <NavSection label="DTF"          items={filterNav(navDTF)}        isActive={isActive} collapsed={collapsed} />
+        <NavSection label="Produção"     items={filterNav(navProducao)}   isActive={isActive} collapsed={collapsed} />
+        <NavSection label="Cadastros"    items={filterNav(navCadastros)}  isActive={isActive} collapsed={collapsed} />
+        <NavSection label="Landing Page" items={filterNav(navLP)}         isActive={isActive} collapsed={collapsed} />
+        <NavSection label="Sistema"      items={filterNav(navSistema)}    isActive={isActive} collapsed={collapsed} />
       </nav>
 
       {/* Bottom: usuário + logout + toggle */}

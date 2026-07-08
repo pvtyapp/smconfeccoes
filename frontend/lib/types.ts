@@ -94,8 +94,8 @@ export type InventoryMetric = {
 }
 
 export type AuthSession = {
-  email: string
-  role: "admin" | "estoque" | "pdv"
+  login: string
   name: string
-  company: string
+  isAdmin: boolean
+  allowedPages: string[]
 }

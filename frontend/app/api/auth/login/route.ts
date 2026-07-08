@@ -1,27 +1,49 @@
 import { NextResponse } from "next/server"
+import bcrypt from "bcryptjs"
+import { pool } from "@/lib/db"
+import { signSession, COOKIE_NAME, MAX_AGE_SECONDS } from "@/lib/session"
 
 export async function POST(req: Request) {
   try {
-    const { email, password } = await req.json() as { email: string; password: string }
+    const { login, password } = await req.json() as { login: string; password: string }
 
-    const AUTH_EMAIL    = process.env.AUTH_EMAIL    ?? "dev@smconfeccoes.app"
-    const AUTH_PASSWORD = process.env.AUTH_PASSWORD ?? "10203040"
-    const AUTH_SECRET   = process.env.AUTH_SECRET
-
-    if (!AUTH_SECRET) {
-      return NextResponse.json({ error: "AUTH_SECRET não configurado no servidor" }, { status: 500 })
+    if (!login || !password) {
+      return NextResponse.json({ error: "Login e senha são obrigatórios" }, { status: 400 })
     }
 
-    if (email !== AUTH_EMAIL || password !== AUTH_PASSWORD) {
-      return NextResponse.json({ error: "Email ou senha incorretos" }, { status: 401 })
+    const { rows } = await pool.query(
+      `SELECT id, name, login, password_hash, is_admin, allowed_pages, active
+       FROM users WHERE login = $1`,
+      [login]
+    )
+    const user = rows[0]
+
+    if (!user || !user.active) {
+      return NextResponse.json({ error: "Login ou senha incorretos" }, { status: 401 })
     }
 
-    const res = NextResponse.json({ ok: true })
-    res.cookies.set("smc_session", AUTH_SECRET, {
+    const ok = await bcrypt.compare(password, user.password_hash)
+    if (!ok) {
+      return NextResponse.json({ error: "Login ou senha incorretos" }, { status: 401 })
+    }
+
+    const token = await signSession({
+      userId: user.id,
+      login: user.login,
+      name: user.name,
+      isAdmin: user.is_admin,
+      allowedPages: user.allowed_pages ?? [],
+    })
+
+    const res = NextResponse.json({
+      ok: true,
+      user: { name: user.name, login: user.login, isAdmin: user.is_admin, allowedPages: user.allowed_pages ?? [] },
+    })
+    res.cookies.set(COOKIE_NAME, token, {
       httpOnly: true,
       secure:   process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge:   60 * 60 * 24 * 30,
+      maxAge:   MAX_AGE_SECONDS,
       path:     "/",
     })
     return res

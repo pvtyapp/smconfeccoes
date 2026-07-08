@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { verifySession, COOKIE_NAME } from "@/lib/session"
 
 // Paths that do NOT require authentication
 const PUBLIC_API_PREFIXES = [
@@ -19,7 +20,15 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/printer-refis/migrate",
 ]
 
-export function middleware(request: NextRequest) {
+// /dashboard raiz é sempre acessível pra qualquer usuário logado — evita loop de
+// redirect se alguém não tiver nenhuma página liberada ainda, e serve de landing page.
+function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
+  if (isAdmin) return true
+  if (pathname === "/dashboard") return true
+  return allowedPages.some(p => pathname === p || pathname.startsWith(p + "/"))
+}
+
+export async function middleware(request: NextRequest) {
   const AUTH_SECRET = process.env.AUTH_SECRET
 
   // AUTH_SECRET not configured OR running locally → skip middleware
@@ -32,24 +41,29 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  const session = request.cookies.get("smc_session")?.value
-  const valid   = session === AUTH_SECRET
+  const token   = request.cookies.get(COOKIE_NAME)?.value
+  const session = token ? await verifySession(token) : null
 
-  if (valid) return NextResponse.next()
-
-  // Redirect dashboard pages to login
-  if (pathname.startsWith("/dashboard")) {
-    const loginUrl = new URL("/login", request.url)
-    loginUrl.searchParams.set("from", pathname)
-    return NextResponse.redirect(loginUrl)
+  if (!session) {
+    // Redirect dashboard pages to login
+    if (pathname.startsWith("/dashboard")) {
+      const loginUrl = new URL("/login", request.url)
+      loginUrl.searchParams.set("from", pathname)
+      return NextResponse.redirect(loginUrl)
+    }
+    // Block API calls
+    if (pathname.startsWith("/api/")) {
+      return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+    return NextResponse.next()
   }
 
-  // Block API calls
-  if (pathname.startsWith("/api/")) {
-    return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    })
+  // Bloqueio real por permissão — não deixa renderizar mesmo digitando a URL direto
+  if (pathname.startsWith("/dashboard") && !hasPagePermission(pathname, session.isAdmin, session.allowedPages)) {
+    return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 
   return NextResponse.next()
