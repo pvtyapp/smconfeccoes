@@ -1222,30 +1222,62 @@ async function handleMedia(
 
   // Arquivo solto, fora de qualquer fluxo — não tenta adivinhar o que é (comprovante, arte, etc).
   // Acha ou cria um pedido DTF virgem só pra aparecer no kanban; operador vincula o arquivo manualmente.
-  const { rows: openPedido } = await pool.query(
-    `SELECT id FROM dtf_pedidos
-     WHERE contact_id = $1 AND status NOT IN ('em_producao', 'pronto', 'concluido', 'cancelado')
-     ORDER BY created_at DESC LIMIT 1`,
-    [contactId]
-  )
-  if (!openPedido[0]) {
-    const numRes = await pool.query(`SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`)
-    await pool.query(
-      `INSERT INTO dtf_pedidos (number, data, contact_id, status, source) VALUES ($1, $2, $3, 'triagem', 'whatsapp')`,
-      [numRes.rows[0].num, todayBR(), contactId]
-    )
-  }
-  // O próprio pedido virgem no kanban já é o alerta — não marca needs_attention na conversa
+  // Trava por advisory lock: quando o cliente manda vários arquivos quase juntos, o WhatsApp dispara
+  // webhooks em paralelo — sem a trava, 2 chamadas simultâneas podem achar "sem pedido aberto" ao
+  // mesmo tempo e criar 2 pedidos DTF duplicados, ou mandar "Recebi seu arquivo!" 2x.
+  let ackSent = false
+  const cliMedia = await pool.connect()
+  try {
+    await cliMedia.query("BEGIN")
+    await cliMedia.query("SELECT pg_advisory_xact_lock($1)", [contactId])
 
-  // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repete a mensagem
-  const { rows: recentAck } = await pool.query(
-    `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
-     AND content = 'Recebi seu arquivo! Já vou te atender. 😊'
-     AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
-    [contactId]
-  )
-  if (!recentAck.length) {
-    await replyAndSave(contactId, jid, "Recebi seu arquivo! Já vou te atender. 😊")
+    const { rows: openPedido } = await cliMedia.query(
+      `SELECT id FROM dtf_pedidos
+       WHERE contact_id = $1 AND status NOT IN ('em_producao', 'pronto', 'concluido', 'cancelado')
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId]
+    )
+    if (!openPedido[0]) {
+      const numRes = await cliMedia.query(`SELECT 'DTF-' || LPAD(nextval('dtf_order_number_seq')::text, 4, '0') AS num`)
+      await cliMedia.query(
+        `INSERT INTO dtf_pedidos (number, data, contact_id, status, source) VALUES ($1, $2, $3, 'triagem', 'whatsapp')`,
+        [numRes.rows[0].num, todayBR(), contactId]
+      )
+    }
+    // O próprio pedido virgem no kanban já é o alerta — não marca needs_attention na conversa
+
+    // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repete a mensagem.
+    // Marca a linha em wa_messages dentro da mesma trava, antes de mandar de verdade —
+    // assim uma segunda chamada concorrente já enxerga o "ack" reservado, sem brecha.
+    const { rows: recentAck } = await cliMedia.query(
+      `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
+       AND content = 'Recebi seu arquivo! Já vou te atender. 😊'
+       AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
+      [contactId]
+    )
+    ackSent = recentAck.length === 0
+    if (ackSent) {
+      await cliMedia.query(
+        `INSERT INTO wa_messages (contact_id, direction, content, created_at) VALUES ($1, 'out', $2, NOW())`,
+        [contactId, "Recebi seu arquivo! Já vou te atender. 😊"]
+      )
+    }
+
+    await cliMedia.query("COMMIT")
+  } catch (e) {
+    await cliMedia.query("ROLLBACK").catch(() => {})
+    ackSent = false
+    console.error("[handleMedia] falhou ao criar pedido DTF virgem / checar dedup", e)
+  } finally {
+    cliMedia.release()
+  }
+
+  if (ackSent) {
+    waitUntil(
+      sendWhatsApp(jid, "Recebi seu arquivo! Já vou te atender. 😊").catch(e =>
+        console.error("[handleMedia] envio do ack falhou:", jid, e instanceof Error ? e.message : e)
+      )
+    )
   }
 }
 
