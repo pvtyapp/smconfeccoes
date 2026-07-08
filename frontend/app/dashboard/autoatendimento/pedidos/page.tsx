@@ -566,8 +566,7 @@ export default function PedidosPage() {
   const loadDtf = useCallback(async () => {
     const r = await fetch(`/api/dtf/pedidos?activeOnly=1`)
     if (r.ok) {
-      const all: DtfOrder[] = await r.json()
-      const active = all.filter(p => !["pronto", "cancelado"].includes(p.status))
+      const active: DtfOrder[] = await r.json()
       setDtfOrders(active)
       if (selectedDtfIdRef.current) {
         const refreshed = active.find(p => p.id === selectedDtfIdRef.current)
