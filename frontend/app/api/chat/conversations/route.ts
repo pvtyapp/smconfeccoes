@@ -38,6 +38,8 @@ export async function DELETE(req: Request) {
 
 export async function GET(req: Request) {
   try {
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS chatbot_silenced BOOLEAN NOT NULL DEFAULT false`).catch(() => {})
+
     const { searchParams } = new URL(req.url)
     const limit  = Math.min(parseInt(searchParams.get("limit")  ?? "20"), 500)
     const offset = Math.max(parseInt(searchParams.get("offset") ?? "0"), 0)
@@ -55,6 +57,7 @@ export async function GET(req: Request) {
           c.attention_reason       AS "attentionReason",
           c.state                  AS "state",
           c.chatbot_paused_until   AS "chatbotPausedUntil",
+          COALESCE(c.chatbot_silenced, false) AS "chatbotSilenced",
           lm.content               AS "lastMessage",
           lm.direction             AS "lastDirection",
           lm.created_at            AS "lastAt",
@@ -83,7 +86,7 @@ export async function GET(req: Request) {
         ) ur ON ur.contact_id = c.id
       )
       SELECT id, name, phone, jid, "profilePic", "lifecycleState", "needsAttention",
-             "attentionReason", state, "chatbotPausedUntil", "lastMessage", "lastDirection",
+             "attentionReason", state, "chatbotPausedUntil", "chatbotSilenced", "lastMessage", "lastDirection",
              "lastAt", unread
       FROM ranked
       WHERE rn = 1

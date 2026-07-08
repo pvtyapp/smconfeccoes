@@ -698,18 +698,37 @@ export async function POST(req: Request) {
       }
     }
 
+    // Cancelamento — só acende alerta pro operador, nunca mexe em pedido/estoque
+    // sozinho (decisão de cancelar é 100% manual, do operador). Roda sempre igual,
+    // não importa o estado da conversa nem se o bot está silenciado.
+    if (text.trim() && !hasMedia) {
+      const lowerCancel = text.toLowerCase().trim()
+      if (["cancelar", "cancel", "sair", "voltar"].includes(lowerCancel)) {
+        await pool.query(
+          `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
+          [contactId]
+        ).catch(() => {})
+        await replyAndSave(contactId, jid, "Recebi! Nossa equipe entra em contato pra te ajudar. 👋")
+        return NextResponse.json({ ok: true })
+      }
+    }
+
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS chatbot_silenced BOOLEAN NOT NULL DEFAULT false`).catch(() => {})
+
     // Fetch chatbot flags (graceful — columns may not exist yet)
     let chatbotProdutoEnabled = true
     let chatbotDtfEnabled = false
     let chatbotObs: string | null = null
     let chatbotPausedUntil: Date | null = null
+    let chatbotSilenced = false
     try {
       const flagsRes = await pool.query(`
         SELECT
           COALESCE(chatbot_produto_enabled, true)  AS "chatbotProdutoEnabled",
           COALESCE(chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
           chatbot_obs                              AS "chatbotObs",
-          chatbot_paused_until                     AS "chatbotPausedUntil"
+          chatbot_paused_until                     AS "chatbotPausedUntil",
+          COALESCE(chatbot_silenced, false)        AS "chatbotSilenced"
         FROM wa_contacts WHERE id = $1
       `, [contactId])
       if (flagsRes.rows[0]) {
@@ -718,6 +737,7 @@ export async function POST(req: Request) {
         chatbotObs            = flagsRes.rows[0].chatbotObs
         chatbotPausedUntil    = flagsRes.rows[0].chatbotPausedUntil
           ? new Date(flagsRes.rows[0].chatbotPausedUntil) : null
+        chatbotSilenced       = flagsRes.rows[0].chatbotSilenced
       }
     } catch { /* use defaults if columns not migrated yet */ }
 
@@ -743,21 +763,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    // Bot paused checks — permanent disable counts as pause
+    // Bot silenciado (toggle manual do operador) ou em pausa temporária (auto, após
+    // operador mandar mensagem manual pelo celular) — fica em silêncio total.
     const isPausedTemp = chatbotPausedUntil && chatbotPausedUntil > new Date()
-    const isPausedPerm = !chatbotProdutoEnabled && !chatbotDtfEnabled
-    if (state === "atendimento" || isPausedTemp || isPausedPerm) {
-      // cancelar sempre recebe resposta mesmo com bot pausado
-      if (!hasMedia) {
-        const lcCancel = text.toLowerCase().trim()
-        if (["cancelar", "cancel", "sair", "voltar"].includes(lcCancel)) {
-          await pool.query(
-            `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
-            [contactId]
-          )
-          await replyAndSave(contactId, jid, "Recebi! Nossa equipe entra em contato agora. 👋")
-        }
-      }
+    if (chatbotSilenced || isPausedTemp) {
       return NextResponse.json({ ok: true })
     }
 
@@ -1315,66 +1324,8 @@ async function handleText(
   const greeting = getGreeting()
   const greetSuffix = nameSuffix(pushName)
 
-  // ── Cancelamento — regra de negócio (estorna estoque se preciso), não muda ──
-  if (lower === "cancelar" || lower === "cancel" || lower === "sair" || lower === "voltar") {
-    if (state === "dtf_coletando_arquivos") {
-      await setState(contactId, "idle")
-      await replyAndSave(contactId, jid, "Ok! Me chama quando precisar. 😊")
-      return
-    }
-
-    const order = await getMostRecentOrder(contactId)
-
-    if (order?.status === "pago") {
-      await pool.query(
-        `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
-        [contactId]
-      )
-      await replyAndSave(contactId, jid, `Seu pedido *${order.number}* já está pago e pronto para retirada. Preciso acionar a equipe — eles entram em contato agora.`)
-      return
-    }
-
-    if (order?.status === "em_separacao") {
-      const { rows: alreadyReverted } = await pool.query(
-        `SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'in' LIMIT 1`,
-        [`Estorno ${order.number}`]
-      )
-      if (!alreadyReverted.length) {
-        const { rows: items } = await pool.query(
-          `SELECT variant_id, qty::int AS qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`,
-          [order.id]
-        )
-        for (const item of items) {
-          await pool.query(
-            `INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes) VALUES ($1, 'in', $2, 'estorno_cancelamento', 'chatbot', $3)`,
-            [item.variant_id, item.qty, `Estorno ${order.number}`]
-          )
-        }
-      }
-      await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [order.id])
-      await pool.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'cancelado', 'chatbot', 'Cliente solicitou cancelamento durante separação')
-      `, [order.id])
-      await pool.query(
-        `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'cancelamento', updated_at = NOW() WHERE id = $1`,
-        [contactId]
-      )
-      await replyAndSave(contactId, jid, `Ok! Avisamos a equipe para parar a separação do pedido *${order.number}*.`)
-      return
-    }
-
-    if (order && ["triagem", "confirmando"].includes(order.status)) {
-      await pool.query(`UPDATE orders SET status = 'cancelado' WHERE id = $1`, [order.id])
-      await pool.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'cancelado', 'chatbot', 'Cliente solicitou cancelamento via WhatsApp')
-      `, [order.id])
-    }
-
-    await replyAndSave(contactId, jid, "Ok, cancelado. Quando precisar é só chamar.")
-    return
-  }
+  // Cancelamento é tratado antes, no nível do POST — sempre só acende alerta,
+  // nunca chega aqui.
 
   // ── DTF: aguardando arquivos — cliente digitou em vez de mandar arquivo ─────
   if (state === "dtf_coletando_arquivos") {

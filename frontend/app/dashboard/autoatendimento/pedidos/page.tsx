@@ -83,6 +83,7 @@ type Conversation = {
   attentionReason: string | null
   state: string | null
   chatbotPausedUntil: string | null
+  chatbotSilenced: boolean
   lastMessage: string | null
   lastDirection: "in" | "out" | null
   lastAt: string | null
@@ -880,14 +881,23 @@ export default function PedidosPage() {
 
   // ── Attention actions ──────────────────────────────────────────────────────
 
-  async function attAction(action: "dismiss" | "pause_temp" | "pause_perm") {
+  async function attAction(action: "dismiss" | "toggle_silence") {
     if (!chatContact) return
     setAttLoading(true)
-    await fetch("/api/chat/attention", {
+    const contactId = chatContact.id
+    const res = await fetch("/api/chat/attention", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contactId: chatContact.id, action }),
+      body: JSON.stringify({ contactId, action }),
     })
+    if (action === "dismiss") {
+      setChatContact(prev => prev?.id === contactId ? { ...prev, needsAttention: false, attentionReason: null } : prev)
+    } else if (action === "toggle_silence" && res.ok) {
+      const d = await res.json().catch(() => ({}))
+      if (typeof d.chatbotSilenced === "boolean") {
+        setChatContact(prev => prev?.id === contactId ? { ...prev, chatbotSilenced: d.chatbotSilenced } : prev)
+      }
+    }
     await loadConvs()
     setAttLoading(false)
   }
@@ -1419,13 +1429,14 @@ export default function PedidosPage() {
                     </span>
                   )}
                   {(() => {
-                    const isBotPausedHeader = chatContact.chatbotPausedUntil && new Date(chatContact.chatbotPausedUntil) > new Date()
+                    const isTempPaused = chatContact.chatbotPausedUntil && new Date(chatContact.chatbotPausedUntil) > new Date()
+                    const isBotPausedHeader = chatContact.chatbotSilenced || isTempPaused
                     return (
                       <span className="text-[9px] px-1 py-0.5 rounded font-medium" style={{
                         background: isBotPausedHeader ? 'rgba(107,114,128,0.2)' : 'rgba(0,168,132,0.15)',
                         color: isBotPausedHeader ? '#9CA3AF' : '#00A884',
                       }}>
-                        {isBotPausedHeader ? '👤 Manual' : '🤖 Bot'}
+                        {chatContact.chatbotSilenced ? '🔇 Silenciado' : isTempPaused ? '👤 Manual' : '🤖 Bot'}
                       </span>
                     )
                   })()}
@@ -1454,15 +1465,11 @@ export default function PedidosPage() {
                     <UserCheck size={12} /> Encerrar
                   </button>
                 )}
-                <button onClick={() => attAction("pause_temp")} disabled={attLoading} title="Silenciar bot 12h"
+                <button onClick={() => attAction("toggle_silence")} disabled={attLoading}
+                  title={chatContact.chatbotSilenced ? "Reativar bot nessa conversa" : "Silenciar bot nessa conversa"}
                   className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 disabled:opacity-40"
-                  style={{ color: "#AEBAC1" }}>
-                  <BotOff size={16} />
-                </button>
-                <button onClick={() => attAction("pause_perm")} disabled={attLoading} title="Silenciar permanente"
-                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 disabled:opacity-40"
-                  style={{ color: "#AEBAC1" }}>
-                  <Bot size={16} />
+                  style={{ color: chatContact.chatbotSilenced ? "#F97316" : "#AEBAC1" }}>
+                  {chatContact.chatbotSilenced ? <BotOff size={16} /> : <Bot size={16} />}
                 </button>
                 <button onClick={() => setShowDtfPanel(v => !v)} title="Gerenciador de Pedidos"
                   className="w-8 h-8 rounded-full flex items-center justify-center transition-colors"
