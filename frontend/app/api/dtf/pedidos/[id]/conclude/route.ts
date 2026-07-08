@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { sendWhatsApp } from "@/lib/whatsapp/send"
 
 export async function POST(
   req: Request,
@@ -16,8 +17,10 @@ export async function POST(
 
     const { rows } = await client.query(`
       SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at,
-             p.metros_finais, p.impressora_id
+             p.metros_finais, p.impressora_id,
+             COALESCE(c.phone_jid, c.jid) AS jid, c.name AS "contactName"
       FROM dtf_pedidos p
+      LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1
     `, [id])
 
@@ -47,6 +50,25 @@ export async function POST(
     }
 
     await client.query("COMMIT")
+
+    if (pedido.jid) {
+      const nome = pedido.contactName ? `, ${(pedido.contactName as string).split(" ")[0]}` : ""
+      const msg = dueDate
+        ? (() => {
+            const [y, m, d] = dueDate.split("-")
+            return `Obrigado${nome}! Seu pedido DTF *${pedido.number}* foi retirado com pagamento até *${d}/${m}/${y}*. Qualquer dúvida é só chamar 😊`
+          })()
+        : `✅ Pedido DTF *${pedido.number}* retirado! Obrigado${nome} pela preferência 🙏 Até a próxima!`
+      try {
+        const result = await sendWhatsApp(pedido.jid, msg) as { key?: { id?: string } }
+        await pool.query(
+          `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
+           VALUES ($1, $2, 'out', $3, NOW())
+           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+          [pedido.contact_id, result?.key?.id ?? null, msg]
+        )
+      } catch { /* Evolution fora do ar — segue sem travar a conclusão */ }
+    }
 
     // Fire-and-forget: colunas opcionais (podem não existir ainda)
     pool.query(`
