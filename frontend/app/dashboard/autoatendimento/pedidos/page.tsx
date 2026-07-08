@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
+import PrintSheet from "./PrintSheet"
 import AudioPlayer from "./AudioPlayer"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
@@ -342,6 +343,7 @@ export default function PedidosPage() {
 
   // Print tracking — IDs já enviados para impressão nesta sessão
   const printedOrderIds = useRef<Set<number>>(new Set())
+  const [autoPrintOrder, setAutoPrintOrder] = useState<Order | null>(null)
 
   // Reservas
   type Reservation = { id: number; productName: string; color: string; size: string; qty: number; contactName: string; contactPhone: string; status: string; createdAt: string }
@@ -527,39 +529,27 @@ export default function PedidosPage() {
     return () => clearInterval(t)
   }, [loadOrders, loadReservations])
 
-  // Auto-print: dispara impressão quando needs_print = true
+  // Auto-print: dispara impressão quando needs_print = true — usa a mesma Ficha de
+  // Separação (PrintSheet) do botão manual, um pedido de cada vez na fila
   useEffect(() => {
-    const toPrint = orders.filter(o => o.needsPrint && !printedOrderIds.current.has(o.id))
-    if (toPrint.length === 0) return
-    for (const order of toPrint) {
-      printedOrderIds.current.add(order.id)
-      // Aguarda 800ms para garantir que o DOM renderizou
-      setTimeout(() => {
-        const printWin = window.open("", "_blank", "width=600,height=800")
-        if (!printWin) return
-        const items = order.items
-          .map(i => `<tr><td>${i.productName} ${i.color ?? ""} ${i.size ?? ""}</td><td>${i.qty} un</td></tr>`)
-          .join("")
-        const valor = order.totalValue
-          ? `<p><strong>Valor: R$ ${Number(order.totalValue).toFixed(2).replace(".", ",")}</strong></p>`
-          : ""
-        printWin.document.write(`<!DOCTYPE html><html><head><title>Pedido ${order.number}</title>
-          <style>body{font-family:sans-serif;padding:16px;font-size:14px}
-          table{width:100%;border-collapse:collapse}
-          td{padding:4px 8px;border-bottom:1px solid #eee}</style></head><body>
-          <h2>Pedido ${order.number}</h2>
-          <p>${order.contactName} · ${order.contactPhone}</p>
-          <table>${items}</table>${valor}
-          <script>window.onload=function(){window.print();window.close()}</script>
-          </body></html>`)
-        printWin.document.close()
-        // Ack ao servidor
-        fetch(`/api/orders/${order.id}/ack-print`, { method: "POST" }).catch(() => {})
-        // Atualiza localmente
-        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, needsPrint: false } : o))
-      }, 800)
+    if (autoPrintOrder) return
+    const next = orders.find(o => o.needsPrint && !printedOrderIds.current.has(o.id))
+    if (!next) return
+    printedOrderIds.current.add(next.id)
+    setAutoPrintOrder(next)
+  }, [orders, autoPrintOrder])
+
+  useEffect(() => {
+    if (!autoPrintOrder) return
+    const finish = () => {
+      fetch(`/api/orders/${autoPrintOrder.id}/ack-print`, { method: "POST" }).catch(() => {})
+      setOrders(prev => prev.map(o => o.id === autoPrintOrder.id ? { ...o, needsPrint: false } : o))
+      setAutoPrintOrder(null)
     }
-  }, [orders])
+    window.addEventListener("afterprint", finish)
+    const t = setTimeout(() => window.print(), 500)
+    return () => { clearTimeout(t); window.removeEventListener("afterprint", finish) }
+  }, [autoPrintOrder])
 
   // ── Load DTF orders ─────────────────────────────────────────────────────────
 
@@ -2398,6 +2388,9 @@ export default function PedidosPage() {
       )}
       {selectedDtf && (
         <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} numImpressoras={numImpressoras} />
+      )}
+      {autoPrintOrder && (
+        <PrintSheet order={autoPrintOrder} items={autoPrintOrder.items} format="a4" onDone={() => setAutoPrintOrder(null)} />
       )}
 
       {/* ── LIGHTBOX ── */}
