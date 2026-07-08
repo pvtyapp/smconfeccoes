@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { sizeCompare } from "@/lib/sizeOrder"
 
 // GET /api/cost-closures/preview?start=YYYY-MM-DD&end=YYYY-MM-DD
 // Returns what a closure would look like — without applying it
@@ -89,9 +90,8 @@ export async function GET(req: Request) {
     for (const r of weightedRows) {
       if (!sizeMap.has(r.size)) sizeMap.set(r.size, Number(r.weight))
     }
-    const SIZE_ORDER = ["PP","P","M","G","GG","XGG","XXXL"]
     const skuBreakdown = [...sizeMap.entries()]
-      .sort((a, b) => SIZE_ORDER.indexOf(a[0]) - SIZE_ORDER.indexOf(b[0]))
+      .sort((a, b) => sizeCompare(a[0], b[0]))
       .map(([size, weight]) => ({
         size, weight,
         costPerPiece: Math.round(costPerWeightUnit * weight * 100) / 100,

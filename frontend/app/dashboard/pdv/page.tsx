@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 import { todayBR, dateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
+import { sizeCompare } from "@/lib/sizeOrder"
 import PdvReceiptModal, { type SaleReceipt } from "./PdvReceiptModal"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -72,15 +73,7 @@ type PayMethod = "dinheiro" | "pix" | "debito" | "credito" | "prazo"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const SIZE_ORDER = ["PP", "P", "M", "G", "GG", "XGG", "XXXL"]
-
-function sizeSort(a: string, b: string) {
-  const ai = SIZE_ORDER.indexOf(a), bi = SIZE_ORDER.indexOf(b)
-  if (ai === -1 && bi === -1) return a.localeCompare(b)
-  if (ai === -1) return 1
-  if (bi === -1) return -1
-  return ai - bi
-}
+const sizeSort = sizeCompare
 
 function fmtPhone(phone: string | null | undefined): string {
   if (!phone) return "—"

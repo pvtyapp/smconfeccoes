@@ -7,6 +7,7 @@ import { downloadEvolutionMedia, classifyMediaCategory, type MediaCategory } fro
 import { matchVariants } from "@/lib/whatsapp/matchVariant"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
+import { sortSizes } from "@/lib/sizeOrder"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -840,19 +841,6 @@ async function getCatalog(): Promise<Array<{ name: string; sale_price: number | 
   return rows
 }
 
-// Ordem padrão de vestuário para tamanhos
-const SIZE_ORDER = ["pp", "p", "m", "g", "gg", "ggg", "gggg", "único", "unico", "u",
-  "xs", "s", "l", "xl", "xxl", "xxxl", "2", "4", "6", "8", "10", "12", "14", "16"]
-function sortSizes(sizes: string[]): string[] {
-  return [...sizes].sort((a, b) => {
-    const ai = SIZE_ORDER.indexOf(a.toLowerCase().trim())
-    const bi = SIZE_ORDER.indexOf(b.toLowerCase().trim())
-    if (ai === -1 && bi === -1) return a.localeCompare(b)
-    if (ai === -1) return 1
-    if (bi === -1) return -1
-    return ai - bi
-  })
-}
 
 async function getProductVariants(keyword: string): Promise<Array<{ color: string; size: string; productName: string; salePrice: number }>> {
   const { rows } = await pool.query(`

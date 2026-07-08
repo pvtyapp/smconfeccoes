@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react"
 import { Calendar, Scissors, Clock } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
+import { sortSizes } from "@/lib/sizeOrder"
 
 const PERIOD_OPTIONS = [
   { key:"hoje",  label:"Hoje"    },
@@ -13,8 +14,6 @@ const PERIOD_OPTIONS = [
   { key:"60d",   label:"60 dias" },
   { key:"range", label:"Período" },
 ]
-
-const SIZE_ORDER = ["PP","P","M","G","GG","XGG","XXXL"]
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type VariantCost = {
@@ -153,9 +152,7 @@ export default function CustoProducaoPage() {
     return { ...p, allocated, costPerPiece }
   })
 
-  const allSizes = SIZE_ORDER.filter(s =>
-    products.some(p => p.variants.some(v => v.size === s))
-  )
+  const allSizes = sortSizes([...new Set(products.flatMap(p => p.variants.map(v => v.size)))])
 
   type PivotRow = {
     productName: string; color: string; isFirstColor: boolean

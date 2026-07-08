@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList, Calendar, SlidersHorizontal } from "lucide-react"
 import type { BalanceRow } from "@/lib/calculations"
 import { todayBR } from "@/lib/tz"
+import { sizeCompare } from "@/lib/sizeOrder"
 
 type Movement = {
   id: string
@@ -249,7 +250,7 @@ export default function EstoquePage() {
           isMaintenance ? "manutencao" : items[0].type === "in" ? "entrada" : "saida"
         return {
           key,
-          items: items.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size)),
+          items: items.sort((a, b) => a.color.localeCompare(b.color) || sizeCompare(a.size, b.size)),
           category,
           productName: items[0].productName,
           netQty,
