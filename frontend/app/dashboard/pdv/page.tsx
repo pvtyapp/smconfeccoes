@@ -787,11 +787,9 @@ export default function PDVPage() {
         </div>
 
         {/* ─── Right: Cart ────────────────────────────────────────────── */}
-        <div className="w-[340px] flex-shrink-0 sticky top-0 self-start">
-          <div
-            className="bg-white rounded-2xl border border-[#0F1E3C]/8 flex flex-col overflow-hidden"
-            style={{ maxHeight: "calc(100vh - 100px)" }}
-          >
+        <div className="w-[340px] flex-shrink-0">
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 flex flex-col overflow-hidden">
+
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/8 flex-shrink-0">
               <div className="flex items-center gap-2">
@@ -827,7 +825,7 @@ export default function PDVPage() {
             )}
 
             {/* Items */}
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div>
               {cart.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-[#0F1E3C]/20">
                   <ShoppingCart size={28} strokeWidth={1.2} />
