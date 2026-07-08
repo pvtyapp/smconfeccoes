@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 
 // Called hourly via cron-job.org: POST /api/orders/expire
 // Authorization: Bearer {CRON_SECRET}
@@ -11,7 +10,6 @@ export async function POST(req: Request) {
   }
 
   let expired   = 0
-  let dtfAlerts = 0
   let errors    = 0
 
   // ── Expire product orders stuck in triagem > 2h ────────────────────────────
@@ -60,43 +58,5 @@ export async function POST(req: Request) {
     }
   } catch { errors++ }
 
-  // ── C6: Alert DTF orders in triagem > 2h without attached file ────────────
-  try {
-    await pool.query(`
-      ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS triagem_alert_sent_at TIMESTAMPTZ
-    `).catch(() => {})
-
-    const { rows: dtfRows } = await pool.query(`
-      SELECT dp.id, dp.number, dp.contact_id,
-             COALESCE(c.phone_jid, c.jid) AS jid
-      FROM dtf_pedidos dp
-      JOIN wa_contacts c ON c.id = dp.contact_id
-      WHERE dp.status = 'triagem'
-        AND dp.created_at < NOW() - INTERVAL '2 hours'
-        AND dp.triagem_alert_sent_at IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM dtf_order_attachments doa
-          WHERE doa.pedido_id = dp.id AND doa.wa_message_id IS NOT NULL
-        )
-    `)
-
-    for (const row of dtfRows) {
-      try {
-        if (row.jid) {
-          await sendAndSave(
-            row.contact_id,
-            row.jid,
-            `⏳ Seu pedido DTF *${row.number}* está aguardando há 2 horas! Por favor, envie o arquivo de arte para agilizar a produção.`
-          )
-        }
-        await pool.query(
-          `UPDATE dtf_pedidos SET triagem_alert_sent_at = NOW() WHERE id = $1`,
-          [row.id]
-        )
-        dtfAlerts++
-      } catch { errors++ }
-    }
-  } catch { errors++ }
-
-  return NextResponse.json({ ok: true, expired, dtfAlerts, errors })
+  return NextResponse.json({ ok: true, expired, errors })
 }
