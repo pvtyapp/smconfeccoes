@@ -5,7 +5,7 @@ import { Plus, X, Loader2, Check, ShieldCheck, UserX, Pencil } from "lucide-reac
 import {
   navTop, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
   type NavItem,
-} from "@/components/layout/Sidebar"
+} from "@/lib/navPages"
 
 type User = {
   id: number

@@ -4,6 +4,7 @@ import Image from "next/image"
 import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { fetchAndStoreSession } from "@/lib/auth"
+import { firstAllowedPage } from "@/lib/navPages"
 
 export default function LoginPage() {
   return (
@@ -35,7 +36,8 @@ function LoginForm() {
         const session = await fetchAndStoreSession()
         const from = searchParams.get("from")
         const canGoFrom = from && session && (session.isAdmin || session.allowedPages.some(p => from === p || from.startsWith(p + "/")))
-        router.push(canGoFrom ? from : "/dashboard")
+        const fallback = session ? (firstAllowedPage(session.isAdmin, session.allowedPages) ?? "/sem-acesso") : "/sem-acesso"
+        router.push(canGoFrom ? from : fallback)
       } else {
         const d = await res.json().catch(() => ({}))
         setError(d.error ?? "Login ou senha incorretos.")

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifySession, COOKIE_NAME } from "@/lib/session"
+import { firstAllowedPage } from "@/lib/navPages"
 
 // Paths that do NOT require authentication
 const PUBLIC_API_PREFIXES = [
@@ -20,11 +21,8 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/printer-refis/migrate",
 ]
 
-// /dashboard raiz é sempre acessível pra qualquer usuário logado — evita loop de
-// redirect se alguém não tiver nenhuma página liberada ainda, e serve de landing page.
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
   if (isAdmin) return true
-  if (pathname === "/dashboard") return true
   return allowedPages.some(p => pathname === p || pathname.startsWith(p + "/"))
 }
 
@@ -61,9 +59,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Bloqueio real por permissão — não deixa renderizar mesmo digitando a URL direto
+  // Bloqueio real por permissão — não deixa renderizar mesmo digitando a URL direto.
+  // Manda pra primeira página que o usuário realmente tem liberada (nunca mais um
+  // /dashboard fixo que pode não ser acessível pra ele) — ou pra /sem-acesso se não
+  // sobrar nenhuma.
   if (pathname.startsWith("/dashboard") && !hasPagePermission(pathname, session.isAdmin, session.allowedPages)) {
-    return NextResponse.redirect(new URL("/dashboard", request.url))
+    const dest = firstAllowedPage(session.isAdmin, session.allowedPages)
+    return NextResponse.redirect(new URL(dest ?? "/sem-acesso", request.url))
   }
 
   return NextResponse.next()

@@ -5,66 +5,13 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { logout, getSession } from "@/lib/auth"
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react"
 import {
-  LayoutDashboard, Package, FolderTree, Wallet, Boxes, Factory,
-  TrendingUp, CalendarClock, UserRound, Users, Images, ShoppingBag,
-  Receipt, ClipboardCheck, Layers, AlertTriangle, Store, TrendingDown,
-  BarChart2, Printer, FlaskConical, FileBarChart, Megaphone, PieChart,
-  Settings, Signal, ChevronLeft, ChevronRight, LogOut,
-} from "lucide-react"
+  navTop, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
+} from "@/lib/navPages"
+import type { NavItem } from "@/lib/navPages"
 
-export type NavItem = { href: string; label: string; icon: React.ElementType }
-type Props   = { collapsed: boolean; onToggle: () => void }
-
-export const navTop: NavItem[] = [
-  { href: "/dashboard",                         label: "Dashboard",       icon: LayoutDashboard },
-  { href: "/dashboard/pdv",                     label: "PDV de Vendas",   icon: Store           },
-  { href: "/dashboard/autoatendimento/pedidos", label: "Autoatendimento", icon: ShoppingBag     },
-  { href: "/dashboard/marketing",               label: "Marketing",       icon: Megaphone       },
-]
-
-export const navGestao: NavItem[] = [
-  { href: "/dashboard/categorias",      label: "Categorias",         icon: FolderTree    },
-  { href: "/dashboard/produtos",        label: "Produtos",           icon: Package       },
-  { href: "/dashboard/estoque",         label: "Estoque",            icon: Boxes         },
-  { href: "/dashboard/estoque-avarias", label: "Estoque de Avarias", icon: AlertTriangle },
-]
-
-export const navFinanceiro: NavItem[] = [
-  { href: "/dashboard/relatorio-vendas",     label: "Relatório de Vendas",   icon: BarChart2    },
-  { href: "/dashboard/relatorio-financeiro", label: "Relatório Financeiro",  icon: PieChart     },
-  { href: "/dashboard/clientes-a-receber",   label: "Clientes a Receber",    icon: Receipt      },
-  { href: "/dashboard/custo-operacional",    label: "Custo Operacional",     icon: Wallet       },
-  { href: "/dashboard/custo-variavel",       label: "Custo Variável",        icon: TrendingDown },
-]
-
-export const navDTF: NavItem[] = [
-  { href: "/dashboard/dtf/pedidos",   label: "Dashboard DTF", icon: Printer      },
-  { href: "/dashboard/dtf/insumos",   label: "Insumos",       icon: FlaskConical },
-  { href: "/dashboard/dtf/relatorio", label: "Relatório DTF", icon: FileBarChart },
-]
-
-export const navProducao: NavItem[] = [
-  { href: "/dashboard/metricas",        label: "Métricas Produção x Vendas", icon: TrendingUp     },
-  { href: "/dashboard/materias-primas", label: "Matéria Prima",              icon: Layers         },
-  { href: "/dashboard/programacao",     label: "Programação de Produção",    icon: CalendarClock  },
-  { href: "/dashboard/custo-producao",  label: "Custos de Produção",         icon: Factory        },
-  { href: "/dashboard/costura-revisao", label: "Costura e Revisão",          icon: ClipboardCheck },
-  { href: "/dashboard/semaforo",        label: "Semáforo de Produção",       icon: Signal         },
-]
-
-export const navCadastros: NavItem[] = [
-  { href: "/dashboard/clientes", label: "Clientes", icon: UserRound },
-  { href: "/dashboard/usuarios", label: "Usuários", icon: Users     },
-]
-
-export const navLP: NavItem[] = [
-  { href: "/dashboard/catalogo", label: "Produtos na LP", icon: Images },
-]
-
-export const navSistema: NavItem[] = [
-  { href: "/dashboard/settings", label: "Configurações", icon: Settings },
-]
+type Props = { collapsed: boolean; onToggle: () => void }
 
 function NavSection({ label, items, isActive, collapsed }: {
   label: string; items: NavItem[]; isActive: (href: string) => boolean; collapsed: boolean
