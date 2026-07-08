@@ -202,6 +202,9 @@ export default function PdvReceiptModal({ receipt, onClose, autoPrint }: Props) 
 }
 
 // ─── Print Sheet ──────────────────────────────────────────────────────────────
+// A4 sai em 2 vias (LOJA + CLIENTE) na mesma folha, separadas por linha pontilhada
+// pra cortar — mesmo padrão já usado na Ficha de Separação de produção. Térmica
+// continua em via única (rolo contínuo, sem sentido duplicar).
 
 function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printTime, isTermica, onDone }: {
   receipt: SaleReceipt
@@ -216,25 +219,30 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
     dinheiro: "Dinheiro", pix: "Pix", debito: "Débito", credito: "Crédito", prazo: "Prazo",
   }
 
-  return (
-    <div className="hidden print:block fixed inset-0 bg-white z-[100]">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-receipt, .print-receipt * { visibility: visible !important; }
-          .print-receipt { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
-          @page { size: ${isTermica ? "80mm 297mm" : "A4"} portrait; margin: 0; }
-        }
-      `}</style>
-      <div className="print-receipt" style={{ fontFamily: "'Arial', sans-serif", padding: "14mm 16mm", color: NAVY }}>
+  // A4 — ≤8 itens: 2 vias na mesma folha (LOJA em cima, CLIENTE embaixo) | >8 itens: 2 páginas
+  const splitSheet = receipt.items.length <= 8
+
+  function renderVia(via: "LOJA" | "CLIENTE") {
+    const pad = !isTermica && splitSheet ? "6mm 14mm 8mm 14mm" : "14mm 16mm"
+    return (
+      <div style={{ fontFamily: "'Arial', sans-serif", padding: pad, color: NAVY }}>
 
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-          <img src="/smsemfundo.png" alt="SM" style={{ height: "50px", width: "auto", flexShrink: 0 }} />
+          <img src="/smsemfundo.png" alt="SM" style={{ height: !isTermica && splitSheet ? "40px" : "50px", width: "auto", flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "18px", fontWeight: "900", lineHeight: 1 }}>SM CONFECÇÕES</div>
             <div style={{ fontSize: "8px", color: "#666", marginTop: "3px" }}>Av. Santa Cruz, 3088 — Franca/SP</div>
           </div>
+          {!isTermica && (
+            <div style={{
+              border: `1.5px solid ${NAVY}`, borderRadius: "4px",
+              padding: "3px 10px", textAlign: "center", flexShrink: 0, marginRight: "8px",
+            }}>
+              <div style={{ fontSize: "6.5px", letterSpacing: "1.5px", color: NAVY, opacity: 0.6, textTransform: "uppercase" }}>via</div>
+              <div style={{ fontSize: "9px", fontWeight: "800", letterSpacing: "1px", color: NAVY, textTransform: "uppercase" }}>{via}</div>
+            </div>
+          )}
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: "7px", color: "#888", textTransform: "uppercase", letterSpacing: "0.8px" }}>Comprovante PDV</div>
             <div style={{ fontSize: "15px", fontWeight: "900" }}>{receipt.number}</div>
@@ -284,7 +292,7 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
               const lineTotal   = item.precoPorMetro ? (item.metros ?? 0) * up : item.qty * up
               const qtyLabel    = item.precoPorMetro ? `${(item.metros ?? 0).toFixed(2)}m` : String(item.qty)
               const colorSize   = [item.color, item.size].filter(Boolean).join(" / ") || "—"
-              const unitLabel   = item.precoPorMetro ? `R$ ${up.toFixed(2).replace(".", ",")}/m` : `R$ ${up.toFixed(2).replace(".", ",")}`
+              const unitLabel   = item.precoPorMetro ? `R$ ${up.toFixed(2).replace(".", ",")}/m` : `R$ ${up.toFixed(2).replace(".", ",")}`
               return (
                 <tr key={i} style={{ background: i % 2 === 0 ? "white" : NAVY_LIGHT, borderBottom: "1px solid #e0e4ec" }}>
                   <td style={{ padding: "4px 6px", fontSize: "9px", fontWeight: "600" }}>{item.productName}</td>
@@ -292,7 +300,7 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
                   <td style={{ padding: "4px 6px", textAlign: "center", fontSize: "10px", fontWeight: "900" }}>{qtyLabel}</td>
                   <td style={{ padding: "4px 6px", textAlign: "right", fontSize: "8.5px" }}>{unitLabel}</td>
                   <td style={{ padding: "4px 6px", textAlign: "right", fontSize: "9px", fontWeight: "700" }}>
-                    {`R$ ${Number(lineTotal).toFixed(2).replace(".", ",")}`}
+                    {`R$ ${Number(lineTotal).toFixed(2).replace(".", ",")}`}
                   </td>
                 </tr>
               )
@@ -316,7 +324,7 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: "6.5px", color: "#888", textTransform: "uppercase", letterSpacing: "0.8px" }}>Total</div>
             <div style={{ fontSize: "18px", fontWeight: "900" }}>
-              {`R$ ${receipt.total.toFixed(2).replace(".", ",")}`}
+              {`R$ ${receipt.total.toFixed(2).replace(".", ",")}`}
             </div>
           </div>
         </div>
@@ -332,6 +340,34 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
           <span style={{ fontSize: "6.5px", color: "#aaa" }}>SM Confecções · Av. Santa Cruz, 3088 · Franca/SP</span>
           <span style={{ fontSize: "6.5px", color: "#aaa" }}>{receipt.number} · {printDate}</span>
         </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="hidden print:block fixed inset-0 bg-white z-[100]">
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          .print-receipt, .print-receipt * { visibility: visible !important; }
+          .print-receipt { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
+          @page { size: ${isTermica ? "80mm 297mm" : "A4"} portrait; margin: 0; }
+        }
+      `}</style>
+      <div className="print-receipt">
+        {isTermica ? (
+          renderVia("CLIENTE")
+        ) : splitSheet ? (
+          <div style={{ display: "grid", gridTemplateRows: "1fr 1fr", height: "100%" }}>
+            <div style={{ borderBottom: "1.5px dashed #bbb", overflow: "hidden" }}>{renderVia("LOJA")}</div>
+            <div style={{ overflow: "hidden" }}>{renderVia("CLIENTE")}</div>
+          </div>
+        ) : (
+          <>
+            {renderVia("LOJA")}
+            <div style={{ pageBreakBefore: "always" }}>{renderVia("CLIENTE")}</div>
+          </>
+        )}
       </div>
       <button onClick={onDone} className="print:hidden mt-2 text-xs text-gray-400">fechar</button>
     </div>

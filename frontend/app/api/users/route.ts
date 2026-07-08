@@ -7,8 +7,10 @@ export async function GET() {
   const session = await getSessionFromRequest()
   if (!session?.isAdmin) return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
 
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
+
   const { rows } = await pool.query(`
-    SELECT id, name, login, phone, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
+    SELECT id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
            active, created_at AS "createdAt"
     FROM users
     ORDER BY name ASC
@@ -20,9 +22,11 @@ export async function POST(req: Request) {
   const session = await getSessionFromRequest()
   if (!session?.isAdmin) return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
 
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
+
   try {
-    const { name, login, password, phone, isAdmin, allowedPages } = await req.json() as {
-      name: string; login: string; password: string; phone?: string
+    const { name, login, password, phone, funcao, isAdmin, allowedPages } = await req.json() as {
+      name: string; login: string; password: string; phone?: string; funcao?: string
       isAdmin?: boolean; allowedPages?: string[]
     }
 
@@ -36,14 +40,15 @@ export async function POST(req: Request) {
     const passwordHash = await bcrypt.hash(password, 10)
 
     const { rows } = await pool.query(`
-      INSERT INTO users (name, login, password_hash, phone, is_admin, allowed_pages)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, name, login, phone, is_admin AS "isAdmin", allowed_pages AS "allowedPages", active
+      INSERT INTO users (name, login, password_hash, phone, funcao, is_admin, allowed_pages)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages", active
     `, [
       name.trim(),
       login.trim(),
       passwordHash,
       phone?.replace(/\D/g, "") || null,
+      funcao?.trim() || null,
       isAdmin ?? false,
       isAdmin ? [] : (allowedPages ?? []),
     ])

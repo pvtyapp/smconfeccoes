@@ -12,6 +12,7 @@ type User = {
   name: string
   login: string
   phone: string | null
+  funcao: string | null
   isAdmin: boolean
   allowedPages: string[]
   active: boolean
@@ -77,19 +78,20 @@ export default function UsuariosPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[#0F1E3C]/5">
-              {["Nome", "Login", "Telefone", "Perfil", "Status", ""].map((h) => (
+              {["Nome", "Função", "Login", "Telefone", "Perfil", "Status", ""].map((h) => (
                 <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#0F1E3C]/4">
             {loading ? (
-              <tr><td colSpan={6} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td></tr>
+              <tr><td colSpan={7} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={6} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhum usuário cadastrado</td></tr>
+              <tr><td colSpan={7} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhum usuário cadastrado</td></tr>
             ) : users.map((u) => (
               <tr key={u.id} className="hover:bg-[#F4F6FB] transition-colors">
                 <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{u.name}</td>
+                <td className="px-5 py-3 text-[#0F1E3C]/60">{u.funcao || "—"}</td>
                 <td className="px-5 py-3 text-[#0F1E3C]/60">{u.login}</td>
                 <td className="px-5 py-3 text-[#0F1E3C]/60">{fmtPhone(u.phone)}</td>
                 <td className="px-5 py-3">
@@ -138,6 +140,7 @@ function UserModal({ user, onClose, onSaved }: {
 }) {
   const isNew = user === null
   const [name,         setName]         = useState(user?.name ?? "")
+  const [funcao,       setFuncao]       = useState(user?.funcao ?? "")
   const [login,        setLoginField]   = useState(user?.login ?? "")
   const [password,     setPassword]     = useState("")
   const [phone,        setPhone]        = useState(user?.phone ? maskPhoneInput(user.phone) : "")
@@ -169,6 +172,7 @@ function UserModal({ user, onClose, onSaved }: {
     try {
       const body: Record<string, unknown> = {
         name: name.trim(),
+        funcao: funcao.trim() || null,
         login: login.trim(),
         phone: phone.replace(/\D/g, "") || null,
         isAdmin,
@@ -214,26 +218,32 @@ function UserModal({ user, onClose, onSaved }: {
                   className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Login *</label>
-                <input value={login} onChange={e => setLoginField(e.target.value)} required autoCapitalize="none"
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Função</label>
+                <input value={funcao} onChange={e => setFuncao(e.target.value)} placeholder="Ex: Vendedora, Estoquista..."
+                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 placeholder:text-[#0F1E3C]/25" />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">
-                  {isNew ? "Senha *" : "Nova senha"}
-                </label>
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder={isNew ? "" : "deixe em branco pra manter"}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 placeholder:text-[#0F1E3C]/25" />
+                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Login *</label>
+                <input value={login} onChange={e => setLoginField(e.target.value)} required autoCapitalize="none"
+                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Telefone</label>
                 <input value={phone} onChange={e => setPhone(maskPhoneInput(e.target.value))} placeholder="(16) 99999-9999"
                   className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 placeholder:text-[#0F1E3C]/25" />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">
+                {isNew ? "Senha *" : "Nova senha"}
+              </label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                placeholder={isNew ? "" : "deixe em branco pra manter"}
+                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 placeholder:text-[#0F1E3C]/25" />
             </div>
 
             <div

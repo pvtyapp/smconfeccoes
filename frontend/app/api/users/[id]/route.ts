@@ -10,10 +10,12 @@ export async function PUT(
   const session = await getSessionFromRequest()
   if (!session?.isAdmin) return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
 
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
+
   try {
     const { id } = await params
-    const { name, login, password, phone, isAdmin, allowedPages, active } = await req.json() as {
-      name: string; login: string; password?: string; phone?: string
+    const { name, login, password, phone, funcao, isAdmin, allowedPages, active } = await req.json() as {
+      name: string; login: string; password?: string; phone?: string; funcao?: string
       isAdmin?: boolean; allowedPages?: string[]; active?: boolean
     }
 
@@ -32,17 +34,19 @@ export async function PUT(
         login         = $2,
         password_hash = COALESCE($3, password_hash),
         phone         = $4,
-        is_admin      = $5,
-        allowed_pages = $6,
-        active        = $7,
+        funcao        = $5,
+        is_admin      = $6,
+        allowed_pages = $7,
+        active        = $8,
         updated_at    = NOW()
-      WHERE id = $8
-      RETURNING id, name, login, phone, is_admin AS "isAdmin", allowed_pages AS "allowedPages", active
+      WHERE id = $9
+      RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages", active
     `, [
       name.trim(),
       login.trim(),
       passwordHash,
       phone?.replace(/\D/g, "") || null,
+      funcao?.trim() || null,
       isAdmin ?? false,
       isAdmin ? [] : (allowedPages ?? []),
       active ?? true,

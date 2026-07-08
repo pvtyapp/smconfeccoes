@@ -1264,23 +1264,23 @@ export default function PDVPage() {
                   </div>
                 )}
 
-                {/* Dois botões: Finalizar | Imprimir */}
+                {/* Dois botões: Imprimir (foco) | Finalizar */}
                 <div className="flex gap-2">
                   <button
                     onClick={() => finalizeSale(false)}
                     disabled={cart.length === 0 || saving || !hasClientOrBalcao}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-black rounded-xl disabled:opacity-40 transition-colors"
+                    title="Finalizar sem imprimir"
+                    className="flex items-center justify-center px-4 py-3 bg-[#0F1E3C]/8 hover:bg-[#0F1E3C]/15 text-[#0F1E3C] rounded-xl disabled:opacity-40 transition-colors flex-shrink-0"
                   >
                     {saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />}
-                    {saving ? "Finalizando..." : "Finalizar Venda"}
                   </button>
                   <button
                     onClick={() => finalizeSale(true)}
                     disabled={cart.length === 0 || saving || !hasClientOrBalcao}
-                    title="Finalizar e imprimir comprovante"
-                    className="flex items-center justify-center px-4 py-3 bg-[#0F1E3C]/8 hover:bg-[#0F1E3C]/15 text-[#0F1E3C] rounded-xl disabled:opacity-40 transition-colors flex-shrink-0"
+                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#4361EE] hover:bg-[#3451D4] text-white text-sm font-black rounded-xl disabled:opacity-40 transition-colors"
                   >
-                    <Printer size={15} />
+                    {saving ? <Loader2 size={15} className="animate-spin" /> : <Printer size={15} />}
+                    {saving ? "Finalizando..." : "Finalizar e Imprimir"}
                   </button>
                 </div>
 
