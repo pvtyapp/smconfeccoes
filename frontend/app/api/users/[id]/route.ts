@@ -12,12 +12,13 @@ export async function PUT(
 
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
 
   try {
     const { id } = await params
-    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled } = await req.json() as {
+    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled, chatbotCommands } = await req.json() as {
       name: string; login: string; password?: string; phone?: string; funcao?: string
-      isAdmin?: boolean; allowedPages?: string[]; active?: boolean; chatbotAdminEnabled?: boolean
+      isAdmin?: boolean; allowedPages?: string[]; active?: boolean; chatbotAdminEnabled?: boolean; chatbotCommands?: string[]
     }
 
     if (!name?.trim() || !login?.trim()) {
@@ -40,10 +41,11 @@ export async function PUT(
         allowed_pages          = $7,
         active                 = $8,
         chatbot_admin_enabled  = $9,
+        chatbot_commands       = $10,
         updated_at             = NOW()
-      WHERE id = $10
+      WHERE id = $11
       RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
-                chatbot_admin_enabled AS "chatbotAdminEnabled", active
+                chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands", active
     `, [
       name.trim(),
       login.trim(),
@@ -54,6 +56,7 @@ export async function PUT(
       isAdmin ? [] : (allowedPages ?? []),
       active ?? true,
       chatbotAdminEnabled ?? true,
+      isAdmin ? [] : (chatbotCommands ?? []),
       id,
     ])
 

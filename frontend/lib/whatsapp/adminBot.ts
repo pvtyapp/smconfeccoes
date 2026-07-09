@@ -5,6 +5,7 @@ import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
 import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
 import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
 import { todayBR } from "@/lib/tz"
+import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 
 // ─── Bot administrativo — operadores cadastrados em Usuários conversando com o
 // mesmo número do WhatsApp da loja, mas num universo totalmente separado do
@@ -21,6 +22,7 @@ type AdminUser = {
   name: string
   isAdmin: boolean
   allowedPages: string[]
+  chatbotCommands: string[]
   waState: string | null
   waStateData: Record<string, unknown>
 }
@@ -42,8 +44,10 @@ async function setState(userId: number, state: string | null, data: Record<strin
   )
 }
 
-function hasPermission(user: AdminUser, href: string): boolean {
-  return user.isAdmin || user.allowedPages.includes(href)
+// Permissão de comando do bot é independente das abas do painel (allowed_pages)
+// — cada operador tem sua própria lista de comandos liberados (chatbot_commands).
+function canUseCommand(user: AdminUser, key: string): boolean {
+  return user.isAdmin || user.chatbotCommands.includes(key)
 }
 
 // Resolve se o telefone de quem mandou a mensagem é um operador cadastrado e ativo.
@@ -73,9 +77,11 @@ export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promi
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wa_state TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wa_state_data JSONB NOT NULL DEFAULT '{}'`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
 
   const { rows } = await pool.query(
     `SELECT id, name, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
+            chatbot_commands AS "chatbotCommands",
             wa_state AS "waState", wa_state_data AS "waStateData"
      FROM users
      WHERE active = true AND chatbot_admin_enabled = true AND phone IN ($1, $2) LIMIT 1`,
@@ -119,12 +125,12 @@ function fmtMoney(n: number): string {
 
 const MENU_FOOTER = `\n\n_Digite *menu* pra ver as opções de novo._`
 
-// ─── Definição do menu — cada item sabe checar permissão e iniciar seu fluxo ────
+// ─── Definição do menu — cada item sabe checar permissão e iniciar seu fluxo.
+// Label vem de lib/chatbotCommands.ts (mesma lista usada nos checkboxes da
+// tela de Usuários) — só triggers/start ficam aqui, que são lógica de bot.
 type MenuItem = {
   key: string
-  label: string
   triggers: string[]
-  permission: string
   start: (jid: string, user: AdminUser) => Promise<void>
 }
 
@@ -301,18 +307,22 @@ async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { key: "criar_ordem",    label: "Criar ordem de produção",       triggers: ["criar ordem"],    permission: "/dashboard/programacao",     start: startCriarOrdem },
-  { key: "concluir_ordem", label: "Concluir ordem de produção",    triggers: ["concluir ordem"], permission: "/dashboard/programacao",     start: startConcluirOrdem },
-  { key: "criar_insumo",   label: "Criar insumo (matéria-prima)",  triggers: ["criar insumo"],   permission: "/dashboard/materias-primas", start: startCriarInsumo },
-  { key: "vendas",       label: "Relatório de vendas",           triggers: ["relatorio de vendas", "relatório de vendas", "vendas"], permission: "/dashboard/relatorio-vendas", start: startVendas },
-  { key: "financeiro",   label: "Relatório financeiro",          triggers: ["relatorio financeiro", "relatório financeiro", "financeiro"], permission: "/dashboard/relatorio-financeiro", start: startFinanceiro },
-  { key: "estoque",      label: "Relatório de estoque",          triggers: ["relatorio de estoque", "relatório de estoque", "estoque"], permission: "/dashboard/estoque", start: startEstoque },
-  { key: "despesa",      label: "Lançar despesa variável",       triggers: ["lancar despesa", "lançar despesa", "despesa"], permission: "/dashboard/custo-variavel", start: startDespesa },
-  { key: "receber",      label: "Clientes a receber",            triggers: ["clientes a receber", "receber"], permission: "/dashboard/clientes-a-receber", start: startClientesReceber },
+  { key: "criar_ordem",    triggers: ["criar ordem"],    start: startCriarOrdem },
+  { key: "concluir_ordem", triggers: ["concluir ordem"], start: startConcluirOrdem },
+  { key: "criar_insumo",   triggers: ["criar insumo"],   start: startCriarInsumo },
+  { key: "vendas",         triggers: ["relatorio de vendas", "relatório de vendas", "vendas"], start: startVendas },
+  { key: "financeiro",     triggers: ["relatorio financeiro", "relatório financeiro", "financeiro"], start: startFinanceiro },
+  { key: "estoque",        triggers: ["relatorio de estoque", "relatório de estoque", "estoque"], start: startEstoque },
+  { key: "despesa",        triggers: ["lancar despesa", "lançar despesa", "despesa"], start: startDespesa },
+  { key: "receber",        triggers: ["clientes a receber", "receber"], start: startClientesReceber },
 ]
 
+function commandLabel(key: string): string {
+  return CHATBOT_COMMANDS.find(c => c.key === key)?.label ?? key
+}
+
 async function showMenu(jid: string, user: AdminUser): Promise<void> {
-  const items = MENU_ITEMS.filter(m => hasPermission(user, m.permission))
+  const items = MENU_ITEMS.filter(m => canUseCommand(user, m.key))
   if (items.length === 0) {
     await setState(user.id, null, {})
     await reply(jid, `Oi, ${user.name}! Você não tem nenhum comando administrativo liberado ainda.`)
@@ -320,7 +330,7 @@ async function showMenu(jid: string, user: AdminUser): Promise<void> {
   }
 
   let alerta = ""
-  if (hasPermission(user, "/dashboard/programacao")) {
+  if (canUseCommand(user, "concluir_ordem")) {
     const { rows: pendentes } = await pool.query(`
       SELECT number, product_name AS "productName" FROM prod_orders
       WHERE status = 'em_andamento' ORDER BY created_at ASC LIMIT 10
@@ -335,7 +345,7 @@ async function showMenu(jid: string, user: AdminUser): Promise<void> {
   await setState(user.id, "idle", { menuMap: items.map(i => i.key) })
   await reply(
     jid,
-    `${alerta}Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${numberedList(items.map(i => i.label))}\n\n_Responda o número ou o nome do comando._`
+    `${alerta}Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${numberedList(items.map(i => commandLabel(i.key)))}\n\n_Responda o número ou o nome do comando._`
   )
 }
 
@@ -375,8 +385,8 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     // Comando por texto direto (atalho, não precisa ver o menu primeiro)
     const item = MENU_ITEMS.find(m => m.triggers.some(t => lower.includes(t)))
     if (item) {
-      if (!hasPermission(user, item.permission)) {
-        await reply(jid, `Você não tem permissão pra usar "${item.label}".` + MENU_FOOTER)
+      if (!canUseCommand(user, item.key)) {
+        await reply(jid, `Você não tem permissão pra usar "${commandLabel(item.key)}".` + MENU_FOOTER)
         return true
       }
       await item.start(jid, user)

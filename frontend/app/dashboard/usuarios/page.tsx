@@ -7,6 +7,7 @@ import {
   navTop, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
   type NavItem,
 } from "@/lib/navPages"
+import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 
 type User = {
   id: number
@@ -17,6 +18,7 @@ type User = {
   isAdmin: boolean
   allowedPages: string[]
   chatbotAdminEnabled: boolean
+  chatbotCommands: string[]
   active: boolean
   createdAt: string
 }
@@ -149,6 +151,7 @@ function UserModal({ user, onClose, onSaved }: {
   const [isAdmin,      setIsAdmin]      = useState(user?.isAdmin ?? false)
   const [allowedPages, setAllowedPages] = useState<string[]>(user?.allowedPages ?? [])
   const [chatbotAdminEnabled, setChatbotAdminEnabled] = useState(user?.chatbotAdminEnabled ?? true)
+  const [chatbotCommands, setChatbotCommands] = useState<string[]>(user?.chatbotCommands ?? [])
   const [active,       setActive]       = useState(user?.active ?? true)
   const [saving,        setSaving]      = useState(false)
   const [error,         setError]       = useState("")
@@ -163,6 +166,10 @@ function UserModal({ user, onClose, onSaved }: {
     setAllowedPages(prev => allChecked
       ? prev.filter(p => !hrefs.includes(p))
       : [...new Set([...prev, ...hrefs])])
+  }
+
+  function toggleCommand(key: string) {
+    setChatbotCommands(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -181,6 +188,7 @@ function UserModal({ user, onClose, onSaved }: {
         isAdmin,
         allowedPages,
         chatbotAdminEnabled,
+        chatbotCommands,
       }
       if (password) body.password = password
       if (!isNew) body.active = active
@@ -268,9 +276,29 @@ function UserModal({ user, onClose, onSaved }: {
               <Toggle on={chatbotAdminEnabled} onChange={() => {}} />
               <div>
                 <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot Administrativo</p>
-                <p className="text-[10px] text-[#0F1E3C]/40">Permite usar o bot do WhatsApp pra comandos das abas liberadas acima</p>
+                <p className="text-[10px] text-[#0F1E3C]/40">Liga/desliga o acesso ao bot do WhatsApp inteiro — os comandos liberados são marcados abaixo, independente das abas do painel</p>
               </div>
             </div>
+
+            {!isAdmin && chatbotAdminEnabled && (
+              <div>
+                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-2">Comandos do chatbot liberados</label>
+                <div className="p-2 grid grid-cols-2 gap-1 border border-[#0F1E3C]/8 rounded-xl">
+                  {CHATBOT_COMMANDS.map(cmd => {
+                    const checked = chatbotCommands.includes(cmd.key)
+                    return (
+                      <label key={cmd.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#F4F6FB] cursor-pointer text-xs text-[#0F1E3C]/70">
+                        <span className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${checked ? "bg-[#4361EE] border-[#4361EE]" : "border-[#0F1E3C]/20"}`}>
+                          {checked && <Check size={11} className="text-white" />}
+                        </span>
+                        <input type="checkbox" checked={checked} onChange={() => toggleCommand(cmd.key)} className="hidden" />
+                        {cmd.label}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {!isAdmin && (
               <div>
