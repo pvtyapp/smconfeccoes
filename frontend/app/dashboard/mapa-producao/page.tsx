@@ -32,9 +32,9 @@ const ZONES = {
   corte2:   { left: 43, top: 80 },
   // sala de vendas (canto inferior direito) — impressora, celular e
   // computador agrupados dentro da mesma salinha
-  dtf:       { left: 79, top: 68 },
+  dtf:       { left: 79, top: 73 },
   whatsapp:  { left: 92, top: 72 },
-  ecommerce: { left: 86, top: 63 },
+  ecommerce: { left: 86, top: 68 },
 }
 
 const REVISAO_TONE: Record<string, string> = {
