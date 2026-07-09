@@ -19,7 +19,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
-  "/api/debug/catalog-blob-test", // temporário — testa upload pro vercel blob isolado
+  "/api/debug/catalog-schema", // temporário — inspeciona schema/constraints de catalog_products
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
