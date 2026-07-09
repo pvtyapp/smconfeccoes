@@ -2,6 +2,8 @@ import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { updateProdOrderGrade } from "@/lib/prodOrders/updateGrade"
+import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
+import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
 
 // ─── Bot administrativo — operadores cadastrados em Usuários conversando com o
 // mesmo número do WhatsApp da loja, mas num universo totalmente separado do
@@ -95,7 +97,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
   if (lower === "cancelar" || lower === "sair") {
     if (user.waState && user.waState !== "idle") {
       await setState(user.id, null, {})
-      await reply(jid, "Ok, cancelado. Se já tinha criado a ordem, ela continua no painel — pode completar por lá.")
+      await reply(jid, "Ok, cancelado. Se já tinha criado algo (ordem ou lote), continua no painel — pode completar por lá.")
     } else {
       await reply(jid, "Nada em andamento.")
     }
@@ -124,6 +126,24 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
         productsList: products.map(p => ({ id: p.id, name: p.name, sizeList: p.sizeList, colorList: p.colorList })),
       }))
       await reply(jid, `📦 *Criar Ordem de Produção*\n\nQual produto?\n\n${numberedList(products.map(p => p.name))}\n\n_Responda só o número. "cancelar" pra sair._`)
+      return
+    }
+    if (lower.includes("criar insumo")) {
+      if (!hasPermission(user, "/dashboard/materias-primas")) {
+        await reply(jid, "Você não tem permissão pra dar entrada de matéria-prima.")
+        return
+      }
+      const { rows: materials } = await pool.query(`
+        SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
+      `)
+      if (materials.length === 0) {
+        await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes.")
+        return
+      }
+      await setState(user.id, "insumo_material", withTimestamp({
+        materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
+      }))
+      await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" pra sair._`)
       return
     }
     // Nenhum comando reconhecido — modo admin fica em silêncio (evita responder
@@ -270,6 +290,99 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
 
     await setState(user.id, null, {})
     await reply(jid, `🎉 Ordem *${orderNumber}* completa! Já está em produção, segue o fluxo normal no painel.`)
+    return
+  }
+
+  // ── Nova entrada de matéria-prima: escolhendo material ──────────────────
+  if (state === "insumo_material") {
+    const materialsList = (data.materialsList as { id: number; name: string; unit: string }[]) ?? []
+    const n = parseInt(lower, 10)
+    if (isNaN(n) || n < 1 || n > materialsList.length) {
+      await reply(jid, `Não entendi. Responda o número do material (1 a ${materialsList.length}).`)
+      return
+    }
+    const material = materialsList[n - 1]
+    const { rows: variants } = await pool.query(
+      `SELECT id, name FROM raw_material_variants WHERE material_id = $1 ORDER BY name`,
+      [material.id]
+    )
+    await setState(user.id, "insumo_variante", withTimestamp({
+      materialId: material.id, materialName: material.name, unit: material.unit,
+      variantsList: variants.map(v => ({ id: v.id, name: v.name })),
+    }))
+    const novaOpcao = variants.length + 1
+    await reply(
+      jid,
+      `Qual variação/cor de *${material.name}*?\n\n${numberedList(variants.map(v => v.name))}${variants.length ? "\n" : ""}${novaOpcao}. Nova variação...\n\n_"cancelar" pra sair._`
+    )
+    return
+  }
+
+  // ── Nova entrada de matéria-prima: escolhendo ou criando variação ───────
+  if (state === "insumo_variante") {
+    const variantsList = (data.variantsList as { id: number; name: string }[]) ?? []
+    const n = parseInt(lower, 10)
+    const novaOpcao = variantsList.length + 1
+    if (isNaN(n) || n < 1 || n > novaOpcao) {
+      await reply(jid, `Não entendi. Responda um número de 1 a ${novaOpcao}.`)
+      return
+    }
+    if (n === novaOpcao) {
+      await setState(user.id, "insumo_variante_nome", withTimestamp({ ...data }))
+      await reply(jid, `Qual o nome da nova variação/cor?`)
+      return
+    }
+    const variant = variantsList[n - 1]
+    await setState(user.id, "insumo_quantidade", withTimestamp({
+      ...data, variantId: variant.id, varianteName: variant.name,
+    }))
+    await reply(jid, `Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
+    return
+  }
+
+  // ── Nova entrada de matéria-prima: nome da variação nova ────────────────
+  if (state === "insumo_variante_nome") {
+    if (!text.trim()) {
+      await reply(jid, "Manda o nome da variação.")
+      return
+    }
+    try {
+      const variant = await createRawMaterialVariant(data.materialId as number, text.trim())
+      await setState(user.id, "insumo_quantidade", withTimestamp({
+        ...data, variantId: variant.id, varianteName: variant.name,
+      }))
+      await reply(jid, `Variação *${variant.name}* criada. Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
+    } catch (e) {
+      console.error("[adminBot] criar variação falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao criar a variação. Tenta de novo ou crie pelo painel.")
+    }
+    return
+  }
+
+  // ── Nova entrada de matéria-prima: quantidade e preço ───────────────────
+  if (state === "insumo_quantidade") {
+    const parts = text.trim().split(/\s+/)
+    const qty = parseFloat((parts[0] ?? "").replace(",", "."))
+    const price = parseFloat((parts[1] ?? "").replace(",", "."))
+    if (isNaN(qty) || qty <= 0 || isNaN(price) || price < 0) {
+      await reply(jid, `Formato não reconhecido. Manda quantidade e preço separados por espaço (ex: 50 12.90).`)
+      return
+    }
+    try {
+      const entry = await createRawMaterialEntry(
+        data.materialId as number, data.variantId as number, qty, price
+      )
+      await setState(user.id, null, {})
+      await reply(
+        jid,
+        `✅ Lote *${entry.number}* criado! ${entry.materialName} - ${entry.varianteName}: ${qty} ${entry.unit} a ${price}/${entry.unit}.`
+      )
+    } catch (e) {
+      console.error("[adminBot] criar lote falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao criar o lote. Tenta de novo ou lance pelo painel.")
+    }
     return
   }
 }

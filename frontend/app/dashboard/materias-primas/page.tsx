@@ -603,18 +603,56 @@ function EditarVarianteModal({
   )
 }
 
+// ─── ConfirmDeleteRaizModal ─────────────────────────────────────────────────────
+function ConfirmDeleteRaizModal({
+  insumo, onClose, onConfirm,
+}: {
+  insumo: InsumoRaiz
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
+          <h3 className="font-bold text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>Excluir Categoria</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 flex items-center justify-center"><X size={15}/></button>
+        </div>
+        <div className="px-6 py-5">
+          <div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200">
+            <p className="text-sm font-semibold text-red-800">Excluir &quot;{insumo.name}&quot; permanentemente?</p>
+            <p className="text-[10px] text-red-600 mt-0.5">Todas as variações e histórico ficam ocultos — não pode ser desfeito por aqui</p>
+          </div>
+        </div>
+        <div className="flex gap-3 px-6 py-4 border-t border-[#0F1E3C]/8">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
+            Cancelar
+          </button>
+          <button onClick={() => { onConfirm(); onClose() }}
+            className="flex-1 py-2.5 rounded-xl bg-red-500 text-white text-sm font-bold hover:bg-red-600 transition-colors">
+            Excluir
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── InsumoCard ────────────────────────────────────────────────────────────────
 function InsumoCard({
-  insumo, onAddLote, onRemoveStock, onDeleteVariante, onUpdateConfig,
+  insumo, onAddLote, onRemoveStock, onDeleteVariante, onUpdateConfig, onDeleteRaiz,
 }: {
   insumo: InsumoRaiz
   onAddLote: () => void
   onRemoveStock: (varianteId: number, obs: string) => void
   onDeleteVariante: (varianteId: number) => void
   onUpdateConfig: (varianteId: number, minQty: number | null, autoDestock: boolean) => void
+  onDeleteRaiz: () => void
 }) {
   const [open,            setOpen]            = useState(true)
   const [editingVariante, setEditingVariante] = useState<InsumoVariante | null>(null)
+  const [confirmDelete,   setConfirmDelete]   = useState(false)
   const unitStr = uls(insumo.unit)
 
   const totalActiveQty = insumo.variantes.reduce((s, v) => s + activeQty(v), 0)
@@ -647,6 +685,13 @@ function InsumoCard({
           <button onClick={onAddLote}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#4361EE] text-white text-xs font-bold hover:bg-[#3451D1] transition-colors">
             <Plus size={12}/> Variação
+          </button>
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={totalActiveQty > 0}
+            title={totalActiveQty > 0 ? "Remova o estoque ativo antes de excluir" : "Excluir categoria"}
+            className="w-8 h-8 rounded-xl hover:bg-red-50 text-red-500/60 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent flex items-center justify-center transition-colors">
+            <Trash2 size={14}/>
           </button>
           <button onClick={() => setOpen(v => !v)}
             className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 flex items-center justify-center transition-colors">
@@ -761,6 +806,14 @@ function InsumoCard({
           onUpdateConfig={(minQty, auto) => { onUpdateConfig(editingVariante.id, minQty, auto); setEditingVariante(null) }}
         />
       )}
+
+      {confirmDelete && (
+        <ConfirmDeleteRaizModal
+          insumo={insumo}
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={onDeleteRaiz}
+        />
+      )}
     </div>
   )
 }
@@ -849,6 +902,16 @@ export default function MateriasPrimasPage() {
   async function handleDeleteVariante(raizId: number, varianteId: number) {
     void raizId
     await fetch(`/api/raw-material-variants/${varianteId}`, { method: "DELETE" })
+    loadInsumos()
+  }
+
+  async function handleDeleteRaiz(raizId: number) {
+    const res = await fetch(`/api/raw-materials/${raizId}`, { method: "DELETE" })
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({ error: "Falha ao excluir" }))
+      alert(error)
+      return
+    }
     loadInsumos()
   }
 
@@ -1010,6 +1073,7 @@ export default function MateriasPrimasPage() {
               onRemoveStock={(varId, obs) => handleRemoveStock(insumo.id, varId, obs)}
               onDeleteVariante={varId => handleDeleteVariante(insumo.id, varId)}
               onUpdateConfig={(varId, minQty, auto) => handleUpdateConfig(insumo.id, varId, minQty, auto)}
+              onDeleteRaiz={() => handleDeleteRaiz(insumo.id)}
             />
           ))}
         </div>
