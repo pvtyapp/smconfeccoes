@@ -4,6 +4,7 @@ import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { updateProdOrderGrade } from "@/lib/prodOrders/updateGrade"
 import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
 import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
+import { todayBR } from "@/lib/tz"
 
 // ─── Bot administrativo — operadores cadastrados em Usuários conversando com o
 // mesmo número do WhatsApp da loja, mas num universo totalmente separado do
@@ -23,6 +24,8 @@ type AdminUser = {
   waState: string | null
   waStateData: Record<string, unknown>
 }
+
+const VARIABLE_COST_CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
 
 async function reply(jid: string, text: string): Promise<void> {
   try {
@@ -108,6 +111,202 @@ function parseNumberList(text: string, max: number): number[] | null {
   return [...new Set(nums)]
 }
 
+function fmtMoney(n: number): string {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+}
+
+const MENU_FOOTER = `\n\n_Digite *menu* pra ver as opções de novo._`
+
+// ─── Definição do menu — cada item sabe checar permissão e iniciar seu fluxo ────
+type MenuItem = {
+  key: string
+  label: string
+  triggers: string[]
+  permission: string
+  start: (jid: string, user: AdminUser) => Promise<void>
+}
+
+async function startCriarOrdem(jid: string, user: AdminUser): Promise<void> {
+  const { rows: products } = await pool.query(`
+    SELECT id, name, size_list AS "sizeList", color_list AS "colorList"
+    FROM products
+    WHERE status = 'active' AND array_length(color_list, 1) > 0 AND array_length(size_list, 1) > 0
+    ORDER BY name
+  `)
+  if (products.length === 0) {
+    await reply(jid, "Nenhum produto com cores e tamanhos cadastrados encontrado." + MENU_FOOTER)
+    return
+  }
+  await setState(user.id, "op_produto", withTimestamp({
+    productsList: products.map(p => ({ id: p.id, name: p.name, sizeList: p.sizeList, colorList: p.colorList })),
+  }))
+  await reply(jid, `📦 *Criar Ordem de Produção*\n\nQual produto?\n\n${numberedList(products.map(p => p.name))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
+}
+
+async function startCriarInsumo(jid: string, user: AdminUser): Promise<void> {
+  const { rows: materials } = await pool.query(`
+    SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
+  `)
+  if (materials.length === 0) {
+    await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes." + MENU_FOOTER)
+    return
+  }
+  await setState(user.id, "insumo_material", withTimestamp({
+    materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
+  }))
+  await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
+}
+
+async function startEstoque(jid: string, user: AdminUser): Promise<void> {
+  void user
+  const { rows } = await pool.query(`
+    SELECT p.name AS "productName", pv.color, pv.size,
+           COALESCE(bal.qty, 0)::int AS "currentStock", pv.min_stock AS "minStock"
+    FROM product_variants pv
+    JOIN products p ON p.id = pv.product_id
+    LEFT JOIN (
+      SELECT variant_id, SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END) AS qty
+      FROM stock_movements GROUP BY variant_id
+    ) bal ON bal.variant_id = pv.id
+    WHERE pv.status = 'active' AND p.status = 'active'
+      AND COALESCE(bal.qty, 0) <= COALESCE(pv.min_stock, 0)
+    ORDER BY COALESCE(bal.qty, 0) ASC
+    LIMIT 15
+  `)
+  if (rows.length === 0) {
+    await reply(jid, "📦 *Estoque*\n\nNenhum item com estoque baixo ou zerado agora." + MENU_FOOTER)
+    return
+  }
+  const linhas = rows.map(r =>
+    `${Number(r.currentStock) <= 0 ? "🔴" : "🟡"} ${r.productName} ${r.color}/${r.size}: *${r.currentStock}* (mín ${r.minStock ?? 0})`
+  )
+  await reply(jid, `📦 *Estoque baixo/zerado* (${rows.length})\n\n${linhas.join("\n")}` + MENU_FOOTER)
+}
+
+async function startDespesa(jid: string, user: AdminUser): Promise<void> {
+  await setState(user.id, "despesa_categoria", withTimestamp({}))
+  await reply(jid, `💸 *Lançar Despesa Variável*\n\nQual categoria?\n\n${numberedList(VARIABLE_COST_CATEGORIES)}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
+}
+
+async function startClientesReceber(jid: string, user: AdminUser): Promise<void> {
+  void user
+  const { rows } = await pool.query(`
+    SELECT o.number, o.total_value::float AS "totalValue", o.due_date::text AS "dueDate", c.name AS "contactName"
+    FROM orders o JOIN wa_contacts c ON c.id = o.contact_id
+    WHERE o.paid_at IS NULL AND o.status != 'cancelado' AND o.due_date IS NOT NULL
+    UNION ALL
+    SELECT p.number, p.preco_cobrado::float AS "totalValue", p.due_date::text AS "dueDate", COALESCE(c.name, p.cliente) AS "contactName"
+    FROM dtf_pedidos p LEFT JOIN wa_contacts c ON c.id = p.contact_id
+    WHERE p.paid_at IS NULL AND p.status != 'cancelado' AND p.due_date IS NOT NULL
+    ORDER BY "dueDate" ASC NULLS LAST
+  `)
+  if (rows.length === 0) {
+    await reply(jid, "💰 *Clientes a Receber*\n\nNada pendente agora." + MENU_FOOTER)
+    return
+  }
+  const hoje = todayBR()
+  const total = rows.reduce((s, r) => s + Number(r.totalValue), 0)
+  const atrasados = rows.filter(r => r.dueDate && r.dueDate < hoje)
+  let msg = `💰 *Clientes a Receber*\n\nTotal pendente: *${fmtMoney(total)}* (${rows.length} cobranças)`
+  if (atrasados.length > 0) {
+    msg += `\n\n🔴 Atrasados (${atrasados.length}):\n` + atrasados.slice(0, 15).map(r =>
+      `${r.contactName ?? "?"} — ${fmtMoney(Number(r.totalValue))} (venceu ${r.dueDate})`
+    ).join("\n")
+  }
+  await reply(jid, msg + MENU_FOOTER)
+}
+
+function periodoRange(kind: "hoje" | "mes"): Date {
+  const now = new Date()
+  if (kind === "hoje") return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return new Date(now.getFullYear(), now.getMonth(), 1)
+}
+
+async function startVendas(jid: string, user: AdminUser): Promise<void> {
+  void user
+  const desde = periodoRange("mes")
+  const { rows } = await pool.query(`
+    SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total_value), 0)::float AS receita
+    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp','manual')
+      AND number NOT LIKE 'COB-%' AND created_at >= $1
+  `, [desde])
+  const { rows: dtfRows } = await pool.query(`
+    SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(preco_cobrado), 0)::float AS receita
+    FROM dtf_pedidos WHERE status != 'cancelado' AND created_at >= $1
+  `, [desde])
+  const totalPedidos = rows[0].pedidos + dtfRows[0].pedidos
+  const totalReceita = rows[0].receita + dtfRows[0].receita
+  await reply(
+    jid,
+    `📊 *Relatório de Vendas — mês atual*\n\nPedidos: *${totalPedidos}*\nReceita: *${fmtMoney(totalReceita)}*\n(Produto: ${fmtMoney(rows[0].receita)} · DTF: ${fmtMoney(dtfRows[0].receita)})` + MENU_FOOTER
+  )
+}
+
+async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
+  void user
+  const desde = periodoRange("mes")
+  const { rows } = await pool.query(`
+    SELECT COALESCE(SUM(total_value), 0)::float AS receita
+    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp','manual')
+      AND number NOT LIKE 'COB-%' AND created_at >= $1
+  `, [desde])
+  const { rows: dtfRows } = await pool.query(`
+    SELECT COALESCE(SUM(preco_cobrado), 0)::float AS receita
+    FROM dtf_pedidos WHERE status != 'cancelado' AND created_at >= $1
+  `, [desde])
+  const { rows: custoRows } = await pool.query(`
+    SELECT COALESCE(SUM(oi.qty * COALESCE(p.material_cost, 0)), 0)::float AS custo
+    FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id
+    LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name) AND p.status = 'active'
+    WHERE o.status != 'cancelado' AND o.source IN ('pdv','whatsapp','manual')
+      AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
+  `, [desde])
+  const { rows: despesaRows } = await pool.query(`
+    SELECT COALESCE(SUM(amount), 0)::float AS despesas
+    FROM variable_costs WHERE cost_date >= $1
+  `, [desde])
+
+  const receita   = rows[0].receita + dtfRows[0].receita
+  const custo     = custoRows[0].custo
+  const despesas  = despesaRows[0].despesas
+  const resultado = receita - custo - despesas
+
+  await reply(
+    jid,
+    `📈 *Relatório Financeiro — mês atual* (resumo simplificado)\n\n` +
+    `Receita: *${fmtMoney(receita)}*\n` +
+    `Custo de produto: -${fmtMoney(custo)}\n` +
+    `Despesas variáveis: -${fmtMoney(despesas)}\n` +
+    `Resultado: *${fmtMoney(resultado)}*\n\n` +
+    `_Resumo simplificado — relatório completo com todos os canais e detalhes fica no painel._` + MENU_FOOTER
+  )
+}
+
+const MENU_ITEMS: MenuItem[] = [
+  { key: "criar_ordem",  label: "Criar ordem de produção",       triggers: ["criar ordem"],   permission: "/dashboard/programacao",     start: startCriarOrdem },
+  { key: "criar_insumo", label: "Criar insumo (matéria-prima)",  triggers: ["criar insumo"],  permission: "/dashboard/materias-primas", start: startCriarInsumo },
+  { key: "vendas",       label: "Relatório de vendas",           triggers: ["relatorio de vendas", "relatório de vendas", "vendas"], permission: "/dashboard/relatorio-vendas", start: startVendas },
+  { key: "financeiro",   label: "Relatório financeiro",          triggers: ["relatorio financeiro", "relatório financeiro", "financeiro"], permission: "/dashboard/relatorio-financeiro", start: startFinanceiro },
+  { key: "estoque",      label: "Relatório de estoque",          triggers: ["relatorio de estoque", "relatório de estoque", "estoque"], permission: "/dashboard/estoque", start: startEstoque },
+  { key: "despesa",      label: "Lançar despesa variável",       triggers: ["lancar despesa", "lançar despesa", "despesa"], permission: "/dashboard/custo-variavel", start: startDespesa },
+  { key: "receber",      label: "Clientes a receber",            triggers: ["clientes a receber", "receber"], permission: "/dashboard/clientes-a-receber", start: startClientesReceber },
+]
+
+async function showMenu(jid: string, user: AdminUser): Promise<void> {
+  const items = MENU_ITEMS.filter(m => hasPermission(user, m.permission))
+  if (items.length === 0) {
+    await setState(user.id, null, {})
+    await reply(jid, `Oi, ${user.name}! Você não tem nenhum comando administrativo liberado ainda.`)
+    return
+  }
+  await setState(user.id, "idle", { menuMap: items.map(i => i.key) })
+  await reply(
+    jid,
+    `Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${numberedList(items.map(i => i.label))}\n\n_Responda o número ou o nome do comando._`
+  )
+}
+
 // Retorna true se a mensagem foi tratada como comando administrativo (não deve
 // cair no chatbot de cliente), false se não bateu com nenhum comando reconhecido
 // e o operador estava em modo neutro (aí a mensagem segue pro fluxo de cliente
@@ -116,12 +315,17 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
   const user = await resetIfStale(userIn)
   const lower = text.toLowerCase().trim()
 
+  if (lower === "menu") {
+    await showMenu(jid, user)
+    return true
+  }
+
   if (lower === "cancelar" || lower === "sair") {
     if (user.waState && user.waState !== "idle") {
       await setState(user.id, null, {})
-      await reply(jid, "Ok, cancelado. Se já tinha criado algo (ordem ou lote), continua no painel — pode completar por lá.")
+      await reply(jid, "Ok, cancelado. Se já tinha criado algo (ordem ou lote), continua no painel — pode completar por lá." + MENU_FOOTER)
     } else {
-      await reply(jid, "Nada em andamento.")
+      await reply(jid, "Nada em andamento." + MENU_FOOTER)
     }
     return true
   }
@@ -129,56 +333,24 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
   const state = user.waState ?? "idle"
 
   if (state === "idle") {
-    if (lower.includes("criar ordem")) {
-      if (!hasPermission(user, "/dashboard/programacao")) {
-        await reply(jid, "Você não tem permissão pra criar ordem de produção.")
+    // Número respondendo o último menu mostrado
+    const menuMap = (user.waStateData?.menuMap as string[]) ?? []
+    const n = parseInt(lower, 10)
+    if (!isNaN(n) && n >= 1 && n <= menuMap.length) {
+      const item = MENU_ITEMS.find(m => m.key === menuMap[n - 1])
+      if (item) { await item.start(jid, user); return true }
+    }
+    // Comando por texto direto (atalho, não precisa ver o menu primeiro)
+    const item = MENU_ITEMS.find(m => m.triggers.some(t => lower.includes(t)))
+    if (item) {
+      if (!hasPermission(user, item.permission)) {
+        await reply(jid, `Você não tem permissão pra usar "${item.label}".` + MENU_FOOTER)
         return true
       }
-      const { rows: products } = await pool.query(`
-        SELECT id, name, size_list AS "sizeList", color_list AS "colorList"
-        FROM products
-        WHERE status = 'active' AND array_length(color_list, 1) > 0 AND array_length(size_list, 1) > 0
-        ORDER BY name
-      `)
-      if (products.length === 0) {
-        await reply(jid, "Nenhum produto com cores e tamanhos cadastrados encontrado.")
-        return true
-      }
-      await setState(user.id, "op_produto", withTimestamp({
-        productsList: products.map(p => ({ id: p.id, name: p.name, sizeList: p.sizeList, colorList: p.colorList })),
-      }))
-      await reply(jid, `📦 *Criar Ordem de Produção*\n\nQual produto?\n\n${numberedList(products.map(p => p.name))}\n\n_Responda só o número. "cancelar" pra sair._`)
+      await item.start(jid, user)
       return true
     }
-    if (lower.includes("criar insumo")) {
-      if (!hasPermission(user, "/dashboard/materias-primas")) {
-        await reply(jid, "Você não tem permissão pra dar entrada de matéria-prima.")
-        return true
-      }
-      const { rows: materials } = await pool.query(`
-        SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
-      `)
-      if (materials.length === 0) {
-        await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes.")
-        return true
-      }
-      await setState(user.id, "insumo_material", withTimestamp({
-        materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
-      }))
-      await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" pra sair._`)
-      return true
-    }
-    // Nenhum comando reconhecido — saudação administrativa, mostra os comandos
-    // disponíveis (só os que o operador tem permissão de usar)
-    const comandos: string[] = []
-    if (hasPermission(user, "/dashboard/programacao"))    comandos.push("*criar ordem* — nova ordem de produção")
-    if (hasPermission(user, "/dashboard/materias-primas")) comandos.push("*criar insumo* — entrada de matéria-prima")
-    await reply(
-      jid,
-      comandos.length
-        ? `Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\nComandos disponíveis:\n${comandos.map(c => `• ${c}`).join("\n")}\n\n_Manda um desses pra começar._`
-        : `Oi, ${user.name}! Você não tem nenhum comando administrativo liberado ainda.`
-    )
+    await showMenu(jid, user)
     return true
   }
 
@@ -220,7 +392,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     `)
     if (materials.length === 0) {
       await setState(user.id, null, {})
-      await reply(jid, "Não há nenhum lote de matéria-prima disponível no estoque agora. Cadastre um lote antes de criar a ordem.")
+      await reply(jid, "Não há nenhum lote de matéria-prima disponível no estoque agora. Cadastre um lote antes de criar a ordem." + MENU_FOOTER)
       return true
     }
     await setState(user.id, "op_material", withTimestamp({
@@ -274,7 +446,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     } catch (e) {
       console.error("[adminBot] criar ordem falhou:", e instanceof Error ? e.message : e)
       await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar a ordem. Tenta de novo em alguns instantes ou crie pelo painel.")
+      await reply(jid, "Deu erro ao criar a ordem. Tenta de novo em alguns instantes ou crie pelo painel." + MENU_FOOTER)
     }
     return true
   }
@@ -320,7 +492,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     }
 
     await setState(user.id, null, {})
-    await reply(jid, `🎉 Ordem *${orderNumber}* completa! Já está em produção, segue o fluxo normal no painel.`)
+    await reply(jid, `🎉 Ordem *${orderNumber}* completa! Já está em produção, segue o fluxo normal no painel.` + MENU_FOOTER)
     return true
   }
 
@@ -386,7 +558,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     } catch (e) {
       console.error("[adminBot] criar variação falhou:", e instanceof Error ? e.message : e)
       await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar a variação. Tenta de novo ou crie pelo painel.")
+      await reply(jid, "Deu erro ao criar a variação. Tenta de novo ou crie pelo painel." + MENU_FOOTER)
     }
     return true
   }
@@ -407,12 +579,57 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await setState(user.id, null, {})
       await reply(
         jid,
-        `✅ Lote *${entry.number}* criado! ${entry.materialName} - ${entry.varianteName}: ${qty} ${entry.unit} a ${price}/${entry.unit}.`
+        `✅ Lote *${entry.number}* criado! ${entry.materialName} - ${entry.varianteName}: ${qty} ${entry.unit} a ${price}/${entry.unit}.` + MENU_FOOTER
       )
     } catch (e) {
       console.error("[adminBot] criar lote falhou:", e instanceof Error ? e.message : e)
       await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar o lote. Tenta de novo ou lance pelo painel.")
+      await reply(jid, "Deu erro ao criar o lote. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
+    }
+    return true
+  }
+
+  // ── Lançar despesa: categoria ────────────────────────────────────────────
+  if (state === "despesa_categoria") {
+    const n = parseInt(lower, 10)
+    if (isNaN(n) || n < 1 || n > VARIABLE_COST_CATEGORIES.length) {
+      await reply(jid, `Não entendi. Responda o número da categoria (1 a ${VARIABLE_COST_CATEGORIES.length}).`)
+      return true
+    }
+    await setState(user.id, "despesa_descricao", withTimestamp({ category: VARIABLE_COST_CATEGORIES[n - 1] }))
+    await reply(jid, `Categoria *${VARIABLE_COST_CATEGORIES[n - 1]}*. Qual a descrição da despesa?`)
+    return true
+  }
+
+  // ── Lançar despesa: descrição ────────────────────────────────────────────
+  if (state === "despesa_descricao") {
+    if (!text.trim()) {
+      await reply(jid, "Manda a descrição da despesa.")
+      return true
+    }
+    await setState(user.id, "despesa_valor", withTimestamp({ ...data, description: text.trim() }))
+    await reply(jid, `Qual o valor? (ex: 45.90)`)
+    return true
+  }
+
+  // ── Lançar despesa: valor e criação ──────────────────────────────────────
+  if (state === "despesa_valor") {
+    const amount = parseFloat(text.trim().replace(",", "."))
+    if (isNaN(amount) || amount <= 0) {
+      await reply(jid, "Valor não reconhecido. Manda só o número (ex: 45.90).")
+      return true
+    }
+    try {
+      await pool.query(`
+        INSERT INTO variable_costs (description, category, amount, cost_date)
+        VALUES ($1, $2, $3, (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date)
+      `, [data.description, data.category, amount])
+      await setState(user.id, null, {})
+      await reply(jid, `✅ Despesa lançada! ${data.category} — ${data.description}: ${fmtMoney(amount)}.` + MENU_FOOTER)
+    } catch (e) {
+      console.error("[adminBot] lançar despesa falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao lançar a despesa. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
     }
     return true
   }
