@@ -62,6 +62,10 @@ export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promi
   }
   const phone = phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
   if (phone.length < 8) return null
+  // users.phone é cadastrado no formato nacional (DDD + número, sem 55) — o
+  // telefone que vem do JID do WhatsApp sempre tem o 55 na frente. Compara
+  // com e sem o prefixo pra cobrir os dois formatos.
+  const phoneNoCC = phone.startsWith("55") && phone.length >= 12 ? phone.slice(2) : phone
 
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wa_state TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wa_state_data JSONB NOT NULL DEFAULT '{}'`).catch(() => {})
@@ -69,8 +73,8 @@ export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promi
   const { rows } = await pool.query(
     `SELECT id, name, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
             wa_state AS "waState", wa_state_data AS "waStateData"
-     FROM users WHERE active = true AND phone = $1 LIMIT 1`,
-    [phone]
+     FROM users WHERE active = true AND phone IN ($1, $2) LIMIT 1`,
+    [phone, phoneNoCC]
   ).catch(() => ({ rows: [] as AdminUser[] }))
 
   return rows[0] ?? null
