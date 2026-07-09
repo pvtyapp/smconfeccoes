@@ -44,8 +44,22 @@ function hasPermission(user: AdminUser, href: string): boolean {
 }
 
 // Resolve se o telefone de quem mandou a mensagem é um operador cadastrado e ativo.
+// Número @lid nem sempre traz o remoteJidAlt na mensagem (só a 1ª costuma trazer) —
+// nesse caso cai pra buscar o phone_jid já resolvido antes em wa_contacts (mesmo
+// contato pode ter mandado mensagem como "cliente" antes de virar operador).
 export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promise<AdminUser | null> {
-  const phoneJid = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net") ? remoteJidAlt : jid
+  let phoneJid = jid
+  if (jid.endsWith("@lid")) {
+    if (remoteJidAlt.endsWith("@s.whatsapp.net")) {
+      phoneJid = remoteJidAlt
+    } else {
+      const { rows: known } = await pool.query(
+        `SELECT phone_jid FROM wa_contacts WHERE jid = $1 AND phone_jid IS NOT NULL LIMIT 1`,
+        [jid]
+      ).catch(() => ({ rows: [] as { phone_jid: string }[] }))
+      if (known[0]?.phone_jid) phoneJid = known[0].phone_jid
+    }
+  }
   const phone = phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
   if (phone.length < 8) return null
 
