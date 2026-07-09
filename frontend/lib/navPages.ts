@@ -18,6 +18,7 @@ export const navTop: NavItem[] = [
   { href: "/dashboard/pdv",                     label: "PDV de Vendas",   icon: Store           },
   { href: "/dashboard/autoatendimento/pedidos", label: "Autoatendimento", icon: ShoppingBag     },
   { href: "/dashboard/marketing",               label: "Marketing",       icon: Megaphone       },
+  { href: "/dashboard/mapa-operacao",           label: "Mapa da Operação", icon: Signal         },
 ]
 
 export const navGestao: NavItem[] = [
@@ -47,7 +48,6 @@ export const navProducao: NavItem[] = [
   { href: "/dashboard/programacao",     label: "Programação de Produção",    icon: CalendarClock  },
   { href: "/dashboard/custo-producao",  label: "Custos de Produção",         icon: Factory        },
   { href: "/dashboard/costura-revisao", label: "Costura e Revisão",          icon: ClipboardCheck },
-  { href: "/dashboard/mapa-producao",   label: "Mapa de Produção",           icon: Signal         },
 ]
 
 export const navCadastros: NavItem[] = [

@@ -77,7 +77,7 @@ type DetailPanel = {
   rows: { label: string; value: string }[]
 } | null
 
-export default function SemaforoMapaPage() {
+export default function MapaOperacaoPage() {
   const [data, setData] = useState<MapaData | null>(null)
   const [dia, setDia] = useState<"hoje" | "ontem">("hoje")
   const [loading, setLoading] = useState(true)
