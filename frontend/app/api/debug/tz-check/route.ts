@@ -16,15 +16,20 @@ export async function GET() {
         (NOW() AT TIME ZONE 'America/Sao_Paulo') AS now_brt
     `)
     const { rows: colType } = await pool.query(`
-      SELECT column_name, data_type FROM information_schema.columns
-      WHERE table_name = 'stock_movements' AND column_name = 'created_at'
+      SELECT table_name, column_name, data_type FROM information_schema.columns
+      WHERE (table_name = 'stock_movements' AND column_name = 'created_at')
+         OR (table_name = 'orders' AND column_name = 'created_at')
+         OR (table_name = 'dtf_pedidos' AND column_name = 'created_at')
+         OR (table_name = 'prod_orders' AND column_name IN ('created_at', 'concluded_at'))
+         OR (table_name = 'raw_material_entries' AND column_name = 'created_at')
+         OR (table_name = 'wa_contacts' AND column_name = 'last_greeting_sent_at')
     `)
     const { rows: sample } = await pool.query(`
       SELECT id, created_at, created_at AT TIME ZONE 'America/Sao_Paulo' AS shifted,
              DATE(created_at AT TIME ZONE 'America/Sao_Paulo') AS shifted_date
       FROM stock_movements ORDER BY created_at DESC LIMIT 3
     `)
-    return NextResponse.json({ ok: true, ...rows[0], createdAtColumnType: colType[0], sample })
+    return NextResponse.json({ ok: true, ...rows[0], columnTypes: colType, sample })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
