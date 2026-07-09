@@ -19,6 +19,7 @@ export async function POST() {
           events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CHATS_UPSERT", "GROUPS_UPSERT", "CONTACTS_UPSERT", "CONNECTION_UPDATE"],
           webhookByEvents: false,
           webhookBase64: false,
+          base64: false,
         },
       }),
       signal: AbortSignal.timeout(8000),
