@@ -19,8 +19,6 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
-  "/api/debug/evo-webhook-config", // temporário — confere config webhookBase64, remover depois de usar
-  "/api/debug/evo-webhook-set",    // temporário — desliga webhookBase64, remover depois de usar
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
