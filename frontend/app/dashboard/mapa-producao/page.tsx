@@ -292,17 +292,27 @@ export default function SemaforoMapaPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-1 gap-3 w-full lg:w-56 flex-shrink-0">
-        <SummaryCard emoji="✂️" label="Corte" value={`${data.corte.length}`} />
-        <SummaryCard emoji="👕" label="Revisão" value={`${data.revisao.length}`} />
-        <SummaryCard emoji="📦" label="Estoque" value={`${estoqueIn.length} in · ${estoqueOut.length} out`} />
-        <SummaryCard emoji="💲" label="Balcão" value={fmtR(data.balcao.reduce((s, v) => s + Number(v.valor), 0))} />
-        <SummaryCard emoji="🖨️" label="DTF" value={fmtR(data.dtf.reduce((s, v) => s + Number(v.valor), 0))} />
-        <SummaryCard emoji="📱" label="WhatsApp" value={fmtR(data.whatsapp.reduce((s, v) => s + Number(v.valor), 0))} />
-        <SummaryCard emoji="💻" label="E-commerce" value="Em breve" />
-        <SummaryCard emoji="💰" label={`Total ${dia}`} value={fmtR(
-          [...data.balcao, ...data.dtf, ...data.whatsapp].reduce((s, v) => s + Number(v.valor), 0)
-        )} />
+      <div className="flex flex-col gap-5 w-full lg:w-72 flex-shrink-0">
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 px-0.5">Produção</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            <SummaryCard emoji="✂️" label="Corte" value={`${data.corte.length}`} />
+            <SummaryCard emoji="👕" label="Revisão" value={`${data.revisao.length}`} />
+            <SummaryCard emoji="📦" label="Estoque" value={`${estoqueIn.length} in · ${estoqueOut.length} out`} wide />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 px-0.5">Vendas</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            <SummaryCard emoji="💲" label="Balcão" value={fmtR(data.balcao.reduce((s, v) => s + Number(v.valor), 0))} />
+            <SummaryCard emoji="🖨️" label="DTF" value={fmtR(data.dtf.reduce((s, v) => s + Number(v.valor), 0))} />
+            <SummaryCard emoji="📱" label="WhatsApp" value={fmtR(data.whatsapp.reduce((s, v) => s + Number(v.valor), 0))} />
+            <SummaryCard emoji="💻" label="E-commerce" value="Em breve" />
+            <SummaryCard emoji="💰" label={`Total ${dia}`} value={fmtR(
+              [...data.balcao, ...data.dtf, ...data.whatsapp].reduce((s, v) => s + Number(v.valor), 0)
+            )} highlight wide />
+          </div>
+        </div>
       </div>
       </div>
 
@@ -388,13 +398,24 @@ function MapBubble({ left, top, emoji, tone, count, badge, faded, onClick }: {
   )
 }
 
-function SummaryCard({ emoji, label, value }: { emoji: string; label: string; value: string }) {
+function SummaryCard({ emoji, label, value, highlight, wide }: {
+  emoji: string; label: string; value: string; highlight?: boolean; wide?: boolean
+}) {
   return (
-    <div className="bg-white rounded-xl border border-[#0F1E3C]/8 px-3 py-3 flex flex-col gap-1">
-      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40">
-        <span className="text-sm">{emoji}</span>{label}
+    <div className={`rounded-xl border px-3 py-3 flex items-center gap-2.5 ${wide ? "col-span-2" : ""} ${
+      highlight
+        ? "bg-[#4361EE] border-[#4361EE] text-white"
+        : "bg-white border-[#0F1E3C]/8 text-[#0F1E3C]"
+    }`}>
+      <span className={`flex items-center justify-center w-8 h-8 rounded-lg text-base flex-shrink-0 ${
+        highlight ? "bg-white/15" : "bg-[#0F1E3C]/5"
+      }`}>{emoji}</span>
+      <div className="min-w-0">
+        <p className={`text-[9px] font-bold uppercase tracking-wider truncate ${
+          highlight ? "text-white/70" : "text-[#0F1E3C]/40"
+        }`}>{label}</p>
+        <p className={`text-sm font-bold tabular-nums truncate ${highlight ? "text-white" : "text-[#0F1E3C]"}`}>{value}</p>
       </div>
-      <p className="text-sm font-bold text-[#0F1E3C] tabular-nums">{value}</p>
     </div>
   )
 }
