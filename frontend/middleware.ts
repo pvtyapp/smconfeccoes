@@ -20,6 +20,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
   "/api/debug/catalog-schema", // temporário — inspeciona schema/constraints de catalog_products
+  "/api/debug/catalog-post-test", // temporário, nao-destrutivo (rollback sempre) — testa insert completo
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
