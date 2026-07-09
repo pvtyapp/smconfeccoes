@@ -8,6 +8,7 @@ import { matchVariants } from "@/lib/whatsapp/matchVariant"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
 import { sortSizes } from "@/lib/sizeOrder"
+import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -738,6 +739,24 @@ export async function POST(req: Request) {
 
       if (jid.endsWith("@g.us")) {
         await handleGroupMessage(m, jid, key)
+        continue
+      }
+
+      // Operador cadastrado mandando do próprio número? Vira comando administrativo —
+      // nunca entra no fluxo de cliente, nem salva em wa_contacts/wa_messages.
+      const remoteJidAlt = (key.remoteJidAlt as string) || ""
+      const adminUser = await resolveAdminUser(jid, remoteJidAlt).catch(() => null)
+      if (adminUser) {
+        const adminMsgBody = m.message as Record<string, unknown> | undefined
+        const adminText: string =
+          (adminMsgBody?.conversation as string) ||
+          ((adminMsgBody?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
+          ""
+        if (adminText.trim()) {
+          await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e =>
+            console.error("[webhook] handleAdminMessage falhou:", jid, e instanceof Error ? e.message : e)
+          )
+        }
         continue
       }
 

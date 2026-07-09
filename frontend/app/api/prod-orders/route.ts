@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { createProdOrder } from "@/lib/prodOrders/createOrder"
 
 // ─── GET: list all prod_orders with grade + materials ──────────────────────────
 export async function GET(req: Request) {
@@ -123,93 +124,11 @@ export async function POST(req: Request) {
     const entries: { entryId: number; color?: string }[] =
       body.entries ?? (body.entryIds ?? []).map((id: number) => ({ entryId: id }))
 
-    if (!productId || !selectedColors?.length) {
-      return NextResponse.json(
-        { error: "productId e selectedColors são obrigatórios" },
-        { status: 400 }
-      )
-    }
-
-    // Fetch product to get sizes + name
-    const { rows: prods } = await pool.query(
-      `SELECT name, COALESCE(size_list,'{}') AS sizes FROM products WHERE id=$1`,
-      [productId]
-    )
-    if (!prods.length) {
-      return NextResponse.json({ error: "Produto não encontrado" }, { status: 404 })
-    }
-    const { name: productName, sizes } = prods[0]
-
-    const client = await pool.connect()
-    try {
-      await client.query("BEGIN")
-
-      // C3: Validate that all selected entries are not already esgotada
-      for (const entry of entries) {
-        const { rows: entryRows } = await client.query(
-          `SELECT status FROM raw_material_entries WHERE id = $1`,
-          [entry.entryId]
-        )
-        if (!entryRows.length) {
-          throw new Error(`Lote ${entry.entryId} não encontrado`)
-        }
-        if (entryRows[0].status === 'esgotada') {
-          throw new Error(`Lote ${entry.entryId} já está esgotado e não pode ser usado`)
-        }
-      }
-
-      // Create order
-      const { rows } = await client.query(`
-        INSERT INTO prod_orders (product_id, product_name, number, status)
-        VALUES ($1, $2, 'OP-TEMP', 'em_andamento')
-        RETURNING id, created_at AS "createdAt"
-      `, [productId, productName])
-
-      const { id, createdAt } = rows[0]
-      const number = `OP-${String(id).padStart(4, "0")}`
-      await client.query("UPDATE prod_orders SET number=$1 WHERE id=$2", [number, id])
-
-      // Create grade items: selectedColors × product.sizes
-      for (const color of selectedColors) {
-        for (const size of sizes) {
-          await client.query(`
-            INSERT INTO prod_order_items (order_id, product_name, color, size, qty_planned)
-            VALUES ($1, $2, $3, $4, 0)
-          `, [id, productName, color, size])
-        }
-      }
-
-      // Link material entries (with color — graceful fallback if column doesn't exist)
-      for (const entry of entries) {
-        const inserted = await client.query(
-          `INSERT INTO prod_order_materials (order_id, entry_id, color) VALUES ($1, $2, $3)`,
-          [id, entry.entryId, entry.color ?? null]
-        ).catch(() =>
-          client.query(
-            `INSERT INTO prod_order_materials (order_id, entry_id) VALUES ($1, $2)`,
-            [id, entry.entryId]
-          )
-        )
-        void inserted
-      }
-
-      await client.query("COMMIT")
-
-      // Log event (silent fail if table doesn't exist yet)
-      pool.query(
-        `INSERT INTO prod_order_logs (order_id, event, payload) VALUES ($1, $2, $3)`,
-        [id, 'criada', JSON.stringify({ productId, productName, selectedColors, entryCount: entries.length })]
-      ).catch(() => {})
-
-      return NextResponse.json({ id, number, createdAt }, { status: 201 })
-    } catch (e) {
-      await client.query("ROLLBACK")
-      throw e
-    } finally {
-      client.release()
-    }
+    const result = await createProdOrder({ productId, selectedColors, entries })
+    return NextResponse.json(result, { status: 201 })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    const status = msg.includes("obrigatórios") || msg.includes("não encontrado") || msg.includes("esgotado") ? 400 : 500
+    return NextResponse.json({ error: msg }, { status })
   }
 }
