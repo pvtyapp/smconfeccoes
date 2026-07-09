@@ -10,10 +10,12 @@ export async function GET() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_subscriptions TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
 
   const { rows } = await pool.query(`
     SELECT id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
            chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands",
+           notification_subscriptions AS "notificationSubscriptions",
            active, created_at AS "createdAt"
     FROM users
     ORDER BY name ASC
@@ -28,11 +30,13 @@ export async function POST(req: Request) {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_subscriptions TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
 
   try {
-    const { name, login, password, phone, funcao, isAdmin, allowedPages, chatbotAdminEnabled, chatbotCommands } = await req.json() as {
+    const { name, login, password, phone, funcao, isAdmin, allowedPages, chatbotAdminEnabled, chatbotCommands, notificationSubscriptions } = await req.json() as {
       name: string; login: string; password: string; phone?: string; funcao?: string
       isAdmin?: boolean; allowedPages?: string[]; chatbotAdminEnabled?: boolean; chatbotCommands?: string[]
+      notificationSubscriptions?: string[]
     }
 
     if (!name?.trim() || !login?.trim() || !password) {
@@ -45,10 +49,11 @@ export async function POST(req: Request) {
     const passwordHash = await bcrypt.hash(password, 10)
 
     const { rows } = await pool.query(`
-      INSERT INTO users (name, login, password_hash, phone, funcao, is_admin, allowed_pages, chatbot_admin_enabled, chatbot_commands)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO users (name, login, password_hash, phone, funcao, is_admin, allowed_pages, chatbot_admin_enabled, chatbot_commands, notification_subscriptions)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
-                chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands", active
+                chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands",
+                notification_subscriptions AS "notificationSubscriptions", active
     `, [
       name.trim(),
       login.trim(),
@@ -59,6 +64,7 @@ export async function POST(req: Request) {
       isAdmin ? [] : (allowedPages ?? []),
       chatbotAdminEnabled ?? true,
       isAdmin ? [] : (chatbotCommands ?? []),
+      notificationSubscriptions ?? [],
     ])
 
     return NextResponse.json(rows[0], { status: 201 })

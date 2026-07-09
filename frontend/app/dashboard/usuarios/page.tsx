@@ -8,6 +8,7 @@ import {
   type NavItem,
 } from "@/lib/navPages"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
+import { NOTIFICATION_SUBSCRIPTIONS } from "@/lib/notificationSubscriptions"
 
 type User = {
   id: number
@@ -19,6 +20,7 @@ type User = {
   allowedPages: string[]
   chatbotAdminEnabled: boolean
   chatbotCommands: string[]
+  notificationSubscriptions: string[]
   active: boolean
   createdAt: string
 }
@@ -152,6 +154,7 @@ function UserModal({ user, onClose, onSaved }: {
   const [allowedPages, setAllowedPages] = useState<string[]>(user?.allowedPages ?? [])
   const [chatbotAdminEnabled, setChatbotAdminEnabled] = useState(user?.chatbotAdminEnabled ?? true)
   const [chatbotCommands, setChatbotCommands] = useState<string[]>(user?.chatbotCommands ?? [])
+  const [notificationSubscriptions, setNotificationSubscriptions] = useState<string[]>(user?.notificationSubscriptions ?? [])
   const [active,       setActive]       = useState(user?.active ?? true)
   const [saving,        setSaving]      = useState(false)
   const [error,         setError]       = useState("")
@@ -172,6 +175,10 @@ function UserModal({ user, onClose, onSaved }: {
     setChatbotCommands(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
   }
 
+  function toggleSubscription(key: string) {
+    setNotificationSubscriptions(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
@@ -189,6 +196,7 @@ function UserModal({ user, onClose, onSaved }: {
         allowedPages,
         chatbotAdminEnabled,
         chatbotCommands,
+        notificationSubscriptions,
       }
       if (password) body.password = password
       if (!isNew) body.active = active
@@ -293,6 +301,27 @@ function UserModal({ user, onClose, onSaved }: {
                         </span>
                         <input type="checkbox" checked={checked} onChange={() => toggleCommand(cmd.key)} className="hidden" />
                         {cmd.label}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {chatbotAdminEnabled && (
+              <div>
+                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-2">Avisos automáticos do chatbot</label>
+                <p className="text-[10px] text-[#0F1E3C]/35 mb-2 px-1">Mensagens que o bot manda sozinho, sem o operador pedir — ex: quando uma ordem fica pronta pra revisão</p>
+                <div className="p-2 grid grid-cols-2 gap-1 border border-[#0F1E3C]/8 rounded-xl">
+                  {NOTIFICATION_SUBSCRIPTIONS.map(sub => {
+                    const checked = notificationSubscriptions.includes(sub.key)
+                    return (
+                      <label key={sub.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#F4F6FB] cursor-pointer text-xs text-[#0F1E3C]/70">
+                        <span className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${checked ? "bg-[#4361EE] border-[#4361EE]" : "border-[#0F1E3C]/20"}`}>
+                          {checked && <Check size={11} className="text-white" />}
+                        </span>
+                        <input type="checkbox" checked={checked} onChange={() => toggleSubscription(sub.key)} className="hidden" />
+                        {sub.label}
                       </label>
                     )
                   })}

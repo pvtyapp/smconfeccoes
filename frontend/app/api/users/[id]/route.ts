@@ -13,12 +13,14 @@ export async function PUT(
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_subscriptions TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
 
   try {
     const { id } = await params
-    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled, chatbotCommands } = await req.json() as {
+    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled, chatbotCommands, notificationSubscriptions } = await req.json() as {
       name: string; login: string; password?: string; phone?: string; funcao?: string
       isAdmin?: boolean; allowedPages?: string[]; active?: boolean; chatbotAdminEnabled?: boolean; chatbotCommands?: string[]
+      notificationSubscriptions?: string[]
     }
 
     if (!name?.trim() || !login?.trim()) {
@@ -32,20 +34,22 @@ export async function PUT(
 
     const { rows } = await pool.query(`
       UPDATE users SET
-        name                   = $1,
-        login                  = $2,
-        password_hash          = COALESCE($3, password_hash),
-        phone                  = $4,
-        funcao                 = $5,
-        is_admin               = $6,
-        allowed_pages          = $7,
-        active                 = $8,
-        chatbot_admin_enabled  = $9,
-        chatbot_commands       = $10,
-        updated_at             = NOW()
-      WHERE id = $11
+        name                       = $1,
+        login                      = $2,
+        password_hash              = COALESCE($3, password_hash),
+        phone                      = $4,
+        funcao                     = $5,
+        is_admin                   = $6,
+        allowed_pages              = $7,
+        active                     = $8,
+        chatbot_admin_enabled      = $9,
+        chatbot_commands           = $10,
+        notification_subscriptions = $11,
+        updated_at                 = NOW()
+      WHERE id = $12
       RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
-                chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands", active
+                chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands",
+                notification_subscriptions AS "notificationSubscriptions", active
     `, [
       name.trim(),
       login.trim(),
@@ -57,6 +61,7 @@ export async function PUT(
       active ?? true,
       chatbotAdminEnabled ?? true,
       isAdmin ? [] : (chatbotCommands ?? []),
+      notificationSubscriptions ?? [],
       id,
     ])
 

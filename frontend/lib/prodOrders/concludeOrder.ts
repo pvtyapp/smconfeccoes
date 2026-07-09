@@ -1,5 +1,5 @@
 import { pool } from "@/lib/db"
-import { notifyPageUsers } from "@/lib/notifications/notifyPageUsers"
+import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
 
 export type ConcludeGradeItem = { color: string; size: string; qty: number }
 export type ConcludeMaterial = { entryId: number; exhausted: boolean }
@@ -122,9 +122,10 @@ export async function concludeProdOrder(
 
     const order = orderRows[0]
     if (order) {
-      notifyPageUsers(
-        "/dashboard/costura-revisao",
-        `📢 Ordem *${order.number}* (${order.productName}) pronta pra revisão. Confere no painel.`
+      const colors = [...new Set(grade.map(g => g.color))].join(", ")
+      notifySubscribers(
+        "costura_revisao",
+        `📢 Ordem *${order.number}* "${order.productName} ${colors}" para revisão, verifica no dashboard!`
       ).catch(() => {})
     }
 
