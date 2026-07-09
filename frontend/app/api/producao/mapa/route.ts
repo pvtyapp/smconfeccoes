@@ -53,7 +53,7 @@ export async function GET(req: Request) {
       JOIN products p ON p.id = pv.product_id
       WHERE DATE(sm.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE - $1::int
       ORDER BY sm.created_at DESC
-      LIMIT 200
+      LIMIT 500
     `, [offset])
 
     type EstoqueRow = typeof estoqueRaw[number]
@@ -64,9 +64,17 @@ export async function GET(req: Request) {
       if (!estoqueGroups.has(key)) estoqueGroups.set(key, { type: r.type, createdAt: r.createdAt, ref, items: [] })
       estoqueGroups.get(key)!.items.push(r)
     }
-    const estoque = [...estoqueGroups.values()]
+    // Corta top-30 de cada tipo SEPARADAMENTE — saída (venda) acontece bem mais
+    // vezes que entrada (só produção/revisão/estorno), então um corte único
+    // combinado deixava as entradas sempre de fora, empurradas pelo volume
+    // de saída.
+    const allGroups = [...estoqueGroups.values()]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 60)
+    const estoque = [
+      ...allGroups.filter(g => g.type === "in").slice(0, 30),
+      ...allGroups.filter(g => g.type === "out").slice(0, 30),
+    ]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .map((g, i) => ({
         id: `${g.type}-${i}-${g.createdAt}`,
         type: g.type,
