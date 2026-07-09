@@ -104,7 +104,11 @@ function parseNumberList(text: string, max: number): number[] | null {
   return [...new Set(nums)]
 }
 
-export async function handleAdminMessage(jid: string, text: string, userIn: AdminUser): Promise<void> {
+// Retorna true se a mensagem foi tratada como comando administrativo (não deve
+// cair no chatbot de cliente), false se não bateu com nenhum comando reconhecido
+// e o operador estava em modo neutro (aí a mensagem segue pro fluxo de cliente
+// normal — número cadastrado também pode simplesmente estar falando como cliente).
+export async function handleAdminMessage(jid: string, text: string, userIn: AdminUser): Promise<boolean> {
   const user = await resetIfStale(userIn)
   const lower = text.toLowerCase().trim()
 
@@ -115,7 +119,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     } else {
       await reply(jid, "Nada em andamento.")
     }
-    return
+    return true
   }
 
   const state = user.waState ?? "idle"
@@ -124,7 +128,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     if (lower.includes("criar ordem")) {
       if (!hasPermission(user, "/dashboard/programacao")) {
         await reply(jid, "Você não tem permissão pra criar ordem de produção.")
-        return
+        return true
       }
       const { rows: products } = await pool.query(`
         SELECT id, name, size_list AS "sizeList", color_list AS "colorList"
@@ -134,35 +138,35 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       `)
       if (products.length === 0) {
         await reply(jid, "Nenhum produto com cores e tamanhos cadastrados encontrado.")
-        return
+        return true
       }
       await setState(user.id, "op_produto", withTimestamp({
         productsList: products.map(p => ({ id: p.id, name: p.name, sizeList: p.sizeList, colorList: p.colorList })),
       }))
       await reply(jid, `📦 *Criar Ordem de Produção*\n\nQual produto?\n\n${numberedList(products.map(p => p.name))}\n\n_Responda só o número. "cancelar" pra sair._`)
-      return
+      return true
     }
     if (lower.includes("criar insumo")) {
       if (!hasPermission(user, "/dashboard/materias-primas")) {
         await reply(jid, "Você não tem permissão pra dar entrada de matéria-prima.")
-        return
+        return true
       }
       const { rows: materials } = await pool.query(`
         SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
       `)
       if (materials.length === 0) {
         await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes.")
-        return
+        return true
       }
       await setState(user.id, "insumo_material", withTimestamp({
         materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
       }))
       await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" pra sair._`)
-      return
+      return true
     }
     // Nenhum comando reconhecido — modo admin fica em silêncio (evita responder
     // ruído; comandos de relatório entram aqui numa próxima rodada)
-    return
+    return false
   }
 
   const data = user.waStateData ?? {}
@@ -173,14 +177,14 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const n = parseInt(lower, 10)
     if (isNaN(n) || n < 1 || n > productsList.length) {
       await reply(jid, `Não entendi. Responda o número do produto (1 a ${productsList.length}).`)
-      return
+      return true
     }
     const product = productsList[n - 1]
     await setState(user.id, "op_cores", withTimestamp({
       productId: product.id, productName: product.name, sizes: product.sizeList, colorsAll: product.colorList,
     }))
     await reply(jid, `Cores de *${product.name}* — quais entram nessa ordem?\n\n${numberedList(product.colorList)}\n\n_Pode escolher mais de uma, separado por vírgula (ex: 1,3). "cancelar" pra sair._`)
-    return
+    return true
   }
 
   // ── Escolhendo cores ─────────────────────────────────────────────────────
@@ -189,7 +193,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const nums = parseNumberList(lower, colorsAll.length)
     if (!nums) {
       await reply(jid, `Não entendi. Responda os números das cores separados por vírgula (1 a ${colorsAll.length}).`)
-      return
+      return true
     }
     const colorsChosen = nums.map(n => colorsAll[n - 1])
     const { rows: materials } = await pool.query(`
@@ -204,7 +208,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     if (materials.length === 0) {
       await setState(user.id, null, {})
       await reply(jid, "Não há nenhum lote de matéria-prima disponível no estoque agora. Cadastre um lote antes de criar a ordem.")
-      return
+      return true
     }
     await setState(user.id, "op_material", withTimestamp({
       ...data, colorsChosen, colorIndex: 0,
@@ -214,7 +218,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       })),
     }))
     await reply(jid, `Cores escolhidas: ${colorsChosen.join(", ")}.\n\nQual lote de matéria-prima abastece *${colorsChosen[0]}*?\n\n${numberedList(materials.map(m => `${m.materialName}${m.varianteName ? " - " + m.varianteName : ""} (lote ${m.number}, ${Number(m.totalQty).toFixed(1)} ${m.unit})`))}\n\n_Pode escolher mais de um, separado por vírgula. "cancelar" pra sair._`)
-    return
+    return true
   }
 
   // ── Escolhendo material — um turno por cor ──────────────────────────────
@@ -225,7 +229,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const nums = parseNumberList(lower, materialsList.length)
     if (!nums) {
       await reply(jid, `Não entendi. Responda os números dos lotes separados por vírgula (1 a ${materialsList.length}).`)
-      return
+      return true
     }
     const materialsByColor = (data.materialsByColor as Record<string, number[]>) ?? {}
     materialsByColor[colorsChosen[colorIndex]] = nums.map(n => materialsList[n - 1].id)
@@ -234,7 +238,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     if (nextIndex < colorsChosen.length) {
       await setState(user.id, "op_material", withTimestamp({ ...data, materialsByColor, colorIndex: nextIndex }))
       await reply(jid, `Anotado. Qual lote abastece *${colorsChosen[nextIndex]}*?\n\n${numberedList(materialsList.map(m => m.label))}`)
-      return
+      return true
     }
 
     // Todas as cores têm material — cria a ordem de verdade agora
@@ -259,7 +263,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await setState(user.id, null, {})
       await reply(jid, "Deu erro ao criar a ordem. Tenta de novo em alguns instantes ou crie pelo painel.")
     }
-    return
+    return true
   }
 
   // ── Preenchendo quantidade — um turno por cor ───────────────────────────
@@ -284,7 +288,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const missing = sizes.filter(s => !(s in qtyBySize))
     if (Object.keys(qtyBySize).length === 0 || missing.length > 0) {
       await reply(jid, `Formato não reconhecido ou faltou tamanho. Manda todos: ${sizes.map(s => `${s}:qtd`).join(" ")}`)
-      return
+      return true
     }
 
     try {
@@ -292,19 +296,19 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     } catch (e) {
       console.error("[adminBot] salvar quantidade falhou:", e instanceof Error ? e.message : e)
       await reply(jid, "Deu erro ao salvar a quantidade. Tenta de novo.")
-      return
+      return true
     }
 
     const nextIndex = colorIndex + 1
     if (nextIndex < colorsChosen.length) {
       await setState(user.id, "op_quantidade", withTimestamp({ ...data, colorIndex: nextIndex }))
       await reply(jid, `Anotado! Agora pra *${colorsChosen[nextIndex]}*:\n${sizes.map(s => `${s}:qtd`).join(" ")}`)
-      return
+      return true
     }
 
     await setState(user.id, null, {})
     await reply(jid, `🎉 Ordem *${orderNumber}* completa! Já está em produção, segue o fluxo normal no painel.`)
-    return
+    return true
   }
 
   // ── Nova entrada de matéria-prima: escolhendo material ──────────────────
@@ -313,7 +317,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const n = parseInt(lower, 10)
     if (isNaN(n) || n < 1 || n > materialsList.length) {
       await reply(jid, `Não entendi. Responda o número do material (1 a ${materialsList.length}).`)
-      return
+      return true
     }
     const material = materialsList[n - 1]
     const { rows: variants } = await pool.query(
@@ -329,7 +333,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       jid,
       `Qual variação/cor de *${material.name}*?\n\n${numberedList(variants.map(v => v.name))}${variants.length ? "\n" : ""}${novaOpcao}. Nova variação...\n\n_"cancelar" pra sair._`
     )
-    return
+    return true
   }
 
   // ── Nova entrada de matéria-prima: escolhendo ou criando variação ───────
@@ -339,26 +343,26 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const novaOpcao = variantsList.length + 1
     if (isNaN(n) || n < 1 || n > novaOpcao) {
       await reply(jid, `Não entendi. Responda um número de 1 a ${novaOpcao}.`)
-      return
+      return true
     }
     if (n === novaOpcao) {
       await setState(user.id, "insumo_variante_nome", withTimestamp({ ...data }))
       await reply(jid, `Qual o nome da nova variação/cor?`)
-      return
+      return true
     }
     const variant = variantsList[n - 1]
     await setState(user.id, "insumo_quantidade", withTimestamp({
       ...data, variantId: variant.id, varianteName: variant.name,
     }))
     await reply(jid, `Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
-    return
+    return true
   }
 
   // ── Nova entrada de matéria-prima: nome da variação nova ────────────────
   if (state === "insumo_variante_nome") {
     if (!text.trim()) {
       await reply(jid, "Manda o nome da variação.")
-      return
+      return true
     }
     try {
       const variant = await createRawMaterialVariant(data.materialId as number, text.trim())
@@ -371,7 +375,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await setState(user.id, null, {})
       await reply(jid, "Deu erro ao criar a variação. Tenta de novo ou crie pelo painel.")
     }
-    return
+    return true
   }
 
   // ── Nova entrada de matéria-prima: quantidade e preço ───────────────────
@@ -381,7 +385,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const price = parseFloat((parts[1] ?? "").replace(",", "."))
     if (isNaN(qty) || qty <= 0 || isNaN(price) || price < 0) {
       await reply(jid, `Formato não reconhecido. Manda quantidade e preço separados por espaço (ex: 50 12.90).`)
-      return
+      return true
     }
     try {
       const entry = await createRawMaterialEntry(
@@ -397,6 +401,11 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await setState(user.id, null, {})
       await reply(jid, "Deu erro ao criar o lote. Tenta de novo ou lance pelo painel.")
     }
-    return
+    return true
   }
+
+  // Estado desconhecido/corrompido — reseta e engole a mensagem (não deixa
+  // vazar pro fluxo de cliente no meio de um estado que não faz sentido).
+  await setState(user.id, null, {})
+  return true
 }

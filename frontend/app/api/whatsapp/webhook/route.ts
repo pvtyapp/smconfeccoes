@@ -742,8 +742,12 @@ export async function POST(req: Request) {
         continue
       }
 
-      // Operador cadastrado mandando do próprio número? Vira comando administrativo —
-      // nunca entra no fluxo de cliente, nem salva em wa_contacts/wa_messages.
+      // Operador cadastrado mandando do próprio número? Verifica comando
+      // administrativo primeiro. Se estiver no meio de um fluxo (op_produto,
+      // insumo_material...) a mensagem é sempre a resposta daquele fluxo. Se
+      // estiver neutro e a mensagem não bater com nenhum comando reconhecido
+      // (ex: "boa noite"), cai no chatbot de cliente normal — híbrido, não
+      // exclusivo — em vez de ficar mudo.
       const remoteJidAlt = (key.remoteJidAlt as string) || ""
       const adminUser = await resolveAdminUser(jid, remoteJidAlt).catch(() => null)
       if (adminUser) {
@@ -752,12 +756,16 @@ export async function POST(req: Request) {
           (adminMsgBody?.conversation as string) ||
           ((adminMsgBody?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
           ""
-        if (adminText.trim()) {
-          await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e =>
+        const midFlow = !!adminUser.waState && adminUser.waState !== "idle"
+        if (midFlow || adminText.trim()) {
+          const handled = await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e => {
             console.error("[webhook] handleAdminMessage falhou:", jid, e instanceof Error ? e.message : e)
-          )
+            return true
+          })
+          if (handled) continue
         }
-        continue
+        // Não é comando e não estava no meio de um fluxo — segue pro fluxo de
+        // cliente normal abaixo (não faz "continue").
       }
 
       const saved = await saveInboundMessage(m)
