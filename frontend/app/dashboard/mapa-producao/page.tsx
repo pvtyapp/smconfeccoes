@@ -37,10 +37,17 @@ const ZONES = {
   ecommerce: { left: 86, top: 68 },
 }
 
+// Cores reais — nada de var(--money)/var(--danger): essas variáveis CSS nunca
+// existiram no projeto, então o contorno/bolinha ficava invisível (o navegador
+// ignora uma var() que não resolve pra nada).
+const TONE_MONEY  = "#10B981" // emerald-500 — entrada
+const TONE_DANGER = "#EF4444" // red-500 — saída
+const TONE_WARN   = "#F59E0B" // amber-500
+
 const REVISAO_TONE: Record<string, string> = {
-  vermelho: "var(--danger)",
-  amarelo:  "var(--warn)",
-  verde:    "var(--money)",
+  vermelho: TONE_DANGER,
+  amarelo:  TONE_WARN,
+  verde:    TONE_MONEY,
 }
 
 // Agrupa uma lista em blocos de até `size` — cada bloco vira 1 balão só, pra
@@ -216,7 +223,7 @@ export default function SemaforoMapaPage() {
             const pos = scatter(ZONES.estoqueIn, i, estoqueIn.length)
             return (
               <MapBubble key={`ein-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
-                tone="var(--money)" count={item.items.length > 1 ? item.items.length : undefined}
+                tone={TONE_MONEY} count={item.items.length > 1 ? item.items.length : undefined}
                 onClick={() => openEstoquePanel(item)} />
             )
           })}
@@ -224,7 +231,7 @@ export default function SemaforoMapaPage() {
             const pos = scatter(ZONES.estoqueOut, i, estoqueOut.length)
             return (
               <MapBubble key={`eout-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
-                tone="var(--danger)" count={item.items.length > 1 ? item.items.length : undefined}
+                tone={TONE_DANGER} count={item.items.length > 1 ? item.items.length : undefined}
                 onClick={() => openEstoquePanel(item)} />
             )
           })}
@@ -273,7 +280,7 @@ export default function SemaforoMapaPage() {
           {whatsappChunks.map((grp, i) => {
             const pos = scatter(ZONES.whatsapp, i, whatsappChunks.length)
             return (
-              <MapBubble key={`wa-${i}`} left={pos.left} top={pos.top} emoji="📱" tone="var(--money)"
+              <MapBubble key={`wa-${i}`} left={pos.left} top={pos.top} emoji="📱" tone={TONE_MONEY}
                 count={grp.length > 1 ? grp.length : undefined}
                 onClick={() => openVendaPanel("Vendas WhatsApp", grp)} />
             )
