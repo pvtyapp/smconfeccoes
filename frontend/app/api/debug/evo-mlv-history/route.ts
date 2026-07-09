@@ -14,11 +14,12 @@ export async function GET() {
     const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
       method: "POST",
       headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: 10 }),
+      body: JSON.stringify({ where: { key: { remoteJid: jid } }, skip: 0, limit: 200 }),
       signal: AbortSignal.timeout(15000),
     })
     const data = await res.json()
     const records = (data?.messages?.records ?? data?.records ?? (Array.isArray(data) ? data : [])) as Record<string, unknown>[]
+    const incoming = records.filter(r => (r.key as Record<string, unknown> | undefined)?.fromMe === false)
     const summary = records.map(r => {
       const key = r.key as Record<string, unknown> | undefined
       const msg = r.message as Record<string, unknown> | undefined
@@ -28,12 +29,16 @@ export async function GET() {
         fromMe: key?.fromMe,
         messageTimestamp: r.messageTimestamp,
         type: r.messageType,
+        content: (msg?.conversation as string) ?? null,
         fileLength: inner?.fileLength,
         fileName: inner?.fileName,
         mimetype: inner?.mimetype,
       }
     })
-    return NextResponse.json({ ok: true, status: res.status, count: records.length, summary })
+    return NextResponse.json({
+      ok: true, status: res.status, totalRecords: records.length,
+      incomingCount: incoming.length, summary,
+    })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
