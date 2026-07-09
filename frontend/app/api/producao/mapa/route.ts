@@ -51,7 +51,8 @@ export async function GET(req: Request) {
       FROM stock_movements sm
       JOIN product_variants pv ON pv.id = sm.variant_id
       JOIN products p ON p.id = pv.product_id
-      WHERE DATE(sm.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE - $1::int
+      WHERE DATE(sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')
+          = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
       ORDER BY sm.created_at DESC
       LIMIT 500
     `, [offset])

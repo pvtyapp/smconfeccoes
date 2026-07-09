@@ -125,12 +125,13 @@ export async function POST(req: Request) {
 
     // 7. Stock movements
     const batchId = crypto.randomUUID()
+    const movementNotes = notes ? `Pedido ${number} · ${notes}` : `Pedido ${number}`
     for (const item of items) {
       if (item.variantId) {
         await client.query(`
           INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes, batch_id)
           VALUES ($1, 'out', $2, 'venda_manual', 'pdv', $3, $4)
-        `, [item.variantId, item.qty, notes || null, batchId])
+        `, [item.variantId, item.qty, movementNotes, batchId])
       }
     }
 

@@ -67,12 +67,12 @@ export async function GET() {
       pool.query(`
         SELECT
           sm.variant_id AS "variantId",
-          EXTRACT(YEAR  FROM (sm.created_at AT TIME ZONE 'America/Sao_Paulo'))::int AS yr,
-          EXTRACT(MONTH FROM (sm.created_at AT TIME ZONE 'America/Sao_Paulo'))::int AS mo,
+          EXTRACT(YEAR  FROM (sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'))::int AS yr,
+          EXTRACT(MONTH FROM (sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'))::int AS mo,
           CASE
-            WHEN EXTRACT(DAY FROM (sm.created_at AT TIME ZONE 'America/Sao_Paulo')) <= 7  THEN 1
-            WHEN EXTRACT(DAY FROM (sm.created_at AT TIME ZONE 'America/Sao_Paulo')) <= 14 THEN 2
-            WHEN EXTRACT(DAY FROM (sm.created_at AT TIME ZONE 'America/Sao_Paulo')) <= 21 THEN 3
+            WHEN EXTRACT(DAY FROM (sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) <= 7  THEN 1
+            WHEN EXTRACT(DAY FROM (sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) <= 14 THEN 2
+            WHEN EXTRACT(DAY FROM (sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) <= 21 THEN 3
             ELSE 4
           END::int AS seg,
           SUM(sm.quantity)::int AS qty
