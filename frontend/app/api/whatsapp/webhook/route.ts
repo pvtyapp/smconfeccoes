@@ -507,6 +507,19 @@ async function replyAndSave(contactId: number, jid: string, text: string): Promi
   ).catch(() => ({ rows: [] as { value: string }[] }))
   if (rows[0]?.value === "false") return
 
+  // Silenciado manual ou pausa automática (operador respondeu direto pelo
+  // celular) — fica mudo, mas a captura de pedido (chamada antes desse ponto)
+  // já rodou normalmente. Mesmo princípio do chatbot_ativo: silêncio não é
+  // isolamento da coleta de pedido.
+  const { rows: contactFlags } = await pool.query(
+    `SELECT COALESCE(chatbot_silenced, false) AS "chatbotSilenced", chatbot_paused_until AS "chatbotPausedUntil"
+     FROM wa_contacts WHERE id = $1`,
+    [contactId]
+  ).catch(() => ({ rows: [] as { chatbotSilenced: boolean; chatbotPausedUntil: string | null }[] }))
+  const cf = contactFlags[0]
+  const isPausedTemp = cf?.chatbotPausedUntil && new Date(cf.chatbotPausedUntil) > new Date()
+  if (cf?.chatbotSilenced || isPausedTemp) return
+
   waitUntil(
     sendWhatsApp(jid, text)
       .then(async (result) => {
@@ -826,25 +839,18 @@ export async function POST(req: Request) {
     let chatbotProdutoEnabled = true
     let chatbotDtfEnabled = false
     let chatbotObs: string | null = null
-    let chatbotPausedUntil: Date | null = null
-    let chatbotSilenced = false
     try {
       const flagsRes = await pool.query(`
         SELECT
           COALESCE(chatbot_produto_enabled, true)  AS "chatbotProdutoEnabled",
           COALESCE(chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
-          chatbot_obs                              AS "chatbotObs",
-          chatbot_paused_until                     AS "chatbotPausedUntil",
-          COALESCE(chatbot_silenced, false)        AS "chatbotSilenced"
+          chatbot_obs                              AS "chatbotObs"
         FROM wa_contacts WHERE id = $1
       `, [contactId])
       if (flagsRes.rows[0]) {
         chatbotProdutoEnabled = flagsRes.rows[0].chatbotProdutoEnabled
         chatbotDtfEnabled     = flagsRes.rows[0].chatbotDtfEnabled
         chatbotObs            = flagsRes.rows[0].chatbotObs
-        chatbotPausedUntil    = flagsRes.rows[0].chatbotPausedUntil
-          ? new Date(flagsRes.rows[0].chatbotPausedUntil) : null
-        chatbotSilenced       = flagsRes.rows[0].chatbotSilenced
       }
     } catch { /* use defaults if columns not migrated yet */ }
 
@@ -865,13 +871,9 @@ export async function POST(req: Request) {
       : { available: false, reason: "desativado" }
     const dtfStatus      = getServiceStatus("dtf", globalSettings)
 
-    // Bot silenciado (toggle manual do operador) ou em pausa temporária (auto, após
-    // operador mandar mensagem manual pelo celular) — fica em silêncio total.
-    const isPausedTemp = chatbotPausedUntil && chatbotPausedUntil > new Date()
-    if (chatbotSilenced || isPausedTemp) {
-      return NextResponse.json({ ok: true })
-    }
-
+    // Silenciado manual ou pausa automática não bloqueia mais aqui — mesmo
+    // princípio do chatbot_ativo acima: a captura de pedido continua rodando,
+    // quem fica mudo é o replyAndSave (checa isso sozinho antes de responder).
     if (hasMedia) {
       await handleMedia(jid, contactId, msg, state)
     } else {
