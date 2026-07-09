@@ -27,9 +27,11 @@ const ZONES = {
   revisao:  { left: 84, top: 41.1 },
   corte1:   { left: 20, top: 68.9 },
   corte2:   { left: 43, top: 80 },
-  dtf:      { left: 80, top: 64.4 },
-  whatsapp: { left: 92, top: 72.2 },
-  ecommerce: { left: 86, top: 57 },
+  // sala de vendas (canto inferior direito) — impressora, celular e
+  // computador agrupados dentro da mesma salinha
+  dtf:       { left: 79, top: 68 },
+  whatsapp:  { left: 92, top: 72 },
+  ecommerce: { left: 86, top: 63 },
 }
 
 const REVISAO_TONE: Record<string, string> = {
@@ -157,8 +159,6 @@ export default function SemaforoMapaPage() {
   const corteChunks = chunk(data.corte, 5)
   const estoqueIn  = data.estoque.filter(e => e.type === "in")
   const estoqueOut = data.estoque.filter(e => e.type === "out")
-  const estoqueInChunks  = chunk(estoqueIn, 5)
-  const estoqueOutChunks = chunk(estoqueOut, 5)
   const dtfChunks      = chunk(data.dtf, 5)
   const whatsappChunks = chunk(data.whatsapp, 5)
   const balcaoChunks   = chunk(data.balcao, 5)
@@ -207,21 +207,20 @@ export default function SemaforoMapaPage() {
             <MapBubble left={ZONES.balcao.left} top={ZONES.balcao.top} emoji="💲" faded />
           )}
 
-          {/* Estoque: entradas verdes, saídas vermelhas */}
-          {estoqueInChunks.map((grp, i) => {
-            const pos = scatter(ZONES.estoqueIn, i, estoqueInChunks.length)
+          {/* Estoque: cada movimentação é seu próprio balão — entrada contorno
+              verde, saída contorno vermelho, sem agrupar */}
+          {estoqueIn.map((item, i) => {
+            const pos = scatter(ZONES.estoqueIn, i, estoqueIn.length)
             return (
-              <MapBubble key={`ein-${i}`} left={pos.left} top={pos.top} emoji="📦"
-                tone="var(--money)" count={grp.length > 1 ? grp.length : undefined}
-                onClick={() => openEstoquePanel(grp, "in")} />
+              <MapBubble key={`ein-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
+                tone="var(--money)" onClick={() => openEstoquePanel([item], "in")} />
             )
           })}
-          {estoqueOutChunks.map((grp, i) => {
-            const pos = scatter(ZONES.estoqueOut, i, estoqueOutChunks.length)
+          {estoqueOut.map((item, i) => {
+            const pos = scatter(ZONES.estoqueOut, i, estoqueOut.length)
             return (
-              <MapBubble key={`eout-${i}`} left={pos.left} top={pos.top} emoji="📦"
-                tone="var(--danger)" count={grp.length > 1 ? grp.length : undefined}
-                onClick={() => openEstoquePanel(grp, "out")} />
+              <MapBubble key={`eout-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
+                tone="var(--danger)" onClick={() => openEstoquePanel([item], "out")} />
             )
           })}
           {estoqueIn.length === 0 && estoqueOut.length === 0 && (
