@@ -164,9 +164,18 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" pra sair._`)
       return true
     }
-    // Nenhum comando reconhecido — modo admin fica em silêncio (evita responder
-    // ruído; comandos de relatório entram aqui numa próxima rodada)
-    return false
+    // Nenhum comando reconhecido — saudação administrativa, mostra os comandos
+    // disponíveis (só os que o operador tem permissão de usar)
+    const comandos: string[] = []
+    if (hasPermission(user, "/dashboard/programacao"))    comandos.push("*criar ordem* — nova ordem de produção")
+    if (hasPermission(user, "/dashboard/materias-primas")) comandos.push("*criar insumo* — entrada de matéria-prima")
+    await reply(
+      jid,
+      comandos.length
+        ? `Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\nComandos disponíveis:\n${comandos.map(c => `• ${c}`).join("\n")}\n\n_Manda um desses pra começar._`
+        : `Oi, ${user.name}! Você não tem nenhum comando administrativo liberado ainda.`
+    )
+    return true
   }
 
   const data = user.waStateData ?? {}
