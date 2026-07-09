@@ -29,6 +29,7 @@ const ZONES = {
   corte2:   { left: 43, top: 80 },
   dtf:      { left: 80, top: 64.4 },
   whatsapp: { left: 92, top: 72.2 },
+  ecommerce: { left: 86, top: 57 },
 }
 
 const REVISAO_TONE: Record<string, string> = {
@@ -183,7 +184,8 @@ export default function SemaforoMapaPage() {
         </div>
       </div>
 
-      <div className="relative bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden shadow-sm flex justify-center">
+      <div className="flex flex-col lg:flex-row gap-5 items-start">
+      <div className="relative bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden shadow-sm flex justify-center mx-auto lg:mx-0">
         <div className="relative" style={{ height: "min(76vh, 780px)", aspectRatio: "780 / 1178", maxWidth: "100%" }}>
           <video
             src="/mapa-producao.mp4"
@@ -274,6 +276,9 @@ export default function SemaforoMapaPage() {
           })}
           {whatsappChunks.length === 0 && <MapBubble left={ZONES.whatsapp.left} top={ZONES.whatsapp.top} emoji="📱" faded />}
 
+          {/* E-commerce — esqueleto, aba ainda não existe */}
+          <MapBubble left={ZONES.ecommerce.left} top={ZONES.ecommerce.top} emoji="💻" faded />
+
           {/* eventos individuais voando (novo item detectado desde a última atualização) */}
           {events.map(e => (
             <span key={e.id} className="absolute pointer-events-none z-20 text-xl"
@@ -287,16 +292,18 @@ export default function SemaforoMapaPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-1 gap-3 w-full lg:w-56 flex-shrink-0">
         <SummaryCard emoji="✂️" label="Corte" value={`${data.corte.length}`} />
         <SummaryCard emoji="👕" label="Revisão" value={`${data.revisao.length}`} />
         <SummaryCard emoji="📦" label="Estoque" value={`${estoqueIn.length} in · ${estoqueOut.length} out`} />
         <SummaryCard emoji="💲" label="Balcão" value={fmtR(data.balcao.reduce((s, v) => s + Number(v.valor), 0))} />
         <SummaryCard emoji="🖨️" label="DTF" value={fmtR(data.dtf.reduce((s, v) => s + Number(v.valor), 0))} />
         <SummaryCard emoji="📱" label="WhatsApp" value={fmtR(data.whatsapp.reduce((s, v) => s + Number(v.valor), 0))} />
+        <SummaryCard emoji="💻" label="E-commerce" value="Em breve" />
         <SummaryCard emoji="💰" label={`Total ${dia}`} value={fmtR(
           [...data.balcao, ...data.dtf, ...data.whatsapp].reduce((s, v) => s + Number(v.valor), 0)
         )} />
+      </div>
       </div>
 
       {panel && (

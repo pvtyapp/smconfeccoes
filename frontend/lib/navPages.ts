@@ -47,7 +47,7 @@ export const navProducao: NavItem[] = [
   { href: "/dashboard/programacao",     label: "Programação de Produção",    icon: CalendarClock  },
   { href: "/dashboard/custo-producao",  label: "Custos de Produção",         icon: Factory        },
   { href: "/dashboard/costura-revisao", label: "Costura e Revisão",          icon: ClipboardCheck },
-  { href: "/dashboard/semaforo",        label: "Semáforo de Produção",       icon: Signal         },
+  { href: "/dashboard/mapa-producao",   label: "Mapa de Produção",           icon: Signal         },
 ]
 
 export const navCadastros: NavItem[] = [
