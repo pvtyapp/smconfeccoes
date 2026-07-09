@@ -15,6 +15,10 @@ const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
 const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
+// Dá tempo pro download de mídia grande (waitUntil) terminar em segundo plano
+// sem o Vercel matar a função antes da hora.
+export const maxDuration = 60
+
 // Contato @lid cuja 1ª mensagem não trouxe remoteJidAlt fica com phone_jid NULL e o
 // campo "phone" com o hash interno do @lid (parece telefone, não é). Antes disso só era
 // corrigido pelo cron diário (/api/chat/sync, 09h BRT). Aqui tentamos resolver na hora,

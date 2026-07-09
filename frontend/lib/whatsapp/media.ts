@@ -37,7 +37,7 @@ export async function downloadEvolutionMedia(message: unknown): Promise<Download
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: EVO_KEY },
         body: JSON.stringify({ message }),
-        signal: AbortSignal.timeout(12_000),
+        signal: AbortSignal.timeout(45_000),
       }
     )
     if (!res.ok) return null
