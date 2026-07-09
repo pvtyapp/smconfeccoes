@@ -39,16 +39,42 @@ export async function GET(req: Request) {
     const revisao = revisaoRows.map((r, i) => ({ ...r, prioridade: i + 1, cor: PRIORIDADE_COR[i] }))
 
     // ── Estoque: movimentações do dia (entrada = verde, saída = vermelho) ────
-    const { rows: estoque } = await pool.query(`
-      SELECT sm.id, sm.type, sm.quantity, sm.reason, sm.created_at AS "createdAt",
+    // Uma ordem com 3 produtos gera 3 linhas em stock_movements (uma por
+    // variante — isso é correto, cada SKU precisa do próprio registro). Mas
+    // pro mapa, isso deve aparecer como 1 evento só, não 3 balões separados.
+    // Todas as linhas do mesmo evento entram no banco com o mesmíssimo
+    // created_at (mesma transação), então agrupar por (type, created_at)
+    // reconstrói "1 ordem = 1 balão" sem precisar mudar nada na gravação.
+    const { rows: estoqueRaw } = await pool.query(`
+      SELECT sm.id, sm.type, sm.quantity, sm.reason, sm.notes, sm.created_at AS "createdAt",
              p.name AS "productName", pv.color, pv.size
       FROM stock_movements sm
       JOIN product_variants pv ON pv.id = sm.variant_id
       JOIN products p ON p.id = pv.product_id
       WHERE DATE(sm.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE - $1::int
       ORDER BY sm.created_at DESC
-      LIMIT 60
+      LIMIT 200
     `, [offset])
+
+    type EstoqueRow = typeof estoqueRaw[number]
+    const estoqueGroups = new Map<string, { type: string; createdAt: string; ref: string | null; items: EstoqueRow[] }>()
+    for (const r of estoqueRaw) {
+      const key = `${r.type}|${r.createdAt}`
+      const ref = (r.notes as string | null)?.match(/Pedido\s+\S+/i)?.[0] ?? null
+      if (!estoqueGroups.has(key)) estoqueGroups.set(key, { type: r.type, createdAt: r.createdAt, ref, items: [] })
+      estoqueGroups.get(key)!.items.push(r)
+    }
+    const estoque = [...estoqueGroups.values()]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 60)
+      .map((g, i) => ({
+        id: `${g.type}-${i}-${g.createdAt}`,
+        type: g.type,
+        createdAt: g.createdAt,
+        ref: g.ref,
+        totalQuantity: g.items.reduce((s, it) => s + Number(it.quantity), 0),
+        items: g.items.map(it => ({ productName: it.productName, color: it.color, size: it.size, quantity: it.quantity })),
+      }))
 
     // ── DTF: vendas concluídas do dia ─────────────────────────────────────────
     const { rows: dtf } = await pool.query(`

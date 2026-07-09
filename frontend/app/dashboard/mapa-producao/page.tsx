@@ -5,14 +5,17 @@ import { fmtR } from "@/lib/format"
 
 type CorteItem = { id: number; number: string; productName: string; createdAt: string; materiaisCount: number; coresCount: number }
 type RevisaoItem = { id: number; number: string; productName: string; concludedAt: string; prioridade: number; cor: "vermelho" | "amarelo" | "verde" }
-type EstoqueItem = { id: string; type: "in" | "out"; quantity: number; reason: string; createdAt: string; productName: string; color: string; size: string }
+type EstoqueGroup = {
+  id: string; type: "in" | "out"; createdAt: string; ref: string | null; totalQuantity: number
+  items: { productName: string; color: string; size: string; quantity: number }[]
+}
 type VendaItem = { id: number; number: string; valor: number; createdAt: string; cliente?: string }
 
 type MapaData = {
   dia: "hoje" | "ontem"
   corte: CorteItem[]
   revisao: RevisaoItem[]
-  estoque: EstoqueItem[]
+  estoque: EstoqueGroup[]
   dtf: VendaItem[]
   whatsapp: VendaItem[]
   balcao: VendaItem[]
@@ -133,11 +136,11 @@ export default function SemaforoMapaPage() {
       ],
     })
   }
-  function openEstoquePanel(items: EstoqueItem[], tipo: "in" | "out") {
+  function openEstoquePanel(group: EstoqueGroup) {
     setPanel({
-      eyebrow: tipo === "in" ? "Estoque — entradas" : "Estoque — saídas",
-      title: `${items.length} movimentação${items.length !== 1 ? "ões" : ""}`,
-      rows: items.map(m => ({ label: `${m.productName} ${m.color}/${m.size}`, value: `${m.quantity} un` })),
+      eyebrow: (group.type === "in" ? "Estoque — entrada" : "Estoque — saída") + (group.ref ? ` · ${group.ref}` : ""),
+      title: `${group.totalQuantity} peça${group.totalQuantity !== 1 ? "s" : ""}`,
+      rows: group.items.map(m => ({ label: `${m.productName} ${m.color}/${m.size}`, value: `${m.quantity} un` })),
     })
   }
 
@@ -207,20 +210,22 @@ export default function SemaforoMapaPage() {
             <MapBubble left={ZONES.balcao.left} top={ZONES.balcao.top} emoji="💲" faded />
           )}
 
-          {/* Estoque: cada movimentação é seu próprio balão — entrada contorno
-              verde, saída contorno vermelho, sem agrupar */}
+          {/* Estoque: cada EVENTO (1 ordem/venda, não linha por produto) é seu
+              próprio balão — entrada contorno verde, saída contorno vermelho */}
           {estoqueIn.map((item, i) => {
             const pos = scatter(ZONES.estoqueIn, i, estoqueIn.length)
             return (
               <MapBubble key={`ein-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
-                tone="var(--money)" onClick={() => openEstoquePanel([item], "in")} />
+                tone="var(--money)" count={item.items.length > 1 ? item.items.length : undefined}
+                onClick={() => openEstoquePanel(item)} />
             )
           })}
           {estoqueOut.map((item, i) => {
             const pos = scatter(ZONES.estoqueOut, i, estoqueOut.length)
             return (
               <MapBubble key={`eout-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
-                tone="var(--danger)" onClick={() => openEstoquePanel([item], "out")} />
+                tone="var(--danger)" count={item.items.length > 1 ? item.items.length : undefined}
+                onClick={() => openEstoquePanel(item)} />
             )
           })}
           {estoqueIn.length === 0 && estoqueOut.length === 0 && (
