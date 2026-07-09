@@ -256,11 +256,16 @@ export default function EstoqueAvariasPage() {
   }
 
   async function handleSave(id: number, disposition: Disposition, notes: string, salePrice?: number | null) {
-    await fetch(`/api/defect-stock/${id}`, {
+    const res = await fetch(`/api/defect-stock/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ disposition, notes, salePrice: salePrice ?? null }),
     })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      alert(body?.error ?? "Erro ao salvar. Tenta de novo.")
+      return
+    }
     setEditing(null)
     setShowSaida(false)
     await load()
