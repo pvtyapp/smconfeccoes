@@ -387,7 +387,10 @@ function MapBubble({ left, top, emoji, tone, count, badge, faded, onClick }: {
           </span>
         )}
         {count != null && (
-          <span className="absolute -bottom-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#4361EE] text-white text-[9px] font-bold flex items-center justify-center">
+          <span
+            className="absolute -bottom-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full text-white text-[9px] font-bold flex items-center justify-center"
+            style={{ background: tone ?? "#4361EE" }}
+          >
             ×{count}
           </span>
         )}
