@@ -19,6 +19,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
+  "/api/debug/mlv", // temporário — audita teste de arquivo grande, remover depois de usar
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
