@@ -19,8 +19,8 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
-  "/api/debug/migrate-mapa-href", // temporário, uso único — migra allowed_pages pro novo href
   "/api/debug/mapa-estoque-check2", // temporário — confere in/out de hoje detalhado
+  "/api/debug/tz-check", // temporário — confere timezone da sessao do postgres
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {

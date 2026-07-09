@@ -12,7 +12,13 @@ export async function GET() {
       WHERE DATE(sm.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE
       ORDER BY sm.created_at DESC
     `)
-    return NextResponse.json({ ok: true, count: rows.length, rows })
+    const { rows: latest } = await pool.query(`
+      SELECT sm.id, sm.type, sm.quantity, sm.reason, sm.notes, sm.created_at AS "createdAt"
+      FROM stock_movements sm
+      ORDER BY sm.created_at DESC
+      LIMIT 5
+    `)
+    return NextResponse.json({ ok: true, count: rows.length, rows, latestOverall: latest })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
