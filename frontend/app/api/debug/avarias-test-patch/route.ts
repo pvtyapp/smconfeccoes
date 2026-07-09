@@ -27,7 +27,7 @@ export async function GET() {
       SET
         disposition  = COALESCE($1, disposition),
         notes        = COALESCE($2, notes),
-        sale_price   = CASE WHEN $5 IS NOT NULL THEN $5 ELSE sale_price END,
+        sale_price   = CASE WHEN $5::numeric IS NOT NULL THEN $5::numeric ELSE sale_price END,
         resolved_at  = CASE WHEN $3 THEN NOW() ELSE resolved_at END
       WHERE id = $4
       RETURNING id, disposition, notes, sale_price AS "salePrice", resolved_at AS "resolvedAt"
