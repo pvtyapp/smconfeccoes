@@ -33,6 +33,7 @@ type Order = {
 }
 type AvailableEntry = {
   id: number; number: string; materialId: number; materialName: string; unit: string
+  variantId: number | null; varianteName: string | null
   totalQty: number; totalCost: number; status: "disponivel" | "usada"
   totalPiecesProduced: number
 }
@@ -295,11 +296,16 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
     }
   }
 
+  // Agrupa em 2 níveis: insumo (categoria raiz) → variação (categoria filha) →
+  // bobinas. Sem isso, bobinas de variações diferentes do mesmo insumo ficavam
+  // misturadas numa lista só, sem dar pra saber qual variação cada uma é.
   const grouped = entries.reduce((acc, e) => {
-    if (!acc[e.materialName]) acc[e.materialName] = []
-    acc[e.materialName].push(e)
+    if (!acc[e.materialName]) acc[e.materialName] = {}
+    const varKey = e.varianteName ?? "Sem variação"
+    if (!acc[e.materialName][varKey]) acc[e.materialName][varKey] = []
+    acc[e.materialName][varKey].push(e)
     return acc
-  }, {} as Record<string, AvailableEntry[]>)
+  }, {} as Record<string, Record<string, AvailableEntry[]>>)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -404,35 +410,42 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                   <p className="text-xs font-semibold">Nenhuma matéria prima disponível</p>
                 </div>
               ) : (
-                Object.entries(grouped).map(([matName, matEntries]) => (
+                Object.entries(grouped).map(([matName, byVariant]) => (
                   <div key={matName}>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">{matName}</p>
-                    <div className="space-y-1.5">
-                      {matEntries.map(entry => {
-                        const selected = matPicks.some(p => p.entryId === entry.id)
-                        return (
-                          <button key={entry.id} onClick={() => toggleEntry(entry)}
-                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all ${
-                              selected ? "border-[#4361EE]/30 bg-[#4361EE]/5" : "border-[#0F1E3C]/8 hover:bg-[#F9FAFB]"
-                            }`}>
-                            <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border-2 transition-all ${
-                              selected ? "bg-[#4361EE] border-[#4361EE]" : "border-[#0F1E3C]/20"
-                            }`}>
-                              {selected && <Check size={10} className="text-white" strokeWidth={3}/>}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-[#0F1E3C]">{entry.number}</p>
-                              <p className="text-xs text-[#0F1E3C]/40">
-                                {entry.totalQty} {entry.unit} · {fmtR(entry.totalCost)}
-                                {entry.totalPiecesProduced > 0 ? ` · ${entry.totalPiecesProduced} pç já produzidas` : ""}
-                              </p>
-                            </div>
-                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
-                              entry.status === "disponivel" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                            }`}>{entry.status === "disponivel" ? "DISPONÍVEL" : "EM USO"}</span>
-                          </button>
-                        )
-                      })}
+                    <div className="space-y-3">
+                      {Object.entries(byVariant).map(([varName, matEntries]) => (
+                        <div key={varName}>
+                          <p className="text-[10px] font-semibold text-[#0F1E3C]/35 mb-1.5 pl-1">↳ {varName}</p>
+                          <div className="space-y-1.5">
+                            {matEntries.map(entry => {
+                              const selected = matPicks.some(p => p.entryId === entry.id)
+                              return (
+                                <button key={entry.id} onClick={() => toggleEntry(entry)}
+                                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all ${
+                                    selected ? "border-[#4361EE]/30 bg-[#4361EE]/5" : "border-[#0F1E3C]/8 hover:bg-[#F9FAFB]"
+                                  }`}>
+                                  <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border-2 transition-all ${
+                                    selected ? "bg-[#4361EE] border-[#4361EE]" : "border-[#0F1E3C]/20"
+                                  }`}>
+                                    {selected && <Check size={10} className="text-white" strokeWidth={3}/>}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-[#0F1E3C]">{entry.number}</p>
+                                    <p className="text-xs text-[#0F1E3C]/40">
+                                      {entry.totalQty} {entry.unit} · {fmtR(entry.totalCost)}
+                                      {entry.totalPiecesProduced > 0 ? ` · ${entry.totalPiecesProduced} pç já produzidas` : ""}
+                                    </p>
+                                  </div>
+                                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                                    entry.status === "disponivel" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                                  }`}>{entry.status === "disponivel" ? "DISPONÍVEL" : "EM USO"}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))
