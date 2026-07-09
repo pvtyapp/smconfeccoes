@@ -16,6 +16,7 @@ type User = {
   funcao: string | null
   isAdmin: boolean
   allowedPages: string[]
+  chatbotAdminEnabled: boolean
   active: boolean
   createdAt: string
 }
@@ -147,6 +148,7 @@ function UserModal({ user, onClose, onSaved }: {
   const [phone,        setPhone]        = useState(user?.phone ? maskPhoneInput(user.phone) : "")
   const [isAdmin,      setIsAdmin]      = useState(user?.isAdmin ?? false)
   const [allowedPages, setAllowedPages] = useState<string[]>(user?.allowedPages ?? [])
+  const [chatbotAdminEnabled, setChatbotAdminEnabled] = useState(user?.chatbotAdminEnabled ?? true)
   const [active,       setActive]       = useState(user?.active ?? true)
   const [saving,        setSaving]      = useState(false)
   const [error,         setError]       = useState("")
@@ -178,6 +180,7 @@ function UserModal({ user, onClose, onSaved }: {
         phone: phone.replace(/\D/g, "") || null,
         isAdmin,
         allowedPages,
+        chatbotAdminEnabled,
       }
       if (password) body.password = password
       if (!isNew) body.active = active
@@ -255,6 +258,17 @@ function UserModal({ user, onClose, onSaved }: {
               <div>
                 <p className="text-sm font-semibold text-[#0F1E3C]">Administrador</p>
                 <p className="text-[10px] text-[#0F1E3C]/40">Vê e acessa todas as abas, sem precisar marcar cada uma</p>
+              </div>
+            </div>
+
+            <div
+              className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6 cursor-pointer select-none"
+              onClick={() => setChatbotAdminEnabled(v => !v)}
+            >
+              <Toggle on={chatbotAdminEnabled} onChange={() => {}} />
+              <div>
+                <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot Administrativo</p>
+                <p className="text-[10px] text-[#0F1E3C]/40">Permite usar o bot do WhatsApp pra comandos das abas liberadas acima</p>
               </div>
             </div>
 

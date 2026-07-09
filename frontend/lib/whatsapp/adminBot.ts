@@ -1,7 +1,7 @@
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { createProdOrder } from "@/lib/prodOrders/createOrder"
-import { updateProdOrderGrade } from "@/lib/prodOrders/updateGrade"
+import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
 import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
 import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
 import { todayBR } from "@/lib/tz"
@@ -72,11 +72,13 @@ export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promi
 
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wa_state TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wa_state_data JSONB NOT NULL DEFAULT '{}'`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
 
   const { rows } = await pool.query(
     `SELECT id, name, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
             wa_state AS "waState", wa_state_data AS "waStateData"
-     FROM users WHERE active = true AND phone IN ($1, $2) LIMIT 1`,
+     FROM users
+     WHERE active = true AND chatbot_admin_enabled = true AND phone IN ($1, $2) LIMIT 1`,
     [phone, phoneNoCC]
   ).catch(() => ({ rows: [] as AdminUser[] }))
 
@@ -155,6 +157,21 @@ async function startCriarInsumo(jid: string, user: AdminUser): Promise<void> {
     materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
   }))
   await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
+}
+
+async function startConcluirOrdem(jid: string, user: AdminUser): Promise<void> {
+  const { rows: orders } = await pool.query(`
+    SELECT id, number, product_name AS "productName"
+    FROM prod_orders WHERE status = 'em_andamento' ORDER BY created_at ASC
+  `)
+  if (orders.length === 0) {
+    await reply(jid, "Nenhuma ordem em andamento pra concluir." + MENU_FOOTER)
+    return
+  }
+  await setState(user.id, "concluir_pedido", withTimestamp({
+    ordersList: orders.map(o => ({ id: o.id, number: o.number, productName: o.productName })),
+  }))
+  await reply(jid, `✂️ *Concluir Ordem de Produção*\n\nQual ordem?\n\n${numberedList(orders.map(o => `${o.number} — ${o.productName}`))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
 }
 
 async function startEstoque(jid: string, user: AdminUser): Promise<void> {
@@ -284,8 +301,9 @@ async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { key: "criar_ordem",  label: "Criar ordem de produção",       triggers: ["criar ordem"],   permission: "/dashboard/programacao",     start: startCriarOrdem },
-  { key: "criar_insumo", label: "Criar insumo (matéria-prima)",  triggers: ["criar insumo"],  permission: "/dashboard/materias-primas", start: startCriarInsumo },
+  { key: "criar_ordem",    label: "Criar ordem de produção",       triggers: ["criar ordem"],    permission: "/dashboard/programacao",     start: startCriarOrdem },
+  { key: "concluir_ordem", label: "Concluir ordem de produção",    triggers: ["concluir ordem"], permission: "/dashboard/programacao",     start: startConcluirOrdem },
+  { key: "criar_insumo",   label: "Criar insumo (matéria-prima)",  triggers: ["criar insumo"],   permission: "/dashboard/materias-primas", start: startCriarInsumo },
   { key: "vendas",       label: "Relatório de vendas",           triggers: ["relatorio de vendas", "relatório de vendas", "vendas"], permission: "/dashboard/relatorio-vendas", start: startVendas },
   { key: "financeiro",   label: "Relatório financeiro",          triggers: ["relatorio financeiro", "relatório financeiro", "financeiro"], permission: "/dashboard/relatorio-financeiro", start: startFinanceiro },
   { key: "estoque",      label: "Relatório de estoque",          triggers: ["relatorio de estoque", "relatório de estoque", "estoque"], permission: "/dashboard/estoque", start: startEstoque },
@@ -300,10 +318,24 @@ async function showMenu(jid: string, user: AdminUser): Promise<void> {
     await reply(jid, `Oi, ${user.name}! Você não tem nenhum comando administrativo liberado ainda.`)
     return
   }
+
+  let alerta = ""
+  if (hasPermission(user, "/dashboard/programacao")) {
+    const { rows: pendentes } = await pool.query(`
+      SELECT number, product_name AS "productName" FROM prod_orders
+      WHERE status = 'em_andamento' ORDER BY created_at ASC LIMIT 10
+    `).catch(() => ({ rows: [] as { number: string; productName: string }[] }))
+    if (pendentes.length > 0) {
+      alerta = `⚠️ *ORDENS DE PRODUÇÃO PENDENTES* (${pendentes.length})\n` +
+        pendentes.map(o => `${o.number} — ${o.productName}`).join("\n") +
+        `\n\n_Digite *concluir ordem* pra dar sequência._\n\n`
+    }
+  }
+
   await setState(user.id, "idle", { menuMap: items.map(i => i.key) })
   await reply(
     jid,
-    `Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${numberedList(items.map(i => i.label))}\n\n_Responda o número ou o nome do comando._`
+    `${alerta}Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${numberedList(items.map(i => i.label))}\n\n_Responda o número ou o nome do comando._`
   )
 }
 
@@ -383,7 +415,7 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     const colorsChosen = nums.map(n => colorsAll[n - 1])
     const { rows: materials } = await pool.query(`
       SELECT rme.id, rme.number, rm.name AS "materialName", rmv.name AS "varianteName",
-             rme.total_qty AS "totalQty", rm.unit
+             rme.total_qty AS "totalQty", rm.unit, rme.status
       FROM raw_material_entries rme
       JOIN raw_materials rm ON rm.id = rme.material_id
       LEFT JOIN raw_material_variants rmv ON rmv.id = rme.variant_id
@@ -395,14 +427,13 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await reply(jid, "Não há nenhum lote de matéria-prima disponível no estoque agora. Cadastre um lote antes de criar a ordem." + MENU_FOOTER)
       return true
     }
+    const materialLabel = (m: typeof materials[number]) =>
+      `${m.status === "disponivel" ? "📗 Disponível" : "🟡 Em uso"} — ${m.materialName}${m.varianteName ? " - " + m.varianteName : ""} (lote ${m.number}, ${Number(m.totalQty).toFixed(1)} ${m.unit})`
     await setState(user.id, "op_material", withTimestamp({
       ...data, colorsChosen, colorIndex: 0,
-      materialsList: materials.map(m => ({
-        id: m.id,
-        label: `${m.materialName}${m.varianteName ? " - " + m.varianteName : ""} (lote ${m.number}, ${Number(m.totalQty).toFixed(1)} ${m.unit})`,
-      })),
+      materialsList: materials.map(m => ({ id: m.id, label: materialLabel(m) })),
     }))
-    await reply(jid, `Cores escolhidas: ${colorsChosen.join(", ")}.\n\nQual lote de matéria-prima abastece *${colorsChosen[0]}*?\n\n${numberedList(materials.map(m => `${m.materialName}${m.varianteName ? " - " + m.varianteName : ""} (lote ${m.number}, ${Number(m.totalQty).toFixed(1)} ${m.unit})`))}\n\n_Pode escolher mais de um, separado por vírgula. "cancelar" pra sair._`)
+    await reply(jid, `Cores escolhidas: ${colorsChosen.join(", ")}.\n\nQual lote de matéria-prima abastece *${colorsChosen[0]}*?\n\n${numberedList(materials.map(materialLabel))}\n\n_Pode escolher mais de um, separado por vírgula. "cancelar" pra sair._`)
     return true
   }
 
@@ -426,7 +457,9 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       return true
     }
 
-    // Todas as cores têm material — cria a ordem de verdade agora
+    // Todas as cores têm material — cria a ordem de verdade agora. Só cria —
+    // grade cortada e esgotamento de bobina são reportados depois, quando o
+    // corte acontecer de verdade, pelo comando "concluir ordem".
     try {
       const entries = Object.entries(materialsByColor).flatMap(([color, ids]) =>
         (ids as number[]).map(entryId => ({ entryId, color }))
@@ -434,14 +467,10 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       const created = await createProdOrder({
         productId: data.productId as string, selectedColors: colorsChosen, entries,
       })
-
-      await setState(user.id, "op_quantidade", withTimestamp({
-        ...data, materialsByColor, colorIndex: 0, orderId: created.id, orderNumber: created.number,
-      }))
-      const sizes = (data.sizes as string[]) ?? []
+      await setState(user.id, null, {})
       await reply(
         jid,
-        `✅ Ordem *${created.number}* criada!\n\nAgora a quantidade por tamanho. Pra *${colorsChosen[0]}*, manda no formato:\n${sizes.map(s => `${s}:0`).join(" ")}\n\n_Exemplo: ${sizes.map(s => `${s}:10`).join(" ")}_`
+        `✅ Ordem *${created.number}* criada! Quando o corte acontecer, digite *concluir ordem* pra reportar a grade cortada.` + MENU_FOOTER
       )
     } catch (e) {
       console.error("[adminBot] criar ordem falhou:", e instanceof Error ? e.message : e)
@@ -451,48 +480,141 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     return true
   }
 
-  // ── Preenchendo quantidade — um turno por cor ───────────────────────────
-  if (state === "op_quantidade") {
-    const colorsChosen = (data.colorsChosen as string[]) ?? []
-    const colorIndex   = (data.colorIndex as number) ?? 0
-    const sizes        = (data.sizes as string[]) ?? []
-    const orderId      = data.orderId as number
-    const orderNumber  = data.orderNumber as string
-    const color        = colorsChosen[colorIndex]
+  // ── Concluir ordem: escolhendo qual ordem ────────────────────────────────
+  if (state === "concluir_pedido") {
+    const ordersList = (data.ordersList as { id: number; number: string; productName: string }[]) ?? []
+    const n = parseInt(lower, 10)
+    if (isNaN(n) || n < 1 || n > ordersList.length) {
+      await reply(jid, `Não entendi. Responda o número da ordem (1 a ${ordersList.length}).`)
+      return true
+    }
+    const order = ordersList[n - 1]
 
-    // Parse "P:10 M:20 G:15"
-    const qtyBySize: Record<string, number> = {}
+    const { rows: items } = await pool.query(
+      `SELECT color, size FROM prod_order_items WHERE order_id = $1 ORDER BY color, size`,
+      [order.id]
+    )
+    if (items.length === 0) {
+      await setState(user.id, null, {})
+      await reply(jid, "Essa ordem não tem grade cadastrada. Estranho — confere pelo painel." + MENU_FOOTER)
+      return true
+    }
+    const colorsChosen = [...new Set(items.map(i => i.color as string))]
+    const sizesByColor: Record<string, string[]> = {}
+    for (const it of items) {
+      (sizesByColor[it.color] ??= []).push(it.size)
+    }
+
+    const { rows: materials } = await pool.query(`
+      SELECT DISTINCT pom.entry_id AS id, rme.number, rm.name AS "materialName", rmv.name AS "varianteName"
+      FROM prod_order_materials pom
+      JOIN raw_material_entries rme ON rme.id = pom.entry_id
+      JOIN raw_materials rm ON rm.id = rme.material_id
+      LEFT JOIN raw_material_variants rmv ON rmv.id = rme.variant_id
+      WHERE pom.order_id = $1
+    `, [order.id])
+
+    await setState(user.id, "concluir_grade", withTimestamp({
+      orderId: order.id, orderNumber: order.number, colorsChosen, colorIndex: 0, sizesByColor, grade: [],
+      materialsList: materials.map(m => ({
+        id: m.id, label: `${m.materialName}${m.varianteName ? " - " + m.varianteName : ""} (lote ${m.number})`,
+      })),
+    }))
+    await reply(
+      jid,
+      `Ordem *${order.number}* — quantidade cortada de *${colorsChosen[0]}*? Só os tamanhos que cortou (pode pular o resto).\n\n_Formato: ${sizesByColor[colorsChosen[0]].map(s => `${s}:qtd`).join(" ")}_`
+    )
+    return true
+  }
+
+  // ── Concluir ordem: grade cortada — um turno por cor ────────────────────
+  if (state === "concluir_grade") {
+    const colorsChosen  = (data.colorsChosen as string[]) ?? []
+    const colorIndex    = (data.colorIndex as number) ?? 0
+    const sizesByColor  = (data.sizesByColor as Record<string, string[]>) ?? {}
+    const color         = colorsChosen[colorIndex]
+    const validSizes    = sizesByColor[color] ?? []
+
+    const grade = (data.grade as { color: string; size: string; qty: number }[]) ?? []
     const tokens = text.trim().split(/\s+/)
+    let anyValid = false
     for (const tok of tokens) {
       const [size, qtyStr] = tok.split(":")
       if (!size || qtyStr === undefined) continue
-      const match = sizes.find(s => s.toLowerCase() === size.toLowerCase())
+      const match = validSizes.find(s => s.toLowerCase() === size.toLowerCase())
       const qty = parseInt(qtyStr, 10)
-      if (match && !isNaN(qty) && qty >= 0) qtyBySize[match] = qty
+      if (match && !isNaN(qty) && qty >= 0) {
+        grade.push({ color, size: match, qty })
+        anyValid = true
+      }
     }
-    const missing = sizes.filter(s => !(s in qtyBySize))
-    if (Object.keys(qtyBySize).length === 0 || missing.length > 0) {
-      await reply(jid, `Formato não reconhecido ou faltou tamanho. Manda todos: ${sizes.map(s => `${s}:qtd`).join(" ")}`)
-      return true
-    }
-
-    try {
-      await updateProdOrderGrade(orderId, color, qtyBySize)
-    } catch (e) {
-      console.error("[adminBot] salvar quantidade falhou:", e instanceof Error ? e.message : e)
-      await reply(jid, "Deu erro ao salvar a quantidade. Tenta de novo.")
+    if (!anyValid && lower !== "nenhum" && lower !== "0") {
+      await reply(jid, `Não entendi. Formato: ${validSizes.map(s => `${s}:qtd`).join(" ")} — ou "nenhum" se não cortou nada dessa cor.`)
       return true
     }
 
     const nextIndex = colorIndex + 1
     if (nextIndex < colorsChosen.length) {
-      await setState(user.id, "op_quantidade", withTimestamp({ ...data, colorIndex: nextIndex }))
-      await reply(jid, `Anotado! Agora pra *${colorsChosen[nextIndex]}*:\n${sizes.map(s => `${s}:qtd`).join(" ")}`)
+      const nextColor = colorsChosen[nextIndex]
+      await setState(user.id, "concluir_grade", withTimestamp({ ...data, colorIndex: nextIndex, grade }))
+      await reply(jid, `Anotado! Agora *${nextColor}*:\n${(sizesByColor[nextColor] ?? []).map(s => `${s}:qtd`).join(" ")}`)
       return true
     }
 
-    await setState(user.id, null, {})
-    await reply(jid, `🎉 Ordem *${orderNumber}* completa! Já está em produção, segue o fluxo normal no painel.` + MENU_FOOTER)
+    const materialsList = (data.materialsList as { id: number; label: string }[]) ?? []
+    if (materialsList.length === 0) {
+      // Sem material vinculado (não devia acontecer, mas não trava o fluxo)
+      try {
+        const result = await concludeProdOrder(data.orderId as number, grade, [])
+        await setState(user.id, null, {})
+        await reply(jid, `✅ Ordem *${data.orderNumber}* concluída! ${result.totalProduced} peças produzidas.` + MENU_FOOTER)
+      } catch (e) {
+        console.error("[adminBot] concluir ordem falhou:", e instanceof Error ? e.message : e)
+        await setState(user.id, null, {})
+        await reply(jid, "Deu erro ao concluir a ordem. Tenta de novo ou conclua pelo painel." + MENU_FOOTER)
+      }
+      return true
+    }
+    await setState(user.id, "concluir_material", withTimestamp({ ...data, grade, materialIndex: 0, materials: [] }))
+    await reply(jid, `Grade anotada. A bobina *${materialsList[0].label}* esgotou? (sim/não)`)
+    return true
+  }
+
+  // ── Concluir ordem: esgotou a bobina? — um turno por lote ───────────────
+  if (state === "concluir_material") {
+    const materialsList = (data.materialsList as { id: number; label: string }[]) ?? []
+    const materialIndex = (data.materialIndex as number) ?? 0
+    const esgotou = lower === "sim" || lower === "s"
+    const naoEsgotou = lower === "não" || lower === "nao" || lower === "n"
+    if (!esgotou && !naoEsgotou) {
+      await reply(jid, `Responde "sim" ou "não". A bobina *${materialsList[materialIndex].label}* esgotou?`)
+      return true
+    }
+    const materials = (data.materials as { entryId: number; exhausted: boolean }[]) ?? []
+    materials.push({ entryId: materialsList[materialIndex].id, exhausted: esgotou })
+
+    const nextIndex = materialIndex + 1
+    if (nextIndex < materialsList.length) {
+      await setState(user.id, "concluir_material", withTimestamp({ ...data, materialIndex: nextIndex, materials }))
+      await reply(jid, `A bobina *${materialsList[nextIndex].label}* esgotou? (sim/não)`)
+      return true
+    }
+
+    try {
+      const grade = (data.grade as { color: string; size: string; qty: number }[]) ?? []
+      const result = await concludeProdOrder(data.orderId as number, grade, materials)
+      await setState(user.id, null, {})
+      await reply(
+        jid,
+        `✅ Ordem *${data.orderNumber}* concluída! ${result.totalProduced} peças produzidas.\n` +
+        (result.anyCostCalculated ? "Custo calculado e sincronizado." : "Nenhuma bobina esgotou — custo fica pendente até esgotar alguma.") +
+        MENU_FOOTER
+      )
+    } catch (e) {
+      console.error("[adminBot] concluir ordem falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao concluir a ordem. Tenta de novo ou conclua pelo painel." + MENU_FOOTER)
+    }
     return true
   }
 

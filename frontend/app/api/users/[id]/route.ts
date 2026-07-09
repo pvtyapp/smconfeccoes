@@ -11,12 +11,13 @@ export async function PUT(
   if (!session?.isAdmin) return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
 
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS funcao TEXT`).catch(() => {})
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
 
   try {
     const { id } = await params
-    const { name, login, password, phone, funcao, isAdmin, allowedPages, active } = await req.json() as {
+    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled } = await req.json() as {
       name: string; login: string; password?: string; phone?: string; funcao?: string
-      isAdmin?: boolean; allowedPages?: string[]; active?: boolean
+      isAdmin?: boolean; allowedPages?: string[]; active?: boolean; chatbotAdminEnabled?: boolean
     }
 
     if (!name?.trim() || !login?.trim()) {
@@ -30,17 +31,19 @@ export async function PUT(
 
     const { rows } = await pool.query(`
       UPDATE users SET
-        name          = $1,
-        login         = $2,
-        password_hash = COALESCE($3, password_hash),
-        phone         = $4,
-        funcao        = $5,
-        is_admin      = $6,
-        allowed_pages = $7,
-        active        = $8,
-        updated_at    = NOW()
-      WHERE id = $9
-      RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages", active
+        name                   = $1,
+        login                  = $2,
+        password_hash          = COALESCE($3, password_hash),
+        phone                  = $4,
+        funcao                 = $5,
+        is_admin               = $6,
+        allowed_pages          = $7,
+        active                 = $8,
+        chatbot_admin_enabled  = $9,
+        updated_at             = NOW()
+      WHERE id = $10
+      RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
+                chatbot_admin_enabled AS "chatbotAdminEnabled", active
     `, [
       name.trim(),
       login.trim(),
@@ -50,6 +53,7 @@ export async function PUT(
       isAdmin ?? false,
       isAdmin ? [] : (allowedPages ?? []),
       active ?? true,
+      chatbotAdminEnabled ?? true,
       id,
     ])
 
