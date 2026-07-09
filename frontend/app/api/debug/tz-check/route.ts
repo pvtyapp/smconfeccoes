@@ -15,7 +15,16 @@ export async function GET() {
         (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AS today_brt,
         (NOW() AT TIME ZONE 'America/Sao_Paulo') AS now_brt
     `)
-    return NextResponse.json({ ok: true, ...rows[0] })
+    const { rows: colType } = await pool.query(`
+      SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_name = 'stock_movements' AND column_name = 'created_at'
+    `)
+    const { rows: sample } = await pool.query(`
+      SELECT id, created_at, created_at AT TIME ZONE 'America/Sao_Paulo' AS shifted,
+             DATE(created_at AT TIME ZONE 'America/Sao_Paulo') AS shifted_date
+      FROM stock_movements ORDER BY created_at DESC LIMIT 3
+    `)
+    return NextResponse.json({ ok: true, ...rows[0], createdAtColumnType: colType[0], sample })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
