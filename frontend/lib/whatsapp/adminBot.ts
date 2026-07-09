@@ -31,9 +31,10 @@ type AdminUser = {
 const VARIABLE_COST_CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
 
 // Salva a resposta do bot em wa_messages (mesma tabela usada pra conversa de
-// cliente) — jid já basta pra achar o contato certo, porque
-// findOrCreateOperatorContact garante que ele existe antes do bot responder
-// qualquer coisa nessa conversa.
+// cliente) — findOrCreateOperatorContact garante que o contato existe antes
+// do bot responder qualquer coisa. Casa por jid OU phone_jid porque o
+// WhatsApp às vezes manda uma identificação diferente da que o contato foi
+// criado, e phone_jid é o valor estável que sempre gravamos na criação.
 async function reply(jid: string, text: string): Promise<void> {
   try {
     await sendWhatsApp(jid, text)
@@ -42,7 +43,7 @@ async function reply(jid: string, text: string): Promise<void> {
   }
   await pool.query(
     `INSERT INTO wa_messages (contact_id, direction, content)
-     SELECT id, 'out', $2 FROM wa_contacts WHERE jid = $1`,
+     SELECT id, 'out', $2 FROM wa_contacts WHERE jid = $1 OR phone_jid = $1 LIMIT 1`,
     [jid, text]
   ).catch(() => {})
 }
@@ -718,16 +719,52 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       const entry = await createRawMaterialEntry(
         data.materialId as number, data.variantId as number, qty, price
       )
-      await setState(user.id, null, {})
+      const lotesCriados = [...(data.lotesCriados as string[] ?? []), entry.number]
+      await setState(user.id, "insumo_mais", withTimestamp({ ...data, lotesCriados }))
       await reply(
         jid,
-        `✅ Lote *${entry.number}* criado! ${entry.materialName} - ${entry.varianteName}: ${qty} ${entry.unit} a ${price}/${entry.unit}.` + MENU_FOOTER
+        `✅ Lote *${entry.number}* criado! ${entry.materialName} - ${entry.varianteName}: ${qty} ${entry.unit} a ${price}/${entry.unit}.\n\nMais uma bobina de *${entry.varianteName}*? (sim/não/novo material)`
       )
     } catch (e) {
       console.error("[adminBot] criar lote falhou:", e instanceof Error ? e.message : e)
       await setState(user.id, null, {})
       await reply(jid, "Deu erro ao criar o lote. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
     }
+    return true
+  }
+
+  // ── Nova entrada de matéria-prima: mais uma bobina, ou encerra ─────────
+  if (state === "insumo_mais") {
+    const lotesCriados = (data.lotesCriados as string[]) ?? []
+    if (lower === "sim" || lower === "s") {
+      await setState(user.id, "insumo_quantidade", withTimestamp({ ...data }))
+      await reply(jid, `Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
+      return true
+    }
+    if (lower === "não" || lower === "nao" || lower === "n") {
+      await setState(user.id, null, {})
+      await reply(
+        jid,
+        `${lotesCriados.length} lote${lotesCriados.length !== 1 ? "s" : ""} criado${lotesCriados.length !== 1 ? "s" : ""}: ${lotesCriados.join(", ")}.` + MENU_FOOTER
+      )
+      return true
+    }
+    if (lower.includes("novo material")) {
+      const { rows: materials } = await pool.query(`
+        SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
+      `)
+      if (materials.length === 0) {
+        await setState(user.id, null, {})
+        await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes." + MENU_FOOTER)
+        return true
+      }
+      await setState(user.id, "insumo_material", withTimestamp({
+        materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })), lotesCriados,
+      }))
+      await reply(jid, `Qual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
+      return true
+    }
+    await reply(jid, `Não entendi. Responda "sim" (mais uma bobina), "não" (encerrar) ou "novo material".`)
     return true
   }
 
