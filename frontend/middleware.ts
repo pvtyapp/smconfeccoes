@@ -21,6 +21,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/printer-refis/migrate",
   "/api/debug/mapa-estoque-check2", // temporário — confere in/out de hoje detalhado
   "/api/debug/tz-check", // temporário — confere timezone da sessao do postgres
+  "/api/debug/tz-verify-fix", // temporário — confere se a conversao corrigida funciona
   "/api/debug/estoque-join-check", // temporário — confere se o JOIN derruba linha por variant_id orfao
 ]
 
