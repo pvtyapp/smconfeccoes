@@ -22,6 +22,7 @@ export async function POST(req: Request) {
 
 export async function GET() {
   try {
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
     const { rows } = await pool.query(`
       SELECT
         c.id,
@@ -52,6 +53,7 @@ export async function GET() {
       FROM wa_contacts c
       LEFT JOIN orders o ON o.contact_id = c.id
       LEFT JOIN dtf_pedidos dp ON dp.contact_id = c.id
+      WHERE c.linked_user_id IS NULL
       GROUP BY c.id
       ORDER BY c.last_order_at DESC NULLS LAST, c.created_at DESC
     `)

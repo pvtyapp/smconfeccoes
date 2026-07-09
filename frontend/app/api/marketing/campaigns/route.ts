@@ -24,6 +24,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
     const body = await req.json() as {
       title?: string
       content: string
@@ -87,6 +88,7 @@ async function resolveContacts(
     SELECT id, COALESCE(phone_jid, jid) AS jid, name
     FROM wa_contacts
     WHERE jid IS NOT NULL
+      AND linked_user_id IS NULL
       AND NOT COALESCE(marketing_optout, false)
       AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
   `

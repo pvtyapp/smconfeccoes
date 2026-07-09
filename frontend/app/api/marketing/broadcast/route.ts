@@ -7,7 +7,8 @@ export async function POST(req: Request) {
     const { content, lifecycle } = await req.json()
     if (!content?.trim()) return NextResponse.json({ error: "Mensagem obrigatória" }, { status: 400 })
 
-    let query = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts WHERE (phone_jid IS NOT NULL OR jid IS NOT NULL)`
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
+    let query = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts WHERE (phone_jid IS NOT NULL OR jid IS NOT NULL) AND linked_user_id IS NULL`
     const params: string[] = []
     if (lifecycle && lifecycle !== "all") {
       params.push(lifecycle)

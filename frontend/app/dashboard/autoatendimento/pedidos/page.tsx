@@ -86,6 +86,7 @@ type Conversation = {
   state: string | null
   chatbotPausedUntil: string | null
   chatbotSilenced: boolean
+  isOperator: boolean
   lastMessage: string | null
   lastDirection: "in" | "out" | null
   lastAt: string | null
@@ -1296,7 +1297,12 @@ export default function PedidosPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <p className="text-[14px] font-medium truncate" style={{ color: "#E9EDEF" }}>{c.name || fmtPhone(c.phone)}</p>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className="text-[14px] font-medium truncate" style={{ color: "#E9EDEF" }}>{c.name || fmtPhone(c.phone)}</p>
+                          {c.isOperator && (
+                            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-[#4361EE]/20 text-[#7C93FF] flex-shrink-0">OPERADOR</span>
+                          )}
+                        </div>
                         <p className="text-[11px] flex-shrink-0 ml-2" style={{ color: "#8696A0" }}>{fmtTime(c.lastAt)}</p>
                       </div>
                       <div className="flex items-center justify-between mt-0.5">

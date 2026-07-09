@@ -71,6 +71,7 @@ export async function GET(req: Request) {
   await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS phone_jid TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_marketing_sent_at TIMESTAMPTZ`).catch(() => {})
   await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS marketing_optout BOOLEAN DEFAULT FALSE`).catch(() => {})
+  await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
 
   const settingsRes = await pool.query("SELECT key, value FROM app_settings")
   const s: Record<string, string> = {}
@@ -91,6 +92,7 @@ export async function GET(req: Request) {
     const rows = await pool.query(`
       SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'new'
+      AND linked_user_id IS NULL
         AND COALESCE(novo_seq, 0) = 0
         AND state = 'idle'
         AND created_at < NOW() - INTERVAL '2 days'
@@ -139,6 +141,7 @@ export async function GET(req: Request) {
     const rows = await pool.query(`
       SELECT id FROM wa_contacts
       WHERE lifecycle_state = 'new'
+      AND linked_user_id IS NULL
         AND COALESCE(novo_seq, 0) = 1
         AND state = 'idle'
         AND novo_last_sent_at < NOW() - INTERVAL '7 days'
@@ -156,6 +159,7 @@ export async function GET(req: Request) {
     const rows = await pool.query(`
       SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'active'
+      AND linked_user_id IS NULL
         AND last_order_at IS NOT NULL
         AND last_order_at < NOW() - INTERVAL '15 days'
         AND state NOT IN ('coletando','aguardando_menu','aguardando_cliente_1',
@@ -206,6 +210,7 @@ export async function GET(req: Request) {
     const rows = await pool.query(`
       SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'ausente'
+      AND linked_user_id IS NULL
         AND ausente_seq = 1
         AND last_order_at IS NOT NULL
         AND last_order_at < NOW() - INTERVAL '30 days'
@@ -250,6 +255,7 @@ export async function GET(req: Request) {
     const rows = await pool.query(`
       SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'ausente'
+      AND linked_user_id IS NULL
         AND ausente_seq = 2
         AND last_order_at IS NOT NULL
         AND last_order_at < NOW() - INTERVAL '45 days'
@@ -294,6 +300,7 @@ export async function GET(req: Request) {
     const rows = await pool.query(`
       SELECT id FROM wa_contacts
       WHERE lifecycle_state = 'ausente'
+      AND linked_user_id IS NULL
         AND ausente_seq = 3
         AND ausente_last_sent_at < NOW() - INTERVAL '30 days'
     `)
@@ -458,6 +465,7 @@ export async function GET(req: Request) {
         if (!item) continue
         let q = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts
                  WHERE jid IS NOT NULL AND NOT COALESCE(marketing_optout,false)
+                   AND linked_user_id IS NULL
                    AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
                    AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
         const qp: string[] = []

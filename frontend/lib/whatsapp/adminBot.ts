@@ -20,6 +20,7 @@ import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 type AdminUser = {
   id: number
   name: string
+  phone: string
   isAdmin: boolean
   allowedPages: string[]
   chatbotCommands: string[]
@@ -29,12 +30,21 @@ type AdminUser = {
 
 const VARIABLE_COST_CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
 
+// Salva a resposta do bot em wa_messages (mesma tabela usada pra conversa de
+// cliente) — jid já basta pra achar o contato certo, porque
+// findOrCreateOperatorContact garante que ele existe antes do bot responder
+// qualquer coisa nessa conversa.
 async function reply(jid: string, text: string): Promise<void> {
   try {
     await sendWhatsApp(jid, text)
   } catch (e) {
     console.error("[adminBot] reply falhou:", jid, e instanceof Error ? e.message : e)
   }
+  await pool.query(
+    `INSERT INTO wa_messages (contact_id, direction, content)
+     SELECT id, 'out', $2 FROM wa_contacts WHERE jid = $1`,
+    [jid, text]
+  ).catch(() => {})
 }
 
 async function setState(userId: number, state: string | null, data: Record<string, unknown> = {}): Promise<void> {
@@ -80,7 +90,7 @@ export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promi
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
 
   const { rows } = await pool.query(
-    `SELECT id, name, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
+    `SELECT id, name, phone, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
             chatbot_commands AS "chatbotCommands",
             wa_state AS "waState", wa_state_data AS "waStateData"
      FROM users

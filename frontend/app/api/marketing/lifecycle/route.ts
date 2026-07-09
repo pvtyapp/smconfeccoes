@@ -8,6 +8,7 @@ export async function GET(req: Request) {
   const period = searchParams.get("period") ?? "7d"
 
   try {
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
     if (view === "tasks") {
       const { rows } = await pool.query(`
         SELECT contact_id, name, phone, stage, due_at,
@@ -24,6 +25,7 @@ export async function GET(req: Request) {
           WHERE c.lifecycle_state = 'new'
             AND COALESCE(c.novo_seq, 0) = 0
             AND c.state = 'idle'
+            AND c.linked_user_id IS NULL
 
           UNION ALL
 
@@ -35,6 +37,7 @@ export async function GET(req: Request) {
           FROM wa_contacts c
           WHERE c.lifecycle_state = 'active'
             AND c.last_order_at IS NOT NULL
+            AND c.linked_user_id IS NULL
 
           UNION ALL
 
@@ -47,6 +50,7 @@ export async function GET(req: Request) {
           WHERE c.lifecycle_state = 'ausente'
             AND COALESCE(c.ausente_seq, 0) = 1
             AND c.last_order_at IS NOT NULL
+            AND c.linked_user_id IS NULL
 
           UNION ALL
 
@@ -59,6 +63,7 @@ export async function GET(req: Request) {
           WHERE c.lifecycle_state = 'ausente'
             AND COALESCE(c.ausente_seq, 0) = 2
             AND c.last_order_at IS NOT NULL
+            AND c.linked_user_id IS NULL
         ) sub
         ORDER BY overdue DESC, due_at ASC
       `)

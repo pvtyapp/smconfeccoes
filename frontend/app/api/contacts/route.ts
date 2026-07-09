@@ -7,6 +7,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")
 
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
     const { rows } = await pool.query(`
       SELECT
         id,
@@ -18,7 +19,8 @@ export async function GET(req: Request) {
         created_at   AS "createdAt",
         updated_at   AS "updatedAt"
       FROM wa_contacts
-      ${search ? `WHERE name ILIKE $1 OR phone ILIKE $1` : ""}
+      WHERE linked_user_id IS NULL
+      ${search ? `AND (name ILIKE $1 OR phone ILIKE $1)` : ""}
       ORDER BY name ASC, updated_at DESC
     `, search ? [`%${search}%`] : [])
     return NextResponse.json(rows)

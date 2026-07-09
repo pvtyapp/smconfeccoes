@@ -60,6 +60,7 @@ export async function POST(req: Request) {
     await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).catch(() => {})
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS phone_jid TEXT`).catch(() => {})
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_message_synced_at TIMESTAMPTZ`).catch(() => {})
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
     await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`).catch(() => {})
     await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS media_download_failed BOOLEAN DEFAULT FALSE`).catch(() => {})
 
@@ -173,6 +174,7 @@ export async function POST(req: Request) {
       DELETE FROM wa_contacts
       WHERE jid LIKE '%@s.whatsapp.net'
         AND jid != '0@s.whatsapp.net'
+        AND linked_user_id IS NULL
         AND EXISTS (
           SELECT 1 FROM wa_contacts lid
           WHERE lid.jid LIKE '%@lid'
@@ -304,6 +306,7 @@ export async function POST(req: Request) {
     const { rowCount: postMergeDeleted } = await pool.query(`
       DELETE FROM wa_contacts
       WHERE jid LIKE '%@s.whatsapp.net' AND jid != '0@s.whatsapp.net'
+        AND linked_user_id IS NULL
         AND NOT EXISTS (SELECT 1 FROM wa_messages WHERE contact_id = wa_contacts.id)
         AND EXISTS (
           SELECT 1 FROM wa_contacts lid WHERE lid.jid LIKE '%@lid'
