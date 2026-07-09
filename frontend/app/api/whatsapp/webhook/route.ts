@@ -791,7 +791,7 @@ export async function POST(req: Request) {
       }
 
       const saved = await saveInboundMessage(m)
-      if (i === 0 && saved) first = { msg: m, jid, saved }
+      if (!first && saved) first = { msg: m, jid, saved }
       waitUntil(reconcileRecentMessages(jid))
     }
 
