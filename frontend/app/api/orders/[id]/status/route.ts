@@ -157,7 +157,7 @@ export async function POST(
 
     if (status === "pronto" && order.jid) {
       const { rows: s } = await pool.query(
-        `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
+        `SELECT key, value FROM app_settings WHERE key IN ('pix_key_pedidos', 'endereco_retirada')`
       )
       const cfg: Record<string, string> = {}
       for (const r of s) cfg[r.key] = r.value
@@ -165,7 +165,7 @@ export async function POST(
       const valor = order.total_value
         ? `\n\n💰 Valor: *R$ ${Number(order.total_value).toFixed(2).replace(".", ",")}*`
         : ""
-      const pix = cfg.pix_key ? `\n💳 Pix: \`${cfg.pix_key}\`` : ""
+      const pix = cfg.pix_key_pedidos ? `\n💳 Pix: \`${cfg.pix_key_pedidos}\`` : ""
       const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
 
       await sendAndSave(

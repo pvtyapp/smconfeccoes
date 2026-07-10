@@ -21,21 +21,17 @@ export default function SettingsPage() {
 
   // PDV print prefs (localStorage only, per device)
   const [pdvPrintFormat, setPdvPrintFormat] = useState<"A4" | "termica">("A4")
-  const [pdvPrintName,   setPdvPrintName]   = useState("")
 
   useEffect(() => {
     try {
       const fmt = localStorage.getItem("pdv_print_format")
       if (fmt === "A4" || fmt === "termica") setPdvPrintFormat(fmt)
-      const name = localStorage.getItem("pdv_print_name")
-      if (name) setPdvPrintName(name)
     } catch { /* ignora */ }
   }, [])
 
-  function savePdvPrint(fmt: "A4" | "termica", name: string) {
+  function savePdvPrint(fmt: "A4" | "termica") {
     try {
       localStorage.setItem("pdv_print_format", fmt)
-      localStorage.setItem("pdv_print_name", name)
     } catch { /* ignora */ }
   }
 
@@ -158,6 +154,9 @@ export default function SettingsPage() {
                     ⚠ Último evento há {webhookAge} min. Normal se não houve mensagens recentes. Se esperava atividade, verifique o Evolution.
                   </p>
                 )}
+                <p className="text-[10px] text-[#0F1E3C]/35 leading-relaxed pt-1 border-t border-[#0F1E3C]/6">
+                  URL do Webhook: <code className="bg-[#F4F6FB] px-1.5 py-0.5 rounded font-mono text-[10px]">{typeof window !== "undefined" ? window.location.origin : ""}/api/whatsapp/webhook</code>
+                </p>
               </section>
             )
           })()}
@@ -165,10 +164,6 @@ export default function SettingsPage() {
           {/* Dados da empresa */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Dados da Empresa</h2>
-            <div>
-              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Nome da empresa</label>
-              <input className={inputCls} value={settings.nome_empresa ?? ""} onChange={e => set("nome_empresa", e.target.value)} placeholder="SM Confecções" />
-            </div>
             <div>
               <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Endereço de retirada</label>
               <input className={inputCls} value={settings.endereco_retirada ?? ""} onChange={e => set("endereco_retirada", e.target.value)} placeholder="Av. Santa Cruz, 3088" />
@@ -180,9 +175,14 @@ export default function SettingsPage() {
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Pagamento</h2>
             <div>
-              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Chave Pix</label>
-              <input className={inputCls} value={settings.pix_key ?? ""} onChange={e => set("pix_key", e.target.value)} placeholder="CPF, e-mail, telefone ou chave aleatória" />
-              <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Enviada ao cliente ao concluir um pedido à vista.</p>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Chave Pix — Pedidos de Produto</label>
+              <input className={inputCls} value={settings.pix_key_pedidos ?? ""} onChange={e => set("pix_key_pedidos", e.target.value)} placeholder="CPF, e-mail, telefone ou chave aleatória" />
+              <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Enviada ao cliente ao concluir um pedido de produto (Autoatendimento/PDV).</p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Chave Pix — DTF</label>
+              <input className={inputCls} value={settings.pix_key_dtf ?? ""} onChange={e => set("pix_key_dtf", e.target.value)} placeholder="CPF, e-mail, telefone ou chave aleatória" />
+              <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Enviada ao cliente ao concluir um pedido DTF.</p>
             </div>
           </section>
 
@@ -248,50 +248,6 @@ export default function SettingsPage() {
             )}
           </section>
 
-          {/* Diagnóstico WhatsApp */}
-          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
-            <h2 className="text-sm font-bold text-[#0F1E3C]">Diagnóstico WhatsApp</h2>
-            {(() => {
-              const raw = settings.debug_last_webhook
-              if (!raw) return (
-                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-                  <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
-                  <div>
-                    <p className="text-xs font-bold text-red-700">Nenhum webhook recebido ainda</p>
-                    <p className="text-[11px] text-red-600 mt-0.5">O Evolution não está enviando eventos para este servidor. Configure o Webhook URL no painel do Evolution.</p>
-                  </div>
-                </div>
-              )
-              let parsed: { event?: string; ts?: string; preview?: string } = {}
-              try { parsed = JSON.parse(raw) } catch { /* raw não é JSON */ }
-              const ts = parsed.ts ? new Date(parsed.ts) : null
-              const age = ts ? Math.round((Date.now() - ts.getTime()) / 60_000) : null
-              const isOk = age !== null && age < 240
-              return (
-                <div className={`flex items-start gap-3 border rounded-xl px-4 py-3 ${isOk ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
-                  <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${isOk ? "bg-emerald-400" : "bg-amber-400"}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-xs font-bold ${isOk ? "text-emerald-700" : "text-amber-700"}`}>
-                      Último webhook: {parsed.event ?? "—"}
-                    </p>
-                    <p className={`text-[11px] mt-0.5 ${isOk ? "text-emerald-600" : "text-amber-600"}`}>
-                      {ts ? ts.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "—"}
-                      {age !== null ? ` (${age < 1 ? "< 1 min atrás" : `${age} min atrás`})` : ""}
-                    </p>
-                    {!isOk && age !== null && age >= 240 && (
-                      <p className="text-[10px] text-amber-500 mt-1">
-                        ⚠ Último evento há {age} min. Se mensagens não estão chegando, verifique o Webhook no Evolution.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )
-            })()}
-            <p className="text-[10px] text-[#0F1E3C]/35 leading-relaxed">
-              URL do Webhook: <code className="bg-[#F4F6FB] px-1.5 py-0.5 rounded font-mono text-[10px]">{typeof window !== "undefined" ? window.location.origin : ""}/api/whatsapp/webhook</code>
-            </p>
-          </section>
-
           {/* Impressão PDV */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-2">
@@ -304,7 +260,7 @@ export default function SettingsPage() {
                 {(["A4", "termica"] as const).map(fmt => (
                   <button
                     key={fmt}
-                    onClick={() => { setPdvPrintFormat(fmt); savePdvPrint(fmt, pdvPrintName) }}
+                    onClick={() => { setPdvPrintFormat(fmt); savePdvPrint(fmt) }}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${
                       pdvPrintFormat === fmt
                         ? "bg-[#4361EE] text-white border-[#4361EE]"
@@ -315,16 +271,7 @@ export default function SettingsPage() {
                   </button>
                 ))}
               </div>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Nome da impressora (informativo)</label>
-              <input
-                className={inputCls}
-                value={pdvPrintName}
-                onChange={e => { setPdvPrintName(e.target.value); savePdvPrint(pdvPrintFormat, e.target.value) }}
-                placeholder="Ex: HP LaserJet Pro"
-              />
-              <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5 leading-relaxed">
+              <p className="text-[10px] text-[#0F1E3C]/30 mt-2 leading-relaxed">
                 Configure a impressora padrão no Windows (Configurações → Bluetooth e dispositivos → Impressoras). O navegador usará a impressora definida como padrão no sistema.
               </p>
             </div>

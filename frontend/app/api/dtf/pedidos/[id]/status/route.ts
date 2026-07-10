@@ -69,7 +69,7 @@ export async function POST(
       // WA: notify with valor + PIX or due date + address
       if (pedido.jid) {
         const { rows: s } = await pool.query(
-          `SELECT key, value FROM app_settings WHERE key IN ('pix_key', 'endereco_retirada')`
+          `SELECT key, value FROM app_settings WHERE key IN ('pix_key_dtf', 'endereco_retirada')`
         )
         const cfg: Record<string, string> = {}
         for (const r of s) cfg[r.key] = r.value
@@ -86,8 +86,8 @@ export async function POST(
         if (paymentMode === "prazo" && dueDate) {
           const dueFmt = new Date(dueDate + "T12:00:00").toLocaleDateString("pt-BR")
           msg += `\n📅 Vencimento: *${dueFmt}*`
-        } else if (cfg.pix_key) {
-          msg += `\n💳 Pix: \`${cfg.pix_key}\``
+        } else if (cfg.pix_key_dtf) {
+          msg += `\n💳 Pix: \`${cfg.pix_key_dtf}\``
         }
 
         if (cfg.endereco_retirada) msg += `\n\n📍 ${cfg.endereco_retirada}`

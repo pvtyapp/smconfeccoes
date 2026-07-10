@@ -6,15 +6,17 @@ type FolderStat = { folder: string; count: number; sizeBytes: number }
 
 export async function GET() {
   try {
-    // Count per-folder from Vercel Blob
+    // Count per-folder from Vercel Blob — sem filtro de prefixo, escaneia tudo
+    // que existe no store (catalog/, hero-banners/, e qualquer outro que surgir),
+    // agrupando pelo primeiro segmento do caminho.
     const folderMap: Record<string, FolderStat> = {}
 
     let cursor: string | undefined
     do {
-      const { blobs, cursor: next } = await list({ prefix: "sm-attachments/", cursor, limit: 1000 })
+      const { blobs, cursor: next } = await list({ cursor, limit: 1000 })
       for (const b of blobs) {
         const parts = b.pathname.split("/")
-        const folder = parts.length >= 2 ? parts[1] : "root"
+        const folder = parts.length >= 2 ? parts[0] : "root"
         if (!folderMap[folder]) folderMap[folder] = { folder, count: 0, sizeBytes: 0 }
         folderMap[folder].count++
         folderMap[folder].sizeBytes += b.size ?? 0

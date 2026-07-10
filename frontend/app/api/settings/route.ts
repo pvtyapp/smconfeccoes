@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 
 const ALLOWED_KEYS = new Set([
-  "nome_empresa", "endereco_retirada", "pix_key",
+  "endereco_retirada", "pix_key_pedidos", "pix_key_dtf",
   "chatbot_ativo", "pedidos_auto", "lifecycle_ativo",
   "dtf_ativo", "dtf_preco_por_metro",
   "dtf_horario_dias", "dtf_horario_inicio", "dtf_horario_fim", "dtf_fechado_ate",
@@ -17,6 +17,20 @@ const ALLOWED_KEYS = new Set([
 
 export async function GET() {
   try {
+    // Migração: pix_key virou 2 chaves separadas (pedidos de produto vs DTF).
+    // Se ainda não existem, semeia as duas com o valor antigo pra ninguém
+    // perder a chave já configurada.
+    await pool.query(`
+      INSERT INTO app_settings (key, value)
+      SELECT 'pix_key_pedidos', value FROM app_settings WHERE key = 'pix_key'
+      ON CONFLICT (key) DO NOTHING
+    `).catch(() => {})
+    await pool.query(`
+      INSERT INTO app_settings (key, value)
+      SELECT 'pix_key_dtf', value FROM app_settings WHERE key = 'pix_key'
+      ON CONFLICT (key) DO NOTHING
+    `).catch(() => {})
+
     const { rows } = await pool.query(`SELECT key, value FROM app_settings ORDER BY key`)
     const settings: Record<string, string> = {}
     for (const row of rows) settings[row.key] = row.value
