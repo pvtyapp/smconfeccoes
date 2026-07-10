@@ -182,6 +182,48 @@ export default function RelatorioVendasPage() {
     return list
   }, [orders, avarias, sourceFilter])
 
+  // Vendas por produto genérico (nome já vem sem cor/tamanho) — soma pedidos
+  // concluídos + avarias vendidas, DTF fica de fora (tem relatório próprio)
+  const byProduct = useMemo(() => {
+    const map = new Map<string, {
+      qty: number; revenue: number; cost: number; costKnown: boolean; sales: Set<string>
+    }>()
+
+    for (const entry of entries) {
+      if (entry.kind === "order") {
+        const o = entry.data
+        if (o.status !== "concluido") continue
+        for (const item of (o.items ?? [])) {
+          if (isDtf(item.productName)) continue
+          const cur = map.get(item.productName) ?? { qty: 0, revenue: 0, cost: 0, costKnown: false, sales: new Set<string>() }
+          cur.qty     += item.qty
+          cur.revenue += (item.unitPrice ?? 0) * item.qty
+          if (item.costPrice != null) { cur.cost += item.costPrice * item.qty; cur.costKnown = true }
+          cur.sales.add(o.number)
+          map.set(item.productName, cur)
+        }
+      } else {
+        const a = entry.data
+        const cur = map.get(a.productName) ?? { qty: 0, revenue: 0, cost: 0, costKnown: false, sales: new Set<string>() }
+        cur.qty     += a.qty
+        cur.revenue += a.salePrice ?? 0
+        cur.sales.add(a.orderNumber ?? `avaria-${a.id}`)
+        map.set(a.productName, cur)
+      }
+    }
+
+    return [...map.entries()]
+      .map(([productName, d]) => ({
+        productName,
+        qty:        d.qty,
+        salesCount: d.sales.size,
+        revenue:    d.revenue,
+        lucro:      d.costKnown ? d.revenue - d.cost : null,
+        margem:     d.costKnown && d.revenue > 0 ? ((d.revenue - d.cost) / d.revenue) * 100 : null,
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+  }, [entries])
+
   // Stats — counts include all orders shown; monetary values only from concluído
   const stats = useMemo(() => {
     const ords    = entries.filter(e => e.kind === "order").map(e => (e as { kind: "order"; data: OrderRecord }).data)
@@ -307,6 +349,48 @@ export default function RelatorioVendasPage() {
           />
         </div>
       )}
+
+      {/* Vendas por produto — nome genérico, soma pedidos concluídos + avarias vendidas */}
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#0F1E3C]/6">
+          <p className="text-sm font-bold text-[#0F1E3C]">Vendas por Produto</p>
+          <p className="text-[11px] text-[#0F1E3C]/35 mt-0.5">Cores e tamanhos somados · DTF fica no relatório próprio</p>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[#0F1E3C]/6 bg-[#F9FAFB]">
+              <th className="text-left  px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Produto</th>
+              <th className="text-center px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Nº de vendas</th>
+              <th className="text-center px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Peças</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Receita</th>
+              <th className="text-right px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Margem</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#0F1E3C]/4">
+            {loading ? (
+              <tr><td colSpan={5} className="py-10 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td></tr>
+            ) : byProduct.length === 0 ? (
+              <tr><td colSpan={5} className="py-10 text-center text-[#0F1E3C]/30 text-sm">Nenhuma venda no período</td></tr>
+            ) : byProduct.map(p => (
+              <tr key={p.productName} className="hover:bg-[#F4F6FB] transition-colors">
+                <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{p.productName}</td>
+                <td className="px-4 py-3 text-center text-[#0F1E3C]/60">{p.salesCount}</td>
+                <td className="px-4 py-3 text-center font-bold text-[#0F1E3C]">{p.qty}</td>
+                <td className="px-4 py-3 text-right font-black text-[#0F1E3C]">{fmtR(p.revenue)}</td>
+                <td className="px-5 py-3 text-right">
+                  {p.margem != null ? (
+                    <span className={`font-bold ${
+                      p.margem >= 40 ? "text-emerald-600" : p.margem >= 20 ? "text-amber-600" : "text-red-600"
+                    }`}>
+                      {p.margem.toFixed(1)}%
+                    </span>
+                  ) : <span className="text-[#0F1E3C]/25">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
