@@ -29,34 +29,28 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
         <span className="ml-2 text-white/40">— Franca/SP</span>
       </div>
 
-      {/* Main nav + mobile menu */}
-      <div className="bg-white/96 backdrop-blur-md border-b border-[#0F1E3C]/8">
+      {/* Main nav — transparente, sobreposto ao hero/carrossel */}
+      <div>
         <div className="max-w-6xl mx-auto px-5 h-[64px] flex items-center justify-between">
 
-          {/* Left */}
-          <Link href="/" className="flex items-center gap-3">
+          {/* Left — só o logo, invertido pra branco e com sombra pra destacar em foto escura */}
+          <Link href="/" className="flex items-center">
             <Image
               src="/smsemfundo.png"
               alt="SM Confecções"
               width={52}
               height={26}
-              className="object-contain"
+              className="object-contain brightness-0 invert drop-shadow-[0_2px_6px_rgba(0,0,0,0.5)]"
             />
-            <span
-              className="text-[#0F1E3C] font-semibold text-base tracking-tight hidden sm:block"
-              style={{ fontFamily: "var(--font-playfair)" }}
-            >
-              SM Confecções
-            </span>
           </Link>
 
           {/* Center */}
-          <nav className="hidden md:flex items-center gap-7">
+          <nav className="hidden md:flex items-center gap-2">
             {links.map((l) => (
               <a
                 key={l.href}
                 href={l.href}
-                className="text-sm font-medium text-[#0F1E3C]/55 hover:text-[#0F1E3C] transition-colors"
+                className="text-sm font-semibold text-[#0F1E3C] bg-white px-3.5 py-2 rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
               >
                 {l.label}
               </a>
@@ -69,14 +63,14 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
               href={waLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-2 bg-[#25D366] text-white text-sm font-semibold px-4 py-2 rounded-full hover:bg-[#1ebe5d] transition-colors"
+              className="hidden sm:flex items-center gap-2 bg-[#25D366] text-white text-sm font-semibold px-4 py-2 rounded-full shadow-md hover:shadow-lg hover:bg-[#1ebe5d] transition-all"
             >
               <MessageCircle size={15} />
               WhatsApp
             </a>
             <button
               onClick={() => setOpen((v) => !v)}
-              className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl text-[#0F1E3C] hover:bg-gray-100 transition-colors"
+              className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-white text-[#0F1E3C] shadow-md hover:shadow-lg transition-all"
               aria-label="Menu"
             >
               {open ? <X size={20} /> : <Menu size={20} />}
@@ -84,9 +78,9 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
           </div>
         </div>
 
-        {/* Mobile menu */}
+        {/* Mobile menu — painel sólido, precisa ser legível independente da foto atrás */}
         {open && (
-          <div className="md:hidden border-t border-gray-100 px-5 py-4 space-y-1">
+          <div className="md:hidden mx-5 mt-2 bg-white rounded-2xl shadow-xl px-5 py-4 space-y-1">
             {links.map((l) => (
               <a
                 key={l.href}

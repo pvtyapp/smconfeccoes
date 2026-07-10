@@ -98,9 +98,7 @@ export default async function LandingPage() {
       <LandingNavbar waLink={WA_LINK} />
 
       {heroBanners.length > 0 ? (
-        <div className="pt-[100px]">
-          <HeroBannerCarousel banners={heroBanners} />
-        </div>
+        <HeroBannerCarousel banners={heroBanners} />
       ) : (
       /* ── HERO ── */
       <section className="relative bg-[#0A1628] text-white overflow-hidden pt-[100px]">
