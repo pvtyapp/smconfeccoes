@@ -179,16 +179,16 @@ export default async function LandingPage() {
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">
-        <div className="max-w-5xl mx-auto px-5 py-2.5 sm:py-4 flex items-center justify-between overflow-x-auto gap-4 sm:gap-6">
+        <div className="max-w-5xl mx-auto px-5 py-1.5 sm:py-2 flex items-center justify-between overflow-x-auto gap-4 sm:gap-6">
           {[
             { val: "Sem mínimo", label: "Compre quanto quiser" },
             { val: "100%", label: "Produção própria" },
             { val: "Atacado", label: "Direto da fábrica" },
             { val: "WhatsApp", label: "Atendimento direto" },
           ].map((s) => (
-            <div key={s.label} className="text-center text-white flex-shrink-0">
-              <p className="text-xs sm:text-base font-black">{s.val}</p>
-              <p className="text-white/65 text-[10px] sm:text-xs mt-0.5 whitespace-nowrap">{s.label}</p>
+            <div key={s.label} className="text-center text-white flex-shrink-0 leading-tight">
+              <p className="text-xs sm:text-base font-black leading-tight">{s.val}</p>
+              <p className="text-white/65 text-[10px] sm:text-xs leading-tight whitespace-nowrap">{s.label}</p>
             </div>
           ))}
         </div>
