@@ -1560,7 +1560,7 @@ async function handleText(
   // redirecionamento curto (evita repetir a apresentação inteira toda hora que o
   // bot não entende algo).
   const { rows: greetRows } = await pool.query(
-    `SELECT (DATE(last_greeting_sent_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE) AS "sentToday"
+    `SELECT (DATE(last_greeting_sent_at AT TIME ZONE 'America/Sao_Paulo') = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS "sentToday"
      FROM wa_contacts WHERE id = $1`,
     [contactId]
   ).catch(() => ({ rows: [] as { sentToday: boolean }[] }))

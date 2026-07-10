@@ -453,7 +453,7 @@ export async function GET(req: Request) {
         AND time_of_day <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::time
         AND (last_executed_at IS NULL
              OR DATE(last_executed_at AT TIME ZONE 'America/Sao_Paulo')
-                < (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo'))
+                < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date)
       LIMIT 3
     `, [brDay])
     for (const sched of dueSchedules) {
