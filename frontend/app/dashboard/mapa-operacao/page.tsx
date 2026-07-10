@@ -143,11 +143,17 @@ export default function MapaOperacaoPage() {
       ],
     })
   }
-  function openEstoquePanel(group: EstoqueGroup) {
+  function openEstoquePanel(groups: EstoqueGroup[], type: "in" | "out") {
+    const totalQty = groups.reduce((s, g) => s + g.totalQuantity, 0)
     setPanel({
-      eyebrow: (group.type === "in" ? "Estoque — entrada" : "Estoque — saída") + (group.ref ? ` · ${group.ref}` : ""),
-      title: `${group.totalQuantity} peça${group.totalQuantity !== 1 ? "s" : ""}`,
-      rows: group.items.map(m => ({ label: `${m.productName} ${m.color}/${m.size}`, value: `${m.quantity} un` })),
+      eyebrow: type === "in" ? "Estoque — entrada" : "Estoque — saída",
+      title: `${totalQty} peça${totalQty !== 1 ? "s" : ""}${groups.length > 1 ? ` · ${groups.length} eventos` : ""}`,
+      rows: groups.flatMap(g =>
+        g.items.map(m => ({
+          label: `${g.ref ? g.ref + " · " : ""}${m.productName} ${m.color}/${m.size}`,
+          value: `${m.quantity} un`,
+        }))
+      ),
     })
   }
 
@@ -167,8 +173,10 @@ export default function MapaOperacaoPage() {
   }
 
   const corteChunks = chunk(data.corte, 5)
-  const estoqueIn  = data.estoque.filter(e => e.type === "in")
-  const estoqueOut = data.estoque.filter(e => e.type === "out")
+  const estoqueInEvents  = data.estoque.filter(e => e.type === "in")
+  const estoqueOutEvents = data.estoque.filter(e => e.type === "out")
+  const estoqueInChunks  = chunk(estoqueInEvents, 5)
+  const estoqueOutChunks = chunk(estoqueOutEvents, 5)
   const dtfChunks      = chunk(data.dtf, 5)
   const whatsappChunks = chunk(data.whatsapp, 5)
   const balcaoChunks   = chunk(data.balcao, 5)
@@ -217,25 +225,25 @@ export default function MapaOperacaoPage() {
             <MapBubble left={ZONES.balcao.left} top={ZONES.balcao.top} emoji="💲" faded />
           )}
 
-          {/* Estoque: cada EVENTO (1 ordem/venda, não linha por produto) é seu
-              próprio balão — entrada contorno verde, saída contorno vermelho */}
-          {estoqueIn.map((item, i) => {
-            const pos = scatter(ZONES.estoqueIn, i, estoqueIn.length)
+          {/* Estoque: agrupado de 5 em 5 como o resto do mapa — entrada contorno
+              verde, saída contorno vermelho */}
+          {estoqueInChunks.map((grp, i) => {
+            const pos = scatter(ZONES.estoqueIn, i, estoqueInChunks.length)
             return (
-              <MapBubble key={`ein-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
-                tone={TONE_MONEY} count={item.items.length > 1 ? item.items.length : undefined}
-                onClick={() => openEstoquePanel(item)} />
+              <MapBubble key={`ein-${i}`} left={pos.left} top={pos.top} emoji="📦"
+                tone={TONE_MONEY} count={grp.length > 1 ? grp.length : undefined}
+                onClick={() => openEstoquePanel(grp, "in")} />
             )
           })}
-          {estoqueOut.map((item, i) => {
-            const pos = scatter(ZONES.estoqueOut, i, estoqueOut.length)
+          {estoqueOutChunks.map((grp, i) => {
+            const pos = scatter(ZONES.estoqueOut, i, estoqueOutChunks.length)
             return (
-              <MapBubble key={`eout-${item.id}`} left={pos.left} top={pos.top} emoji="📦"
-                tone={TONE_DANGER} count={item.items.length > 1 ? item.items.length : undefined}
-                onClick={() => openEstoquePanel(item)} />
+              <MapBubble key={`eout-${i}`} left={pos.left} top={pos.top} emoji="📦"
+                tone={TONE_DANGER} count={grp.length > 1 ? grp.length : undefined}
+                onClick={() => openEstoquePanel(grp, "out")} />
             )
           })}
-          {estoqueIn.length === 0 && estoqueOut.length === 0 && (
+          {estoqueInChunks.length === 0 && estoqueOutChunks.length === 0 && (
             <MapBubble left={ZONES.estoqueIn.left} top={ZONES.estoqueIn.top} emoji="📦" faded />
           )}
 
@@ -309,7 +317,7 @@ export default function MapaOperacaoPage() {
           <div className="grid grid-cols-2 gap-2.5">
             <SummaryCard emoji="✂️" label="Corte" value={`${data.corte.length}`} />
             <SummaryCard emoji="👕" label="Revisão" value={`${data.revisao.length}`} />
-            <SummaryCard emoji="📦" label="Estoque" value={`${estoqueIn.length} in · ${estoqueOut.length} out`} wide />
+            <SummaryCard emoji="📦" label="Estoque" value={`${estoqueInEvents.length} in · ${estoqueOutEvents.length} out`} wide />
           </div>
         </div>
         <div className="space-y-2">

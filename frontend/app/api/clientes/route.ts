@@ -55,7 +55,7 @@ export async function GET() {
       LEFT JOIN dtf_pedidos dp ON dp.contact_id = c.id
       WHERE c.linked_user_id IS NULL
       GROUP BY c.id
-      ORDER BY c.last_order_at DESC NULLS LAST, c.created_at DESC
+      ORDER BY COALESCE(c.last_order_at, c.created_at) DESC
     `)
     return NextResponse.json(rows)
   } catch (err) {

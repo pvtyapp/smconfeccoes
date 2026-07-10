@@ -345,12 +345,14 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
   }
 
   return (
-    <div className="hidden print:block fixed inset-0 bg-white z-[100]">
+    <div className="hidden print:block bg-white">
       <style>{`
         @media print {
           body * { visibility: hidden; }
           .print-receipt, .print-receipt * { visibility: visible !important; }
-          .print-receipt { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
+          /* absolute (não fixed!) — fixed corta conteúdo que passa de 1 página na
+             impressão do Chrome; absolute deixa a 2ª via fluir pra folha 2 de verdade */
+          .print-receipt { position: absolute; top: 0; left: 0; right: 0; }
           @page { size: ${isTermica ? "80mm 297mm" : "A4"} portrait; margin: 0; }
         }
       `}</style>
