@@ -250,38 +250,79 @@ async function startClientesReceber(jid: string, user: AdminUser): Promise<void>
   await reply(jid, msg + MENU_FOOTER)
 }
 
-function periodoRange(kind: "hoje" | "mes"): Date {
+function periodoRange(kind: "hoje" | "mes" | number): Date {
   const now = new Date()
   if (kind === "hoje") return new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  return new Date(now.getFullYear(), now.getMonth(), 1)
+  if (kind === "mes")  return new Date(now.getFullYear(), now.getMonth(), 1)
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  d.setDate(d.getDate() - (kind - 1)) // "últimos N dias" inclui hoje
+  return d
 }
 
-async function startVendas(jid: string, user: AdminUser): Promise<void> {
-  void user
-  const desde = periodoRange("mes")
-  const { rows } = await pool.query(`
+// Monta a mensagem de vendas (total + por produto genérico, sem cor/tamanho) —
+// soma pedidos concluídos + avarias vendidas, DTF fica só na linha resumo
+// separada (tem relatório próprio, não entra misturado no "por produto").
+async function buildVendasMsg(desde: Date, label: string): Promise<string> {
+  const { rows: ordRows } = await pool.query(`
     SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp','manual')
+    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp')
       AND number NOT LIKE 'COB-%' AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
     SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(preco_cobrado), 0)::float AS receita
     FROM dtf_pedidos WHERE status != 'cancelado' AND created_at >= $1
   `, [desde])
-  const totalPedidos = rows[0].pedidos + dtfRows[0].pedidos
-  const totalReceita = rows[0].receita + dtfRows[0].receita
-  await reply(
-    jid,
-    `📊 *Relatório de Vendas — mês atual*\n\nPedidos: *${totalPedidos}*\nReceita: *${fmtMoney(totalReceita)}*\n(Produto: ${fmtMoney(rows[0].receita)} · DTF: ${fmtMoney(dtfRows[0].receita)})` + MENU_FOOTER
-  )
+  const { rows: avariaAgg } = await pool.query(`
+    SELECT COUNT(*)::int AS vendas, COALESCE(SUM(sale_price), 0)::float AS receita
+    FROM defect_stock WHERE disposition = 'vendido' AND COALESCE(resolved_at, created_at) >= $1
+  `, [desde])
+  const { rows: porProduto } = await pool.query(`
+    SELECT oi.product_name AS "productName", COUNT(DISTINCT o.id)::int AS vendas,
+           SUM(oi.qty)::int AS pecas, SUM(oi.qty * COALESCE(oi.unit_price, 0))::float AS receita
+    FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id
+    WHERE o.status != 'cancelado' AND o.source IN ('pdv','whatsapp')
+      AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
+    GROUP BY oi.product_name
+  `, [desde])
+  const { rows: avariaPorProduto } = await pool.query(`
+    SELECT product_name AS "productName", COUNT(*)::int AS vendas,
+           COALESCE(SUM(qty), 0)::int AS pecas, COALESCE(SUM(sale_price), 0)::float AS receita
+    FROM defect_stock WHERE disposition = 'vendido' AND COALESCE(resolved_at, created_at) >= $1
+    GROUP BY product_name
+  `, [desde])
+
+  const porProdutoMap = new Map<string, { vendas: number; pecas: number; receita: number }>()
+  for (const r of [...porProduto, ...avariaPorProduto] as { productName: string; vendas: number; pecas: number; receita: number }[]) {
+    const cur = porProdutoMap.get(r.productName) ?? { vendas: 0, pecas: 0, receita: 0 }
+    cur.vendas  += r.vendas
+    cur.pecas   += r.pecas
+    cur.receita += r.receita
+    porProdutoMap.set(r.productName, cur)
+  }
+  const porProdutoList = [...porProdutoMap.entries()].sort((a, b) => b[1].receita - a[1].receita)
+
+  const totalPedidos = ordRows[0].pedidos + dtfRows[0].pedidos + avariaAgg[0].vendas
+  const totalReceita = ordRows[0].receita + dtfRows[0].receita + avariaAgg[0].receita
+  const receitaProduto = ordRows[0].receita + avariaAgg[0].receita
+
+  let msg = `📊 *Relatório de Vendas — ${label}*\n\n` +
+    `Pedidos: *${totalPedidos}*\nReceita: *${fmtMoney(totalReceita)}*\n` +
+    `(Produto: ${fmtMoney(receitaProduto)} · DTF: ${fmtMoney(dtfRows[0].receita)})`
+
+  if (porProdutoList.length > 0) {
+    const top = porProdutoList.slice(0, 8)
+    msg += `\n\n*Por produto:*\n` + top.map(([name, d]) => `• ${name}: ${d.pecas} pç · ${fmtMoney(d.receita)}`).join("\n")
+    if (porProdutoList.length > 8) msg += `\n_+ ${porProdutoList.length - 8} outro(s) produto(s)_`
+  }
+
+  return msg
 }
 
-async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
-  void user
-  const desde = periodoRange("mes")
+async function buildFinanceiroMsg(desde: Date, label: string): Promise<string> {
   const { rows } = await pool.query(`
     SELECT COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp','manual')
+    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp')
       AND number NOT LIKE 'COB-%' AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
@@ -293,7 +334,7 @@ async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
     LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name) AND p.status = 'active'
-    WHERE o.status != 'cancelado' AND o.source IN ('pdv','whatsapp','manual')
+    WHERE o.status != 'cancelado' AND o.source IN ('pdv','whatsapp')
       AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
   `, [desde])
   const { rows: despesaRows } = await pool.query(`
@@ -306,15 +347,26 @@ async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
   const despesas  = despesaRows[0].despesas
   const resultado = receita - custo - despesas
 
-  await reply(
-    jid,
-    `📈 *Relatório Financeiro — mês atual* (resumo simplificado)\n\n` +
+  return `📈 *Relatório Financeiro — ${label}* (resumo simplificado)\n\n` +
     `Receita: *${fmtMoney(receita)}*\n` +
     `Custo de produto: -${fmtMoney(custo)}\n` +
     `Despesas variáveis: -${fmtMoney(despesas)}\n` +
     `Resultado: *${fmtMoney(resultado)}*\n\n` +
-    `_Resumo simplificado — relatório completo com todos os canais e detalhes fica no painel._` + MENU_FOOTER
-  )
+    `_Resumo simplificado — relatório completo com todos os canais e detalhes fica no painel._`
+}
+
+const PERIODO_PROMPT = `\n\n_Quer ver os últimos 15 ou 30 dias? Responda 15 ou 30. Ou "menu" pra sair._`
+
+async function startVendas(jid: string, user: AdminUser): Promise<void> {
+  const msg = await buildVendasMsg(periodoRange("hoje"), "hoje")
+  await setState(user.id, "relatorio_periodo", withTimestamp({ tipo: "vendas" }))
+  await reply(jid, msg + PERIODO_PROMPT)
+}
+
+async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
+  const msg = await buildFinanceiroMsg(periodoRange("hoje"), "hoje")
+  await setState(user.id, "relatorio_periodo", withTimestamp({ tipo: "financeiro" }))
+  await reply(jid, msg + PERIODO_PROMPT)
 }
 
 const MENU_ITEMS: MenuItem[] = [
@@ -810,6 +862,28 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       await setState(user.id, null, {})
       await reply(jid, "Deu erro ao lançar a despesa. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
     }
+    return true
+  }
+
+  // ── Relatório (vendas/financeiro): oferece ver 15 ou 30 dias além de hoje ──
+  if (state === "relatorio_periodo") {
+    const tipo = (data.tipo as "vendas" | "financeiro") ?? "vendas"
+    if (lower === "15" || lower === "30") {
+      const dias  = lower === "15" ? 15 : 30
+      const label = `últimos ${dias} dias`
+      const msg = tipo === "vendas"
+        ? await buildVendasMsg(periodoRange(dias), label)
+        : await buildFinanceiroMsg(periodoRange(dias), label)
+      await setState(user.id, null, {})
+      await reply(jid, msg + MENU_FOOTER)
+      return true
+    }
+    if (lower === "não" || lower === "nao" || lower === "n") {
+      await setState(user.id, null, {})
+      await reply(jid, "Ok!" + MENU_FOOTER)
+      return true
+    }
+    await reply(jid, `Não entendi. Responda "15" ou "30" pra ver mais dias, ou "menu" pra sair.`)
     return true
   }
 
