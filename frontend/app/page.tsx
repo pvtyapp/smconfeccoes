@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic"
 
 import Image from "next/image"
 import Link from "next/link"
-import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight } from "lucide-react"
+import { MessageCircle, MapPin, Package, ChevronRight } from "lucide-react"
 import CatalogCarousel, { type CatalogProduct } from "@/components/landing/CatalogCarousel"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
@@ -73,19 +73,6 @@ const services = [
       "Produção sob encomenda disponível",
     ],
   },
-  {
-    icon: Truck,
-    title: "Dropshipping",
-    badge: "Sem estoque próprio",
-    desc: "Venda nossas peças sem precisar comprar estoque. Você vende, nós produzimos e enviamos direto ao seu cliente.",
-    cta: "Quero revender no WhatsApp",
-    items: [
-      "Zero investimento em estoque",
-      "Nós cuidamos da produção e envio",
-      "Margens atrativas para revendedores",
-      "Atendimento direto pelo WhatsApp",
-    ],
-  },
 ]
 
 export default async function LandingPage() {
@@ -101,7 +88,7 @@ export default async function LandingPage() {
         <HeroBannerCarousel banners={heroBanners} />
       ) : (
       /* ── HERO ── */
-      <section className="relative bg-[#0A1628] text-white overflow-hidden pt-[100px]">
+      <section className="relative bg-[#0A1628] text-white overflow-hidden pt-16">
         {/* Grid texture */}
         <div
           className="absolute inset-0 opacity-[0.035]"
@@ -157,7 +144,7 @@ export default async function LandingPage() {
               </h1>
 
               <p className="text-white/60 text-base lg:text-xl font-light mb-4 max-w-md mx-auto lg:mx-0">
-                Atacado · Dropshipping
+                Atacado
               </p>
               <p className="text-white/75 text-base lg:text-xl mb-10 max-w-md mx-auto lg:mx-0 leading-relaxed font-medium">
                 Compre sem pedido mínimo, nosso atendimento é o mais rápido da região!
@@ -196,7 +183,7 @@ export default async function LandingPage() {
           {[
             { val: "Sem mínimo", label: "Compre quanto quiser" },
             { val: "100%", label: "Produção própria" },
-            { val: "Atacado & Drop", label: "Para lojistas" },
+            { val: "Atacado", label: "Direto da fábrica" },
             { val: "WhatsApp", label: "Atendimento direto" },
           ].map((s) => (
             <div key={s.label} className="text-center text-white flex-shrink-0">
@@ -206,81 +193,6 @@ export default async function LandingPage() {
           ))}
         </div>
       </div>
-
-      {/* ── PONTOS DE COLETA ── */}
-      <section id="coleta" className="py-20 sm:py-28 px-5 bg-[#F4F6FB]">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-14">
-            <span className="inline-block bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-[0.18em] px-4 py-1.5 rounded-full mb-5">
-              Em Breve
-            </span>
-            <h2
-              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
-              style={{ fontFamily: "var(--font-playfair)" }}
-            >
-              Ponto de Coleta
-            </h2>
-            <p className="text-[#0F1E3C]/50 text-base sm:text-lg max-w-lg mx-auto leading-relaxed">
-              Vendedor de Shopee ou TikTok Shop? Traga seus pedidos vendidos aqui.
-              Nós cuidamos de todo o processo de postagem e envio pra você.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5 max-w-xl mx-auto mb-8">
-            {/* Shopee */}
-            <div className="bg-white rounded-2xl p-4 sm:p-8 flex flex-row sm:flex-col items-center gap-4 sm:gap-5 border border-gray-100 opacity-75">
-              <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-[#FF6130] to-[#F95B2B] flex items-center justify-center shadow-md shadow-[#F95B2B]/20 flex-shrink-0">
-                <span className="text-white text-base sm:text-2xl font-black">S</span>
-                <div className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
-                  <Clock size={10} color="white" className="sm:hidden" />
-                  <Clock size={12} color="white" className="hidden sm:block" />
-                </div>
-              </div>
-              <div className="text-left sm:text-center min-w-0 flex-1 sm:flex-none">
-                <p className="text-base sm:text-xl font-black text-[#0F1E3C]">Shopee</p>
-                <p className="text-xs sm:text-sm text-[#0F1E3C]/45 mt-0.5 sm:mt-1">Ponto de postagem para vendedores</p>
-              </div>
-              <span className="hidden sm:inline-block bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
-                Em Breve
-              </span>
-            </div>
-
-            {/* TikTok */}
-            <div className="bg-white rounded-2xl p-4 sm:p-8 flex flex-row sm:flex-col items-center gap-4 sm:gap-5 border border-gray-100 opacity-75">
-              <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-[#010101] flex items-center justify-center shadow-md shadow-black/15 flex-shrink-0">
-                <span className="text-white text-base sm:text-2xl font-black">T</span>
-                <div className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
-                  <Clock size={10} color="white" className="sm:hidden" />
-                  <Clock size={12} color="white" className="hidden sm:block" />
-                </div>
-              </div>
-              <div className="text-left sm:text-center min-w-0 flex-1 sm:flex-none">
-                <p className="text-base sm:text-xl font-black text-[#0F1E3C]">TikTok Shop</p>
-                <p className="text-xs sm:text-sm text-[#0F1E3C]/45 mt-0.5 sm:mt-1">Ponto de postagem para vendedores</p>
-              </div>
-              <span className="hidden sm:inline-block bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
-                Em Breve
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-3 max-w-xl mx-auto">
-            <div className="flex items-center gap-2.5 bg-white border border-[#0F1E3C]/8 rounded-xl px-5 py-3 shadow-sm">
-              <span className="text-[#0F1E3C] text-sm font-semibold">Horário de Funcionamento</span>
-              <span className="bg-[#4361EE]/10 text-[#4361EE] text-[10px] font-black uppercase tracking-wide px-2.5 py-1 rounded-full">
-                Em Breve
-              </span>
-            </div>
-            <a
-              href="#localizacao"
-              className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold px-5 py-3 rounded-xl transition-colors"
-            >
-              <MapPin size={15} />
-              Ver endereço
-            </a>
-          </div>
-        </div>
-      </section>
 
       {/* ── CATÁLOGO ── */}
       <CatalogCarousel initialProducts={catalog} waLink={WA_LINK} />
@@ -293,14 +205,14 @@ export default async function LandingPage() {
               className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
-              Para lojistas e revendedores
+              Atacado direto de fábrica
             </h2>
             <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-md mx-auto">
-              Duas formas de trabalhar com a SM Confecções
+              Sem pedido mínimo, sem intermediário
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-3xl mx-auto">
+          <div className="grid grid-cols-1 max-w-md mx-auto">
             {services.map((s, i) => (
               <div
                 key={s.title}
