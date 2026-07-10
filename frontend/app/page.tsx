@@ -6,6 +6,7 @@ import { MessageCircle, MapPin, Package, Truck, Clock, ChevronRight } from "luci
 import CatalogCarousel, { type CatalogProduct } from "@/components/landing/CatalogCarousel"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
+import HeroBannerCarousel, { type HeroBanner } from "@/components/landing/HeroBannerCarousel"
 import { pool } from "@/lib/db"
 
 const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
@@ -29,6 +30,25 @@ async function getCatalog(): Promise<CatalogProduct[]> {
       WHERE p.active = true
       GROUP BY p.id
       ORDER BY p.display_order ASC, p.created_at ASC
+    `)
+    return rows
+  } catch {
+    return []
+  }
+}
+
+async function getHeroBanners(): Promise<HeroBanner[]> {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS hero_banners (
+        id            SERIAL PRIMARY KEY,
+        image_url     TEXT NOT NULL,
+        display_order INTEGER NOT NULL DEFAULT 0,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `)
+    const { rows } = await pool.query(`
+      SELECT id, image_url FROM hero_banners ORDER BY display_order ASC, created_at ASC
     `)
     return rows
   } catch {
@@ -70,13 +90,19 @@ const services = [
 
 export default async function LandingPage() {
   const catalog = await getCatalog()
+  const heroBanners = await getHeroBanners()
 
   return (
     <div className="min-h-screen bg-white text-[#0F1E3C]" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
 
       <LandingNavbar waLink={WA_LINK} />
 
-      {/* ── HERO ── */}
+      {heroBanners.length > 0 ? (
+        <div className="pt-[100px]">
+          <HeroBannerCarousel banners={heroBanners} />
+        </div>
+      ) : (
+      /* ── HERO ── */
       <section className="relative bg-[#0A1628] text-white overflow-hidden pt-[100px]">
         {/* Grid texture */}
         <div
@@ -164,6 +190,7 @@ export default async function LandingPage() {
         {/* Bottom fade */}
         <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#0A1628] to-transparent" />
       </section>
+      )}
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">

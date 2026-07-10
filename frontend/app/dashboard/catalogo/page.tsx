@@ -7,6 +7,7 @@ import type { CatalogProduct } from "@/components/landing/CatalogCarousel"
 
 type Slot = { file: File | null; preview: string; color: string }
 type EditingProduct = CatalogProduct & { pendingRemove: string[] }
+type HeroBanner = { id: number; image_url: string; display_order: number }
 
 const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 const colorCls = "w-full border border-[#0F1E3C]/12 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C] focus:outline-none focus:ring-1 focus:ring-[#4361EE]/30 focus:border-[#4361EE] transition-colors placeholder:text-[#0F1E3C]/30 mt-1.5"
@@ -42,6 +43,13 @@ export default function CatalogoPage() {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [savingOrder, setSavingOrder] = useState(false)
 
+  // Hero banners
+  const [banners, setBanners] = useState<HeroBanner[]>([])
+  const [bannerUploading, setBannerUploading] = useState(false)
+  const [bannerDeleting, setBannerDeleting] = useState<number | null>(null)
+  const [bannerDragIndex, setBannerDragIndex] = useState<number | null>(null)
+  const bannerInputRef = useRef<HTMLInputElement>(null)
+
   async function fetchProducts() {
     try {
       const res = await fetch("/api/catalog")
@@ -49,7 +57,54 @@ export default function CatalogoPage() {
     } catch { /* silencioso */ }
   }
 
-  useEffect(() => { fetchProducts() }, [])
+  async function fetchBanners() {
+    try {
+      const res = await fetch("/api/hero-banners")
+      if (res.ok) setBanners(await res.json())
+    } catch { /* silencioso */ }
+  }
+
+  async function handleBannerUpload(file: File) {
+    setBannerUploading(true)
+    try {
+      const form = new FormData()
+      form.append("image", file)
+      const res = await fetch("/api/hero-banners", { method: "POST", body: form })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erro ao subir banner") }
+      const created = await res.json()
+      setBanners((b) => [...b, created])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao subir banner")
+    } finally { setBannerUploading(false) }
+  }
+
+  async function handleBannerDelete(id: number) {
+    setBannerDeleting(id)
+    try {
+      await fetch(`/api/hero-banners/${id}`, { method: "DELETE" })
+      setBanners((b) => b.filter((x) => x.id !== id))
+    } finally { setBannerDeleting(null) }
+  }
+
+  async function handleBannerReorder(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return
+    const reordered = [...banners]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved)
+    setBanners(reordered)
+    await Promise.all(
+      reordered.map((b, i) =>
+        b.display_order === i ? null : fetch(`/api/hero-banners/${b.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ display_order: i }),
+        })
+      )
+    )
+    setBanners(reordered.map((b, i) => ({ ...b, display_order: i })))
+  }
+
+  useEffect(() => { fetchProducts(); fetchBanners() }, [])
 
   // Whenever last slot gets a file, append a new empty slot
   function setSlotFile(idx: number, f: File, target: Slot[], setter: (s: Slot[]) => void) {
@@ -178,6 +233,54 @@ export default function CatalogoPage() {
         <p className="text-sm text-[#0F1E3C]/45 mt-0.5">
           Capa obrigatória + variações de cor ilimitadas. Clique em uma variação preenchida para liberar a próxima.
         </p>
+      </div>
+
+      {/* Hero banner carousel */}
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6">
+        <h2 className="text-sm font-bold text-[#0F1E3C] mb-1">Banner do topo da LP</h2>
+        <p className="text-xs text-[#0F1E3C]/40 mb-5">
+          Sem nenhuma foto aqui, a LP mostra o topo padrão (logo + texto). Com 1 ou mais fotos, vira um
+          carrossel com autoplay que substitui o topo inteiro. Até 5 fotos, 1600×640px funciona melhor.
+          {banners.length > 1 && " Arraste pra mudar a ordem."}
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {banners.map((b, i) => (
+            <div
+              key={b.id}
+              draggable
+              onDragStart={() => setBannerDragIndex(i)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); if (bannerDragIndex !== null) handleBannerReorder(bannerDragIndex, i); setBannerDragIndex(null) }}
+              onDragEnd={() => setBannerDragIndex(null)}
+              className={`relative aspect-[2.5/1] rounded-xl overflow-hidden group cursor-move border-2 transition-colors ${
+                bannerDragIndex === i ? "border-[#4361EE] opacity-50" : "border-transparent"
+              }`}
+            >
+              <Image src={b.image_url} alt="" fill className="object-cover" />
+              <button
+                onClick={() => handleBannerDelete(b.id)}
+                disabled={bannerDeleting === b.id}
+                className="absolute top-1.5 right-1.5 w-7 h-7 bg-red-500 text-white rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 disabled:opacity-60 transition-opacity"
+              >
+                {bannerDeleting === b.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              </button>
+            </div>
+          ))}
+          {banners.length < 5 && (
+            <button
+              onClick={() => bannerInputRef.current?.click()}
+              disabled={bannerUploading}
+              className="relative aspect-[2.5/1] border-2 border-dashed border-[#0F1E3C]/15 hover:border-[#4361EE]/40 bg-[#F4F6FB] rounded-xl flex flex-col items-center justify-center gap-1 text-[#0F1E3C]/30 transition-colors disabled:opacity-60"
+            >
+              {bannerUploading ? <Loader2 size={18} className="animate-spin" /> : <ImagePlus size={18} />}
+              <span className="text-[10px] font-semibold">{banners.length === 0 ? "Adicionar foto" : "Nova foto"}</span>
+            </button>
+          )}
+        </div>
+        <input
+          ref={bannerInputRef} type="file" accept="image/*" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBannerUpload(f); e.target.value = "" }}
+        />
       </div>
 
       {/* Add form */}
