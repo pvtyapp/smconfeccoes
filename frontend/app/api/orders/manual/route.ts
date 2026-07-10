@@ -89,7 +89,7 @@ export async function POST(req: Request) {
       const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
       const orderRes = await cli.query(`
         INSERT INTO orders (number, contact_id, status, total_value, source)
-        VALUES ($1, $2, 'triagem', $3, 'manual')
+        VALUES ($1, $2, 'triagem', $3, 'whatsapp')
         RETURNING id, number
       `, [number, contactId, totalValue > 0 ? totalValue : null])
       orderId     = orderRes.rows[0].id as number

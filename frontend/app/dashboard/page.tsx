@@ -81,7 +81,7 @@ const STATUS_CLASS: Record<string, string> = {
 }
 
 const CHANNEL_LABEL: Record<string, string> = {
-  pdv: "Balcão (PDV)", whatsapp: "WhatsApp", manual: "Manual", dtf: "DTF",
+  pdv: "Balcão (PDV)", whatsapp: "WhatsApp", dtf: "DTF",
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -315,12 +315,12 @@ export default function DashboardPage() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {financeiroLoading
-            ? Array.from({ length: 4 }).map((_, i) => (
+            ? Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-[72px] rounded-2xl bg-[#0F1E3C]/4 animate-pulse"/>
               ))
-            : (["pdv", "whatsapp", "manual"] as const).map(ch => (
+            : (["pdv", "whatsapp"] as const).map(ch => (
                 <MetricCard
                   key={ch}
                   title={CHANNEL_LABEL[ch]}

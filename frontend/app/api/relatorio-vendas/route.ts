@@ -54,7 +54,7 @@ export async function GET(req: Request) {
           LIMIT 1
         ) p ON true
         WHERE o.status != 'cancelado'
-          AND o.source IN ('pdv', 'whatsapp', 'manual')
+          AND o.source IN ('pdv', 'whatsapp')
           AND o.number NOT LIKE 'COB-%'
           ${orderDateCond}
         GROUP BY o.id, c.name, c.phone

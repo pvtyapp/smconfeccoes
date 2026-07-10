@@ -44,7 +44,7 @@ export async function GET(req: Request) {
         LIMIT 1
       ) p ON true
       WHERE o.status != 'cancelado'
-        AND o.source IN ('pdv', 'whatsapp', 'manual')
+        AND o.source IN ('pdv', 'whatsapp')
         AND o.number NOT LIKE 'COB-%'
         AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
       GROUP BY o.id
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
       JOIN products p
         ON TRIM(LOWER(p.name)) = TRIM(LOWER(oi.product_name))
       WHERE o.status != 'cancelado'
-        AND o.source IN ('pdv', 'whatsapp', 'manual')
+        AND o.source IN ('pdv', 'whatsapp')
         AND o.number NOT LIKE 'COB-%'
         AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
         AND (p.material_cost IS NULL OR p.material_cost = 0)
