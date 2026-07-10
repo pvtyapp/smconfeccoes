@@ -50,7 +50,7 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
               <a
                 key={l.href}
                 href={l.href}
-                className="text-sm font-semibold text-[#0F1E3C] bg-white px-3.5 py-2 rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
+                className="text-sm font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.6)] hover:text-white/80 transition-colors"
               >
                 {l.label}
               </a>
@@ -63,14 +63,14 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
               href={waLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-2 bg-[#25D366] text-white text-sm font-semibold px-4 py-2 rounded-full shadow-md hover:shadow-lg hover:bg-[#1ebe5d] transition-all"
+              className="hidden sm:flex items-center gap-2 text-white text-sm font-semibold drop-shadow-[0_1px_4px_rgba(0,0,0,0.6)] hover:text-white/80 transition-colors"
             >
               <MessageCircle size={15} />
               WhatsApp
             </a>
             <button
               onClick={() => setOpen((v) => !v)}
-              className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-white text-[#0F1E3C] shadow-md hover:shadow-lg transition-all"
+              className="md:hidden w-10 h-10 flex items-center justify-center text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.6)] hover:text-white/80 transition-colors"
               aria-label="Menu"
             >
               {open ? <X size={20} /> : <Menu size={20} />}
