@@ -19,8 +19,6 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
-  "/api/debug/audit-col-types", // temporário — audita tipos de coluna pra fechar levantamento de timezone
-  "/api/debug/cron-tz-verify", // temporário — confere fix do agendador de campanha antes de confiar
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
