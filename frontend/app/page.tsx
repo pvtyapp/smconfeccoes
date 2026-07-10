@@ -85,10 +85,12 @@ export default async function LandingPage() {
       <LandingNavbar waLink={WA_LINK} />
 
       {heroBanners.length > 0 ? (
-        <HeroBannerCarousel banners={heroBanners} />
+        <div className="pt-12 md:pt-0">
+          <HeroBannerCarousel banners={heroBanners} />
+        </div>
       ) : (
       /* ── HERO ── */
-      <section className="relative bg-[#0A1628] text-white overflow-hidden pt-16">
+      <section className="relative bg-[#0A1628] text-white overflow-hidden pt-12 md:pt-16">
         {/* Grid texture */}
         <div
           className="absolute inset-0 opacity-[0.035]"
@@ -179,7 +181,7 @@ export default async function LandingPage() {
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">
-        <div className="max-w-5xl mx-auto px-5 py-1.5 sm:py-2 flex items-center justify-between overflow-x-auto gap-4 sm:gap-6">
+        <div className="max-w-5xl mx-auto px-5 py-0.5 sm:py-1 flex items-center justify-between overflow-x-auto gap-4 sm:gap-6">
           {[
             { val: "Sem mínimo", label: "Compre quanto quiser" },
             { val: "100%", label: "Produção própria" },
