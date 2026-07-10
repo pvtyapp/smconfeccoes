@@ -192,7 +192,7 @@ export default async function LandingPage() {
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">
-        <div className="max-w-5xl mx-auto px-5 py-4 flex items-center justify-between overflow-x-auto gap-6">
+        <div className="max-w-5xl mx-auto px-5 py-2.5 sm:py-4 flex items-center justify-between overflow-x-auto gap-4 sm:gap-6">
           {[
             { val: "Sem mínimo", label: "Compre quanto quiser" },
             { val: "100%", label: "Produção própria" },
@@ -200,8 +200,8 @@ export default async function LandingPage() {
             { val: "WhatsApp", label: "Atendimento direto" },
           ].map((s) => (
             <div key={s.label} className="text-center text-white flex-shrink-0">
-              <p className="text-sm sm:text-base font-black">{s.val}</p>
-              <p className="text-white/65 text-[11px] sm:text-xs mt-0.5 whitespace-nowrap">{s.label}</p>
+              <p className="text-xs sm:text-base font-black">{s.val}</p>
+              <p className="text-white/65 text-[10px] sm:text-xs mt-0.5 whitespace-nowrap">{s.label}</p>
             </div>
           ))}
         </div>
@@ -226,37 +226,39 @@ export default async function LandingPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-xl mx-auto mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5 max-w-xl mx-auto mb-8">
             {/* Shopee */}
-            <div className="bg-white rounded-2xl p-7 sm:p-8 flex flex-col items-center gap-5 border border-gray-100 opacity-75">
-              <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-[#FF6130] to-[#F95B2B] flex items-center justify-center shadow-md shadow-[#F95B2B]/20">
-                <span className="text-white text-2xl font-black">S</span>
-                <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
-                  <Clock size={12} color="white" />
+            <div className="bg-white rounded-2xl p-4 sm:p-8 flex flex-row sm:flex-col items-center gap-4 sm:gap-5 border border-gray-100 opacity-75">
+              <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-[#FF6130] to-[#F95B2B] flex items-center justify-center shadow-md shadow-[#F95B2B]/20 flex-shrink-0">
+                <span className="text-white text-base sm:text-2xl font-black">S</span>
+                <div className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
+                  <Clock size={10} color="white" className="sm:hidden" />
+                  <Clock size={12} color="white" className="hidden sm:block" />
                 </div>
               </div>
-              <div className="text-center">
-                <p className="text-xl font-black text-[#0F1E3C]">Shopee</p>
-                <p className="text-sm text-[#0F1E3C]/45 mt-1">Ponto de postagem para vendedores</p>
+              <div className="text-left sm:text-center min-w-0 flex-1 sm:flex-none">
+                <p className="text-base sm:text-xl font-black text-[#0F1E3C]">Shopee</p>
+                <p className="text-xs sm:text-sm text-[#0F1E3C]/45 mt-0.5 sm:mt-1">Ponto de postagem para vendedores</p>
               </div>
-              <span className="bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
+              <span className="hidden sm:inline-block bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
                 Em Breve
               </span>
             </div>
 
             {/* TikTok */}
-            <div className="bg-white rounded-2xl p-7 sm:p-8 flex flex-col items-center gap-5 border border-gray-100 opacity-75">
-              <div className="relative w-16 h-16 rounded-2xl bg-[#010101] flex items-center justify-center shadow-md shadow-black/15">
-                <span className="text-white text-2xl font-black">T</span>
-                <div className="absolute -top-2 -right-2 w-6 h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
-                  <Clock size={12} color="white" />
+            <div className="bg-white rounded-2xl p-4 sm:p-8 flex flex-row sm:flex-col items-center gap-4 sm:gap-5 border border-gray-100 opacity-75">
+              <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-[#010101] flex items-center justify-center shadow-md shadow-black/15 flex-shrink-0">
+                <span className="text-white text-base sm:text-2xl font-black">T</span>
+                <div className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 w-5 h-5 sm:w-6 sm:h-6 bg-[#4361EE] rounded-full flex items-center justify-center">
+                  <Clock size={10} color="white" className="sm:hidden" />
+                  <Clock size={12} color="white" className="hidden sm:block" />
                 </div>
               </div>
-              <div className="text-center">
-                <p className="text-xl font-black text-[#0F1E3C]">TikTok Shop</p>
-                <p className="text-sm text-[#0F1E3C]/45 mt-1">Ponto de postagem para vendedores</p>
+              <div className="text-left sm:text-center min-w-0 flex-1 sm:flex-none">
+                <p className="text-base sm:text-xl font-black text-[#0F1E3C]">TikTok Shop</p>
+                <p className="text-xs sm:text-sm text-[#0F1E3C]/45 mt-0.5 sm:mt-1">Ponto de postagem para vendedores</p>
               </div>
-              <span className="bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
+              <span className="hidden sm:inline-block bg-[#4361EE]/10 text-[#4361EE] text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full">
                 Em Breve
               </span>
             </div>

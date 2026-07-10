@@ -49,19 +49,21 @@ export default function HeroBannerCarousel({ banners }: { banners: HeroBanner[] 
           <button
             onClick={prev}
             aria-label="Anterior"
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/15 hover:bg-white/25 backdrop-blur-sm text-white rounded-full flex items-center justify-center transition-colors"
+            className="absolute left-1.5 sm:left-3 top-1/2 -translate-y-1/2 w-6 h-6 sm:w-10 sm:h-10 bg-white/15 hover:bg-white/25 backdrop-blur-sm text-white rounded-full flex items-center justify-center transition-colors"
           >
-            <ChevronLeft size={20} />
+            <ChevronLeft size={14} className="sm:hidden" />
+            <ChevronLeft size={20} className="hidden sm:block" />
           </button>
           <button
             onClick={next}
             aria-label="Próximo"
-            className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/15 hover:bg-white/25 backdrop-blur-sm text-white rounded-full flex items-center justify-center transition-colors"
+            className="absolute right-1.5 sm:right-3 top-1/2 -translate-y-1/2 w-6 h-6 sm:w-10 sm:h-10 bg-white/15 hover:bg-white/25 backdrop-blur-sm text-white rounded-full flex items-center justify-center transition-colors"
           >
-            <ChevronRight size={20} />
+            <ChevronRight size={14} className="sm:hidden" />
+            <ChevronRight size={20} className="hidden sm:block" />
           </button>
 
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+          <div className="absolute bottom-1.5 sm:bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 sm:gap-2">
             {banners.map((b, i) => (
               <button
                 key={b.id}

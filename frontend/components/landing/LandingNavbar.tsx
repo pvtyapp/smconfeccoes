@@ -19,14 +19,14 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
     <header className="fixed top-0 left-0 right-0 z-50">
 
       {/* Announcement bar */}
-      <div className="bg-[#0F1E3C] text-white text-xs py-2 px-5 text-center">
+      <div className="bg-[#0F1E3C] text-white text-[10px] sm:text-xs py-1.5 sm:py-2 px-5 text-center whitespace-nowrap overflow-hidden text-ellipsis">
         <span className="text-white/50 mr-1.5">Em breve:</span>
-        <span className="font-semibold text-white/90">Ponto de Coleta</span>
-        <span className="mx-2 text-white/25">·</span>
+        <span className="font-semibold text-white/90 hidden sm:inline">Ponto de Coleta</span>
+        <span className="mx-2 text-white/25 hidden sm:inline">·</span>
         <span className="font-black text-[#F95B2B]">Shopee</span>
         <span className="mx-2 text-white/25">&amp;</span>
         <span className="font-black text-white">TikTok Shop</span>
-        <span className="ml-2 text-white/40">— Franca/SP</span>
+        <span className="ml-2 text-white/40 hidden sm:inline">— Franca/SP</span>
       </div>
 
       {/* Main nav — transparente, sobreposto ao hero/carrossel */}
