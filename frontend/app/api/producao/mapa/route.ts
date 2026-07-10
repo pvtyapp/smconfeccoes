@@ -92,7 +92,7 @@ export async function GET(req: Request) {
       FROM dtf_pedidos dp
       LEFT JOIN wa_contacts c ON c.id = dp.contact_id
       WHERE dp.status = 'concluido'
-        AND DATE(dp.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE - $1::int
+        AND DATE(dp.created_at AT TIME ZONE 'America/Sao_Paulo') = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
       ORDER BY dp.created_at DESC
       LIMIT 60
     `, [offset])
@@ -103,7 +103,7 @@ export async function GET(req: Request) {
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.source = 'whatsapp' AND o.status = 'concluido'
-        AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE - $1::int
+        AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
       ORDER BY o.created_at DESC
       LIMIT 60
     `, [offset])
@@ -113,7 +113,7 @@ export async function GET(req: Request) {
       SELECT o.id, o.number, o.total_value AS valor, o.created_at AS "createdAt"
       FROM orders o
       WHERE o.source = 'pdv' AND o.status = 'concluido'
-        AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE - $1::int
+        AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
       ORDER BY o.created_at DESC
       LIMIT 60
     `, [offset])
