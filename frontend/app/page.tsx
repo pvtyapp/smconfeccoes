@@ -149,17 +149,17 @@ export default async function LandingPage() {
               </p>
 
               <h1
-                className="text-[clamp(3rem,8vw,6rem)] font-black leading-[1.0] text-white mb-6"
+                className="text-[clamp(2.25rem,10vw,6rem)] font-black leading-[1.0] text-white mb-6"
                 style={{ fontFamily: "var(--font-playfair)" }}
               >
                 SM<br />
                 <span className="text-[#4361EE]">Confecções</span>
               </h1>
 
-              <p className="text-white/60 text-lg lg:text-xl font-light mb-4 max-w-md mx-auto lg:mx-0">
+              <p className="text-white/60 text-base lg:text-xl font-light mb-4 max-w-md mx-auto lg:mx-0">
                 Atacado · Dropshipping
               </p>
-              <p className="text-white/75 text-lg lg:text-xl mb-10 max-w-md mx-auto lg:mx-0 leading-relaxed font-medium">
+              <p className="text-white/75 text-base lg:text-xl mb-10 max-w-md mx-auto lg:mx-0 leading-relaxed font-medium">
                 Compre sem pedido mínimo, nosso atendimento é o mais rápido da região!
               </p>
 
@@ -215,7 +215,7 @@ export default async function LandingPage() {
               Em Breve
             </span>
             <h2
-              className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
+              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Ponto de Coleta
@@ -288,7 +288,7 @@ export default async function LandingPage() {
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-14">
             <h2
-              className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
+              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Para lojistas e revendedores
@@ -375,7 +375,7 @@ export default async function LandingPage() {
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-10">
             <h2
-              className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
+              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Onde nos encontrar
@@ -451,7 +451,7 @@ export default async function LandingPage() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] bg-[#4361EE]/15 blur-[120px] rounded-full pointer-events-none" />
         <div className="relative max-w-2xl mx-auto text-center">
           <h2
-            className="text-3xl sm:text-4xl md:text-5xl font-black mb-5 leading-tight"
+            className="text-2xl sm:text-4xl md:text-5xl font-black mb-5 leading-tight"
             style={{ fontFamily: "var(--font-playfair)" }}
           >
             Quer comprar no atacado?

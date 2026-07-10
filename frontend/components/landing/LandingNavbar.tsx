@@ -45,7 +45,7 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
           </Link>
 
           {/* Center */}
-          <nav className="hidden md:flex items-center gap-2">
+          <nav className="hidden md:flex items-center gap-5 lg:gap-8 xl:gap-10">
             {links.map((l) => (
               <a
                 key={l.href}
