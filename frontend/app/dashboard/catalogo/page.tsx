@@ -38,6 +38,10 @@ export default function CatalogoPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [modalImg, setModalImg] = useState(0)
 
+  // Reorder (drag and drop)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [savingOrder, setSavingOrder] = useState(false)
+
   async function fetchProducts() {
     try {
       const res = await fetch("/api/catalog")
@@ -96,6 +100,27 @@ export default function CatalogoPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar")
     } finally { setLoading(false) }
+  }
+
+  async function handleReorder(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return
+    const reordered = [...products]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved)
+    setProducts(reordered)
+    setSavingOrder(true)
+    try {
+      await Promise.all(
+        reordered.map((p, i) =>
+          p.display_order === i ? null : fetch(`/api/catalog/${p.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ display_order: i }),
+          })
+        )
+      )
+      setProducts(reordered.map((p, i) => ({ ...p, display_order: i })))
+    } finally { setSavingOrder(false) }
   }
 
   async function handleDelete(id: string) {
@@ -237,9 +262,15 @@ export default function CatalogoPage() {
 
       {/* Product list */}
       <div>
-        <h2 className="text-sm font-bold text-[#0F1E3C] mb-4">
-          Produtos no catálogo <span className="text-[#0F1E3C]/35 font-normal">({products.length})</span>
-        </h2>
+        <div className="flex items-center gap-2 mb-4">
+          <h2 className="text-sm font-bold text-[#0F1E3C]">
+            Produtos no catálogo <span className="text-[#0F1E3C]/35 font-normal">({products.length})</span>
+          </h2>
+          {products.length > 1 && (
+            <span className="text-xs text-[#0F1E3C]/35">— arraste os cards pra mudar a ordem</span>
+          )}
+          {savingOrder && <Loader2 size={13} className="animate-spin text-[#4361EE]" />}
+        </div>
 
         {products.length === 0 ? (
           <div className="bg-white rounded-2xl border-2 border-dashed border-[#0F1E3C]/10 py-16 text-center text-[#0F1E3C]/25">
@@ -248,10 +279,20 @@ export default function CatalogoPage() {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {products.map((p) => {
+            {products.map((p, index) => {
               const colors = [p.cover_color, ...(p.images?.map((i) => i.color) ?? [])].filter(Boolean) as string[]
               return (
-                <div key={p.id} className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden group shadow-sm hover:shadow-md transition-shadow">
+                <div
+                  key={p.id}
+                  draggable
+                  onDragStart={() => setDragIndex(index)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); if (dragIndex !== null) handleReorder(dragIndex, index); setDragIndex(null) }}
+                  onDragEnd={() => setDragIndex(null)}
+                  className={`bg-white rounded-2xl border overflow-hidden group shadow-sm hover:shadow-md transition-shadow cursor-move ${
+                    dragIndex === index ? "border-[#4361EE] opacity-50" : "border-[#0F1E3C]/8"
+                  }`}
+                >
                   <div className="relative aspect-square bg-[#F4F6FB]">
                     <Image src={p.image_url} alt={p.name} fill className="object-cover" sizes="(max-width: 640px) 50vw, 25vw" />
                     <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
