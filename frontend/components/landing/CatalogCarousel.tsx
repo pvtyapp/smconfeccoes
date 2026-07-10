@@ -206,16 +206,16 @@ export default function CatalogCarousel({ initialProducts, waLink }: Props) {
 
   return (
     <>
-      <section id="catalogo" className="py-20 sm:py-28 px-5 bg-white">
+      <section id="catalogo" className="py-12 sm:py-16 px-5 bg-white">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-14">
+          <div className="text-center mb-8">
             <h2
-              className="text-3xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
+              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-2"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Nossos Produtos
             </h2>
-            <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto leading-relaxed">
+            <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto leading-snug">
               Peças de qualidade, produção própria. Clique para ver detalhes.
             </p>
           </div>

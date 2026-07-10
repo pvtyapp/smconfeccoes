@@ -138,17 +138,17 @@ export default async function LandingPage() {
               </p>
 
               <h1
-                className="text-[clamp(2.25rem,10vw,6rem)] font-black leading-[1.0] text-white mb-6"
+                className="text-[clamp(2.25rem,10vw,6rem)] font-black leading-[1.0] text-white mb-4"
                 style={{ fontFamily: "var(--font-playfair)" }}
               >
                 SM<br />
                 <span className="text-[#4361EE]">Confecções</span>
               </h1>
 
-              <p className="text-white/60 text-base lg:text-xl font-light mb-4 max-w-md mx-auto lg:mx-0">
+              <p className="text-white/60 text-base lg:text-xl font-light mb-2 max-w-md mx-auto lg:mx-0">
                 Atacado
               </p>
-              <p className="text-white/75 text-base lg:text-xl mb-10 max-w-md mx-auto lg:mx-0 leading-relaxed font-medium">
+              <p className="text-white/75 text-base lg:text-xl mb-6 max-w-md mx-auto lg:mx-0 leading-snug font-medium">
                 Compre sem pedido mínimo, nosso atendimento é o mais rápido da região!
               </p>
 
@@ -200,11 +200,11 @@ export default async function LandingPage() {
       <CatalogCarousel initialProducts={catalog} waLink={WA_LINK} />
 
       {/* ── SERVIÇOS ── */}
-      <section id="servicos" className="py-20 sm:py-28 px-5 bg-[#F4F6FB]">
+      <section id="servicos" className="py-12 sm:py-16 px-5 bg-[#F4F6FB]">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-14">
+          <div className="text-center mb-8">
             <h2
-              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
+              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-2"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Atacado direto de fábrica
@@ -218,13 +218,13 @@ export default async function LandingPage() {
             {services.map((s, i) => (
               <div
                 key={s.title}
-                className={`rounded-2xl p-8 border transition-all hover:shadow-md ${
+                className={`rounded-2xl p-6 border transition-all hover:shadow-md ${
                   i === 0
                     ? "bg-[#0F1E3C] border-[#0F1E3C]"
                     : "bg-white border-[#0F1E3C]/8 hover:border-[#4361EE]/20"
                 }`}
               >
-                <div className="flex items-center gap-3 mb-5">
+                <div className="flex items-center gap-3 mb-3">
                   <div
                     className="w-11 h-11 rounded-xl flex items-center justify-center"
                     style={{ backgroundColor: i === 0 ? "rgba(255,255,255,0.1)" : "#4361EE15" }}
@@ -244,15 +244,15 @@ export default async function LandingPage() {
                 </div>
 
                 <h3
-                  className={`text-2xl font-black mb-3 ${i === 0 ? "text-white" : "text-[#0F1E3C]"}`}
+                  className={`text-2xl font-black mb-2 ${i === 0 ? "text-white" : "text-[#0F1E3C]"}`}
                   style={{ fontFamily: "var(--font-playfair)" }}
                 >
                   {s.title}
                 </h3>
-                <p className={`text-sm leading-relaxed mb-6 ${i === 0 ? "text-white/55" : "text-[#0F1E3C]/50"}`}>
+                <p className={`text-sm leading-snug mb-4 ${i === 0 ? "text-white/55" : "text-[#0F1E3C]/50"}`}>
                   {s.desc}
                 </p>
-                <ul className="space-y-3">
+                <ul className="space-y-2">
                   {s.items.map((item) => (
                     <li
                       key={item}
@@ -271,7 +271,7 @@ export default async function LandingPage() {
                   href={WA_LINK}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`mt-7 flex items-center justify-center gap-2 text-sm font-bold py-3 rounded-xl transition-colors ${
+                  className={`mt-5 flex items-center justify-center gap-2 text-sm font-bold py-3 rounded-xl transition-colors ${
                     i === 0
                       ? "bg-white/10 hover:bg-white/15 text-white"
                       : "bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white"
@@ -287,16 +287,16 @@ export default async function LandingPage() {
       </section>
 
       {/* ── LOCALIZAÇÃO ── */}
-      <section id="localizacao" className="py-20 sm:py-28 px-5 bg-[#F4F6FB]">
+      <section id="localizacao" className="py-12 sm:py-16 px-5 bg-[#F4F6FB]">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-10">
+          <div className="text-center mb-6">
             <h2
-              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-4"
+              className="text-2xl sm:text-4xl md:text-5xl font-black text-[#0F1E3C] mb-2"
               style={{ fontFamily: "var(--font-playfair)" }}
             >
               Onde nos encontrar
             </h2>
-            <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto mb-6">
+            <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-sm mx-auto mb-4">
               Visite a fábrica ou fale antes pelo WhatsApp
             </p>
             {/* Reference tags */}
@@ -355,7 +355,7 @@ export default async function LandingPage() {
       </section>
 
       {/* ── CTA FINAL ── */}
-      <section className="py-24 px-5 bg-[#0A1628] text-white relative overflow-hidden">
+      <section className="py-14 sm:py-16 px-5 bg-[#0A1628] text-white relative overflow-hidden">
         <div
           className="absolute inset-0 opacity-[0.04]"
           style={{
@@ -367,12 +367,12 @@ export default async function LandingPage() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] bg-[#4361EE]/15 blur-[120px] rounded-full pointer-events-none" />
         <div className="relative max-w-2xl mx-auto text-center">
           <h2
-            className="text-2xl sm:text-4xl md:text-5xl font-black mb-5 leading-tight"
+            className="text-2xl sm:text-4xl md:text-5xl font-black mb-3 leading-tight"
             style={{ fontFamily: "var(--font-playfair)" }}
           >
             Quer comprar no atacado?
           </h2>
-          <p className="text-white/45 text-base sm:text-lg mb-10 leading-relaxed max-w-md mx-auto">
+          <p className="text-white/45 text-base sm:text-lg mb-6 leading-snug max-w-md mx-auto">
             Sem pedido mínimo. Fale agora no WhatsApp, te respondemos rápido.
           </p>
           <a
@@ -384,12 +384,12 @@ export default async function LandingPage() {
             <MessageCircle size={23} />
             Falar no WhatsApp agora
           </a>
-          <p className="text-white/25 text-sm mt-6">(16) 99269-2363</p>
+          <p className="text-white/25 text-sm mt-4">(16) 99269-2363</p>
         </div>
       </section>
 
       {/* ── FOOTER ── */}
-      <footer className="bg-[#050C19] text-white/30 py-8 px-5">
+      <footer className="bg-[#050C19] text-white/30 py-5 px-5">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-5 text-sm">
           <div className="flex items-center gap-3">
             <Image
