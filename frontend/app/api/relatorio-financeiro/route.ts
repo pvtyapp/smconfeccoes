@@ -239,6 +239,7 @@ export async function GET(req: Request) {
         margemOp:    resultadoOp !== null && receitaBruta > 0 ? (resultadoOp / receitaBruta) * 100 : null,
       },
       byChannel,
+      dtf: { receita: receitaDtf, count: dtfCount, metros: metrosDtf },
       productRanking,
       materialFlow: {
         entradas: { total: Number(matEntradas[0]?.total ?? 0), count: Number(matEntradas[0]?.count ?? 0) },
