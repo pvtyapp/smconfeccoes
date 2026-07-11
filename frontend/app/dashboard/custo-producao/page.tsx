@@ -97,24 +97,44 @@ export default function CustoProducaoPage() {
   const [variantCosts,    setVariantCosts]    = useState<VarCostRow[]>([])
   const [orders,          setOrders]          = useState<OrderRow[]>([])
   const [operationalCosts,setOperationalCosts]= useState<OpCostRow[]>([])
+  const [pesoMap,         setPesoMap]         = useState<Map<number, number>>(new Map())
+  const [savingPeso,      setSavingPeso]      = useState<number | null>(null)
   const [loading,         setLoading]         = useState(true)
 
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [rCosts, rOrders, rOps] = await Promise.all([
+      const [rCosts, rOrders, rOps, rProducts] = await Promise.all([
         fetch("/api/product-variant-costs"),
         fetch("/api/prod-orders?status=concluida,encerrada"),
         fetch("/api/operational-costs"),
+        fetch("/api/products"),
       ])
-      const [costs, ords, ops] = await Promise.all([rCosts.json(), rOrders.json(), rOps.json()])
+      const [costs, ords, ops, prods] = await Promise.all([rCosts.json(), rOrders.json(), rOps.json(), rProducts.json()])
       if (Array.isArray(costs))  setVariantCosts(costs)
       if (Array.isArray(ords))   setOrders(ords)
       if (Array.isArray(ops))    setOperationalCosts(ops)
+      if (Array.isArray(prods)) {
+        setPesoMap(new Map(prods.map((p: { id: number; pesoCostura: number }) => [p.id, Number(p.pesoCostura) || 1])))
+      }
     } finally {
       setLoading(false)
     }
   }, [])
+
+  async function savePeso(productId: number, peso: number) {
+    setSavingPeso(productId)
+    try {
+      const res = await fetch(`/api/products/${productId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pesoCostura: peso }),
+      })
+      if (res.ok) setPesoMap(prev => new Map(prev).set(productId, peso))
+    } finally {
+      setSavingPeso(null)
+    }
+  }
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -146,10 +166,18 @@ export default function CustoProducaoPage() {
   const totalPieces  = products.reduce((s, p) => s + p.totalPieces, 0)
   const calcCount    = products.filter(p => p.variants.some(v => v.costMaterial !== null)).length
 
+  // Custo de costura pesado: em vez de dividir por peça pura, divide por
+  // peça × peso (moletom peso 2 "vale" o dobro de uma camiseta peso 1 na
+  // hora de repartir o custo fixo de costura do período).
+  const grandTotalWeighted = products.reduce((s, p) => s + p.totalPieces * (pesoMap.get(p.id) ?? 1), 0)
+
   const sewingRows = products.map(p => {
-    const allocated    = totalSewing * (p.productionPct / 100)
-    const costPerPiece = p.totalPieces > 0 ? allocated / p.totalPieces : 0
-    return { ...p, allocated, costPerPiece }
+    const peso           = pesoMap.get(p.id) ?? 1
+    const weightedPieces = p.totalPieces * peso
+    const weightedPct    = grandTotalWeighted > 0 ? (weightedPieces / grandTotalWeighted) * 100 : 0
+    const allocated       = totalSewing * (weightedPct / 100)
+    const costPerPiece    = p.totalPieces > 0 ? allocated / p.totalPieces : 0
+    return { ...p, peso, allocated, costPerPiece }
   })
 
   const allSizes = sortSizes([...new Set(products.flatMap(p => p.variants.map(v => v.size)))])
@@ -296,20 +324,38 @@ export default function CustoProducaoPage() {
 
           {products.length > 0 && (
             <div className="space-y-2">
+              <p className="text-[10px] text-[#0F1E3C]/30 -mt-1 mb-1">
+                Peso = quanto tempo de costura o produto leva em relação aos outros (1 = padrão). Vale pra sempre, não só esse período.
+              </p>
               {sewingRows.map(s => (
                 <div key={s.name}
                   className="flex items-center justify-between px-4 py-3 rounded-xl bg-[#F9FAFB] border border-[#0F1E3C]/6">
                   <div>
                     <p className="text-xs font-semibold text-[#0F1E3C]">{s.name}</p>
                     <p className="text-[10px] text-[#0F1E3C]/35">
-                      {s.productionPct}% · {fmtR(s.allocated)} alocado
+                      {s.productionPct}% do mix · {fmtR(s.allocated)} alocado
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-black text-[#0F1E3C]">
-                      {fmtR(s.costPerPiece)}
-                      <span className="text-[10px] font-normal text-[#0F1E3C]/40">/pç</span>
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] text-[#0F1E3C]/35 uppercase tracking-wider">Peso</span>
+                      <input
+                        type="number" min="0.1" step="0.1"
+                        defaultValue={s.peso}
+                        disabled={savingPeso === s.id}
+                        onBlur={e => {
+                          const v = parseFloat(e.target.value.replace(",", "."))
+                          if (!isNaN(v) && v > 0 && v !== s.peso) savePeso(s.id, v)
+                        }}
+                        className="w-14 px-1.5 py-1 rounded-lg border border-[#0F1E3C]/12 text-xs text-center text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-black text-[#0F1E3C]">
+                        {fmtR(s.costPerPiece)}
+                        <span className="text-[10px] font-normal text-[#0F1E3C]/40">/pç</span>
+                      </p>
+                    </div>
                   </div>
                 </div>
               ))}

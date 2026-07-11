@@ -4,6 +4,7 @@ import { syncVariants } from "@/lib/products/syncVariants"
 
 export async function GET() {
   try {
+    await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_costura NUMERIC(4,2) NOT NULL DEFAULT 1`).catch(() => {})
     const { rows } = await pool.query(`
       SELECT
         id,
@@ -12,6 +13,7 @@ export async function GET() {
         description,
         sale_price      AS "salePrice",
         material_cost   AS "costPrice",
+        COALESCE(peso_costura, 1)::float AS "pesoCostura",
         stock_enabled     AS "stockEnabled",
         COALESCE(preco_por_metro, false) AS "precoPorMetro",
         COALESCE(size_list, '{}')  AS sizes,

@@ -10,12 +10,13 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await req.json()
-    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled, precoPorMetro } = body
+    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled, precoPorMetro, pesoCostura } = body
 
     const sizeArr  = Array.isArray(sizes)  ? sizes.filter(Boolean)  : null
     const colorArr = Array.isArray(colors) ? colors.filter(Boolean) : null
 
     await client.query("BEGIN")
+    await client.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_costura NUMERIC(4,2) NOT NULL DEFAULT 1`).catch(() => {})
 
     const { rows } = await client.query(`
       UPDATE products SET
@@ -29,7 +30,8 @@ export async function PUT(
         status            = COALESCE($8, status),
         chatbot_enabled   = COALESCE($9, chatbot_enabled),
         stock_enabled     = COALESCE($10, stock_enabled),
-        preco_por_metro   = COALESCE($11, preco_por_metro)
+        preco_por_metro   = COALESCE($11, preco_por_metro),
+        peso_costura      = COALESCE($13, peso_costura)
       WHERE id = $12
       RETURNING
         id, name,
@@ -37,6 +39,7 @@ export async function PUT(
         description,
         sale_price      AS "salePrice",
         material_cost   AS "costPrice",
+        COALESCE(peso_costura, 1)::float AS "pesoCostura",
         stock_enabled   AS "stockEnabled",
         COALESCE(preco_por_metro, false) AS "precoPorMetro",
         COALESCE(size_list, '{}')  AS sizes,
@@ -57,6 +60,7 @@ export async function PUT(
       stockEnabled   ?? null,
       precoPorMetro  ?? null,
       id,
+      pesoCostura    ?? null,
     ])
 
     if (rows.length === 0) {
