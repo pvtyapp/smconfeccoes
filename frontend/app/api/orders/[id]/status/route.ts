@@ -21,6 +21,10 @@ export async function POST(
     }
 
     await client.query("BEGIN")
+    await client.query(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_alert JSONB,
+      ADD COLUMN IF NOT EXISTS alteration_sent BOOLEAN NOT NULL DEFAULT false
+    `).catch(() => {})
 
     const orderRes = await client.query(`
       SELECT o.id, o.number, o.contact_id, o.status AS "currentStatus",
@@ -44,27 +48,50 @@ export async function POST(
     // ── Lógica de cada stage ──────────────────────────────────────────────────
 
     if (status === "em_separacao") {
-      // Deduz estoque (anti-duplicata)
+      // Deduz estoque (anti-duplicata) — se faltar saldo pra algum item, deduz só o
+      // disponível, registra o corte em stock_alert e deixa o operador confirmar a
+      // alteração com o cliente antes de seguir pra Pronto (ver /alert-alteration).
       const itemsRes = await client.query(`
-        SELECT variant_id, qty::int AS qty FROM order_items
-        WHERE order_id = $1 AND variant_id IS NOT NULL
+        SELECT id, variant_id, qty::int AS qty, product_name, color, size FROM order_items
+        WHERE order_id = $1
       `, [id])
       const { rows: alreadyDeducted } = await client.query(
         `SELECT 1 FROM stock_movements WHERE notes = $1 AND type = 'out' LIMIT 1`,
         [`Pedido ${order.number}`]
       )
       if (!alreadyDeducted.length) {
+        const stockAlert: { productName: string; color: string; size: string; requested: number; available: number }[] = []
         for (const item of itemsRes.rows) {
-          await client.query(`
-            INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-            VALUES ($1, 'out', $2, 'venda', 'dashboard', $3)
-          `, [item.variant_id, item.qty, `Pedido ${order.number}`])
+          if (!item.variant_id) continue
+          const { rows: balRows } = await client.query(
+            `SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END), 0)::int AS bal
+             FROM stock_movements WHERE variant_id = $1`,
+            [item.variant_id]
+          )
+          const available = Math.max(0, balRows[0].bal)
+          const toDeduct  = Math.min(item.qty, available)
+          if (toDeduct > 0) {
+            await client.query(`
+              INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
+              VALUES ($1, 'out', $2, 'venda', 'dashboard', $3)
+            `, [item.variant_id, toDeduct, `Pedido ${order.number}`])
+          }
+          if (toDeduct < item.qty) {
+            await client.query(`UPDATE order_items SET qty_confirmed = $1 WHERE id = $2`, [toDeduct, item.id])
+            stockAlert.push({
+              productName: item.product_name, color: item.color, size: item.size,
+              requested: item.qty, available: toDeduct,
+            })
+          }
         }
+        await client.query(
+          `UPDATE orders SET status = $1, stock_alert = $2, alteration_sent = false WHERE id = $3`,
+          [status, stockAlert.length > 0 ? JSON.stringify(stockAlert) : null, id]
+        )
+      } else {
+        // Re-entrante — dedução já rolou numa chamada anterior, só garante o status
+        await client.query(`UPDATE orders SET status = $1 WHERE id = $2`, [status, id])
       }
-      await client.query(
-        `UPDATE orders SET status = $1, needs_print = true WHERE id = $2`,
-        [status, id]
-      )
 
     } else if (status === "pronto") {
       // Pronto para retirada — sem mudança de DB especial
@@ -147,13 +174,9 @@ export async function POST(
     await client.query("COMMIT")
 
     // ── Notificações WA pós-commit ────────────────────────────────────────────
-
-    if (status === "em_separacao" && order.jid) {
-      await sendAndSave(
-        order.contact_id, order.jid,
-        `📦 Seu pedido *${order.number}* está sendo separado! Avisamos quando estiver pronto para retirada.`
-      )
-    }
+    // Em Separação fica silencioso na entrada — a mensagem só sai quando o
+    // pedido vira Pronto (seja direto, seja depois de confirmar uma alteração
+    // de estoque em /alert-alteration).
 
     if (status === "pronto" && order.jid) {
       const { rows: s } = await pool.query(
@@ -162,15 +185,21 @@ export async function POST(
       const cfg: Record<string, string> = {}
       for (const r of s) cfg[r.key] = r.value
 
-      const valor = order.total_value
-        ? `\n\n💰 Valor: *R$ ${Number(order.total_value).toFixed(2).replace(".", ",")}*`
+      const { rows: totalRows } = await pool.query(
+        `SELECT SUM(COALESCE(qty_confirmed, qty) * COALESCE(unit_price, 0)) AS total FROM order_items WHERE order_id = $1`,
+        [id]
+      )
+      const total = Number(totalRows[0]?.total ?? 0)
+
+      const valor = total > 0
+        ? `\n\n💰 Valor: *R$ ${total.toFixed(2).replace(".", ",")}*`
         : ""
       const pix = cfg.pix_key_pedidos ? `\n💳 Pix: \`${cfg.pix_key_pedidos}\`` : ""
       const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
 
       await sendAndSave(
         order.contact_id, order.jid,
-        `✅ Seu pedido *${order.number}* está pronto para retirada!${valor}${pix}${end}`
+        `Seu pedido *${order.number}* está separado para retirada!${valor}${pix}${end}`
       )
     }
 
@@ -205,7 +234,7 @@ export async function POST(
 
       type Change = { productName: string; color: string | null; size: string | null; oldQty: number; newQty: number }
       function itemLabel(c: Change) { return [c.productName, c.color, c.size].filter(Boolean).join(" ") }
-      let intro = `Olá! Seu pedido *${order.number}* está na lista:\n\n`
+      let intro = `Confirma por gentileza, será esses produtos mesmo?\n\n`
       if (Array.isArray(changes) && changes.length > 0) {
         const zeroed  = (changes as Change[]).filter(c => c.newQty === 0)
         const reduced = (changes as Change[]).filter(c => c.newQty > 0 && c.newQty < c.oldQty)
@@ -222,7 +251,7 @@ export async function POST(
           intro = `Atenção, atualizamos alguns itens do pedido *${order.number}*:\n${bullets.join("\n")}\n\nSeu pedido ficou assim:\n\n`
         }
       }
-      const confirmMsg = `${intro}${lines.join("\n")}\n\nEstamos conferindo tudo! Qualquer ajuste, avisamos aqui. 😊`
+      const confirmMsg = `${intro}${lines.join("\n")}\n\nConfirmando já separo para você!`
       await sendAndSave(order.contact_id, order.jid, confirmMsg)
       pool.query(
         `UPDATE wa_contacts SET state = 'confirmando', state_data = $1, updated_at = NOW() WHERE id = $2`,

@@ -3,6 +3,10 @@ import { pool } from "@/lib/db"
 
 export async function GET(req: Request) {
   try {
+    await pool.query(`
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_alert JSONB,
+      ADD COLUMN IF NOT EXISTS alteration_sent BOOLEAN NOT NULL DEFAULT false
+    `).catch(() => {})
     const { searchParams } = new URL(req.url)
     const status     = searchParams.get("status")
     const source     = searchParams.get("source")
@@ -38,6 +42,8 @@ export async function GET(req: Request) {
         o.paid_at              AS "paidAt",
         o.needs_print          AS "needsPrint",
         o.is_partial           AS "isPartial",
+        o.stock_alert          AS "stockAlert",
+        COALESCE(o.alteration_sent, false) AS "alterationSent",
         (
           SELECT oe2.note LIKE '%ajuste%'
           FROM order_events oe2

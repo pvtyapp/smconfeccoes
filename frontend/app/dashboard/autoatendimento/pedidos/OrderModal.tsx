@@ -85,6 +85,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [isPaid,        setIsPaid]        = useState(true)
   const [dueDate,       setDueDate]       = useState("")
   const [error,         setError]         = useState("")
+  const [sendingAlteration, setSendingAlteration] = useState(false)
 
   function itemsHash(list: OrderItem[]) {
     return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}`).join(",")
@@ -204,6 +205,14 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     } finally { setSaving(false) }
   }
 
+  async function handleConfirmarAlteracao() {
+    setSendingAlteration(true)
+    try {
+      await fetch(`/api/orders/${order.id}/alert-alteration`, { method: "POST" })
+      onRefresh()
+    } finally { setSendingAlteration(false) }
+  }
+
   async function handleMarcarPronte() {
     setSaving(true)
     try {
@@ -291,6 +300,21 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                   Mensagem enviada via WhatsApp. Avance manualmente quando confirmar com o cliente.
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Em Separação — alerta de estoque insuficiente */}
+          {isSeparacao && order.stockAlert && order.stockAlert.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 space-y-1">
+              <p className="text-xs font-bold text-red-700">⚠ Estoque insuficiente</p>
+              {order.stockAlert.map((a, i) => (
+                <p key={i} className="text-xs text-red-600">
+                  {[a.productName, a.color, a.size].filter(Boolean).join(" ")} — pediu <b>{a.requested}</b>, disponível <b>{a.available}</b>
+                </p>
+              ))}
+              {order.alterationSent && (
+                <p className="text-[10px] text-red-500 pt-1">Mensagem já enviada ao cliente — aguardando resposta.</p>
+              )}
             </div>
           )}
 
@@ -521,11 +545,27 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* EM SEPARAÇÃO: marcar como pronto */}
-            {isSeparacao && (
+            {/* EM SEPARAÇÃO — sem alteração: marcar como pronto */}
+            {isSeparacao && !order.stockAlert?.length && (
               <button onClick={handleMarcarPronte} disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pronto <ChevronRight size={14} /></>}
+              </button>
+            )}
+
+            {/* EM SEPARAÇÃO — alteração ainda não avisada ao cliente */}
+            {isSeparacao && !!order.stockAlert?.length && !order.alterationSent && (
+              <button onClick={handleConfirmarAlteracao} disabled={sendingAlteration}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                {sendingAlteration ? <Loader2 size={14} className="animate-spin" /> : <>🔁 Confirmar Alteração</>}
+              </button>
+            )}
+
+            {/* EM SEPARAÇÃO — alteração já avisada, aguardando resposta do cliente */}
+            {isSeparacao && !!order.stockAlert?.length && order.alterationSent && (
+              <button onClick={handleMarcarPronte} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Confirmar Alteração</>}
               </button>
             )}
 

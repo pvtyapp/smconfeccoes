@@ -60,8 +60,9 @@ type Props = { order: DtfOrder; onClick: () => void }
 
 export default function DtfOrderCard({ order, onClick }: Props) {
   const nomeCliente = order.contactName ?? order.cliente ?? "Cliente não identificado"
+  const isTriagem   = order.status === "triagem"
 
-  return (
+  const card = (
     <button
       onClick={onClick}
       className="w-full text-left bg-white rounded-2xl border border-[#0F1E3C]/8 p-4 shadow-sm hover:shadow-md hover:border-[#7C3AED]/30 transition-all"
@@ -136,16 +137,25 @@ export default function DtfOrderCard({ order, onClick }: Props) {
             🖨 Imp. {order.impressoraId}
           </span>
         )}
-        {(order.status === "pronto" || order.status === "concluido") && (
+        {order.status !== "cancelado" && (
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
             order.isPaid
               ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-              : "bg-amber-50 text-amber-700 border-amber-200"
+              : "bg-red-50 text-red-700 border-red-200"
           }`}>
-            {order.isPaid ? "Pago" : "A cobrar"}
+            {order.isPaid ? "Pago" : "Não Pago"}
           </span>
         )}
       </div>
     </button>
+  )
+
+  if (!isTriagem) return card
+
+  return (
+    <div className="led-wrap">
+      <div className="led-glow" />
+      <div className="led-ring">{card}</div>
+    </div>
   )
 }

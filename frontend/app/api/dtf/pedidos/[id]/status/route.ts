@@ -22,7 +22,7 @@ export async function POST(
       cancelMessage?: string
       impressoraId?: number
     }
-    const { status, metrosFinais, precoCobrado, paymentMode, dueDate, notifyClient, cancelMessage, impressoraId } = body
+    const { status, metrosFinais, precoCobrado, dueDate, notifyClient, cancelMessage, impressoraId } = body
 
     if (!VALID.includes(status))
       return NextResponse.json({ error: `Status inválido. Use: ${VALID.join(", ")}` }, { status: 400 })
@@ -31,7 +31,8 @@ export async function POST(
 
     const { rows } = await client.query(`
       SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at,
-             p.preco_cobrado AS preco_cobrado_db, COALESCE(c.phone_jid, c.jid) AS jid
+             p.preco_cobrado AS preco_cobrado_db, c.name AS "contactName",
+             COALESCE(c.phone_jid, c.jid) AS jid
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1
@@ -66,33 +67,11 @@ export async function POST(
 
       await client.query("COMMIT")
 
-      // WA: notify with valor + PIX or due date + address
+      // WA: valor/pix já foram avisados em em_producao — aqui só avisa que chegou a vez
       if (pedido.jid) {
-        const { rows: s } = await pool.query(
-          `SELECT key, value FROM app_settings WHERE key IN ('pix_key_dtf', 'endereco_retirada')`
-        )
-        const cfg: Record<string, string> = {}
-        for (const r of s) cfg[r.key] = r.value
-
-        // use body value or fall back to what's already in DB
-        const valorFinal = precoCobrado ?? (pedido.preco_cobrado_db ? Number(pedido.preco_cobrado_db) : null)
-
-        let msg = `✅ Pedido DTF *${pedido.number}* pronto para retirada!`
-
-        if (valorFinal) {
-          msg += `\n\n💰 Valor: *R$ ${valorFinal.toFixed(2).replace(".", ",")}*`
-        }
-
-        if (paymentMode === "prazo" && dueDate) {
-          const dueFmt = new Date(dueDate + "T12:00:00").toLocaleDateString("pt-BR")
-          msg += `\n📅 Vencimento: *${dueFmt}*`
-        } else if (cfg.pix_key_dtf) {
-          msg += `\n💳 Pix: \`${cfg.pix_key_dtf}\``
-        }
-
-        if (cfg.endereco_retirada) msg += `\n\n📍 ${cfg.endereco_retirada}`
-
-        sendAndSave(pedido.contact_id, pedido.jid, msg).catch(() => {})
+        const firstName = pedido.contactName?.trim().split(" ")[0]
+        const saudacao   = firstName ? `${firstName}, seu` : "Seu"
+        sendAndSave(pedido.contact_id, pedido.jid, `${saudacao} pedido de DTF está pronto para retirada.`).catch(() => {})
       }
 
     } else if (status === "em_producao") {
@@ -108,10 +87,15 @@ export async function POST(
       await client.query("COMMIT")
 
       if (pedido.jid) {
-        let msg = `✅ Arte confirmada! Pedido *${pedido.number}* em produção.`
+        const { rows: s } = await pool.query(
+          `SELECT key, value FROM app_settings WHERE key = 'pix_key_dtf'`
+        )
+        const pixKey = s[0]?.value
+
+        let msg = `Ficando pronto te aviso pra retirar, seu pedido está em produção.`
         if (metrosFinais) msg += `\n📐 Metragem: *${Number(metrosFinais).toFixed(2)} m*`
-        if (precoCobrado) msg += `\n💰 Valor estimado: *R$ ${Number(precoCobrado).toFixed(2).replace(".", ",")}*`
-        msg += `\n\nAvisamos quando estiver pronto!`
+        if (precoCobrado) msg += `\n💰 Valor: *R$ ${Number(precoCobrado).toFixed(2).replace(".", ",")}*`
+        if (pixKey) msg += `\n💳 Pix: \`${pixKey}\``
         sendAndSave(pedido.contact_id, pedido.jid, msg).catch(() => {})
       }
 

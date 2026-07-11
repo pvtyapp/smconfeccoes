@@ -1,6 +1,6 @@
 "use client"
 
-import { Phone, Clock, AlertTriangle, Printer } from "lucide-react"
+import { Phone, Clock, AlertTriangle } from "lucide-react"
 import type { Order } from "./page"
 
 const STATUS_LABEL: Record<string, string> = {
@@ -41,34 +41,41 @@ type Props = {
 
 export default function OrderCard({ order, onClick, onTogglePay }: Props) {
   const totalQty  = order.items.reduce((s, i) => s + i.qty, 0)
-  const isEm      = order.status === "pronto"
+  const isPronto  = order.status === "pronto"
 
   function handlePayToggle(e: React.MouseEvent) {
     e.stopPropagation()
     onTogglePay?.(order.id, false)
   }
 
-  return (
+  const hasStockAlert = order.status === "em_separacao" && !!order.stockAlert?.length
+  const isTriagem     = order.status === "triagem"
+
+  const card = (
     <button
       onClick={onClick}
-      className={`w-full text-left bg-white rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${
+      className={`relative w-full text-left bg-white rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${
         order.needsAttention
           ? "border-amber-300 hover:border-amber-400"
-          : order.needsPrint
-          ? "border-blue-400 hover:border-blue-500 ring-2 ring-blue-200"
+          : hasStockAlert
+          ? "border-red-300 hover:border-red-400"
           : "border-[#0F1E3C]/8 hover:border-[#4361EE]/30"
       }`}
     >
-      {/* Print indicator */}
-      {order.needsPrint && (
-        <div className="flex items-center gap-1.5 mb-3 px-2 py-1.5 bg-blue-50 border border-blue-200 rounded-xl animate-pulse">
-          <Printer size={11} className="text-blue-500 flex-shrink-0" />
-          <p className="text-[10px] font-semibold text-blue-700">Imprimindo ficha...</p>
+      {/* Stock alert banner */}
+      {hasStockAlert && (
+        <div className="mb-3 px-2 py-1.5 bg-red-50 border border-red-200 rounded-xl">
+          <p className="text-[10px] font-bold text-red-700 mb-0.5">⚠ Estoque insuficiente</p>
+          {order.stockAlert!.map((a, i) => (
+            <p key={i} className="text-[10px] text-red-600">
+              {[a.productName, a.color, a.size].filter(Boolean).join(" ")} — pediu {a.requested}, disponível {a.available}
+            </p>
+          ))}
         </div>
       )}
 
       {/* Attention banner */}
-      {order.needsAttention && !order.needsPrint && (
+      {order.needsAttention && !hasStockAlert && (
         <div className="flex items-center gap-1.5 mb-3 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-xl">
           <AlertTriangle size={11} className="text-amber-500 flex-shrink-0" />
           <p className="text-[10px] font-semibold text-amber-700">Cliente pediu ajuste — chatbot em contato</p>
@@ -126,8 +133,8 @@ export default function OrderCard({ order, onClick, onTogglePay }: Props) {
         <span>{order.items.length} iten{order.items.length !== 1 ? "s" : ""}</span>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
-          {/* Botão PAGO — aparece em Em Separação */}
-          {isEm && (
+          {/* Botão PAGO — aparece em Pronto p/ Retirada */}
+          {isPronto && (
             <button
               onClick={handlePayToggle}
               className="text-[9px] font-black px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 transition-colors"
@@ -138,5 +145,14 @@ export default function OrderCard({ order, onClick, onTogglePay }: Props) {
         </div>
       </div>
     </button>
+  )
+
+  if (!isTriagem) return card
+
+  return (
+    <div className="led-wrap">
+      <div className="led-glow" />
+      <div className="led-ring">{card}</div>
+    </div>
   )
 }

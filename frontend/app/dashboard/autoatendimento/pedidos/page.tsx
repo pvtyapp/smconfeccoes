@@ -10,7 +10,6 @@ import {
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
-import PrintSheet from "./PrintSheet"
 import AudioPlayer from "./AudioPlayer"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
@@ -69,6 +68,8 @@ export type Order = {
   paidAt: string | null
   needsPrint: boolean
   isPartial: boolean
+  stockAlert: { productName: string; color: string; size: string; requested: number; available: number }[] | null
+  alterationSent: boolean
   items: OrderItem[]
 }
 
@@ -346,10 +347,6 @@ export default function PedidosPage() {
   const [dtfAtivo,          setDtfAtivo]           = useState(true)
   const [togglingDtf,       setTogglingDtf]        = useState(false)
 
-  // Print tracking — IDs já enviados para impressão nesta sessão
-  const printedOrderIds = useRef<Set<number>>(new Set())
-  const [autoPrintOrder, setAutoPrintOrder] = useState<Order | null>(null)
-
   // Reservas
   type Reservation = { id: number; productName: string; color: string; size: string; qty: number; contactName: string; contactPhone: string; status: string; createdAt: string }
   const [reservations,    setReservations]    = useState<Reservation[]>([])
@@ -533,28 +530,6 @@ export default function PedidosPage() {
     const t = setInterval(() => { loadOrders(); loadReservations() }, 10_000)
     return () => clearInterval(t)
   }, [loadOrders, loadReservations])
-
-  // Auto-print: dispara impressão quando needs_print = true — usa a mesma Ficha de
-  // Separação (PrintSheet) do botão manual, um pedido de cada vez na fila
-  useEffect(() => {
-    if (autoPrintOrder) return
-    const next = orders.find(o => o.needsPrint && !printedOrderIds.current.has(o.id))
-    if (!next) return
-    printedOrderIds.current.add(next.id)
-    setAutoPrintOrder(next)
-  }, [orders, autoPrintOrder])
-
-  useEffect(() => {
-    if (!autoPrintOrder) return
-    const finish = () => {
-      fetch(`/api/orders/${autoPrintOrder.id}/ack-print`, { method: "POST" }).catch(() => {})
-      setOrders(prev => prev.map(o => o.id === autoPrintOrder.id ? { ...o, needsPrint: false } : o))
-      setAutoPrintOrder(null)
-    }
-    window.addEventListener("afterprint", finish)
-    const t = setTimeout(() => window.print(), 500)
-    return () => { clearTimeout(t); window.removeEventListener("afterprint", finish) }
-  }, [autoPrintOrder])
 
   // ── Load DTF orders ─────────────────────────────────────────────────────────
 
@@ -2424,10 +2399,6 @@ export default function PedidosPage() {
       {selectedDtf && (
         <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} numImpressoras={numImpressoras} />
       )}
-      {autoPrintOrder && (
-        <PrintSheet order={autoPrintOrder} items={autoPrintOrder.items} format="a4" onDone={() => setAutoPrintOrder(null)} />
-      )}
-
       {/* ── LIGHTBOX ── */}
       {lightboxMsg && (
         <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
@@ -2587,6 +2558,35 @@ export default function PedidosPage() {
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        @property --led-angle {
+          syntax: "<angle>";
+          initial-value: 0deg;
+          inherits: false;
+        }
+        @keyframes led-spin { to { --led-angle: 360deg; } }
+        @keyframes led-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+
+        .led-wrap { position: relative; }
+
+        .led-glow {
+          position: absolute; inset: -10px; border-radius: 22px;
+          background: conic-gradient(from var(--led-angle),
+            transparent 0deg, #22D3EE 45deg, #7C9BFF 100deg, #4361EE 150deg, transparent 200deg, transparent 360deg);
+          filter: blur(14px);
+          animation: led-spin 2.2s linear infinite, led-pulse 2.2s ease-in-out infinite;
+        }
+
+        .led-ring {
+          position: relative;
+          border-radius: 18px;
+          padding: 2.5px;
+          background: conic-gradient(from var(--led-angle),
+            transparent 0deg, #22D3EE 45deg, #7C9BFF 100deg, #4361EE 150deg, transparent 200deg, transparent 360deg);
+          animation: led-spin 2.2s linear infinite;
+        }
+      `}</style>
     </div>
   )
 }
