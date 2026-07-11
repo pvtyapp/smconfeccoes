@@ -7,6 +7,7 @@ import { campaignSend } from "@/lib/whatsapp/campaignSend"
 import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 import { todayBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
+import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
@@ -18,7 +19,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { novo: number; ausente: number; frio: number; cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; campaignSent?: number; scheduleSent?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
+  const results: { novo: number; ausente: number; frio: number; cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; campaignSent?: number; scheduleSent?: number; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -486,6 +487,39 @@ export async function GET(req: Request) {
         await pool.query(`UPDATE marketing_schedules SET last_executed_at = NOW() WHERE id = $1`, [sched.id])
         await pool.query(`UPDATE marketing_schedule_items SET last_sent_at = NOW(), sent_count = sent_count + $1 WHERE id = $2`, [sentCount, item.id])
       } catch { results.errors++ }
+    }
+  } catch { results.errors++ }
+
+  // ── 13. Contas a Pagar — lembrete no dia do vencimento ───────────────────────
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payables (
+        id SERIAL PRIMARY KEY,
+        description  TEXT NOT NULL,
+        category     TEXT,
+        amount       NUMERIC(10,2) NOT NULL,
+        due_date     DATE NOT NULL,
+        paid_at      TIMESTAMPTZ,
+        paid_amount  NUMERIC(10,2),
+        notes        TEXT,
+        created_by   TEXT NOT NULL DEFAULT 'dashboard',
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {})
+
+    const { rows: due } = await pool.query(`
+      SELECT description, category, amount::float AS amount
+      FROM payables
+      WHERE due_date = $1 AND paid_at IS NULL
+      ORDER BY amount DESC
+    `, [today])
+
+    if (due.length > 0) {
+      const total = due.reduce((s, p) => s + Number(p.amount), 0)
+      const linhas = due.map(p => `• ${p.description}${p.category ? ` (${p.category})` : ""}: R$ ${Number(p.amount).toFixed(2).replace(".", ",")}`)
+      const msg = `📅 *Contas a Pagar — vencem hoje*\n\n${linhas.join("\n")}\n\nTotal: *R$ ${total.toFixed(2).replace(".", ",")}*`
+      await notifySubscribers("contas_pagar", msg)
+      results.payablesDue = due.length
     }
   } catch { results.errors++ }
 

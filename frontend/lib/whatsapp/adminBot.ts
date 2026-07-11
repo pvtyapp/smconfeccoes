@@ -29,6 +29,33 @@ type AdminUser = {
 }
 
 const VARIABLE_COST_CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
+const PAYABLE_CATEGORIES = ["Fornecedor", "Aluguel", "Imposto", "Salário", "Serviço", "Outros"]
+
+// Aceita "dd/mm" (assume ano atual, rola pro ano seguinte se a data já passou)
+// ou "dd/mm/aaaa". Retorna null se não bater um formato de data válido.
+function parseBRDate(text: string): string | null {
+  const m = text.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/)
+  if (!m) return null
+  const day   = parseInt(m[1], 10)
+  const month = parseInt(m[2], 10)
+  if (month < 1 || month > 12) return null
+  const now = new Date()
+  let year = m[3] ? parseInt(m[3], 10) : now.getFullYear()
+  if (year < 100) year += 2000
+
+  const tryDate = (y: number) => {
+    const d = new Date(y, month - 1, day)
+    return d.getMonth() === month - 1 && d.getDate() === day ? d : null
+  }
+  let d = tryDate(year)
+  if (!d) return null
+  if (!m[3]) {
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (d < startToday) d = tryDate(year + 1) ?? d
+  }
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
 
 // Salva a resposta do bot em wa_messages (mesma tabela usada pra conversa de
 // cliente) — findOrCreateOperatorContact garante que o contato existe antes
@@ -222,6 +249,11 @@ async function startDespesa(jid: string, user: AdminUser): Promise<void> {
   await reply(jid, `💸 *Lançar Despesa Variável*\n\nQual categoria?\n\n${numberedList(VARIABLE_COST_CATEGORIES)}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
 }
 
+async function startContaPagar(jid: string, user: AdminUser): Promise<void> {
+  await setState(user.id, "pagar_descricao", withTimestamp({}))
+  await reply(jid, `📅 *Lançar Conta a Pagar*\n\nQual a descrição?\n\n_"cancelar" ou "menu" pra sair._`)
+}
+
 async function startClientesReceber(jid: string, user: AdminUser): Promise<void> {
   void user
   const { rows } = await pool.query(`
@@ -378,6 +410,7 @@ const MENU_ITEMS: MenuItem[] = [
   { key: "estoque",        triggers: ["relatorio de estoque", "relatório de estoque", "estoque"], start: startEstoque },
   { key: "despesa",        triggers: ["lancar despesa", "lançar despesa", "despesa"], start: startDespesa },
   { key: "receber",        triggers: ["clientes a receber", "receber"], start: startClientesReceber },
+  { key: "contas_pagar",   triggers: ["lancar conta a pagar", "lançar conta a pagar", "conta a pagar", "contas a pagar"], start: startContaPagar },
 ]
 
 function commandLabel(key: string): string {
@@ -861,6 +894,77 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       console.error("[adminBot] lançar despesa falhou:", e instanceof Error ? e.message : e)
       await setState(user.id, null, {})
       await reply(jid, "Deu erro ao lançar a despesa. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
+    }
+    return true
+  }
+
+  // ── Lançar conta a pagar: descrição ──────────────────────────────────────
+  if (state === "pagar_descricao") {
+    if (!text.trim()) {
+      await reply(jid, "Manda a descrição da conta.")
+      return true
+    }
+    await setState(user.id, "pagar_categoria", withTimestamp({ description: text.trim() }))
+    await reply(jid, `Qual categoria?\n\n${numberedList(PAYABLE_CATEGORIES)}`)
+    return true
+  }
+
+  // ── Lançar conta a pagar: categoria ──────────────────────────────────────
+  if (state === "pagar_categoria") {
+    const n = parseInt(lower, 10)
+    if (isNaN(n) || n < 1 || n > PAYABLE_CATEGORIES.length) {
+      await reply(jid, `Não entendi. Responda o número da categoria (1 a ${PAYABLE_CATEGORIES.length}).`)
+      return true
+    }
+    await setState(user.id, "pagar_valor", withTimestamp({ ...data, category: PAYABLE_CATEGORIES[n - 1] }))
+    await reply(jid, `Categoria *${PAYABLE_CATEGORIES[n - 1]}*. Qual o valor?`)
+    return true
+  }
+
+  // ── Lançar conta a pagar: valor ──────────────────────────────────────────
+  if (state === "pagar_valor") {
+    const amount = parseFloat(text.trim().replace(",", "."))
+    if (isNaN(amount) || amount <= 0) {
+      await reply(jid, "Valor não reconhecido. Manda só o número (ex: 350.00).")
+      return true
+    }
+    await setState(user.id, "pagar_vencimento", withTimestamp({ ...data, amount }))
+    await reply(jid, `Qual a data de vencimento? (dd/mm ou dd/mm/aaaa)`)
+    return true
+  }
+
+  // ── Lançar conta a pagar: vencimento e criação ───────────────────────────
+  if (state === "pagar_vencimento") {
+    const dueDate = parseBRDate(text.trim())
+    if (!dueDate) {
+      await reply(jid, "Data não reconhecida. Manda no formato dd/mm ou dd/mm/aaaa (ex: 15/07).")
+      return true
+    }
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS payables (
+          id SERIAL PRIMARY KEY,
+          description  TEXT NOT NULL,
+          category     TEXT,
+          amount       NUMERIC(10,2) NOT NULL,
+          due_date     DATE NOT NULL,
+          paid_at      TIMESTAMPTZ,
+          paid_amount  NUMERIC(10,2),
+          notes        TEXT,
+          created_by   TEXT NOT NULL DEFAULT 'dashboard',
+          created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `).catch(() => {})
+      await pool.query(`
+        INSERT INTO payables (description, category, amount, due_date, created_by)
+        VALUES ($1, $2, $3, $4, 'chatbot')
+      `, [data.description, data.category, data.amount, dueDate])
+      await setState(user.id, null, {})
+      await reply(jid, `✅ Conta lançada! ${data.category} — ${data.description}: ${fmtMoney(data.amount as number)} — vence ${text.trim()}.` + MENU_FOOTER)
+    } catch (e) {
+      console.error("[adminBot] lançar conta a pagar falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao lançar a conta. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
     }
     return true
   }

@@ -7,4 +7,5 @@ export type NotificationSubscription = { key: string; label: string }
 
 export const NOTIFICATION_SUBSCRIPTIONS: NotificationSubscription[] = [
   { key: "costura_revisao", label: "Ordem de produção pronta pra revisão" },
+  { key: "contas_pagar",    label: "Lembrete diário de contas a pagar" },
 ]

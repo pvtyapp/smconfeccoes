@@ -14,4 +14,5 @@ export const CHATBOT_COMMANDS: ChatbotCommand[] = [
   { key: "estoque",        label: "Relatório de estoque" },
   { key: "despesa",        label: "Lançar despesa variável" },
   { key: "receber",        label: "Clientes a receber" },
+  { key: "contas_pagar",   label: "Lançar conta a pagar" },
 ]
