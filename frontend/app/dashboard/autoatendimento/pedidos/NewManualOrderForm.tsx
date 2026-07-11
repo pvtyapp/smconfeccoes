@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
-import { X, Plus, Loader2, Trash2 } from "lucide-react"
+import { X, Loader2, Trash2 } from "lucide-react"
 
 type Variant = {
   variantId: string
@@ -30,10 +30,10 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
   const [loading,  setLoading]  = useState(true)
   const [items,    setItems]    = useState<Item[]>([])
 
+  // Picker encadeado: produto → cor → tamanho (toca no tamanho e já adiciona,
+  // volta pro passo 1 pronto pro próximo item — sem fechar nada no meio)
   const [product, setProduct] = useState("")
   const [color,   setColor]   = useState("")
-  const [size,    setSize]    = useState("")
-  const [qty,     setQty]     = useState(1)
 
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState("")
@@ -57,19 +57,38 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
     () => [...new Set(variants.filter(v => v.productName === product && v.color === color).map(v => v.size))].sort(),
     [variants, product, color]
   )
-  const selectedVariant = variants.find(v => v.productName === product && v.color === color && v.size === size)
 
-  function addItem() {
-    if (!selectedVariant || qty <= 0) return
-    setItems(prev => [...prev, {
-      variantId: selectedVariant.variantId,
-      productName: selectedVariant.productName,
-      color: selectedVariant.color,
-      size: selectedVariant.size,
-      qty,
-      salePrice: selectedVariant.salePrice,
-    }])
-    setProduct(""); setColor(""); setSize(""); setQty(1)
+  function pickProduct(p: string) {
+    setProduct(p)
+    setColor("")
+  }
+
+  function pickColor(c: string) {
+    setColor(c)
+  }
+
+  function pickSize(s: string) {
+    const variant = variants.find(v => v.productName === product && v.color === color && v.size === s)
+    if (!variant) return
+    setItems(prev => {
+      const idx = prev.findIndex(i => i.variantId === variant.variantId)
+      if (idx >= 0) {
+        const next = [...prev]
+        next[idx] = { ...next[idx], qty: next[idx].qty + 1 }
+        return next
+      }
+      return [...prev, {
+        variantId: variant.variantId, productName: variant.productName,
+        color: variant.color, size: variant.size, qty: 1, salePrice: variant.salePrice,
+      }]
+    })
+    // Volta pro passo 1, pronto pra encadear o próximo item sem fechar o picker
+    setProduct("")
+    setColor("")
+  }
+
+  function setQty(idx: number, val: number) {
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, qty: Math.max(1, val) } : it))
   }
 
   function removeItem(idx: number) {
@@ -122,46 +141,24 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
               </div>
             ) : (
               <>
-                {/* Item picker */}
-                <div className="space-y-2">
-                  <select value={product} onChange={e => { setProduct(e.target.value); setColor(""); setSize("") }}
-                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-white">
-                    <option value="">Produto...</option>
-                    {productNames.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  <div className="grid grid-cols-3 gap-2">
-                    <select value={color} onChange={e => { setColor(e.target.value); setSize("") }} disabled={!product}
-                      className="border border-[#0F1E3C]/12 rounded-xl px-2 py-2 text-xs text-[#0F1E3C] bg-white disabled:opacity-40">
-                      <option value="">Cor...</option>
-                      {colors.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <select value={size} onChange={e => setSize(e.target.value)} disabled={!color}
-                      className="border border-[#0F1E3C]/12 rounded-xl px-2 py-2 text-xs text-[#0F1E3C] bg-white disabled:opacity-40">
-                      <option value="">Tam...</option>
-                      {sizes.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <input type="number" min={1} value={qty} onChange={e => setQty(Math.max(1, Number(e.target.value) || 1))}
-                      className="border border-[#0F1E3C]/12 rounded-xl px-2 py-2 text-xs text-[#0F1E3C] text-center" />
-                  </div>
-                  <button onClick={addItem} disabled={!selectedVariant}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-dashed border-[#0F1E3C]/20 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] hover:border-[#0F1E3C]/40 transition-colors disabled:opacity-40">
-                    <Plus size={13} /> Adicionar item
-                  </button>
-                </div>
-
                 {/* Items list */}
                 {items.length > 0 && (
                   <div className="space-y-1.5">
                     {items.map((it, idx) => (
-                      <div key={idx} className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#F4F6FB]">
-                        <div className="min-w-0">
+                      <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#F4F6FB]">
+                        <div className="min-w-0 flex-1">
                           <p className="text-xs font-bold text-[#0F1E3C] truncate">{it.productName}</p>
-                          <p className="text-[10px] text-[#0F1E3C]/40">{[it.color, it.size].filter(Boolean).join(" · ")} · {it.qty}un</p>
+                          <p className="text-[10px] text-[#0F1E3C]/40">{[it.color, it.size].filter(Boolean).join(" · ")}</p>
                         </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="text-xs font-bold text-[#0F1E3C]">R$ {(it.qty * it.salePrice).toFixed(2).replace(".", ",")}</span>
-                          <button onClick={() => removeItem(idx)} className="text-[#0F1E3C]/25 hover:text-red-400"><Trash2 size={13} /></button>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button onClick={() => setQty(idx, it.qty - 1)}
+                            className="w-6 h-6 rounded-lg bg-white border border-[#0F1E3C]/10 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-xs font-bold flex items-center justify-center">−</button>
+                          <span className="w-6 text-center text-xs font-black text-[#0F1E3C]">{it.qty}</span>
+                          <button onClick={() => setQty(idx, it.qty + 1)}
+                            className="w-6 h-6 rounded-lg bg-white border border-[#0F1E3C]/10 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-xs font-bold flex items-center justify-center">+</button>
                         </div>
+                        <span className="text-xs font-bold text-[#0F1E3C] flex-shrink-0 w-16 text-right">R$ {(it.qty * it.salePrice).toFixed(2).replace(".", ",")}</span>
+                        <button onClick={() => removeItem(idx)} className="text-[#0F1E3C]/25 hover:text-red-400 flex-shrink-0"><Trash2 size={13} /></button>
                       </div>
                     ))}
                     <div className="flex justify-between px-3 pt-1">
@@ -170,6 +167,45 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
                     </div>
                   </div>
                 )}
+
+                {/* Picker encadeado */}
+                <div className={items.length > 0 ? "pt-3 border-t border-dashed border-[#0F1E3C]/12 space-y-2.5" : "space-y-2.5"}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">
+                    {items.length > 0 ? "Adicionar próximo item" : "Adicionar item"}
+                  </p>
+
+                  <select value={product} onChange={e => pickProduct(e.target.value)}
+                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-white">
+                    <option value="">Selecionar produto...</option>
+                    {productNames.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+
+                  {product && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {colors.map(c => (
+                        <button key={c} type="button" onClick={() => pickColor(c)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+                            color === c
+                              ? "bg-[#4361EE] text-white border-[#4361EE]"
+                              : "bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+                          }`}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {product && color && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {sizes.map(s => (
+                        <button key={s} type="button" onClick={() => pickSize(s)}
+                          className="px-3 py-1.5 rounded-xl border text-xs font-semibold bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-colors">
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
               </>

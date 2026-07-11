@@ -302,6 +302,8 @@ export default function PedidosPage() {
   // DTF panel within chat modal
   const [showDtfPanel,      setShowDtfPanel]      = useState(false)
   const [showNewOrderForm,  setShowNewOrderForm]  = useState(false)
+  const [showHistProdutos,  setShowHistProdutos]  = useState(false)
+  const [showHistDtf,       setShowHistDtf]       = useState(false)
   const [contactDtfOrders,  setContactDtfOrders]  = useState<DtfOrder[]>([])
   const contactProductOrders = chatContact ? orders.filter(o => o.contactId === chatContact.id) : []
   const [linkingDtfMsg,     setLinkingDtfMsg]     = useState<number | null>(null)
@@ -1824,21 +1826,27 @@ export default function PedidosPage() {
                           )}
                           {concludedProductOrders.length > 0 && (
                             <div className="mt-1">
-                              <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1 mb-1.5">
-                                Histórico produtos ({concludedProductOrders.length})
-                              </p>
-                              <div className="space-y-1">
-                                {concludedProductOrders.map(o => (
-                                  <button key={o.id}
-                                    onClick={() => { selectedIdRef.current = o.id; setSelected(o) }}
-                                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:bg-[#0F1E3C]/4 transition-colors text-left">
-                                    <span className="text-[10px] font-bold text-[#0F1E3C]/50">{o.number}</span>
-                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${o.status === "concluido" ? "bg-[#0F1E3C]/5 text-[#0F1E3C]/30" : "bg-red-50 text-red-400"}`}>
-                                      {o.status === "concluido" ? "Concluído" : "Cancelado"}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
+                              <button onClick={() => setShowHistProdutos(v => !v)}
+                                className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:border-[#4361EE]/25 transition-colors">
+                                <span className="text-[10px] font-bold text-[#0F1E3C]/50">
+                                  {concludedProductOrders.length} pedido{concludedProductOrders.length !== 1 ? "s" : ""} no histórico
+                                </span>
+                                {showHistProdutos ? <ChevronUp size={12} className="text-[#0F1E3C]/30"/> : <ChevronDown size={12} className="text-[#0F1E3C]/30"/>}
+                              </button>
+                              {showHistProdutos && (
+                                <div className="space-y-1 mt-1.5">
+                                  {concludedProductOrders.map(o => (
+                                    <button key={o.id}
+                                      onClick={() => { selectedIdRef.current = o.id; setSelected(o) }}
+                                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:bg-[#0F1E3C]/4 transition-colors text-left">
+                                      <span className="text-[10px] font-bold text-[#0F1E3C]/50">{o.number}</span>
+                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${o.status === "concluido" ? "bg-[#0F1E3C]/5 text-[#0F1E3C]/30" : "bg-red-50 text-red-400"}`}>
+                                        {o.status === "concluido" ? "Concluído" : "Cancelado"}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                           {activeOrders.length > 0 && (
@@ -1849,24 +1857,30 @@ export default function PedidosPage() {
                           ))}
                           {concludedOrders.length > 0 && (
                             <div className="mt-1">
-                              <p className="text-[9px] font-bold text-[#0F1E3C]/25 uppercase tracking-widest px-1 mb-1.5">
-                                Histórico DTF ({concludedOrders.length})
-                              </p>
-                              <div className="space-y-1">
-                                {concludedOrders.map(o => (
-                                  <button key={o.id}
-                                    onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }}
-                                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:bg-[#0F1E3C]/4 transition-colors text-left">
-                                    <div>
-                                      <span className="text-[10px] font-bold text-[#0F1E3C]/50">{o.number}</span>
-                                      {o.metrosFinais && <span className="text-[9px] text-[#0F1E3C]/30 ml-1.5">{Number(o.metrosFinais).toFixed(2)}m</span>}
-                                    </div>
-                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${o.status === "concluido" ? "bg-[#0F1E3C]/5 text-[#0F1E3C]/30" : "bg-red-50 text-red-400"}`}>
-                                      {o.status === "concluido" ? "Concluído" : "Cancelado"}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
+                              <button onClick={() => setShowHistDtf(v => !v)}
+                                className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:border-[#7C3AED]/25 transition-colors">
+                                <span className="text-[10px] font-bold text-[#0F1E3C]/50">
+                                  {concludedOrders.length} pedido{concludedOrders.length !== 1 ? "s" : ""} DTF no histórico
+                                </span>
+                                {showHistDtf ? <ChevronUp size={12} className="text-[#0F1E3C]/30"/> : <ChevronDown size={12} className="text-[#0F1E3C]/30"/>}
+                              </button>
+                              {showHistDtf && (
+                                <div className="space-y-1 mt-1.5">
+                                  {concludedOrders.map(o => (
+                                    <button key={o.id}
+                                      onClick={() => { selectedDtfIdRef.current = o.id; setSelectedDtf(o) }}
+                                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/6 hover:bg-[#0F1E3C]/4 transition-colors text-left">
+                                      <div>
+                                        <span className="text-[10px] font-bold text-[#0F1E3C]/50">{o.number}</span>
+                                        {o.metrosFinais && <span className="text-[9px] text-[#0F1E3C]/30 ml-1.5">{Number(o.metrosFinais).toFixed(2)}m</span>}
+                                      </div>
+                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${o.status === "concluido" ? "bg-[#0F1E3C]/5 text-[#0F1E3C]/30" : "bg-red-50 text-red-400"}`}>
+                                        {o.status === "concluido" ? "Concluído" : "Cancelado"}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                         </>
