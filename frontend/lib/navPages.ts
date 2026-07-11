@@ -44,10 +44,10 @@ export const navDTF: NavItem[] = [
 
 export const navProducao: NavItem[] = [
   { href: "/dashboard/metricas",        label: "Métricas Produção x Vendas", icon: TrendingUp     },
-  { href: "/dashboard/materias-primas", label: "Matéria Prima",              icon: Layers         },
   { href: "/dashboard/programacao",     label: "Programação de Produção",    icon: CalendarClock  },
-  { href: "/dashboard/custo-producao",  label: "Custos de Produção",         icon: Factory        },
   { href: "/dashboard/costura-revisao", label: "Costura e Revisão",          icon: ClipboardCheck },
+  { href: "/dashboard/materias-primas", label: "Matéria Prima",              icon: Layers         },
+  { href: "/dashboard/custo-producao",  label: "Custos de Produção",         icon: Factory        },
 ]
 
 export const navCadastros: NavItem[] = [

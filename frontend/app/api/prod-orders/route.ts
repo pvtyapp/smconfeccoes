@@ -70,8 +70,9 @@ export async function GET(req: Request) {
     const { rows: revisions } = await pool.query(`
       SELECT
         order_id AS "orderId",
-        SUM(qty_approved) AS "totalAprovadas",
-        SUM(qty_defect)   AS "totalAvarias"
+        SUM(qty_approved)   AS "totalAprovadas",
+        SUM(qty_defect)     AS "totalAvarias",
+        MAX(concluded_at)   AS "revisedAt"
       FROM prod_revision_batches
       WHERE order_id = ANY($1)
       GROUP BY order_id
@@ -102,6 +103,7 @@ export async function GET(req: Request) {
       materials:      mats.filter(m => m.orderId === o.id).map(({ orderId: _, ...r }) => r),
       totalAprovadas: Number(revMap.get(o.id)?.totalAprovadas ?? 0),
       totalAvarias:   Number(revMap.get(o.id)?.totalAvarias   ?? 0),
+      revisedAt:      revMap.get(o.id)?.revisedAt ?? null,
       logs:           logMap.get(o.id) ?? [],
     }))
 

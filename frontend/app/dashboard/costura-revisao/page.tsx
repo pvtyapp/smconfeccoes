@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react"
 import { CheckCircle2, Clock, X, Check, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react"
+import { todayBR, subDaysBR, dateBR } from "@/lib/tz"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type RevisaoStatus = "aguardando" | "concluida"
@@ -22,9 +23,29 @@ type OrdemRevisao = {
   grade:         GradeItem[]
   concludedAt:   string
   revisadoAt?:   string
+  revisedAt?:    string | null
   totalPecas:    number
   totalAprovadas?: number
   totalAvarias?:   number
+}
+
+// ─── Período ────────────────────────────────────────────────────────────────────
+type PeriodKey = "hoje" | "ontem" | "7d" | "30d"
+
+const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
+  { key: "hoje",  label: "Hoje"    },
+  { key: "ontem", label: "Ontem"   },
+  { key: "7d",    label: "7 dias"  },
+  { key: "30d",   label: "30 dias" },
+]
+
+function getPeriodRange(key: PeriodKey): [string, string] {
+  switch (key) {
+    case "hoje":  return [todayBR(), todayBR()]
+    case "ontem": return [subDaysBR(1), subDaysBR(1)]
+    case "7d":    return [subDaysBR(6), todayBR()]
+    case "30d":   return [subDaysBR(29), todayBR()]
+  }
 }
 
 // Mock removed — data comes from /api/prod-orders
@@ -239,6 +260,7 @@ function mapOrder(o: {
   id: number; number: string; productName: string; status: string
   grade: { color:string; size:string; qtyProduced?:number }[]
   concludedAt?: string
+  revisedAt?: string | null
   totalAprovadas?: number
   totalAvarias?:   number
 }): OrdemRevisao {
@@ -251,6 +273,7 @@ function mapOrder(o: {
     id: o.id, number: o.number, productName: o.productName,
     status: apiStatus, grade, totalPecas,
     concludedAt:   o.concludedAt ?? "",
+    revisedAt:     o.revisedAt   ?? null,
     totalAprovadas: o.totalAprovadas ?? 0,
     totalAvarias:   o.totalAvarias   ?? 0,
   }
@@ -261,6 +284,7 @@ export default function CosturaRevisaoPage() {
   const [loading, setLoading] = useState(true)
   const [revisando, setRevisando] = useState<OrdemRevisao | null>(null)
   const [histOpen, setHistOpen] = useState(false)
+  const [period, setPeriod] = useState<PeriodKey>("hoje")
 
   const loadOrdens = useCallback(async () => {
     setLoading(true)
@@ -280,8 +304,17 @@ export default function CosturaRevisaoPage() {
   const pendentes  = ordens.filter(o => o.status === "aguardando")
   const concluidas = ordens.filter(o => o.status === "concluida")
 
-  const totalRevisadas  = concluidas.reduce((s, o) => s + o.totalPecas, 0)
-  const totalAvarias    = concluidas.reduce((s, o) => s + (o.totalAvarias ?? 0), 0)
+  // Dashboard e histórico respeitam o período — pendentes fica sempre com a fila toda
+  const [periodFrom, periodTo] = getPeriodRange(period)
+  const concluidasPeriodo = useMemo(() => concluidas.filter(o => {
+    const ref = o.revisedAt ?? o.concludedAt
+    if (!ref) return false
+    const key = dateBR(new Date(ref))
+    return key >= periodFrom && key <= periodTo
+  }), [concluidas, periodFrom, periodTo])
+
+  const totalRevisadas  = concluidasPeriodo.reduce((s, o) => s + o.totalPecas, 0)
+  const totalAvarias    = concluidasPeriodo.reduce((s, o) => s + (o.totalAvarias ?? 0), 0)
   const pctAvaria       = totalRevisadas > 0 ? (totalAvarias / totalRevisadas) * 100 : 0
 
   async function handleConcluir(id: number, finalGrade: GradeItem[]) {
@@ -298,21 +331,35 @@ export default function CosturaRevisaoPage() {
     <div className="space-y-5">
 
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>
-          Costura e Revisão
-        </h1>
-        <p className="text-xs text-[#0F1E3C]/45 mt-1">
-          Revisão de qualidade · aprovadas → estoque · avarias → estoque de avarias
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>
+            Costura e Revisão
+          </h1>
+          <p className="text-xs text-[#0F1E3C]/45 mt-1">
+            Revisão de qualidade · aprovadas → estoque · avarias → estoque de avarias
+          </p>
+        </div>
+        <div className="flex items-center gap-1 bg-white border border-[#0F1E3C]/8 rounded-xl p-1">
+          {PERIOD_OPTIONS.map(opt => (
+            <button key={opt.key} onClick={() => setPeriod(opt.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                period === opt.key
+                  ? "bg-[#4361EE] text-white"
+                  : "text-[#0F1E3C]/50 hover:text-[#0F1E3C]"
+              }`}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — respeitam o período selecionado (exceto "Aguardando revisão", que é sempre a fila toda) */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
         <div className="grid grid-cols-4 divide-x divide-[#0F1E3C]/6">
           {[
             { label:"Aguardando revisão", display: String(pendentes.length),           color:"text-amber-500"   },
-            { label:"Revisões concluídas",display: String(concluidas.length),          color:"text-emerald-600" },
+            { label:"Revisões concluídas",display: String(concluidasPeriodo.length),   color:"text-emerald-600" },
             { label:"Peças revisadas",    display: `${totalRevisadas} pç`,             color:"text-[#0F1E3C]"   },
             { label:"Taxa de avaria",     display: `${pctAvaria.toFixed(1)}%`,         color: pctAvaria > 3 ? "text-amber-500" : "text-[#0F1E3C]" },
           ].map(s => (
@@ -348,14 +395,14 @@ export default function CosturaRevisaoPage() {
         </div>
       )}
 
-      {/* Histórico — minimizado por padrão */}
-      {concluidas.length > 0 && (
+      {/* Histórico — minimizado por padrão, respeita o período selecionado */}
+      {concluidasPeriodo.length > 0 ? (
         <div>
           <button onClick={() => setHistOpen(v => !v)}
             className="w-full flex items-center justify-between px-5 py-3.5 rounded-2xl bg-white border border-[#0F1E3C]/8 hover:border-[#4361EE]/25 transition-colors">
             <div className="flex items-center gap-2.5">
               <CheckCircle2 size={14} className="text-emerald-500"/>
-              <p className="text-sm font-bold text-[#0F1E3C]">{concluidas.length} revisões concluídas</p>
+              <p className="text-sm font-bold text-[#0F1E3C]">{concluidasPeriodo.length} revisões concluídas</p>
             </div>
             <div className="flex items-center gap-1 text-xs font-bold text-[#4361EE]">
               ver histórico
@@ -364,12 +411,14 @@ export default function CosturaRevisaoPage() {
           </button>
           {histOpen && (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
-              {concluidas.map(o => (
+              {concluidasPeriodo.map(o => (
                 <ConcludedCard key={o.id} ordem={o}/>
               ))}
             </div>
           )}
         </div>
+      ) : (
+        <p className="text-xs text-[#0F1E3C]/30 text-center py-4">Nenhuma revisão concluída nesse período</p>
       )}
 
       {/* Modal */}
