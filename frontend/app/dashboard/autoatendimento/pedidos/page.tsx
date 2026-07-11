@@ -1651,6 +1651,17 @@ export default function PedidosPage() {
                                       )}
                                     </div>
                                     {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>{m.caption}</p>}
+                                    {!isOut && m.mediaCategory === "dtf" && !msgMediaExpired && (
+                                      <div className="px-3 pt-1.5">
+                                        <button onClick={() => linkDtfFile(m)} disabled={linkingDtfMsg === m.id}
+                                          className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-[10px] font-bold transition-colors disabled:opacity-50"
+                                          style={{ background: "rgba(124,58,237,0.08)", borderColor: "rgba(124,58,237,0.3)", color: "#7C3AED" }}>
+                                          {linkingDtfMsg === m.id
+                                            ? <div className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin" />
+                                            : <><Printer size={10} /> Adicionar ao pedido DTF</>}
+                                        </button>
+                                      </div>
+                                    )}
                                     {timeEl("px-3 pb-1.5")}
                                   </div>
                                 )}

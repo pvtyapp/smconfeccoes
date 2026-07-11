@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect, useCallback } from "react"
-import { CheckCircle2, Clock, X, Check, AlertTriangle, Scissors, ChevronDown, ChevronUp } from "lucide-react"
+import { CheckCircle2, Clock, X, Check, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type RevisaoStatus = "aguardando" | "concluida"
@@ -28,12 +28,6 @@ type OrdemRevisao = {
 }
 
 // Mock removed — data comes from /api/prod-orders
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-function fmtDate(s: string) {
-  const [y, m, d] = s.split("-")
-  return `${d}/${m}/${y}`
-}
 
 // ─── RevisaoModal ──────────────────────────────────────────────────────────────
 function RevisaoModal({
@@ -186,111 +180,54 @@ function RevisaoModal({
   )
 }
 
-// ─── OrderCard ─────────────────────────────────────────────────────────────────
-function OrderCard({
-  ordem,
-  onRevisar,
-}: {
-  ordem:     OrdemRevisao
-  onRevisar: (o: OrdemRevisao) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const concluida = ordem.status === "concluida"
+// ─── PendingCard ───────────────────────────────────────────────────────────────
+// Bloco 1:1 com LED azul girando ao redor — sinaliza "precisa de ação".
+// Clique abre o RevisaoModal (grade completa por cor/tamanho).
+function colorChips(grade: GradeItem[]): { shown: string[]; extra: number } {
+  const colors: string[] = []
+  for (const g of grade) if (!colors.includes(g.color)) colors.push(g.color)
+  return { shown: colors.slice(0, 2), extra: Math.max(0, colors.length - 2) }
+}
 
-  const colorGroups = useMemo(() => {
-    const map = new Map<string, GradeItem[]>()
-    for (const g of ordem.grade) {
-      if (!map.has(g.color)) map.set(g.color, [])
-      map.get(g.color)!.push(g)
-    }
-    return [...map.entries()]
-  }, [ordem.grade])
-
+function PendingCard({ ordem, onClick }: { ordem: OrdemRevisao; onClick: () => void }) {
+  const { shown, extra } = useMemo(() => colorChips(ordem.grade), [ordem.grade])
   return (
-    <div className={`bg-white rounded-2xl border overflow-hidden ${
-      concluida ? "border-[#0F1E3C]/6" : "border-[#4361EE]/20"
-    }`}>
-
-      {/* Summary row */}
-      <div className="flex items-center gap-4 px-5 py-4">
-        {/* Status dot */}
-        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-          concluida ? "bg-emerald-500" : "bg-amber-400"
-        }`}/>
-
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-bold text-[#0F1E3C] text-sm">{ordem.number}</span>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/8 text-[#4361EE]">
-              {ordem.productName}
-            </span>
-            {!concluida && (
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 uppercase tracking-wide">
-                Aguardando revisão
-              </span>
+    <div className="led-wrap relative aspect-square">
+      <div className="led-glow"/>
+      <div className="led-ring h-full w-full">
+        <button onClick={onClick}
+          className="h-full w-full rounded-[18px] bg-white flex flex-col items-center justify-center
+            text-center gap-1.5 p-4 cursor-pointer hover:scale-[1.03] transition-transform relative">
+          <p className="text-sm font-black text-[#0F1E3C] leading-tight">{ordem.productName}</p>
+          <div className="flex gap-1 flex-wrap justify-center">
+            {shown.map(c => (
+              <span key={c} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">{c}</span>
+            ))}
+            {extra > 0 && (
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/8 text-[#0F1E3C]/50">+{extra}</span>
             )}
           </div>
-          <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-            {ordem.totalPecas} pç produzidas · conc. produção {fmtDate(ordem.concludedAt)}
-            {concluida && ordem.revisadoAt && ` · revisado ${fmtDate(ordem.revisadoAt)}`}
-          </p>
-        </div>
-
-        {/* Right side */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {concluida ? (
-            <div className="text-right">
-              <p className="text-xs font-bold text-emerald-600">{ordem.totalAprovadas} aprovadas</p>
-              {(ordem.totalAvarias ?? 0) > 0 && (
-                <p className="text-xs font-bold text-amber-600">{ordem.totalAvarias} avarias</p>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={() => onRevisar(ordem)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#4361EE] text-white text-xs font-bold hover:bg-[#3451d1] transition-colors">
-              <Scissors size={12}/>
-              Revisar
-            </button>
-          )}
-          <button onClick={() => setExpanded(v => !v)}
-            className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/30 flex items-center justify-center">
-            {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
-          </button>
-        </div>
+          <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-bold text-[#0F1E3C]/40
+            bg-[#F9FAFB] border border-[#0F1E3C]/8 px-2.5 py-0.5 rounded-full">
+            {ordem.totalPecas} pç
+          </span>
+        </button>
       </div>
+    </div>
+  )
+}
 
-      {/* Expanded detail */}
-      {expanded && (
-        <div className="border-t border-[#0F1E3C]/5 px-5 py-4 bg-[#F9FAFB]">
-          <div className="space-y-3">
-            {colorGroups.map(([color, rows]) => (
-              <div key={color}>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">{color}</p>
-                <div className="grid grid-cols-[1fr_64px_80px_80px] gap-2 mb-1">
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30">Tam.</span>
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30 text-center">Total</span>
-                  {concluida && <>
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-600 text-center">Aprov.</span>
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-amber-600 text-center">Avar.</span>
-                  </>}
-                </div>
-                {rows.map(r => (
-                  <div key={r.size}
-                    className="grid grid-cols-[1fr_64px_80px_80px] gap-2 items-center py-1.5 border-b border-[#0F1E3C]/4 last:border-0">
-                    <span className="text-sm font-bold text-[#0F1E3C]">{r.size}</span>
-                    <span className="text-sm text-[#0F1E3C]/60 text-center">{r.qty}</span>
-                    {concluida && <>
-                      <span className="text-sm font-semibold text-emerald-600 text-center">{r.aprovadas ?? "—"}</span>
-                      <span className="text-sm font-semibold text-amber-600 text-center">{r.avarias ?? "—"}</span>
-                    </>}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+// ─── ConcludedCard ─────────────────────────────────────────────────────────────
+// Versão compacta, sem LED — usada só dentro do histórico minimizado.
+function ConcludedCard({ ordem }: { ordem: OrdemRevisao }) {
+  return (
+    <div className="aspect-square rounded-2xl bg-white border border-[#0F1E3C]/6 flex flex-col
+      items-center justify-center text-center gap-1 p-3">
+      <CheckCircle2 size={16} className="text-emerald-500"/>
+      <p className="text-xs font-bold text-[#0F1E3C] leading-tight">{ordem.productName}</p>
+      <p className="text-[10px] font-semibold text-emerald-600">{ordem.totalAprovadas} aprov.</p>
+      {(ordem.totalAvarias ?? 0) > 0 && (
+        <p className="text-[10px] font-semibold text-amber-600">{ordem.totalAvarias} avaria{ordem.totalAvarias! > 1 ? "s" : ""}</p>
       )}
     </div>
   )
@@ -323,6 +260,7 @@ export default function CosturaRevisaoPage() {
   const [ordens, setOrdens] = useState<OrdemRevisao[]>([])
   const [loading, setLoading] = useState(true)
   const [revisando, setRevisando] = useState<OrdemRevisao | null>(null)
+  const [histOpen, setHistOpen] = useState(false)
 
   const loadOrdens = useCallback(async () => {
     setLoading(true)
@@ -395,9 +333,9 @@ export default function CosturaRevisaoPage() {
               Aguardando Revisão ({pendentes.length})
             </p>
           </div>
-          <div className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
             {pendentes.map(o => (
-              <OrderCard key={o.id} ordem={o} onRevisar={setRevisando}/>
+              <PendingCard key={o.id} ordem={o} onClick={() => setRevisando(o)}/>
             ))}
           </div>
         </div>
@@ -410,20 +348,27 @@ export default function CosturaRevisaoPage() {
         </div>
       )}
 
-      {/* Histórico */}
+      {/* Histórico — minimizado por padrão */}
       {concluidas.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <CheckCircle2 size={13} className="text-emerald-500"/>
-            <p className="text-xs font-bold uppercase tracking-wider text-[#0F1E3C]/35">
-              Histórico de Revisões ({concluidas.length})
-            </p>
-          </div>
-          <div className="space-y-3">
-            {concluidas.map(o => (
-              <OrderCard key={o.id} ordem={o} onRevisar={setRevisando}/>
-            ))}
-          </div>
+          <button onClick={() => setHistOpen(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-3.5 rounded-2xl bg-white border border-[#0F1E3C]/8 hover:border-[#4361EE]/25 transition-colors">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 size={14} className="text-emerald-500"/>
+              <p className="text-sm font-bold text-[#0F1E3C]">{concluidas.length} revisões concluídas</p>
+            </div>
+            <div className="flex items-center gap-1 text-xs font-bold text-[#4361EE]">
+              ver histórico
+              {histOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+            </div>
+          </button>
+          {histOpen && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
+              {concluidas.map(o => (
+                <ConcludedCard key={o.id} ordem={o}/>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -435,6 +380,35 @@ export default function CosturaRevisaoPage() {
           onConcluir={handleConcluir}
         />
       )}
+
+      <style jsx global>{`
+        @property --led-angle {
+          syntax: "<angle>";
+          initial-value: 0deg;
+          inherits: false;
+        }
+        @keyframes led-spin { to { --led-angle: 360deg; } }
+        @keyframes led-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+
+        .led-wrap { position: relative; }
+
+        .led-glow {
+          position: absolute; inset: -14px; border-radius: 26px;
+          background: conic-gradient(from var(--led-angle),
+            transparent 0deg, #22D3EE 45deg, #7C9BFF 100deg, #4361EE 150deg, transparent 200deg, transparent 360deg);
+          filter: blur(18px);
+          animation: led-spin 2.2s linear infinite, led-pulse 2.2s ease-in-out infinite;
+        }
+
+        .led-ring {
+          position: relative;
+          border-radius: 20px;
+          padding: 2.5px;
+          background: conic-gradient(from var(--led-angle),
+            transparent 0deg, #22D3EE 45deg, #7C9BFF 100deg, #4361EE 150deg, transparent 200deg, transparent 360deg);
+          animation: led-spin 2.2s linear infinite;
+        }
+      `}</style>
     </div>
   )
 }
