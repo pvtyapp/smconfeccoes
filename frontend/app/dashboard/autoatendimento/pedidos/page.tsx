@@ -340,8 +340,6 @@ export default function PedidosPage() {
   const [togglingBot,       setTogglingBot]        = useState(false)
   const [resetting,         setResetting]          = useState(false)
   const [mergingDupes,      setMergingDupes]       = useState(false)
-  const [controleEstoque,   setControleEstoque]    = useState(false)
-  const [togglingEstoque,   setTogglingEstoque]    = useState(false)
 
   // Per-service toggles
   const [dtfAtivo,          setDtfAtivo]           = useState(true)
@@ -389,7 +387,6 @@ export default function PedidosPage() {
       .then((s: Record<string, string>) => {
         if (s.chatbot_ativo           !== undefined) setChatbotAtivo(s.chatbot_ativo         !== "false")
         if (s.dtf_ativo               !== undefined) setDtfAtivo(s.dtf_ativo                !== "false")
-        if (s.controle_estoque_ativo  !== undefined) setControleEstoque(s.controle_estoque_ativo === "true")
         if (s.produto_horario_dias)   setProdDias(s.produto_horario_dias.split(",").map(Number))
         if (s.produto_horario_inicio) setProdInicio(s.produto_horario_inicio)
         if (s.produto_horario_fim)    setProdFim(s.produto_horario_fim)
@@ -440,18 +437,6 @@ export default function PedidosPage() {
       body: JSON.stringify({ dtf_ativo: String(next) }),
     }).catch(() => setDtfAtivo(!next))
     setTogglingDtf(false)
-  }
-
-  async function toggleEstoque() {
-    setTogglingEstoque(true)
-    const next = !controleEstoque
-    setControleEstoque(next)
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ controle_estoque_ativo: String(next) }),
-    }).catch(() => setControleEstoque(!next))
-    setTogglingEstoque(false)
   }
 
   async function mergeDupeContacts() {
@@ -1969,13 +1954,6 @@ export default function PedidosPage() {
                 )}
                 <span className="text-[8px]">{showProdList ? "▲" : "▼"}</span>
               </button>
-            </div>
-
-            {/* Toggle Controle Estoque */}
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] font-bold text-[#0F1E3C]/50">Estoque</p>
-              <Tip text="ON: chatbot avisa o cliente quando item está sem estoque ou com quantidade limitada. OFF: chatbot vende livremente sem alertas de estoque (ex: produção sob demanda). A dedução do estoque ocorre normalmente nos dois casos." />
-              <Toggle on={controleEstoque} onChange={toggleEstoque} onColor="bg-emerald-500" disabled={togglingEstoque} />
             </div>
 
             {/* Horários */}
