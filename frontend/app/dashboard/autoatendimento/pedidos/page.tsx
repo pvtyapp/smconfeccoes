@@ -256,6 +256,9 @@ export default function PedidosPage() {
   const selectedIdRef                       = useRef<number | null>(null)
   const [payConfirmId,   setPayConfirmId]   = useState<number | null>(null)
   const [confirmingPay,  setConfirmingPay]  = useState(false)
+  const [dtfUnpayId,     setDtfUnpayId]     = useState<number | null>(null)
+  const [dtfUnpayDate,   setDtfUnpayDate]   = useState("")
+  const [confirmingDtfUnpay, setConfirmingDtfUnpay] = useState(false)
   // DTF
   const [dtfOrders,      setDtfOrders]      = useState<DtfOrder[]>([])
   const [selectedDtf,    setSelectedDtf]    = useState<DtfOrder | null>(null)
@@ -2267,13 +2270,21 @@ export default function PedidosPage() {
                           <DtfOrderCard key={p.id} order={p}
                             onClick={() => { selectedDtfIdRef.current = p.id; setSelectedDtf(p) }}
                             onTogglePaid={async (id, currentlyPaid) => {
-                              const nextPaid = !currentlyPaid
-                              await fetch(`/api/dtf/pedidos/${id}`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ isPaid: nextPaid }),
-                              })
-                              setDtfOrders(prev => prev.map(o => o.id === id ? { ...o, isPaid: nextPaid } : o))
+                              if (!currentlyPaid) {
+                                // Marcar como Pago passa pelo endpoint de verdade — grava paid_at
+                                // (sem isso o pedido continuava "pendente" em Contas a Receber
+                                // mesmo com o card mostrando Pago).
+                                await fetch(`/api/dtf/pedidos/${id}/pay`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ notifyClient: false }),
+                                })
+                                setDtfOrders(prev => prev.map(o => o.id === id ? { ...o, isPaid: true } : o))
+                              } else {
+                                // Marcar como Não Pago sempre exige um vencimento novo
+                                setDtfUnpayId(id)
+                                setDtfUnpayDate("")
+                              }
                             }}
                           />
                         ))}
@@ -2414,6 +2425,46 @@ export default function PedidosPage() {
             }
           }}
         />
+      )}
+      {dtfUnpayId !== null && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="text-base font-bold text-[#0F1E3C]">Marcar como Não Pago</h3>
+            <div className="space-y-1.5">
+              <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Novo vencimento *</label>
+              <input type="date" value={dtfUnpayDate} onChange={e => setDtfUnpayDate(e.target.value)}
+                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setDtfUnpayId(null)} disabled={confirmingDtfUnpay}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 disabled:opacity-50">
+                Cancelar
+              </button>
+              <button
+                disabled={confirmingDtfUnpay || !dtfUnpayDate}
+                onClick={async () => {
+                  const id = dtfUnpayId
+                  setConfirmingDtfUnpay(true)
+                  try {
+                    const r = await fetch(`/api/dtf/pedidos/${id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ isPaid: false, dueDate: dtfUnpayDate }),
+                    })
+                    if (r.ok) {
+                      setDtfOrders(prev => prev.map(o => o.id === id ? { ...o, isPaid: false, dueDate: dtfUnpayDate } : o))
+                      setDtfUnpayId(null)
+                    }
+                  } finally {
+                    setConfirmingDtfUnpay(false)
+                  }
+                }}
+                className="flex-1 px-4 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-bold rounded-xl disabled:opacity-50">
+                {confirmingDtfUnpay ? "..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {/* ── LIGHTBOX ── */}
       {lightboxMsg && (

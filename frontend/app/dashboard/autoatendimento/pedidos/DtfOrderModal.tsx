@@ -49,6 +49,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   const [printFormat,    setPrintFormat]    = useState<"a4" | "thermal">("a4")
   const [hasDownloaded,  setHasDownloaded]  = useState(false)
   const [hasPrinted,     setHasPrinted]     = useState(false)
+  const [removingAttId,  setRemovingAttId]  = useState<number | null>(null)
 
   useEffect(() => {
     try {
@@ -110,6 +111,17 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
       setError(e instanceof Error ? e.message : "Erro ao baixar arquivo")
     } finally {
       setDownloading(false)
+    }
+  }
+
+  async function removeAttachment(attachmentId: number) {
+    if (!confirm("Remover esse arquivo do pedido?")) return
+    setRemovingAttId(attachmentId)
+    try {
+      await fetch(`/api/dtf/pedidos/${order.id}/attachments/${attachmentId}`, { method: "DELETE" })
+      onRefresh()
+    } finally {
+      setRemovingAttId(null)
     }
   }
 
@@ -385,6 +397,16 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
                     <span className="text-[10px] text-[#0F1E3C]/25 flex-shrink-0 uppercase">
                       {a.filename?.split(".").pop() ?? "—"}
                     </span>
+                    {!isDone && (
+                      <button
+                        onClick={() => removeAttachment(a.id)}
+                        disabled={removingAttId === a.id}
+                        title="Remover arquivo do pedido"
+                        className="w-6 h-6 rounded-lg text-[#0F1E3C]/20 hover:text-red-400 hover:bg-red-50 flex items-center justify-center flex-shrink-0 transition-colors disabled:opacity-40"
+                      >
+                        {removingAttId === a.id ? <Loader2 size={11} className="animate-spin" /> : <X size={12} />}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

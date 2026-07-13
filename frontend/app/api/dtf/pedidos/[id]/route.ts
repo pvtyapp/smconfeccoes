@@ -51,12 +51,26 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params
-    const body = await req.json().catch(() => ({})) as { isPaid?: boolean | null; impressoraId?: number | null }
+    const body = await req.json().catch(() => ({})) as {
+      isPaid?: boolean | null; impressoraId?: number | null; dueDate?: string | null
+    }
     await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS is_paid BOOLEAN`).catch(() => {})
+
+    // Marcar "Não Pago" sempre exige um novo prazo — sem isso o pedido some do
+    // radar de Contas a Receber (que filtra por due_date IS NOT NULL) mesmo
+    // aparecendo como pendente no kanban.
+    if (body.isPaid === false && !body.dueDate) {
+      return NextResponse.json({ error: "Informe a data de vencimento pra marcar como Não Pago" }, { status: 400 })
+    }
+
     const cols: string[]   = []
     const vals: unknown[]  = []
-    if (body.isPaid !== undefined)     { vals.push(body.isPaid ?? null);      cols.push(`is_paid = $${vals.length}`) }
+    if (body.isPaid !== undefined) {
+      vals.push(body.isPaid ?? null); cols.push(`is_paid = $${vals.length}`)
+      if (body.isPaid === false) cols.push(`paid_at = NULL`)
+    }
     if (body.impressoraId !== undefined) { vals.push(body.impressoraId ?? null); cols.push(`impressora_id = $${vals.length}`) }
+    if (body.dueDate !== undefined)      { vals.push(body.dueDate ?? null);      cols.push(`due_date = $${vals.length}`) }
     if (cols.length) {
       vals.push(id)
       await pool.query(`UPDATE dtf_pedidos SET ${cols.join(", ")} WHERE id = $${vals.length}`, vals)

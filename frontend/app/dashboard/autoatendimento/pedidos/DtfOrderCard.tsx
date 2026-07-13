@@ -146,28 +146,40 @@ export default function DtfOrderCard({ order, onClick, onTogglePaid }: Props) {
             🖨 Imp. {order.impressoraId}
           </span>
         )}
-        {order.status !== "cancelado" && (
-          onTogglePaid ? (
-            <button
-              type="button"
-              onClick={handleTogglePaid}
-              title="Clique pra alternar"
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
+        {/* Pago/Não Pago só faz sentido a partir de Pronto — antes disso o pedido
+            nem foi entregue, pagamento ainda não é uma decisão real */}
+        {(order.status === "pronto" || order.status === "concluido") && (
+          <>
+            {!order.isPaid && order.dueDate && (() => {
+              const [, m, d] = order.dueDate.split("-")
+              return (
+                <span className="text-[9px] font-semibold text-[#0F1E3C]/40" title="Vencimento">
+                  Vence {d}/{m}
+                </span>
+              )
+            })()}
+            {onTogglePaid ? (
+              <button
+                type="button"
+                onClick={handleTogglePaid}
+                title="Clique pra alternar"
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
+                  order.isPaid
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                    : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+                }`}>
+                {order.isPaid ? "Pago" : "Não Pago"}
+              </button>
+            ) : (
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                 order.isPaid
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                  : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : "bg-red-50 text-red-700 border-red-200"
               }`}>
-              {order.isPaid ? "Pago" : "Não Pago"}
-            </button>
-          ) : (
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-              order.isPaid
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                : "bg-red-50 text-red-700 border-red-200"
-            }`}>
-              {order.isPaid ? "Pago" : "Não Pago"}
-            </span>
-          )
+                {order.isPaid ? "Pago" : "Não Pago"}
+              </span>
+            )}
+          </>
         )}
       </div>
     </button>

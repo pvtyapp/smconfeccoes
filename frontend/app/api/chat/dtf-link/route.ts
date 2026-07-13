@@ -14,6 +14,11 @@ export async function POST(req: Request) {
     if (!contactId || !waMessageId)
       return NextResponse.json({ error: "contactId, waMessageId obrigatórios" }, { status: 400 })
 
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dtf_attach_pedido_msg
+      ON dtf_order_attachments(pedido_id, wa_message_id) WHERE wa_message_id IS NOT NULL
+    `).catch(() => {})
+
     // Busca o arquivo direto do banco (banco-a-banco) em vez de recebê-lo no corpo
     // da requisição — o navegador só manda o id da mensagem. Arquivo em base64
     // trafegando ida e volta pelo navegador estourava o limite de ~4.5MB de
@@ -69,9 +74,14 @@ export async function POST(req: Request) {
       created = true
     }
 
+    // ON CONFLICT cobre a corrida rara com o vínculo automático do chatbot
+    // tentando linkar a mesma mensagem ao mesmo tempo (mesma constraint criada
+    // em addFileToDtfPedido) — sem isso, colidir aqui vira erro 500 em vez de
+    // simplesmente reconhecer que já foi vinculado.
     await pool.query(`
       INSERT INTO dtf_order_attachments (pedido_id, blob_url, filename, mime_type, wa_message_id)
       VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (pedido_id, wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING
     `, [pedidoId, fileUrl, fileName, mimeType, waMessageId])
 
     return NextResponse.json({ pedidoId, pedidoNumber, created })
