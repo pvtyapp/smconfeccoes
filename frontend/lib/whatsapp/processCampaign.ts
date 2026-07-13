@@ -87,20 +87,22 @@ export async function processCampaignBatch(
           ? (camp.content as string)
           : (camp.content as string).replace(/\{nome\}/g, firstName)
 
+        let msgId: string | null = null
         try {
-          await campaignSend(sendJid, msg, mediaUrl)
+          msgId = await campaignSend(sendJid, msg, mediaUrl)
         } catch (mediaErr) {
           console.error("[processCampaignBatch] sendMedia falhou para", sendJid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
-          if (mediaUrl) await campaignSend(recipient.jid, msg, null)
+          if (mediaUrl) msgId = await campaignSend(recipient.jid, msg, null)
           else throw mediaErr
         }
 
         if (recipient.id) {
           await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [recipient.id]).catch(() => {})
           await pool.query(
-            `INSERT INTO wa_messages (contact_id, direction, content, media_url, media_type)
-             VALUES ($1,'out',$2,$3,$4)`,
-            [recipient.id, msg, mediaUrl ?? null, mediaUrl ? "image" : null]
+            `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_url, media_type)
+             VALUES ($1,$2,'out',$3,$4,$5)
+             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+            [recipient.id, msgId, msg, mediaUrl ?? null, mediaUrl ? "image" : null]
           ).catch(() => {})
         }
         processed++

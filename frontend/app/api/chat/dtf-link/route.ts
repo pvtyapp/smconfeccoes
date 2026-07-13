@@ -4,16 +4,29 @@ import { todayBR } from "@/lib/tz"
 
 export async function POST(req: Request) {
   try {
-    const { contactId, waMessageId, fileUrl, fileName, mimeType } = await req.json() as {
+    const { contactId, waMessageId, fileName, mimeType } = await req.json() as {
       contactId: number
       waMessageId: number
-      fileUrl: string
       fileName: string | null
       mimeType: string | null
     }
 
-    if (!contactId || !waMessageId || !fileUrl)
-      return NextResponse.json({ error: "contactId, waMessageId, fileUrl obrigatórios" }, { status: 400 })
+    if (!contactId || !waMessageId)
+      return NextResponse.json({ error: "contactId, waMessageId obrigatórios" }, { status: 400 })
+
+    // Busca o arquivo direto do banco (banco-a-banco) em vez de recebê-lo no corpo
+    // da requisição — o navegador só manda o id da mensagem. Arquivo em base64
+    // trafegando ida e volta pelo navegador estourava o limite de ~4.5MB de
+    // payload de Function da Vercel pra arquivos um pouco maiores que 3MB.
+    const mediaRes = await pool.query(
+      `SELECT media_data AS "mediaData", COALESCE(media_failed, false) AS "mediaFailed" FROM wa_messages WHERE id = $1`,
+      [waMessageId]
+    )
+    const media = mediaRes.rows[0] as { mediaData: string | null; mediaFailed: boolean } | undefined
+    if (!media) return NextResponse.json({ error: "Mensagem não encontrada" }, { status: 404 })
+    if (media.mediaFailed) return NextResponse.json({ error: "Falha no download desse arquivo — peça pro cliente reenviar" }, { status: 422 })
+    if (!media.mediaData) return NextResponse.json({ error: "Arquivo ainda processando — tente de novo em instantes" }, { status: 409 })
+    const fileUrl = media.mediaData
 
     // Idempotent: if already linked, return existing pedido
     const existing = await pool.query(`

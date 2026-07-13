@@ -39,8 +39,8 @@ export const navFinanceiro: NavItem[] = [
 
 export const navDTF: NavItem[] = [
   { href: "/dashboard/dtf/pedidos",   label: "Dashboard DTF", icon: Printer      },
-  { href: "/dashboard/dtf/insumos",   label: "Insumos",       icon: FlaskConical },
   { href: "/dashboard/dtf/relatorio", label: "Relatório DTF", icon: FileBarChart },
+  { href: "/dashboard/dtf/insumos",   label: "Insumos",       icon: FlaskConical },
 ]
 
 export const navProducao: NavItem[] = [

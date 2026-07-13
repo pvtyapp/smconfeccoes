@@ -46,6 +46,23 @@ export async function POST() {
         WHERE id = $1
       `, [d.lid_id, d.s_name, d.s_pic, d.phone, d.s_jid])
 
+      // 1.5. Antes de mover, remove do @s qualquer mensagem que já existe (mesmo
+      // conteúdo/direção, dentro de 60s) do lado do @lid — sem esse passo, a
+      // mesclagem só consolida as duas cópias na mesma conversa em vez de
+      // limpar a duplicata (comum quando message_id ficou NULL numa das cópias).
+      await client.query(
+        `DELETE FROM wa_messages dup
+         WHERE dup.contact_id = $2
+           AND EXISTS (
+             SELECT 1 FROM wa_messages keep
+             WHERE keep.contact_id = $1
+               AND keep.direction = dup.direction
+               AND keep.content = dup.content
+               AND keep.created_at BETWEEN dup.created_at - INTERVAL '60 seconds' AND dup.created_at + INTERVAL '60 seconds'
+           )`,
+        [d.lid_id, d.s_id]
+      )
+
       // 2. Move messages from @s → @lid
       const { rowCount } = await client.query(
         `UPDATE wa_messages SET contact_id = $1 WHERE contact_id = $2`,

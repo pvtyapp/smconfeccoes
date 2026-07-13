@@ -780,8 +780,9 @@ export async function POST(req: Request) {
             .catch(() => null)
           if (operatorContactId && adminText.trim()) {
             await pool.query(
-              `INSERT INTO wa_messages (contact_id, direction, content) VALUES ($1,'in',$2)`,
-              [operatorContactId, adminText.trim()]
+              `INSERT INTO wa_messages (contact_id, message_id, direction, content) VALUES ($1,$2,'in',$3)
+               ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+              [operatorContactId, (key.id as string) ?? null, adminText.trim()]
             ).catch(() => {})
           }
           const handled = await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e => {
@@ -879,7 +880,7 @@ export async function POST(req: Request) {
     // princípio do chatbot_ativo acima: a captura de pedido continua rodando,
     // quem fica mudo é o replyAndSave (checa isso sozinho antes de responder).
     if (hasMedia) {
-      await handleMedia(jid, contactId, msg, state)
+      await handleMedia(jid, contactId, msg, state, allMsgs)
     } else {
       await handleText(
         jid, contactId, state, text.trim(), lifecycle, pushName ?? "",
@@ -1321,20 +1322,43 @@ async function handleVariacao(jid: string, contactId: number, text: string) {
 
 // ─── media ───────────────────────────────────────────────────────────────────
 
+function msgHasMedia(m: Record<string, unknown>): boolean {
+  const body = m.message as Record<string, unknown> | undefined
+  return !!(body?.imageMessage || body?.documentMessage || body?.videoMessage || body?.audioMessage || body?.stickerMessage)
+}
+
 async function handleMedia(
   jid: string,
   contactId: number,
   msg: unknown,
   state: string,
+  allMsgs: Record<string, unknown>[],
 ) {
   if (state === "dtf_coletando_arquivos") {
     const contactRes = await pool.query(`SELECT state_data FROM wa_contacts WHERE id = $1`, [contactId])
     const stateData = contactRes.rows[0]?.state_data ?? {}
-    const pedidoId = stateData.pedidoId as number | undefined
-    if (pedidoId) {
-      await addFileToDtfPedido(jid, contactId, pedidoId, msg)
-    } else {
-      await handleDtfMedia(jid, contactId, stateData)
+    let pedidoId = stateData.pedidoId as number | undefined
+    let justCreated = false
+    if (!pedidoId) {
+      const created = await handleDtfMedia(jid, contactId, stateData)
+      if (!created) return
+      pedidoId = created
+      justCreated = true
+    }
+
+    // Evolution pode agrupar vários arquivos de arte no mesmo lote — vincula
+    // TODOS os arquivos de mídia do lote ao pedido, não só o "msg" que disparou
+    // essa chamada (antes só o primeiro do lote virava anexo, o resto sumia).
+    const mediaMsgs = allMsgs.filter(msgHasMedia)
+    let attached = 0
+    for (const m of mediaMsgs) {
+      if (await addFileToDtfPedido(pedidoId, contactId, m)) attached++
+    }
+
+    if (!justCreated && attached > 0) {
+      await replyAndSave(contactId, jid, attached > 1
+        ? `📎 ${attached} arquivos adicionados! Mais algum ou responda *pronto* para finalizar.`
+        : `📎 Arquivo adicionado! Mais algum ou responda *pronto* para finalizar.`)
     }
     return
   }
@@ -1352,6 +1376,7 @@ async function handleMedia(
   // webhooks em paralelo — sem a trava, 2 chamadas simultâneas podem achar "sem pedido aberto" ao
   // mesmo tempo e criar 2 pedidos DTF duplicados, ou mandar "Recebi seu arquivo!" 2x.
   let ackSent = false
+  let ackRowId: number | null = null
   const cliMedia = await pool.connect()
   try {
     await cliMedia.query("BEGIN")
@@ -1383,10 +1408,11 @@ async function handleMedia(
     )
     ackSent = recentAck.length === 0
     if (ackSent) {
-      await cliMedia.query(
-        `INSERT INTO wa_messages (contact_id, direction, content, created_at) VALUES ($1, 'out', $2, NOW())`,
+      const { rows: ackRow } = await cliMedia.query(
+        `INSERT INTO wa_messages (contact_id, direction, content, created_at) VALUES ($1, 'out', $2, NOW()) RETURNING id`,
         [contactId, "Recebi seu arquivo! Já vou te atender. 😊"]
       )
+      ackRowId = ackRow[0]?.id ?? null
     }
 
     await cliMedia.query("COMMIT")
@@ -1398,11 +1424,23 @@ async function handleMedia(
     cliMedia.release()
   }
 
-  if (ackSent) {
+  // A linha do ack é reservada DENTRO da trava (acima) só pra garantir dedup entre
+  // chamadas concorrentes — o envio de verdade e o message_id só saem depois do
+  // commit. Sem gravar o message_id de volta aqui, essa linha nunca "casa" com o
+  // que a Evolution reporta depois, e todo reconcile/sync recria a mesma mensagem.
+  if (ackSent && ackRowId) {
+    const rowId = ackRowId
     waitUntil(
-      sendWhatsApp(jid, "Recebi seu arquivo! Já vou te atender. 😊").catch(e =>
-        console.error("[handleMedia] envio do ack falhou:", jid, e instanceof Error ? e.message : e)
-      )
+      sendWhatsApp(jid, "Recebi seu arquivo! Já vou te atender. 😊")
+        .then(result => {
+          const msgId = (result as { key?: { id?: string } })?.key?.id
+          if (!msgId) return
+          return pool.query(
+            `UPDATE wa_messages SET message_id = $1 WHERE id = $2 AND message_id IS NULL`,
+            [msgId, rowId]
+          )
+        })
+        .catch(e => console.error("[handleMedia] envio do ack falhou:", jid, e instanceof Error ? e.message : e))
     )
   }
 }
@@ -1788,7 +1826,7 @@ async function handleDtfMedia(
   jid: string,
   contactId: number,
   stateData: Record<string, unknown>,
-) {
+): Promise<number | null> {
   const cli8 = await pool.connect()
   try {
     await cli8.query("BEGIN")
@@ -1818,35 +1856,48 @@ async function handleDtfMedia(
 
     await setState(contactId, "dtf_coletando_arquivos", { pedidoId, pedidoNumber: number })
     await replyAndSave(contactId, jid, `📎 Arte *${number}* recebida! Tem mais arquivos pra adicionar?\nManda agora ou responda *pronto* para finalizar.`)
+    return pedidoId
   } catch (e) {
     await cli8.query("ROLLBACK").catch(() => {})
     console.error("[handleDtfMedia] falhou — migration dtf_pedidos/dtf_order_number_seq não rodou?", e)
+    return null
   } finally {
     cli8.release()
   }
 }
 
-async function addFileToDtfPedido(jid: string, contactId: number, pedidoId: number, msg: unknown) {
+// Vincula pelo message_id específico do evento (não "a mídia mais recente do
+// contato") — antes, duas mensagens de mídia quase simultâneas podiam disputar
+// a mesma linha "mais recente" e uma delas nunca virava anexo. O índice único
+// parcial garante que reprocessar a mesma mensagem (retry de webhook) não gera
+// anexo duplicado.
+async function addFileToDtfPedido(pedidoId: number, contactId: number, msg: Record<string, unknown>): Promise<boolean> {
   try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dtf_attach_pedido_msg
+      ON dtf_order_attachments(pedido_id, wa_message_id) WHERE wa_message_id IS NOT NULL
+    `).catch(() => {})
+
+    const key = msg.key as Record<string, unknown> | undefined
+    const messageId = key?.id as string | undefined
+    if (!messageId) return false
+
     const { rows: msgRows } = await pool.query(`
       SELECT id, file_name FROM wa_messages
-      WHERE contact_id = $1 AND media_type IN ('document', 'image') AND direction = 'in'
-        AND created_at > NOW() - INTERVAL '5 minutes'
-      ORDER BY id DESC LIMIT 1
-    `, [contactId])
+      WHERE contact_id = $1 AND message_id = $2 AND media_type IN ('document', 'image') AND direction = 'in'
+      LIMIT 1
+    `, [contactId, messageId])
+    if (!msgRows[0]) return false
 
-    if (msgRows[0]) {
-      await pool.query(`
-        INSERT INTO dtf_order_attachments (pedido_id, wa_message_id, filename)
-        VALUES ($1, $2, $3)
-        ON CONFLICT DO NOTHING
-      `, [pedidoId, msgRows[0].id, msgRows[0].file_name])
-    }
-
-    void msg
-    await replyAndSave(contactId, jid, `📎 Arquivo adicionado! Mais algum ou responda *pronto* para finalizar.`)
+    const { rowCount } = await pool.query(`
+      INSERT INTO dtf_order_attachments (pedido_id, wa_message_id, filename)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (pedido_id, wa_message_id) WHERE wa_message_id IS NOT NULL DO NOTHING
+    `, [pedidoId, msgRows[0].id, msgRows[0].file_name])
+    return (rowCount ?? 0) > 0
   } catch (e) {
-    console.error("[addFileToDtfPedido]", e)
+    console.error("[addFileToDtfPedido]", contactId, pedidoId, e)
+    return false
   }
 }
 

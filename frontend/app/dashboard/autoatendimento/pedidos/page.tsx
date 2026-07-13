@@ -973,25 +973,19 @@ export default function PedidosPage() {
     setLinkingDtfMsg(m.id)
     setDtfLinkToast(null)
     try {
-      const cached = typeof mediaLoaded[m.id] === "string" && mediaLoaded[m.id] !== "expired"
-        ? (mediaLoaded[m.id] as string) : null
-      const fileUrl = cached ?? await fetchMessageMedia(m.id)
-      if (!fileUrl || fileUrl === "expired") {
-        setDtfLinkToast("Arquivo ainda não disponível — tente de novo em instantes")
-        return
-      }
+      // O arquivo nunca passa pelo navegador aqui — o servidor pega o arquivo
+      // direto do banco e vincula lá dentro, sem limite de tamanho.
       const r = await fetch("/api/chat/dtf-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contactId: chatContact.id,
           waMessageId: m.id,
-          fileUrl,
           fileName: m.fileName,
           mimeType: null,
         }),
       })
-      const data = await r.json()
+      const data = await r.json().catch(() => ({}))
       if (!r.ok) {
         setDtfLinkToast(`Erro: ${data.error ?? "falha ao vincular"}`)
         return
@@ -1003,6 +997,8 @@ export default function PedidosPage() {
       setShowDtfPanel(true)
       // Await so the panel renders with fresh data
       await loadContactDtfOrders(chatContact.id)
+    } catch (e) {
+      setDtfLinkToast(`Erro: ${e instanceof Error ? e.message : "falha ao vincular"}`)
     } finally {
       setLinkingDtfMsg(null)
     }

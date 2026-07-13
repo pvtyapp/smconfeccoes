@@ -15,12 +15,15 @@ async function assertEvolutionOpen(): Promise<void> {
   }
 }
 
-// Sends text or image+caption to any JID (individual or group)
+// Sends text or image+caption to any JID (individual or group).
+// Retorna o message_id real da Evolution — necessário pra gravar em wa_messages
+// com o mesmo dedupe (ON CONFLICT message_id) usado pelo resto do sistema;
+// sem isso, qualquer sync/reconcile recria a mesma mensagem de campanha.
 export async function campaignSend(
   jid: string,
   content: string,
   mediaUrl?: string | null
-): Promise<void> {
+): Promise<string | null> {
   await assertEvolutionOpen()
 
   const number = jid
@@ -60,6 +63,8 @@ export async function campaignSend(
       console.error(`[campaignSend] sendMedia falhou ${r.status} para ${number}:`, errBody.slice(0, 300))
       throw new Error(`Evolution sendMedia ${r.status}: ${errBody.slice(0, 120)}`)
     }
+    const data = await r.json().catch(() => null) as { key?: { id?: string } } | null
+    return data?.key?.id ?? null
   } else {
     const r = await fetch(`${EVO_URL}/message/sendText/${EVO_INST}`, {
       method: "POST",
@@ -68,5 +73,7 @@ export async function campaignSend(
       signal: AbortSignal.timeout(9_000),
     })
     if (!r.ok) throw new Error(`Evolution sendText ${r.status}`)
+    const data = await r.json().catch(() => null) as { key?: { id?: string } } | null
+    return data?.key?.id ?? null
   }
 }

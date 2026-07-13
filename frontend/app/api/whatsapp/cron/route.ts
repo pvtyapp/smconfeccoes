@@ -476,8 +476,16 @@ export async function GET(req: Request) {
         for (const r of rcpts.slice(0, 5)) {
           try {
             const msg = (item.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
-            await campaignSend(r.jid as string, msg, item.mediaUrl as string | null)
-            if (r.id) await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})
+            const msgId = await campaignSend(r.jid as string, msg, item.mediaUrl as string | null)
+            if (r.id) {
+              await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})
+              await pool.query(
+                `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_url, media_type)
+                 VALUES ($1,$2,'out',$3,$4,$5)
+                 ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+                [r.id, msgId, msg, item.mediaUrl ?? null, item.mediaUrl ? "image" : null]
+              ).catch(() => {})
+            }
             sentCount++; results.scheduleSent = (results.scheduleSent ?? 0) + 1
           } catch { results.errors++ }
           await randDelay()

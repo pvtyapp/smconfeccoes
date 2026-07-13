@@ -63,15 +63,18 @@ function parseBRDate(text: string): string | null {
 // WhatsApp às vezes manda uma identificação diferente da que o contato foi
 // criado, e phone_jid é o valor estável que sempre gravamos na criação.
 async function reply(jid: string, text: string): Promise<void> {
+  let msgId: string | null = null
   try {
-    await sendWhatsApp(jid, text)
+    const result = await sendWhatsApp(jid, text) as { key?: { id?: string } }
+    msgId = result?.key?.id ?? null
   } catch (e) {
     console.error("[adminBot] reply falhou:", jid, e instanceof Error ? e.message : e)
   }
   await pool.query(
-    `INSERT INTO wa_messages (contact_id, direction, content)
-     SELECT id, 'out', $2 FROM wa_contacts WHERE jid = $1 OR phone_jid = $1 LIMIT 1`,
-    [jid, text]
+    `INSERT INTO wa_messages (contact_id, message_id, direction, content)
+     SELECT id, $2, 'out', $3 FROM wa_contacts WHERE jid = $1 OR phone_jid = $1 LIMIT 1
+     ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+    [jid, msgId, text]
   ).catch(() => {})
 }
 

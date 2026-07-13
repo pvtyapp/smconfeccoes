@@ -1,9 +1,9 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Plus, Printer, FlaskConical, TrendingDown, X, AlertTriangle, Info, ChevronDown, ChevronUp, RotateCcw } from "lucide-react"
+import { Printer, FlaskConical, AlertTriangle, Info, ChevronDown, ChevronUp, RotateCcw } from "lucide-react"
 import MetricCard from "@/components/cards/MetricCard"
-import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR, fmtQtd } from "@/lib/format"
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -101,8 +101,6 @@ function fmtCpm(v: number | null | undefined) {
   if (v == null) return "—"
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`
 }
-function fmtData(s: string) { return fmtDateBR(s) }
-
 const INSUMO_COLOR: Record<string, { bg: string; text: string; border: string }> = {
   Tinta:     { bg: "bg-blue-50",   text: "text-blue-700",   border: "border-blue-200"   },
   Film:      { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" },
@@ -118,7 +116,6 @@ export default function DTFDashboardPage() {
   const [relatorio,      setRelatorio]      = useState<Relatorio | null>(null)
   const [insumos,        setInsumos]        = useState<InsumoSummary[]>([])
   const [loading,        setLoading]        = useState(true)
-  const [precoMetro,     setPrecoMetro]     = useState<number | null>(null)
   const [numImpressoras, setNumImpressoras] = useState(1)
 
   const [showTooltip, setShowTooltip] = useState(false)
@@ -137,12 +134,6 @@ export default function DTFDashboardPage() {
   const [refilForm,     setRefilForm]     = useState({ insumoId: "", quantidade: "", obs: "" })
   const [refilSaving,   setRefilSaving]   = useState(false)
   const [refilError,    setRefilError]    = useState("")
-
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({
-    data: todayBR(),
-    cliente: "", metros: "", precoCobrado: "", observacao: "", impressoraId: "1",
-  })
 
   const loadRelatorio = useCallback(async () => {
     const [from, to] = getPeriodDates(period, rangeStart, rangeEnd)
@@ -176,41 +167,12 @@ export default function DTFDashboardPage() {
   useEffect(() => { loadFilm() },      [loadFilm])
   useEffect(() => { loadRefis() },     [loadRefis])
   useEffect(() => {
-    fetch("/api/dtf/preco").then(r => r.ok ? r.json() : null).then(d => {
-      if (d?.precoMetro) setPrecoMetro(d.precoMetro)
-    })
     fetch("/api/settings").then(r => r.ok ? r.json() : null).then((d: Record<string, string> | null) => {
       if (d?.dtf_num_impressoras)     setNumImpressoras(Number(d.dtf_num_impressoras) || 1)
       if (d?.dtf_film_alerta_m)       setFilmAlertaM(Number(d.dtf_film_alerta_m) || 80)
       if (d?.dtf_film_tamanho_padrao) setFilmTamanhoM(Number(d.dtf_film_tamanho_padrao) || 100)
     })
   }, [])
-
-  async function salvar() {
-    if (!form.data || !form.metros) return
-    const impressoraId = numImpressoras > 1 && form.impressoraId
-      ? parseInt(form.impressoraId)
-      : numImpressoras === 1 ? 1 : null
-    const r = await fetch("/api/dtf/pedidos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        data: form.data,
-        cliente: form.cliente || null,
-        metros: parseFloat(form.metros),
-        precoCobrado: form.precoCobrado ? parseFloat(form.precoCobrado) : null,
-        observacao: form.observacao || null,
-        impressoraId,
-      }),
-    })
-    if (r.ok) {
-      setForm({ data: todayBR(), cliente: "", metros: "", precoCobrado: "", observacao: "", impressoraId: "1" })
-      setShowForm(false)
-      loadRelatorio()
-      loadFilm()
-      loadRefis()
-    }
-  }
 
   async function salvarRefil(impressoraId: number) {
     if (!refilForm.insumoId || !refilForm.quantidade) return
@@ -253,12 +215,6 @@ export default function DTFDashboardPage() {
     setFilmTrocaForm({ tamanhoM: "100", obs: "" })
     setFilmTrocando(false)
     loadFilm()
-  }
-
-  async function excluir(id: number) {
-    if (!confirm("Excluir este pedido?")) return
-    await fetch(`/api/dtf/pedidos/${id}`, { method: "DELETE" })
-    loadRelatorio()
   }
 
   const custoEstimado = relatorio?.custoCombinado && relatorio?.totalMetros
@@ -867,142 +823,6 @@ export default function DTFDashboardPage() {
         </div>
       </section>
 
-      {/* ── Pedidos do período ── */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <TrendingDown size={14} className="text-[#0F1E3C]/35"/>
-            <h2 className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Pedidos no Período</h2>
-          </div>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 bg-[#4361EE] text-white px-3 py-1.5 rounded-xl text-xs font-semibold hover:bg-[#3451d1] transition-colors"
-          >
-            {showForm ? <X size={13}/> : <Plus size={13}/>}
-            {showForm ? "Cancelar" : "Lançar Pedido"}
-          </button>
-        </div>
-
-        {/* Formulário inline */}
-        {showForm && (
-          <div className="bg-white border border-[#0F1E3C]/8 rounded-2xl shadow-sm p-5 space-y-4">
-            <p className="text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-widest">Novo Pedido</p>
-            <div className={`grid gap-3 ${numImpressoras > 1 ? "grid-cols-2 md:grid-cols-6" : "grid-cols-2 md:grid-cols-5"}`}>
-              <div>
-                <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Data *</label>
-                <input type="date" value={form.data}
-                  onChange={e => setForm(f => ({ ...f, data: e.target.value }))}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
-              </div>
-              {numImpressoras > 1 && (
-                <div>
-                  <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Impressora *</label>
-                  <div className="flex gap-1">
-                    {Array.from({ length: numImpressoras }, (_, i) => String(i + 1)).map(n => (
-                      <button key={n} type="button"
-                        onClick={() => setForm(f => ({ ...f, impressoraId: n }))}
-                        className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
-                          form.impressoraId === n
-                            ? "bg-[#4361EE] text-white border-[#4361EE]"
-                            : "bg-white text-[#0F1E3C]/50 border-gray-200 hover:border-[#4361EE]/40"
-                        }`}>
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div>
-                <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Metros *</label>
-                <input type="number" step="0.01" min="0" placeholder="0,00" value={form.metros}
-                  onChange={e => {
-                    const metros = e.target.value
-                    const calc = precoMetro && metros ? (parseFloat(metros) * precoMetro).toFixed(2) : ""
-                    setForm(f => ({ ...f, metros, precoCobrado: calc }))
-                  }}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
-              </div>
-              <div>
-                <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Cliente</label>
-                <input type="text" placeholder="Nome" value={form.cliente}
-                  onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
-              </div>
-              <div>
-                <label className="text-xs text-[#0F1E3C]/40 mb-1 block">
-                  Preço cobrado
-                  {precoMetro && <span className="ml-1 text-[#4361EE]/60">(R$ {precoMetro.toFixed(2)}/m)</span>}
-                </label>
-                <input type="number" step="0.01" min="0" placeholder="R$ 0,00" value={form.precoCobrado}
-                  onChange={e => setForm(f => ({ ...f, precoCobrado: e.target.value }))}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
-              </div>
-              <div>
-                <label className="text-xs text-[#0F1E3C]/40 mb-1 block">Observação</label>
-                <input type="text" placeholder="Opcional" value={form.observacao}
-                  onChange={e => setForm(f => ({ ...f, observacao: e.target.value }))}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
-              </div>
-            </div>
-            <button onClick={salvar}
-              className="bg-[#4361EE] text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-[#3451d1] transition-colors">
-              Salvar
-            </button>
-          </div>
-        )}
-
-        {/* Tabela */}
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="w-6 h-6 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin"/>
-            </div>
-          ) : !relatorio?.pedidos.length ? (
-            <p className="py-12 text-center text-sm text-[#0F1E3C]/30">Nenhum pedido neste período.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#0F1E3C]/8 bg-[#F9FAFB]">
-                    {["Data","Cliente","Metros","Preço","Custo est.","Margem",""].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {relatorio.pedidos.map((p, i) => {
-                    const custo = relatorio.custoCombinado ? Number(p.metros) * relatorio.custoCombinado : null
-                    const mgm   = p.precoCobrado && custo
-                      ? ((Number(p.precoCobrado) - custo) / Number(p.precoCobrado)) * 100 : null
-                    return (
-                      <tr key={p.id}
-                        className={`border-b border-[#0F1E3C]/4 last:border-0 ${i % 2 === 1 ? "bg-[#F9FAFB]/50" : ""} hover:bg-[#F4F6FB] transition-colors`}>
-                        <td className="px-4 py-3 text-[#0F1E3C]/60">{fmtData(p.data)}</td>
-                        <td className="px-4 py-3 font-medium text-[#0F1E3C]">{p.cliente || <span className="text-[#0F1E3C]/25">—</span>}</td>
-                        <td className="px-4 py-3 font-bold text-[#0F1E3C]">{Number(p.metros).toFixed(2)} m</td>
-                        <td className="px-4 py-3 text-[#0F1E3C]/60">{fmtR(p.precoCobrado)}</td>
-                        <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs">{fmtR(custo)}</td>
-                        <td className="px-4 py-3">
-                          {mgm != null ? (
-                            <span className={`text-sm font-bold ${mgm >= 40 ? "text-emerald-600" : mgm >= 20 ? "text-amber-600" : "text-red-600"}`}>
-                              {mgm.toFixed(1)}%
-                            </span>
-                          ) : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button onClick={() => excluir(p.id)} className="text-[#0F1E3C]/20 hover:text-red-400 transition-colors text-xs">
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
     </div>
   )
 }

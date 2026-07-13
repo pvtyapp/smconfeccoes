@@ -21,11 +21,12 @@ export async function POST(req: Request) {
     for (const c of contacts) {
       try {
         const msg = content.replace("{nome}", (c.name ?? "").split(" ")[0])
-        await sendWhatsApp(c.jid, msg)
+        const result = await sendWhatsApp(c.jid, msg) as { key?: { id?: string } }
         await pool.query(`
-          INSERT INTO wa_messages (contact_id, direction, content)
-          VALUES ($1, 'out', $2)
-        `, [c.id, msg])
+          INSERT INTO wa_messages (contact_id, message_id, direction, content)
+          VALUES ($1, $2, 'out', $3)
+          ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING
+        `, [c.id, result?.key?.id ?? null, msg])
         sent++
         await new Promise(r => setTimeout(r, 300)) // throttle
       } catch { errors++ }
