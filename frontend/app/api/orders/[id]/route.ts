@@ -82,7 +82,7 @@ export async function PUT(
       // Em separação, o estoque já foi debitado com base na quantidade que existia
       // no momento da entrada no estágio. Se o operador altera a quantidade agora,
       // precisa reconciliar stock_movements pra refletir a diferença.
-      let oldQtyByVariant: Record<string, number> = {}
+      const oldQtyByVariant: Record<string, number> = {}
       if (orderStatus === "em_separacao") {
         const { rows: oldItems } = await client.query(
           `SELECT variant_id, qty::int AS qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`,
