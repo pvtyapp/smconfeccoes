@@ -56,11 +56,20 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(hrs / 24)}d`
 }
 
-type Props = { order: DtfOrder; onClick: () => void }
+type Props = {
+  order: DtfOrder
+  onClick: () => void
+  onTogglePaid?: (orderId: number, currentlyPaid: boolean) => void
+}
 
-export default function DtfOrderCard({ order, onClick }: Props) {
+export default function DtfOrderCard({ order, onClick, onTogglePaid }: Props) {
   const nomeCliente = order.contactName ?? order.cliente ?? "Cliente não identificado"
   const isTriagem   = order.status === "triagem"
+
+  function handleTogglePaid(e: React.MouseEvent) {
+    e.stopPropagation()
+    onTogglePaid?.(order.id, !!order.isPaid)
+  }
 
   const card = (
     <button
@@ -138,13 +147,27 @@ export default function DtfOrderCard({ order, onClick }: Props) {
           </span>
         )}
         {order.status !== "cancelado" && (
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-            order.isPaid
-              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-              : "bg-red-50 text-red-700 border-red-200"
-          }`}>
-            {order.isPaid ? "Pago" : "Não Pago"}
-          </span>
+          onTogglePaid ? (
+            <button
+              type="button"
+              onClick={handleTogglePaid}
+              title="Clique pra alternar"
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
+                order.isPaid
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                  : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+              }`}>
+              {order.isPaid ? "Pago" : "Não Pago"}
+            </button>
+          ) : (
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+              order.isPaid
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-red-50 text-red-700 border-red-200"
+            }`}>
+              {order.isPaid ? "Pago" : "Não Pago"}
+            </span>
+          )
         )}
       </div>
     </button>

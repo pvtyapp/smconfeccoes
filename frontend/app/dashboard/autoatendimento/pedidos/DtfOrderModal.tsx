@@ -5,6 +5,7 @@ import { X, Download, Check, ChevronRight, AlertCircle, Loader2, FileImage, Prin
 import type { DtfOrder } from "./DtfOrderCard"
 import { subDaysBR } from "@/lib/tz"
 import Toggle from "@/components/Toggle"
+import TwoViaPrintSheet from "./TwoViaPrintSheet"
 
 type Props = {
   order: DtfOrder
@@ -678,24 +679,14 @@ function DtfPrintSheet({ order, nomeCliente, format, onDone }: {
     )
   }
 
-  // A4
-  return (
-    <div className="hidden print:block fixed inset-0 bg-white z-[100]">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .dtf-a4, .dtf-a4 * { visibility: visible !important; }
-          .dtf-a4 { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }
-          @page { size: A4 portrait; margin: 0; }
-        }
-      `}</style>
-      <div className="dtf-a4">
-        <div style={{ display: "grid", gridTemplateRows: "1fr 1fr", height: "100%" }}>
-          {(["LOJA", "CLIENTE"] as const).map(via => (
-            <div key={via} style={{
+  // A4 — mesmo layout de fluxo natural usado na ficha de Produto (TwoViaPrintSheet):
+  // as duas vias cabem numa folha só quando o conteúdo é pequeno, e o motor de
+  // impressão empurra a via CLIENTE pra folha seguinte sozinho quando não cabe.
+  function renderVia(via: "LOJA" | "CLIENTE") {
+    return (
+            <div style={{
               fontFamily: "'Arial', 'Helvetica', sans-serif",
-              padding: "6mm 14mm 8mm 14mm", color: NAVY,
-              borderBottom: via === "LOJA" ? "1px dashed #ccc" : undefined,
+              padding: "14mm 16mm", color: NAVY,
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "5px" }}>
                 <img src="/smsemfundo.png" alt="SM Confecções" style={{ height: "46px", width: "auto", flexShrink: 0 }} />
@@ -801,10 +792,8 @@ function DtfPrintSheet({ order, nomeCliente, format, onDone }: {
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-      <button onClick={onDone} className="print:hidden mt-2 text-xs text-gray-400">fechar</button>
-    </div>
-  )
+    )
+  }
+
+  return <TwoViaPrintSheet wrapperClass="dtf-a4" renderVia={renderVia} onDone={onDone} />
 }

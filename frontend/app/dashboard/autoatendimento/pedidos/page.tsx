@@ -15,6 +15,7 @@ import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
 import NewManualOrderForm from "./NewManualOrderForm"
 import Toggle from "@/components/Toggle"
+import ConfirmDialog from "@/components/ConfirmDialog"
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
 
@@ -253,6 +254,8 @@ export default function PedidosPage() {
   const [loadingOrders,  setLoadingOrders]  = useState(true)
   const [selected,       setSelected]       = useState<Order | null>(null)
   const selectedIdRef                       = useRef<number | null>(null)
+  const [payConfirmId,   setPayConfirmId]   = useState<number | null>(null)
+  const [confirmingPay,  setConfirmingPay]  = useState(false)
   // DTF
   const [dtfOrders,      setDtfOrders]      = useState<DtfOrder[]>([])
   const [selectedDtf,    setSelectedDtf]    = useState<DtfOrder | null>(null)
@@ -2168,15 +2171,7 @@ export default function PedidosPage() {
                         ) : colOrders.map(order => (
                           <OrderCard key={order.id} order={order}
                             onClick={() => { selectedIdRef.current = order.id; setSelected(order) }}
-                            onTogglePay={async (id) => {
-                              await fetch(`/api/orders/${id}/status`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ status: "pago" }),
-                              })
-                              setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "pago", paidAt: new Date().toISOString() } : o))
-                            }}
-
+                            onTogglePay={(id) => setPayConfirmId(id)}
                           />
                         ))}
                         {/* Reservas — seção colapsável na Triagem */}
@@ -2273,7 +2268,18 @@ export default function PedidosPage() {
                             <p className="text-[10px] text-[#0F1E3C]/20">vazio</p>
                           </div>
                         ) : colDtf.map(p => (
-                          <DtfOrderCard key={p.id} order={p} onClick={() => { selectedDtfIdRef.current = p.id; setSelectedDtf(p) }} />
+                          <DtfOrderCard key={p.id} order={p}
+                            onClick={() => { selectedDtfIdRef.current = p.id; setSelectedDtf(p) }}
+                            onTogglePaid={async (id, currentlyPaid) => {
+                              const nextPaid = !currentlyPaid
+                              await fetch(`/api/dtf/pedidos/${id}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ isPaid: nextPaid }),
+                              })
+                              setDtfOrders(prev => prev.map(o => o.id === id ? { ...o, isPaid: nextPaid } : o))
+                            }}
+                          />
                         ))}
                       </div>
                     </div>
@@ -2390,6 +2396,28 @@ export default function PedidosPage() {
       )}
       {selectedDtf && (
         <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} numImpressoras={numImpressoras} />
+      )}
+      {payConfirmId !== null && (
+        <ConfirmDialog
+          title="Marcar pedido como pago?"
+          confirming={confirmingPay}
+          onCancel={() => setPayConfirmId(null)}
+          onConfirm={async () => {
+            setConfirmingPay(true)
+            try {
+              const id = payConfirmId
+              await fetch(`/api/orders/${id}/status`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "pago" }),
+              })
+              setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "pago", paidAt: new Date().toISOString() } : o))
+            } finally {
+              setConfirmingPay(false)
+              setPayConfirmId(null)
+            }
+          }}
+        />
       )}
       {/* ── LIGHTBOX ── */}
       {lightboxMsg && (

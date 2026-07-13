@@ -6,6 +6,7 @@ import type { Order, OrderItem } from "./page"
 import { subDaysBR } from "@/lib/tz"
 import PrintSheet from "./PrintSheet"
 import Toggle from "@/components/Toggle"
+import ConfirmDialog from "@/components/ConfirmDialog"
 
 type Props = {
   order: Order
@@ -86,12 +87,30 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [dueDate,       setDueDate]       = useState("")
   const [error,         setError]         = useState("")
   const [sendingAlteration, setSendingAlteration] = useState(false)
+  const [pendingAction, setPendingAction] = useState<{ title: string; run: () => Promise<void> } | null>(null)
+  const [confirming,    setConfirming]    = useState(false)
 
   function itemsHash(list: OrderItem[]) {
     return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}`).join(",")
   }
   const currentHash  = itemsHash(items)
   const needsReprint = hasPrinted && currentHash !== printedHash
+
+  // Rastreia edição manual de quantidade feita em Em Separação (comparado ao que
+  // já está salvo no servidor) — dispara o fluxo de Reconfirmar Pedido.
+  const [lastSavedHash, setLastSavedHash] = useState(() => itemsHash(order.items))
+  const hasPendingEdit = currentHash !== lastSavedHash
+
+  async function runConfirmed() {
+    if (!pendingAction) return
+    setConfirming(true)
+    try {
+      await pendingAction.run()
+    } finally {
+      setConfirming(false)
+      setPendingAction(null)
+    }
+  }
 
   function handlePrint() {
     setPrintedHash(currentHash)
@@ -209,6 +228,19 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     setSendingAlteration(true)
     try {
       await fetch(`/api/orders/${order.id}/alert-alteration`, { method: "POST" })
+      onRefresh()
+    } finally { setSendingAlteration(false) }
+  }
+
+  // Operador alterou quantidade manualmente com o pedido já em Em Separação:
+  // salva (o PUT reconcilia o estoque debitado), avisa o cliente e mantém o
+  // pedido no mesmo estágio — o botão volta a ser "Marcar como Pronto" depois.
+  async function handleReconfirmarPedido() {
+    setSendingAlteration(true)
+    try {
+      await saveItems()
+      await fetch(`/api/orders/${order.id}/alert-alteration`, { method: "POST" })
+      setLastSavedHash(currentHash)
       onRefresh()
     } finally { setSendingAlteration(false) }
   }
@@ -529,7 +561,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
             {/* TRIAGEM: confirmar pedido — manda lista pro cliente confirmar */}
             {isTriagem && (
-              <button onClick={handleEnviarConfirmar} disabled={saving}
+              <button
+                onClick={() => setPendingAction({ title: "Confirmar pedido e avançar para Aguardando Confirmação?", run: handleEnviarConfirmar })}
+                disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={13} className="animate-spin" /> : null}
                 Confirmar Pedido
@@ -538,23 +572,35 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
             {/* CONFIRMANDO: adicionar item + avançar */}
             {isConfirm && (
-              <button onClick={handleAvancarManual} disabled={saving}
+              <button
+                onClick={() => setPendingAction({ title: "Avançar pedido para Em Separação?", run: handleAvancarManual })}
+                disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : null}
                 Avançar para Separação <ChevronRight size={14} />
               </button>
             )}
 
+            {/* EM SEPARAÇÃO — operador alterou quantidade manualmente: reconfirma com o cliente */}
+            {isSeparacao && hasPendingEdit && (
+              <button onClick={handleReconfirmarPedido} disabled={sendingAlteration}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                {sendingAlteration ? <Loader2 size={14} className="animate-spin" /> : <>🔁 Reconfirmar Pedido</>}
+              </button>
+            )}
+
             {/* EM SEPARAÇÃO — sem alteração: marcar como pronto */}
-            {isSeparacao && !order.stockAlert?.length && (
-              <button onClick={handleMarcarPronte} disabled={saving}
+            {isSeparacao && !hasPendingEdit && !order.stockAlert?.length && (
+              <button
+                onClick={() => setPendingAction({ title: "Marcar pedido como Pronto para Retirada?", run: handleMarcarPronte })}
+                disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pronto <ChevronRight size={14} /></>}
               </button>
             )}
 
-            {/* EM SEPARAÇÃO — alteração ainda não avisada ao cliente */}
-            {isSeparacao && !!order.stockAlert?.length && !order.alterationSent && (
+            {/* EM SEPARAÇÃO — alteração automática (estoque insuficiente) ainda não avisada ao cliente */}
+            {isSeparacao && !hasPendingEdit && !!order.stockAlert?.length && !order.alterationSent && (
               <button onClick={handleConfirmarAlteracao} disabled={sendingAlteration}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {sendingAlteration ? <Loader2 size={14} className="animate-spin" /> : <>🔁 Confirmar Alteração</>}
@@ -562,8 +608,10 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             )}
 
             {/* EM SEPARAÇÃO — alteração já avisada, aguardando resposta do cliente */}
-            {isSeparacao && !!order.stockAlert?.length && order.alterationSent && (
-              <button onClick={handleMarcarPronte} disabled={saving}
+            {isSeparacao && !hasPendingEdit && !!order.stockAlert?.length && order.alterationSent && (
+              <button
+                onClick={() => setPendingAction({ title: "Marcar pedido como Pronto para Retirada?", run: handleMarcarPronte })}
+                disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Confirmar Alteração</>}
               </button>
@@ -588,7 +636,13 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                     <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "À vista" : "A prazo"}</p>
                   </div>
                 )}
-                <button onClick={isPaid ? handleMarcarPago : handleConcluirPrazo} disabled={saving}
+                <button
+                  onClick={() => setPendingAction(
+                    isPaid
+                      ? { title: "Confirmar pagamento e avançar pedido?", run: handleMarcarPago }
+                      : { title: "Concluir pedido a prazo?", run: handleConcluirPrazo }
+                  )}
+                  disabled={saving}
                   className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors ${
                     isPaid ? "bg-green-600 hover:bg-green-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"
                   }`}>
@@ -600,7 +654,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
             {/* PAGO: confirmar entrega */}
             {isPago && (
-              <button onClick={handleConfirmarRetirada} disabled={saving}
+              <button
+                onClick={() => setPendingAction({ title: "Confirmar entrega e concluir pedido?", run: handleConfirmarRetirada })}
+                disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                 Confirmar Entrega
@@ -613,6 +669,16 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
       {/* Print */}
       {showPrint && (
         <PrintSheet order={order} items={items} format={printFormat} onDone={() => setShowPrint(false)} />
+      )}
+
+      {/* Confirmação de avanço de estágio */}
+      {pendingAction && (
+        <ConfirmDialog
+          title={pendingAction.title}
+          confirming={confirming}
+          onConfirm={runConfirmed}
+          onCancel={() => setPendingAction(null)}
+        />
       )}
 
       {/* Cancel dialog */}

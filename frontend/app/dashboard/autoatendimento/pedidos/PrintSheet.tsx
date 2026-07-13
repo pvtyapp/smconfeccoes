@@ -1,6 +1,7 @@
 "use client"
 
 import type { Order, OrderItem } from "./page"
+import TwoViaPrintSheet from "./TwoViaPrintSheet"
 
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
@@ -128,19 +129,15 @@ export default function PrintSheet({ order, items, format, onDone }: {
     )
   }
 
-  // A4 — ≤8 itens: 2 colunas na mesma folha | >8 itens: 2 páginas
-  const splitSheet = items.length <= 8
-
   function renderFicha(via: "LOJA" | "CLIENTE") {
-    const pad = splitSheet ? "6mm 14mm 8mm 14mm" : "14mm 16mm"
     return (
-      <div style={{ fontFamily: "'Arial', 'Helvetica', sans-serif", padding: pad, color: NAVY }}>
+      <div style={{ fontFamily: "'Arial', 'Helvetica', sans-serif", padding: "14mm 16mm", color: NAVY }}>
 
         {/* ── Cabeçalho ── */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "5px" }}>
-          <img src="/smsemfundo.png" alt="SM Confecções" style={{ height: splitSheet ? "46px" : "58px", width: "auto", flexShrink: 0 }} />
+          <img src="/smsemfundo.png" alt="SM Confecções" style={{ height: "58px", width: "auto", flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: splitSheet ? "16px" : "20px", fontWeight: "900", letterSpacing: "-0.5px", lineHeight: 1, color: NAVY }}>
+            <div style={{ fontSize: "20px", fontWeight: "900", letterSpacing: "-0.5px", lineHeight: 1, color: NAVY }}>
               SM CONFECÇÕES
             </div>
             <div style={{ fontSize: "8px", color: "#666", marginTop: "3px" }}>
@@ -198,7 +195,7 @@ export default function PrintSheet({ order, items, format, onDone }: {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
               <div style={{ fontSize: "6.5px", color: "#888", textTransform: "uppercase", letterSpacing: "0.8px" }}>Cliente</div>
-              <div style={{ fontSize: splitSheet ? "12px" : "15px", fontWeight: "800", color: NAVY, marginTop: "1px" }}>
+              <div style={{ fontSize: "15px", fontWeight: "800", color: NAVY, marginTop: "1px" }}>
                 {order.contactName}
               </div>
             </div>
@@ -291,34 +288,5 @@ export default function PrintSheet({ order, items, format, onDone }: {
     )
   }
 
-  return (
-    <div className="hidden print:block bg-white">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-a4, .print-a4 * { visibility: visible !important; }
-          /* absolute (não fixed!) — fixed corta conteúdo que passa de 1 página na
-             impressão do Chrome; absolute deixa a 2ª via fluir pra folha 2 de verdade */
-          .print-a4 { position: absolute; top: 0; left: 0; right: 0; }
-          @page { size: A4 portrait; margin: 0; }
-        }
-      `}</style>
-      <div className="print-a4">
-        {splitSheet ? (
-          <div style={{ display: "grid", gridTemplateRows: "1fr 1fr", height: "100%" }}>
-            <div style={{ borderBottom: "1.5px dashed #bbb", overflow: "hidden" }}>
-              {renderFicha("LOJA")}
-            </div>
-            <div style={{ overflow: "hidden" }}>{renderFicha("CLIENTE")}</div>
-          </div>
-        ) : (
-          <>
-            {renderFicha("LOJA")}
-            <div style={{ pageBreakBefore: "always" }}>{renderFicha("CLIENTE")}</div>
-          </>
-        )}
-      </div>
-      <button onClick={onDone} className="print:hidden mt-2 text-xs text-gray-400">fechar</button>
-    </div>
-  )
+  return <TwoViaPrintSheet wrapperClass="print-a4" renderVia={renderFicha} onDone={onDone} />
 }
