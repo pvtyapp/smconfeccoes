@@ -11,9 +11,7 @@ export async function GET() {
              COALESCE(
                (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
                 FROM dtf_pedidos p
-                WHERE p.impressora_id = r.impressora_id
-                  AND p.created_at >= r.aberta_em
-                  AND p.status != 'cancelado'),
+                WHERE r.id = ANY(p.refil_ids) AND p.status != 'cancelado'),
                0
              )::float AS "metrosAtuais"
       FROM dtf_printer_refis r
@@ -87,9 +85,7 @@ export async function POST(req: Request) {
              COALESCE(
                (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
                 FROM dtf_pedidos p
-                WHERE p.impressora_id = r.impressora_id
-                  AND p.created_at >= r.aberta_em
-                  AND p.status != 'cancelado'),
+                WHERE r.id = ANY(p.refil_ids) AND p.status != 'cancelado'),
                0
              ) AS metros_ciclo
       FROM dtf_printer_refis r

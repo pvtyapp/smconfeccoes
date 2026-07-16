@@ -100,12 +100,6 @@ function wasteStyle(pct: number) {
   return               { card: "bg-red-50 border-red-100",         label: "text-red-400",     value: "text-red-700"     }
 }
 
-function margemStyle(pct: number) {
-  if (pct >= 30) return { card: "bg-emerald-50 border-emerald-100", label: "text-emerald-400", value: "text-emerald-700" }
-  if (pct >= 10) return { card: "bg-amber-50 border-amber-100",     label: "text-amber-400",   value: "text-amber-700"   }
-  return                { card: "bg-red-50 border-red-100",         label: "text-red-400",     value: "text-red-700"     }
-}
-
 const INSUMO_COLOR: Record<string, string> = {
   Tinta:     "text-blue-600",
   Film:      "text-purple-600",
@@ -134,7 +128,7 @@ export default function DTFRelatorioPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[#0F1E3C]">Relatório DTF</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Custos, margens e performance de produção</p>
+          <p className="text-sm text-gray-400 mt-0.5">Consumo de insumos e performance de produção</p>
         </div>
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
           {PERIODOS.map(p => (
@@ -152,30 +146,22 @@ export default function DTFRelatorioPage() {
         <div className="p-10 text-center text-sm text-gray-400">Carregando...</div>
       ) : !data ? null : (
         <>
-          {/* ── BLOCO 1: KPIs financeiros ── */}
+          {/* ── BLOCO 1: Volume + Monitor de Insumo ──
+              Custo/m aqui é só indicador operacional (ciclo de consumo mais
+              recente de film/tinta/poliamida) — nunca comparado contra receita.
+              Margem real de DTF vive só no Relatório Financeiro, calculada a
+              partir do custo cadastrado no produto "DTF 60cm". */}
           {(() => {
             const film = data.insumos.find(i => i.unidade === "metro")
-            const custoTotal = data.custoCombinado != null ? data.custoCombinado * data.totalMetros : null
-            const margemBruta = custoTotal != null ? data.totalReceita - custoTotal : null
-            const margemPct = margemBruta != null && data.totalReceita > 0
-              ? (margemBruta / data.totalReceita) * 100 : null
             const precoMedioM = data.totalMetros > 0 ? data.totalReceita / data.totalMetros : null
             const ticketMedio = data.pedidos.length > 0 ? data.totalReceita / data.pedidos.length : null
             const metroMedio  = data.pedidos.length > 0 ? data.totalMetros  / data.pedidos.length : null
-            const margemNegativa = margemBruta != null && margemBruta < 0
 
-            const ms = margemPct != null ? margemStyle(margemPct) : null
             const ws = film?.pctDesperdicioMedio != null
               ? wasteStyle(Number(film.pctDesperdicioMedio)) : null
 
             return (
               <div className="space-y-3">
-                {margemNegativa && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 font-semibold flex items-center gap-2">
-                    ⚠️ Custo/m ({fmtCpm(data.custoCombinado)}) está acima do preço médio cobrado ({fmtCpm(precoMedioM)}) — margem negativa no período.
-                  </div>
-                )}
-
                 {/* Linha 1: volume */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[
@@ -191,10 +177,10 @@ export default function DTFRelatorioPage() {
                   ))}
                 </div>
 
-                {/* Linha 2: financeiro */}
+                {/* Linha 2: monitor de insumo (informativo) */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="rounded-2xl p-4 border border-[#0F1E3C] bg-[#0F1E3C] shadow-sm">
-                    <p className="text-xs uppercase tracking-widest mb-1 text-white/50">Custo/m combinado</p>
+                    <p className="text-xs uppercase tracking-widest mb-1 text-white/50">Custo/m insumos (monitor)</p>
                     <p className="text-2xl font-bold text-white">{fmtCpm(data.custoCombinado)}</p>
                   </div>
                   <div className="rounded-2xl p-4 border border-gray-100 bg-white shadow-sm">
@@ -205,13 +191,7 @@ export default function DTFRelatorioPage() {
                     <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">Ticket médio</p>
                     <p className="text-2xl font-bold text-[#0F1E3C]">{fmtR(ticketMedio)}</p>
                   </div>
-                  {ms && margemPct != null ? (
-                    <div className={`rounded-2xl p-4 border shadow-sm ${ms.card}`}>
-                      <p className={`text-xs uppercase tracking-widest mb-1 ${ms.label}`}>Margem bruta</p>
-                      <p className={`text-2xl font-bold ${ms.value}`}>{margemPct.toFixed(1)}%</p>
-                      <p className={`text-[10px] mt-0.5 ${ms.label}`}>{fmtR(margemBruta)} no período</p>
-                    </div>
-                  ) : ws && film?.pctDesperdicioMedio != null ? (
+                  {ws && film?.pctDesperdicioMedio != null ? (
                     <div className={`rounded-2xl p-4 border shadow-sm ${ws.card}`}>
                       <p className={`text-xs uppercase tracking-widest mb-1 ${ws.label}`}>Desperdício film</p>
                       <p className={`text-2xl font-bold ${ws.value}`}>{Number(film.pctDesperdicioMedio).toFixed(1)}%</p>
@@ -219,7 +199,7 @@ export default function DTFRelatorioPage() {
                     </div>
                   ) : (
                     <div className="rounded-2xl p-4 border border-gray-100 bg-white shadow-sm">
-                      <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">Margem bruta</p>
+                      <p className="text-xs uppercase tracking-widest mb-1 text-gray-400">Desperdício film</p>
                       <p className="text-2xl font-bold text-gray-300">—</p>
                     </div>
                   )}
@@ -439,63 +419,44 @@ export default function DTFRelatorioPage() {
           )}
 
           {/* ── Pedidos do período ── */}
-          {data.pedidos.length > 0 && (() => {
-            const cpm = data.custoCombinado
-            return (
-              <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-                <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
-                  <BarChart2 size={16} className="text-[#4361EE]" />
-                  <span className="font-semibold text-sm text-[#0F1E3C]">Pedidos no Período</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
-                        <th className="px-5 py-3 text-left">Data</th>
-                        <th className="px-5 py-3 text-left">Cliente</th>
-                        <th className="px-5 py-3 text-right">Metros</th>
-                        <th className="px-5 py-3 text-right">Preço cobrado</th>
-                        <th className="px-5 py-3 text-right">Preço/m</th>
-                        <th className="px-5 py-3 text-right">Custo est.</th>
-                        <th className="px-5 py-3 text-right">Margem</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {data.pedidos.map(p => {
-                        const metros = Number(p.metrosFinais ?? p.metros ?? 0)
-                        const preco  = p.precoCobrado != null ? Number(p.precoCobrado) : null
-                        const custo  = cpm != null && metros > 0 ? cpm * metros : null
-                        const margem = preco != null && custo != null ? preco - custo : null
-                        const margemPct = margem != null && preco != null && preco > 0
-                          ? (margem / preco) * 100 : null
-                        const precoM = preco != null && metros > 0 ? preco / metros : null
-                        const negativa = margem != null && margem < 0
-
-                        return (
-                          <tr key={p.id} className={`hover:bg-gray-50/50 transition-colors ${negativa ? "bg-red-50/30" : ""}`}>
-                            <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
-                            <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
-                            <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
-                            <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
-                            <td className="px-5 py-3 text-right text-xs font-mono text-gray-500">{fmtCpm(precoM)}</td>
-                            <td className="px-5 py-3 text-right text-gray-400 text-xs">{fmtR(custo)}</td>
-                            <td className="px-5 py-3 text-right">
-                              {margem != null ? (
-                                <span className={`text-xs font-semibold ${negativa ? "text-red-600" : "text-emerald-600"}`}>
-                                  {margemPct != null ? `${margemPct.toFixed(0)}%` : ""}{" "}
-                                  <span className="font-normal text-[10px]">({fmtR(margem)})</span>
-                                </span>
-                              ) : <span className="text-gray-300 text-xs">—</span>}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+          {data.pedidos.length > 0 && (
+            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
+                <BarChart2 size={16} className="text-[#4361EE]" />
+                <span className="font-semibold text-sm text-[#0F1E3C]">Pedidos no Período</span>
               </div>
-            )
-          })()}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
+                      <th className="px-5 py-3 text-left">Data</th>
+                      <th className="px-5 py-3 text-left">Cliente</th>
+                      <th className="px-5 py-3 text-right">Metros</th>
+                      <th className="px-5 py-3 text-right">Preço cobrado</th>
+                      <th className="px-5 py-3 text-right">Preço/m</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {data.pedidos.map(p => {
+                      const metros = Number(p.metrosFinais ?? p.metros ?? 0)
+                      const preco  = p.precoCobrado != null ? Number(p.precoCobrado) : null
+                      const precoM = preco != null && metros > 0 ? preco / metros : null
+
+                      return (
+                        <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
+                          <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
+                          <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
+                          <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
+                          <td className="px-5 py-3 text-right text-xs font-mono text-gray-500">{fmtCpm(precoM)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

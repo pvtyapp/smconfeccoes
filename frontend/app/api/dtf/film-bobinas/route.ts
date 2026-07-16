@@ -7,14 +7,14 @@ export async function GET() {
     const { rows: ativas } = await pool.query(`
       SELECT b.id, b.impressora_id AS "impressoraId", b.tamanho_m AS "tamanhoM",
              b.aberta_em AS "abertaEm", b.obs,
-             COALESCE(SUM(COALESCE(p.metros_finais, p.metros, 0)), 0)::float AS "metrosUsados"
+             COALESCE(
+               (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
+                FROM dtf_pedidos p
+                WHERE p.film_bobina_id = b.id AND p.status != 'cancelado'),
+               0
+             )::float AS "metrosUsados"
       FROM dtf_film_bobinas b
-      LEFT JOIN dtf_pedidos p
-        ON p.impressora_id = b.impressora_id
-        AND p.created_at >= b.aberta_em
-        AND p.status != 'cancelado'
       WHERE b.fechada_em IS NULL
-      GROUP BY b.id, b.impressora_id, b.tamanho_m, b.aberta_em, b.obs
       ORDER BY b.impressora_id
     `)
 
@@ -52,7 +52,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const client = await pool.connect()
   try {
-    const { impressoraId, tamanhoM = 100, obs } = await req.json()
+    const { impressoraId, tamanhoM = 100, obs, metrosUsadosOverride } = await req.json()
     if (!impressoraId) return NextResponse.json({ error: "impressoraId obrigatorio" }, { status: 400 })
 
     await client.query("BEGIN")
@@ -60,18 +60,24 @@ export async function POST(req: Request) {
     // Fechar bobina ativa anterior se existir
     const { rows: ativas } = await client.query(`
       SELECT b.id, b.tamanho_m,
-             COALESCE(SUM(COALESCE(p.metros_finais, p.metros, 0)), 0)::float AS metros_usados
+             COALESCE(
+               (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
+                FROM dtf_pedidos p
+                WHERE p.film_bobina_id = b.id AND p.status != 'cancelado'),
+               0
+             )::float AS metros_usados
       FROM dtf_film_bobinas b
-      LEFT JOIN dtf_pedidos p
-        ON p.impressora_id = b.impressora_id
-        AND p.created_at >= b.aberta_em
-        AND p.status != 'cancelado'
       WHERE b.impressora_id = $1 AND b.fechada_em IS NULL
-      GROUP BY b.id, b.tamanho_m
     `, [impressoraId])
 
+    // metrosUsadosOverride: quando a bobina acabou no meio de um pedido (ficou
+    // parte impressa nela, parte vai sair na próxima), o cálculo automático por
+    // vínculo não sabe dividir — o operador pode corrigir manualmente aqui.
+    // É só pra registro visual do monitor, nunca entra em relatório financeiro.
     for (const ativa of ativas) {
-      const metrosUsados = Number(ativa.metros_usados)
+      const metrosUsados = metrosUsadosOverride != null
+        ? Number(metrosUsadosOverride)
+        : Number(ativa.metros_usados)
       const desperdicio  = Math.max(0, Number(ativa.tamanho_m) - metrosUsados)
       await client.query(`
         UPDATE dtf_film_bobinas

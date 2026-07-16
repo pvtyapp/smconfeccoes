@@ -31,8 +31,9 @@ export async function POST(
 
     const { rows } = await client.query(`
       SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at,
-             p.preco_cobrado AS preco_cobrado_db, c.name AS "contactName",
-             COALESCE(c.phone_jid, c.jid) AS jid
+             p.preco_cobrado AS preco_cobrado_db, p.impressora_id,
+             p.film_bobina_id, p.refil_ids,
+             c.name AS "contactName", COALESCE(c.phone_jid, c.jid) AS jid
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1
@@ -75,14 +76,41 @@ export async function POST(
       }
 
     } else if (status === "em_producao") {
+      // Vincula o pedido ao ciclo de insumo (bobina de film / refis de tinta e
+      // poliamida) que está ATIVO agora, nesse impressora — gravado uma única
+      // vez (nunca sobrescrito depois). É esse vínculo, e não mais inferência
+      // por timestamp, que os monitores usam pra somar metros por ciclo —
+      // fecha o gap de um pedido criado antes de uma troca de bobina mas
+      // concluído depois (antes ficava sem contar em nenhum dos dois ciclos).
+      const effectiveImpressoraId = impressoraId ?? pedido.impressora_id ?? null
+      let filmBobinaId: number | null = pedido.film_bobina_id ?? null
+      let refilIds: number[] | null = pedido.refil_ids ?? null
+
+      if (effectiveImpressoraId != null && filmBobinaId == null) {
+        const { rows: fb } = await client.query(
+          `SELECT id FROM dtf_film_bobinas WHERE impressora_id = $1 AND fechada_em IS NULL LIMIT 1`,
+          [effectiveImpressoraId]
+        )
+        filmBobinaId = fb[0]?.id ?? null
+      }
+      if (effectiveImpressoraId != null && refilIds == null) {
+        const { rows: rf } = await client.query(
+          `SELECT array_agg(id) AS ids FROM dtf_printer_refis WHERE impressora_id = $1 AND fechada_em IS NULL`,
+          [effectiveImpressoraId]
+        )
+        refilIds = rf[0]?.ids ?? null
+      }
+
       await client.query(`
         UPDATE dtf_pedidos
-        SET status        = 'em_producao',
-            metros_finais = COALESCE($1::numeric, metros_finais),
-            preco_cobrado = COALESCE($2::numeric, preco_cobrado),
-            impressora_id = COALESCE($4::int, impressora_id)
+        SET status         = 'em_producao',
+            metros_finais  = COALESCE($1::numeric, metros_finais),
+            preco_cobrado  = COALESCE($2::numeric, preco_cobrado),
+            impressora_id  = COALESCE($4::int, impressora_id),
+            film_bobina_id = COALESCE(film_bobina_id, $5::int),
+            refil_ids      = COALESCE(refil_ids, $6::int[])
         WHERE id = $3
-      `, [metrosFinais ?? null, precoCobrado ?? null, id, impressoraId ?? null])
+      `, [metrosFinais ?? null, precoCobrado ?? null, id, impressoraId ?? null, filmBobinaId, refilIds])
 
       await client.query("COMMIT")
 

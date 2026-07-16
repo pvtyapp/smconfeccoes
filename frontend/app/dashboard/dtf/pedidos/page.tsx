@@ -97,10 +97,6 @@ function periodLabel(key: PeriodKey, rs: string, re: string) {
   return `${fmt(rs)} – ${fmt(re)}`
 }
 
-function fmtCpm(v: number | null | undefined) {
-  if (v == null) return "—"
-  return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`
-}
 const INSUMO_COLOR: Record<string, { bg: string; text: string; border: string }> = {
   Tinta:     { bg: "bg-blue-50",   text: "text-blue-700",   border: "border-blue-200"   },
   Film:      { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" },
@@ -125,7 +121,7 @@ export default function DTFDashboardPage() {
   const [filmAlertaM,    setFilmAlertaM]    = useState(80)
   const [filmTamanhoM,   setFilmTamanhoM]   = useState(100)
   const [filmTrocaImp,   setFilmTrocaImp]   = useState<number | null>(null)
-  const [filmTrocaForm,  setFilmTrocaForm]  = useState({ tamanhoM: "100", obs: "" })
+  const [filmTrocaForm,  setFilmTrocaForm]  = useState({ tamanhoM: "100", obs: "", metrosOverride: "" })
   const [filmTrocando,   setFilmTrocando]   = useState(false)
   const [filmHistOpen,   setFilmHistOpen]   = useState<number | null>(null)
 
@@ -202,6 +198,7 @@ export default function DTFDashboardPage() {
 
   async function trocarBobina(impressoraId: number) {
     setFilmTrocando(true)
+    const override = filmTrocaForm.metrosOverride.trim()
     await fetch("/api/dtf/film-bobinas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -209,18 +206,14 @@ export default function DTFDashboardPage() {
         impressoraId,
         tamanhoM: parseFloat(filmTrocaForm.tamanhoM) || 100,
         obs: filmTrocaForm.obs || null,
+        metrosUsadosOverride: override ? parseFloat(override) : undefined,
       }),
     })
     setFilmTrocaImp(null)
-    setFilmTrocaForm({ tamanhoM: "100", obs: "" })
+    setFilmTrocaForm({ tamanhoM: "100", obs: "", metrosOverride: "" })
     setFilmTrocando(false)
     loadFilm()
   }
-
-  const custoEstimado = relatorio?.custoCombinado && relatorio?.totalMetros
-    ? relatorio.totalMetros * relatorio.custoCombinado : null
-  const margem = relatorio?.totalReceita && custoEstimado
-    ? ((relatorio.totalReceita - custoEstimado) / relatorio.totalReceita) * 100 : null
 
   return (
     <div className="space-y-8">
@@ -231,7 +224,7 @@ export default function DTFDashboardPage() {
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
             Dashboard DTF
           </h1>
-          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Produção, custo e margem por período</p>
+          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Produção e consumo de insumos por período</p>
         </div>
 
         <div className="flex flex-col items-end gap-2">
@@ -308,20 +301,17 @@ export default function DTFDashboardPage() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {loading
-            ? Array.from({ length: 5 }).map((_, i) => (
+            ? Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-[72px] rounded-2xl bg-[#0F1E3C]/4 animate-pulse"/>
               ))
             : [
-                { title: "Pedidos",         value: String(relatorio?.pedidos.length ?? 0)                           },
-                { title: "Metros",           value: `${Number(relatorio?.totalMetros ?? 0).toFixed(2)} m`            },
-                { title: "Receita",          value: fmtR(relatorio?.totalReceita ?? 0)                               },
-                { title: "Custo estimado",   value: fmtR(custoEstimado)                                              },
-                { title: "Margem estimada",  value: margem != null ? `${margem.toFixed(1)}%` : "—",
-                  color: margem == null ? "default" : margem >= 40 ? "green" : margem >= 20 ? "yellow" : "red"       },
+                { title: "Pedidos", value: String(relatorio?.pedidos.length ?? 0)                },
+                { title: "Metros",  value: `${Number(relatorio?.totalMetros ?? 0).toFixed(2)} m` },
+                { title: "Receita", value: fmtR(relatorio?.totalReceita ?? 0)                     },
               ].map(c => (
-                <MetricCard key={c.title} title={c.title} value={c.value} color={(c as { color?: string }).color as "blue" | "green" | "red" | "yellow" | "default" | undefined ?? "blue"}/>
+                <MetricCard key={c.title} title={c.title} value={c.value} color="blue"/>
               ))
           }
         </div>
@@ -462,7 +452,7 @@ export default function DTFDashboardPage() {
                       )}
                     </div>
                     <button
-                      onClick={() => { setFilmTrocaImp(b.impressoraId); setFilmTrocaForm({ tamanhoM: String(b.tamanhoM), obs: "" }) }}
+                      onClick={() => { setFilmTrocaImp(b.impressoraId); setFilmTrocaForm({ tamanhoM: String(b.tamanhoM), obs: "", metrosOverride: b.metrosUsados.toFixed(2) }) }}
                       className="text-[10px] font-bold text-[#7C3AED] hover:underline"
                     >
                       Trocar bobina
@@ -520,6 +510,22 @@ export default function DTFDashboardPage() {
                           />
                         </div>
                       </div>
+                      <div>
+                        <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">
+                          Metros usados na bobina atual (ajuste manual)
+                        </label>
+                        <input
+                          type="number" min="0" step="0.01"
+                          value={filmTrocaForm.metrosOverride}
+                          onChange={e => setFilmTrocaForm(f => ({ ...f, metrosOverride: e.target.value }))}
+                          className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                        />
+                        <p className="text-[9px] text-[#0F1E3C]/30 mt-1">
+                          Calculado automaticamente pelos pedidos vinculados a essa bobina. Se ela acabou no meio
+                          de um pedido (parte saiu nessa, parte vai sair na próxima), corrija aqui — só afeta o
+                          desperdício mostrado no monitor, nunca entra em relatório financeiro.
+                        </p>
+                      </div>
                       <div className="flex gap-2">
                         <button
                           onClick={() => trocarBobina(b.impressoraId)}
@@ -573,7 +579,7 @@ export default function DTFDashboardPage() {
               {Array.from({ length: numImpressoras }, (_, i) => i + 1)
                 .filter(n => !filmBobinas.some(b => b.impressoraId === n))
                 .map(n => (
-                  <button key={n} onClick={() => { setFilmTrocaImp(n); setFilmTrocaForm({ tamanhoM: "100", obs: "" }) }}
+                  <button key={n} onClick={() => { setFilmTrocaImp(n); setFilmTrocaForm({ tamanhoM: "100", obs: "", metrosOverride: "" }) }}
                     className="text-xs font-semibold text-[#7C3AED] border border-[#7C3AED]/30 px-3 py-1.5 rounded-xl hover:bg-[#7C3AED]/5 transition-colors">
                     + Instalar bobina na Impressora {n}
                   </button>

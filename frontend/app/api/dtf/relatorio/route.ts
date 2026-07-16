@@ -61,9 +61,7 @@ export async function GET(req: Request) {
              COALESCE(
                (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
                 FROM dtf_pedidos p
-                WHERE p.impressora_id = b.impressora_id
-                  AND p.created_at >= b.aberta_em
-                  AND p.status != 'cancelado'),
+                WHERE p.film_bobina_id = b.id AND p.status != 'cancelado'),
                0
              )::float AS metros_atuais
       FROM dtf_film_bobinas b
@@ -90,8 +88,8 @@ export async function GET(req: Request) {
       custo_total: number | null; aberta_em: string; fechada_em: string
       metros_no_ciclo: number | null; custo_por_metro: number | null
     }
-    let refisAtivosMap: Record<number, RefilAtivo[]> = {}
-    let refisFechadosMap: Record<number, RefilFechado[]> = {}
+    const refisAtivosMap: Record<number, RefilAtivo[]> = {}
+    const refisFechadosMap: Record<number, RefilFechado[]> = {}
 
     try {
       const { rows: ra } = await pool.query(`
@@ -99,9 +97,7 @@ export async function GET(req: Request) {
                COALESCE(
                  (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
                   FROM dtf_pedidos p
-                  WHERE p.impressora_id = r.impressora_id
-                    AND p.created_at >= r.aberta_em
-                    AND p.status != 'cancelado'),
+                  WHERE r.id = ANY(p.refil_ids) AND p.status != 'cancelado'),
                  0
                )::float AS metros_atuais
         FROM dtf_printer_refis r

@@ -137,9 +137,6 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
             {dre.perdasDescarte > 0 && (
               <DreLine label="(-) Perdas por Descarte" value={-dre.perdasDescarte} indent sub="avarias descartadas no período" />
             )}
-            {dre.custoInsumoDtf > 0 && (
-              <DreLine label="(-) Custo de Insumo DTF" value={-dre.custoInsumoDtf} indent sub="film + tinta, metros produzidos" />
-            )}
             <DreLine bold label="Resultado Operacional" value={dre.resultadoOp}
               sub={dre.resultadoOp != null ? `margem op. ${pct(summary.margemOp)}` : undefined} />
           </div>

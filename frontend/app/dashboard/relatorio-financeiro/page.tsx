@@ -19,7 +19,6 @@ export type DRE = {
   custoFixo:      number
   custoVariavel:  number
   perdasDescarte: number
-  custoInsumoDtf: number
   resultadoOp:    number | null
 }
 
@@ -311,11 +310,11 @@ export default function RelatorioFinanceiroPage() {
           {data.diagnostico.dtfSemCusto && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
               <p className="text-xs font-bold text-amber-700 mb-1">
-                Custo de insumo DTF indisponível no período — teve venda de DTF, mas nenhum ciclo de consumo
-                (bobina de film ou refil de tinta) com custo registrado ainda.
+                Lucro e margem de DTF indisponíveis — teve venda de DTF no período, mas o produto &ldquo;DTF 60cm&rdquo;
+                não tem custo cadastrado.
               </p>
               <p className="text-[10px] text-amber-500 mt-1">
-                Acesse Insumos DTF e registre o custo de compra dos insumos consumidos.
+                Acesse Produtos, abra o DTF e salve o campo &ldquo;Preço de custo&rdquo;.
               </p>
             </div>
           )}
@@ -679,10 +678,6 @@ export default function RelatorioFinanceiroPage() {
                 {(dre?.perdasDescarte ?? 0) > 0 && (
                   <DRERow label="(-) Perdas por Descarte" value={-(dre?.perdasDescarte ?? 0)} indent negative
                     sub="qty × custo médio · avarias descartadas no período" />
-                )}
-                {(dre?.custoInsumoDtf ?? 0) > 0 && (
-                  <DRERow label="(-) Custo de Insumo DTF" value={-(dre?.custoInsumoDtf ?? 0)} indent negative
-                    sub="metros produzidos × custo por metro atual (film + tinta)" />
                 )}
                 <DRERow separator />
                 <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}

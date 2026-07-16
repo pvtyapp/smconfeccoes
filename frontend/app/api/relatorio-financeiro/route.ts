@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { getDtfCustoPorMetroAtual } from "@/lib/dtf/custoPorMetro"
 
 // GET /api/relatorio-financeiro?from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: Request) {
@@ -138,11 +137,20 @@ export async function GET(req: Request) {
     const dtfCount   = Number(dtfRows[0]?.count ?? 0)
     const metrosDtf  = Number(dtfRows[0]?.metros ?? 0)
 
-    // Custo de insumo DTF (film + tintas/poliamida) no período — custo atual por
-    // metro (ciclo de consumo mais recente) × metros produzidos no período. Antes
-    // a receita de DTF entrava no faturamento mas o custo nunca era descontado.
-    const custoPorMetroDtf = metrosDtf > 0 ? await getDtfCustoPorMetroAtual() : null
-    const custoInsumoDtf   = custoPorMetroDtf != null ? custoPorMetroDtf * metrosDtf : 0
+    // Custo do DTF — mesma fonte usada por qualquer outro produto: material_cost
+    // cadastrado no produto "DTF 60cm" (mesmo cadastro que já é fonte única de
+    // preço em /api/dtf/preco). O monitor de insumo (film/tinta/poliamida) é só
+    // um indicador operacional de consumo/desperdício — nunca entra no financeiro,
+    // porque o custo/metro dele varia (ciclo recém-aberto x ciclo maduro) e não
+    // representa o custo real de produzir 1 metro de DTF.
+    const { rows: dtfProdutoRows } = await pool.query(`
+      SELECT name, material_cost FROM products
+      WHERE LOWER(name) LIKE 'dtf%' AND status = 'active'
+      ORDER BY created_at ASC LIMIT 1
+    `)
+    const dtfProdutoNome   = dtfProdutoRows[0]?.name ?? "DTF"
+    const custoDtfUnitario = dtfProdutoRows[0]?.material_cost != null
+      ? Number(dtfProdutoRows[0].material_cost) : null
 
     // ── Calcular DRE ──────────────────────────────────────────────────────────
     const concluded = orders.filter(o => o.status === "pago" || o.status === "concluido")
@@ -176,6 +184,22 @@ export async function GET(req: Request) {
       }
     }
 
+    // DTF entra no mesmo modelo dos demais produtos — 1 "unidade" = 1 metro,
+    // custo e receita vindos do cadastro do produto (nunca do monitor de insumo).
+    if (metrosDtf > 0) {
+      const cur = byProduct.get(dtfProdutoNome) ?? { revenue: 0, cost: 0, qty: 0, hasCost: false }
+      cur.revenue += receitaDtf
+      cur.qty     += metrosDtf
+      if (custoDtfUnitario != null) {
+        const lineCost = custoDtfUnitario * metrosDtf
+        custoInsumos      += lineCost
+        custoInsumosKnown  = true
+        cur.cost    += lineCost
+        cur.hasCost  = true
+      }
+      byProduct.set(dtfProdutoNome, cur)
+    }
+
     // Custo operacional pro-rateado pelo período
     const fraction = days / 30
     let custoCostura = 0
@@ -189,7 +213,7 @@ export async function GET(req: Request) {
     const custoVariavel = Number(varCosts[0]?.total ?? 0)
     const lucroBruto    = custoInsumosKnown ? receitaBruta - custoInsumos : null
     const resultadoOp   = lucroBruto !== null
-      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte - custoInsumoDtf
+      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte
       : null
 
     const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
@@ -227,7 +251,6 @@ export async function GET(req: Request) {
         custoFixo,
         custoVariavel,
         perdasDescarte,
-        custoInsumoDtf,
         resultadoOp,
       },
       summary: {
@@ -247,7 +270,7 @@ export async function GET(req: Request) {
       },
       diagnostico: {
         semCusto: semCustoRows.map(r => r.product_name as string),
-        dtfSemCusto: metrosDtf > 0 && custoPorMetroDtf === null,
+        dtfSemCusto: metrosDtf > 0 && custoDtfUnitario === null,
       },
     })
   } catch (err) {
