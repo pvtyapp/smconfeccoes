@@ -60,16 +60,31 @@ export async function GET(req: Request) {
            WHERE schedule_id = $1 ORDER BY COALESCE(last_sent_at,'1970-01-01') ASC, id ASC LIMIT 1`, [sched.id]
         )
         if (!item) continue
-        let q = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts
-                 WHERE jid IS NOT NULL AND NOT COALESCE(marketing_optout,false)
-                   AND linked_user_id IS NULL
-                   AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
-                   AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
-        const qp: string[] = []
-        if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }
-        const { rows: rcpts } = await pool.query(q, qp)
+
+        // Destinatário depende da audiência escolhida — "groups" manda direto
+        // pros JIDs dos grupos salvos, sem consultar wa_contacts. "mixed" soma
+        // os dois. Antes disso, qualquer audiência (inclusive "groups" puro)
+        // caía sempre na busca de contatos individuais, porque nada aqui lia
+        // audience_group_jids — mandava pra gente aleatória em vez do grupo.
+        type Rcpt = { id?: number; jid: string; name: string }
+        let contactRcpts: Rcpt[] = []
+        if (sched.audience_type !== "groups") {
+          let q = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts
+                   WHERE jid IS NOT NULL AND NOT COALESCE(marketing_optout,false)
+                     AND linked_user_id IS NULL
+                     AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
+                     AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
+          const qp: string[] = []
+          if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }
+          const { rows } = await pool.query(q, qp)
+          contactRcpts = rows.slice(0, 5)
+        }
+        const groupRcpts: Rcpt[] = (sched.audience_type === "groups" || sched.audience_type === "mixed")
+          ? ((sched.audience_group_jids ?? []) as string[]).map(jid => ({ jid, name: jid.split("@")[0] }))
+          : []
+        const rcpts: Rcpt[] = [...contactRcpts, ...groupRcpts]
         let sentCount = 0
-        for (const r of rcpts.slice(0, 5)) {
+        for (const r of rcpts) {
           try {
             const msg = (item.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
             const msgId = await campaignSend(r.jid as string, msg, item.mediaUrl as string | null)

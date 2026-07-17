@@ -105,9 +105,9 @@ export async function POST(req: Request) {
     // 5. Order items
     for (const item of items) {
       await client.query(`
-        INSERT INTO order_items (order_id, product_name, color, size, qty, unit_price, is_service)
-        VALUES ($1, $2, $3, $4, $5, $6, false)
-      `, [orderId, item.productName, item.color || null, item.size || null, item.qty, item.unitPrice ?? null])
+        INSERT INTO order_items (order_id, product_name, color, size, qty, unit_price, is_service, variant_id)
+        VALUES ($1, $2, $3, $4, $5, $6, false, $7)
+      `, [orderId, item.productName, item.color || null, item.size || null, item.qty, item.unitPrice ?? null, item.variantId ?? null])
     }
 
     // 6. Mark as paid unless prazo
