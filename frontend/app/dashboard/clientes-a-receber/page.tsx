@@ -16,6 +16,8 @@ type PendingOrder = {
   number: string
   status: string
   totalValue: number | null
+  amountPaid: number | null
+  remaining: number | null
   dueDate: string | null
   createdAt: string
   contactId: number
@@ -48,6 +50,8 @@ function fmtPhone(phone: string) {
   if (p.length === 11) return `(${p.slice(0, 2)}) ${p.slice(2, 7)}-${p.slice(7)}`
   return phone
 }
+
+function owed(o: PendingOrder) { return o.remaining ?? o.totalValue ?? 0 }
 
 function dueDateStatus(dueDate: string | null, today: string): "vencido" | "hoje" | "futuro" | "sem_data" {
   if (!dueDate) return "sem_data"
@@ -87,13 +91,13 @@ export default function ClientesAReceberPage() {
   useEffect(() => { load() }, [load])
 
   // ── Stats ─────────────────────────────────────────────────────────────────
-  const totalPending   = orders.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
-  const overdueTotal   = orders.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+  const totalPending   = orders.reduce((s, o) => s + owed(o), 0)
+  const overdueTotal   = orders.filter(o => o.dueDate && o.dueDate < today).reduce((s, o) => s + owed(o), 0)
   const overdueCount   = orders.filter(o => o.dueDate && o.dueDate < today).length
-  const todayTotal     = orders.filter(o => o.dueDate === today).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+  const todayTotal     = orders.filter(o => o.dueDate === today).reduce((s, o) => s + owed(o), 0)
   const todayCount     = orders.filter(o => o.dueDate === today).length
   const semanaOrders   = orders.filter(o => o.dueDate && o.dueDate > today && o.dueDate <= weekAhead)
-  const semanaTotal    = semanaOrders.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+  const semanaTotal    = semanaOrders.reduce((s, o) => s + owed(o), 0)
   const semanaCount    = semanaOrders.length
 
   // ── Filter + Search + Sort ────────────────────────────────────────────────
@@ -121,7 +125,7 @@ export default function ClientesAReceberPage() {
         return da < db ? -dir : da > db ? dir : 0
       }
       if (sort.key === "totalValue") {
-        return ((a.totalValue ?? 0) - (b.totalValue ?? 0)) * dir
+        return (owed(a) - owed(b)) * dir
       }
       return (a.contactName ?? "").localeCompare(b.contactName ?? "") * dir
     })
@@ -259,7 +263,7 @@ export default function ClientesAReceberPage() {
 
         {filtered.length > 0 && (
           <p className="text-xs text-[#0F1E3C]/40 ml-auto">
-            {filtered.length} resultado{filtered.length !== 1 ? "s" : ""} · {fmtCurrency(filtered.reduce((s, o) => s + Number(o.totalValue ?? 0), 0))}
+            {filtered.length} resultado{filtered.length !== 1 ? "s" : ""} · {fmtCurrency(filtered.reduce((s, o) => s + owed(o), 0))}
           </p>
         )}
       </div>
@@ -322,7 +326,12 @@ export default function ClientesAReceberPage() {
 
                   {/* Valor */}
                   <div>
-                    <p className="font-black text-[#0F1E3C]">{fmtCurrency(o.totalValue)}</p>
+                    <p className="font-black text-[#0F1E3C]">{fmtCurrency(owed(o))}</p>
+                    {(o.amountPaid ?? 0) > 0 && (
+                      <p className="text-[10px] text-emerald-600 font-semibold mt-0.5">
+                        {fmtCurrency(o.amountPaid)} pago de {fmtCurrency(o.totalValue)}
+                      </p>
+                    )}
                   </div>
 
                   {/* Vencimento */}
@@ -381,7 +390,7 @@ export default function ClientesAReceberPage() {
             <div className="flex items-center gap-1.5">
               <TrendingDown size={12} className="text-[#0F1E3C]/30" />
               <p className="text-xs font-bold text-[#0F1E3C]/60">
-                Total visível: <span className="text-[#0F1E3C]">{fmtCurrency(filtered.reduce((s, o) => s + Number(o.totalValue ?? 0), 0))}</span>
+                Total visível: <span className="text-[#0F1E3C]">{fmtCurrency(filtered.reduce((s, o) => s + owed(o), 0))}</span>
               </p>
             </div>
           </div>
@@ -424,23 +433,31 @@ function DarBaixaModal({
 }: {
   order: PendingOrder; onClose: () => void; onSuccess: () => Promise<void>
 }) {
+  const remaining = owed(order)
+
   const [method,   setMethod]   = useState("pix")
   const [notes,    setNotes]    = useState("")
   const [notify,   setNotify]   = useState(true)
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState("")
+  const [valor,    setValor]    = useState(remaining.toFixed(2).replace(".", ","))
 
   const today = todayBR()
   const ds = dueDateStatus(order.dueDate, today)
 
+  const valorNum   = Number(valor.replace(",", "."))
+  const isParcial  = !isNaN(valorNum) && valorNum > 0 && valorNum < remaining - 0.01
+
   async function confirm() {
-    setSaving(true)
     setError("")
+    if (isNaN(valorNum) || valorNum <= 0) { setError("Informe um valor válido."); return }
+    if (valorNum > remaining + 0.01) { setError(`Valor maior que o restante (${fmtCurrency(remaining)}).`); return }
+    setSaving(true)
     try {
       const res = await fetch(payUrl(order), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method, notes: notes.trim(), notifyClient: notify }),
+        body: JSON.stringify({ method, notes: notes.trim(), notifyClient: notify, amount: valorNum }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? "Erro ao confirmar."); return }
       await onSuccess()
@@ -487,14 +504,36 @@ function DarBaixaModal({
                   )}
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-[#0F1E3C]/40">Valor</p>
-                  <p className="text-2xl font-black text-[#0F1E3C]">{
-                    order.totalValue
-                      ? `R$ ${Number(order.totalValue).toFixed(2).replace(".", ",")}`
-                      : "—"
-                  }</p>
+                  <p className="text-xs text-[#0F1E3C]/40">Restante</p>
+                  <p className="text-2xl font-black text-[#0F1E3C]">{fmtCurrency(remaining)}</p>
+                  {(order.amountPaid ?? 0) > 0 && (
+                    <p className="text-[10px] text-emerald-600 font-semibold mt-0.5">
+                      {fmtCurrency(order.amountPaid)} já pago de {fmtCurrency(order.totalValue)}
+                    </p>
+                  )}
                 </div>
               </div>
+            </div>
+
+            {/* Valor recebido agora */}
+            <div>
+              <label className="text-xs font-bold text-[#0F1E3C]/50 uppercase tracking-wider mb-2 block">
+                Valor recebido agora
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#0F1E3C]/40 pointer-events-none">R$</span>
+                <input
+                  type="text" inputMode="decimal"
+                  className="w-full border border-[#0F1E3C]/12 rounded-xl pl-9 pr-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                  value={valor}
+                  onChange={e => setValor(e.target.value.replace(/[^\d,.]/g, ""))}
+                />
+              </div>
+              {isParcial && (
+                <p className="text-xs text-amber-600 font-semibold mt-1.5">
+                  Pagamento parcial — vai ficar faltando {fmtCurrency(remaining - valorNum)}, vencimento continua {order.dueDate ? fmtDateBR(order.dueDate) : "o mesmo"}.
+                </p>
+              )}
             </div>
 
             {/* Forma de pagamento */}
@@ -560,7 +599,7 @@ function DarBaixaModal({
                 className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-2.5 text-sm font-bold disabled:opacity-60 transition-colors"
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-                {saving ? "Confirmando..." : "Confirmar Recebimento"}
+                {saving ? "Confirmando..." : isParcial ? "Confirmar Recebimento Parcial" : "Confirmar Recebimento"}
               </button>
             </div>
           </div>

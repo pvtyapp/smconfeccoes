@@ -5,7 +5,7 @@ import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { campaignSend } from "@/lib/whatsapp/campaignSend"
 import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
-import { todayBR } from "@/lib/tz"
+import { todayBR, fmtDateBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
 
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { novo: number; ausente: number; frio: number; cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; campaignSent?: number; scheduleSent?: number; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
+  const results: { novo: number; ausente: number; frio: number; cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; campaignSent?: number; scheduleSent?: number; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -360,6 +360,69 @@ export async function GET(req: Request) {
         results.cobranca++
       } catch { results.errors++ }
     }
+  } catch { results.errors++ }
+
+  // ── 8b. Cobrança de vencido — produto + DTF, a cada 3 dias até pagar ────────
+  // Diferente das seções 7/8 (aviso só no dia do vencimento, e só pra contato com
+  // prazo automático configurado): esta cobre TUDO que já venceu e continua em
+  // aberto — inclusive cobrança manual (Nova Cobrança) e pedido DTF, que antes
+  // nunca recebiam lembrete nenhum. Primeiro disparo no dia seguinte ao
+  // vencimento, depois a cada 3 dias (throttle via last_reminder_at).
+  try {
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0`).catch(() => {})
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMPTZ`).catch(() => {})
+    await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0`).catch(() => {})
+    await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMPTZ`).catch(() => {})
+
+    const { rows: overdueOrders } = await pool.query(`
+      SELECT o.id, o.number, o.total_value, o.amount_paid, o.due_date::text AS due_date,
+             o.contact_id AS "contactId", COALESCE(c.phone_jid, c.jid) AS jid, c.name
+      FROM orders o
+      JOIN wa_contacts c ON c.id = o.contact_id
+      WHERE o.due_date < $1
+        AND o.paid_at IS NULL
+        AND o.status != 'cancelado'
+        AND (o.last_reminder_at IS NULL OR o.last_reminder_at <= NOW() - INTERVAL '3 days')
+    `, [today])
+
+    const { rows: overdueDtf } = await pool.query(`
+      SELECT p.id, p.number, p.preco_cobrado AS total_value, p.amount_paid, p.due_date::text AS due_date,
+             p.contact_id AS "contactId", COALESCE(c.phone_jid, c.jid) AS jid, COALESCE(c.name, p.cliente) AS name
+      FROM dtf_pedidos p
+      LEFT JOIN wa_contacts c ON c.id = p.contact_id
+      WHERE p.due_date < $1
+        AND p.paid_at IS NULL
+        AND p.status != 'cancelado'
+        AND (p.last_reminder_at IS NULL OR p.last_reminder_at <= NOW() - INTERVAL '3 days')
+    `, [today])
+
+    for (const row of [...overdueOrders, ...overdueDtf]) {
+      if (!row.jid || !row.name) continue
+      try {
+        const total     = row.total_value != null ? Number(row.total_value) : null
+        const paid      = Number(row.amount_paid ?? 0)
+        const remaining = total != null ? Math.max(0, total - paid) : null
+        const restanteTxt = remaining != null ? `R$ ${remaining.toFixed(2).replace(".", ",")}` : "o valor combinado"
+        const firstName = (row.name as string).split(" ")[0]
+        const vencTxt = row.due_date ? fmtDateBR(row.due_date) : ""
+        const msg = `⚠️ Oi ${firstName}, o pagamento do pedido *${row.number}* venceu em *${vencTxt}* e continua em aberto — restam *${restanteTxt}*. Qualquer dúvida é só chamar!`
+        await sendAndSave(row.contactId as number, row.jid as string, msg)
+      } catch { results.errors++ }
+    }
+
+    if (overdueOrders.length > 0) {
+      await pool.query(`
+        UPDATE orders SET last_reminder_at = NOW()
+        WHERE id = ANY($1::int[])
+      `, [overdueOrders.filter(r => r.jid && r.name).map(r => r.id)])
+    }
+    if (overdueDtf.length > 0) {
+      await pool.query(`
+        UPDATE dtf_pedidos SET last_reminder_at = NOW()
+        WHERE id = ANY($1::int[])
+      `, [overdueDtf.filter(r => r.jid && r.name).map(r => r.id)])
+    }
+    results.cobrancaVencida = overdueOrders.filter(r => r.jid && r.name).length + overdueDtf.filter(r => r.jid && r.name).length
   } catch { results.errors++ }
 
   // ── 9. Reset estados presos do chatbot (> 6h sem atualização) ───────────────
