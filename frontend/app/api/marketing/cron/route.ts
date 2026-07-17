@@ -6,6 +6,13 @@ import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
 
+// Sem isso, a Vercel mata a função no tempo padrão (bem menor que o
+// necessário) -- medido na prática: 10 destinatários com a pausa anti-ban
+// entre cada um já passam de 1 minuto. Sem erro nenhum registrado, a função
+// só para de mandar no meio da lista. 280s dá folga confortável até pro
+// pior caso (schedule com bastante grupo).
+export const maxDuration = 280
+
 // Vercel Cron: */5 * * * * (a cada 5 minutos)
 //
 // Separado do cron diário (/api/whatsapp/cron, 9h BRT) porque campanha
@@ -40,6 +47,11 @@ export async function GET(req: Request) {
   } catch { results.errors++ }
 
   // ── 3. Schedules recorrentes — dispara os do dia, no horário marcado ───────
+  // LIMIT 1: com vários grupos por programação, o tempo de envio (pausa
+  // anti-ban entre cada um) já é grande sozinho. Processar mais de uma
+  // programação atrasada na mesma chamada multiplicaria esse tempo e
+  // arriscaria o timeout de novo mesmo com maxDuration alto. Como o cron
+  // roda a cada 5min, a próxima atrasada pega na chamada seguinte.
   try {
     const brDay = Number(new Date(Date.now() - 3 * 3600 * 1000).getUTCDay())
     const { rows: dueSchedules } = await pool.query(`
@@ -51,7 +63,7 @@ export async function GET(req: Request) {
         AND (last_executed_at IS NULL
              OR DATE(last_executed_at AT TIME ZONE 'America/Sao_Paulo')
                 < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date)
-      LIMIT 3
+      LIMIT 1
     `, [brDay])
     for (const sched of dueSchedules) {
       try {
