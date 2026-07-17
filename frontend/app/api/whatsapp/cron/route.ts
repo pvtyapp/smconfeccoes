@@ -3,8 +3,6 @@ import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
-import { campaignSend } from "@/lib/whatsapp/campaignSend"
-import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 import { todayBR, fmtDateBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
@@ -19,7 +17,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { novo: number; ausente: number; frio: number; cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; campaignSent?: number; scheduleSent?: number; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
+  const results: { novo: number; ausente: number; frio: number; cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -499,67 +497,10 @@ export async function GET(req: Request) {
     results.messagesDeleted = messagesDeleted
   } catch { results.errors++ }
 
-  // ── 11. Campaigns — processa até 8 mensagens da campanha mais antiga em fila ───
-  try {
-    const { processed, errors } = await processCampaignBatch(8)
-    results.campaignSent = (results.campaignSent ?? 0) + processed
-    results.errors += errors
-  } catch { results.errors++ }
-
-  // ── 12. Schedules — dispara schedules do dia (horário BR) ───────────────────────
-  try {
-    const brDay = Number(new Date(Date.now() - 3 * 3600 * 1000).getUTCDay())
-    const { rows: dueSchedules } = await pool.query(`
-      SELECT id, audience_type, audience_lifecycle, audience_group_jids
-      FROM marketing_schedules
-      WHERE active = true
-        AND $1 = ANY(days_of_week)
-        AND time_of_day <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::time
-        AND (last_executed_at IS NULL
-             OR DATE(last_executed_at AT TIME ZONE 'America/Sao_Paulo')
-                < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date)
-      LIMIT 3
-    `, [brDay])
-    for (const sched of dueSchedules) {
-      try {
-        const { rows: [item] } = await pool.query(
-          `SELECT id, content, media_url AS "mediaUrl" FROM marketing_schedule_items
-           WHERE schedule_id = $1 ORDER BY COALESCE(last_sent_at,'1970-01-01') ASC, id ASC LIMIT 1`, [sched.id]
-        )
-        if (!item) continue
-        let q = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts
-                 WHERE jid IS NOT NULL AND NOT COALESCE(marketing_optout,false)
-                   AND linked_user_id IS NULL
-                   AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
-                   AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
-        const qp: string[] = []
-        if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }
-        const { rows: rcpts } = await pool.query(q, qp)
-        let sentCount = 0
-        for (const r of rcpts.slice(0, 5)) {
-          try {
-            const msg = (item.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
-            const msgId = await campaignSend(r.jid as string, msg, item.mediaUrl as string | null)
-            if (r.id) {
-              await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})
-              await pool.query(
-                `INSERT INTO wa_messages (contact_id, message_id, direction, content, media_url, media_type)
-                 VALUES ($1,$2,'out',$3,$4,$5)
-                 ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-                [r.id, msgId, msg, item.mediaUrl ?? null, item.mediaUrl ? "image" : null]
-              ).catch(() => {})
-            }
-            sentCount++; results.scheduleSent = (results.scheduleSent ?? 0) + 1
-          } catch { results.errors++ }
-          await randDelay()
-        }
-        await pool.query(`INSERT INTO marketing_schedule_executions (schedule_id, item_id, content, media_url, sent_count, error_count) VALUES ($1,$2,$3,$4,$5,0)`,
-          [sched.id, item.id, item.content, item.mediaUrl ?? null, sentCount]).catch(() => {})
-        await pool.query(`UPDATE marketing_schedules SET last_executed_at = NOW() WHERE id = $1`, [sched.id])
-        await pool.query(`UPDATE marketing_schedule_items SET last_sent_at = NOW(), sent_count = sent_count + $1 WHERE id = $2`, [sentCount, item.id])
-      } catch { results.errors++ }
-    }
-  } catch { results.errors++ }
+  // Nota: campanhas avulsas ("enviar agora"/agendadas) e schedules recorrentes
+  // migraram pro cron dedicado /api/marketing/cron (roda a cada 5min) — aqui
+  // era só 1x/dia, o que fazia qualquer horário marcado depois das 9h nunca
+  // disparar e campanha agendada pra data futura nunca sair de "scheduled".
 
   // ── 13. Contas a Pagar — lembrete no dia do vencimento ───────────────────────
   try {

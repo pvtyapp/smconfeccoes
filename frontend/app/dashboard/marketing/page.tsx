@@ -7,7 +7,7 @@ import {
   Megaphone, Calendar, Plus, Trash2, Send, Image, X,
   Clock, Users, RefreshCw, ChevronDown, ChevronUp,
   CheckCircle, AlertCircle, Loader2, ToggleLeft, ToggleRight,
-  CalendarClock, Layers, Save, SlidersHorizontal,
+  CalendarClock, Layers, Save, SlidersHorizontal, Check,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -288,6 +288,48 @@ function AudiencePicker({
   )
 }
 
+// ─── Time picker com confirmação ───────────────────────────────────────────────
+// Digitar/rolar hora e minuto no input nativo dispara onChange a cada tecla — sem
+// esse botão o valor "comprometido" (usado no submit) mudava no meio da digitação,
+// e um step de hora inteira acabava arredondando o minuto sozinho. Agora o valor
+// só é aplicado quando o operador confirma.
+
+function TimeConfirmInput({ value, onConfirm, onDirtyChange }: {
+  value: string; onConfirm: (v: string) => void; onDirtyChange?: (dirty: boolean) => void
+}) {
+  // Sem useEffect de sincronização: o componente só existe dentro de um bloco
+  // renderizado condicionalmente (isRecurring / sendMode === "schedule"), então
+  // remonta do zero — com o `value` atual — sempre que reaparece na tela. O
+  // único jeito de `schedTime` mudar é por este próprio onConfirm, que já
+  // marca confirmed=true na hora, sem precisar reagir à mudança da prop depois.
+  const [draft, setDraft] = useState(value)
+  const [confirmed, setConfirmed] = useState(true)
+
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="time"
+        value={draft}
+        onChange={e => { setDraft(e.target.value); setConfirmed(false); onDirtyChange?.(true) }}
+        className="border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+      />
+      <button
+        type="button"
+        onClick={() => { onConfirm(draft); setConfirmed(true); onDirtyChange?.(false) }}
+        disabled={confirmed || !draft}
+        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors ${
+          confirmed
+            ? "bg-emerald-50 text-emerald-600 cursor-default"
+            : "bg-[#4361EE] text-white hover:bg-[#3451d1]"
+        } disabled:opacity-60`}
+      >
+        {confirmed ? <Check size={13} /> : null}
+        {confirmed ? "Confirmado" : "Confirmar horário"}
+      </button>
+    </div>
+  )
+}
+
 // ─── Unified Create Drawer ────────────────────────────────────────────────────
 
 function UnifiedDrawer({
@@ -310,6 +352,7 @@ function UnifiedDrawer({
   const [sendMode,     setSendMode]     = useState<"now" | "schedule">("now")
   const [schedDate,    setSchedDate]    = useState("")
   const [schedTime,    setSchedTime]    = useState("08:00")
+  const [timeDirty,    setTimeDirty]    = useState(false)
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState<string | null>(null)
 
@@ -334,6 +377,8 @@ function UnifiedDrawer({
       setError("Selecione ao menos um grupo"); return
     }
     if (!isRecurring && sendMode === "schedule" && !schedDate) { setError("Data obrigatória"); return }
+    const needsTime = isRecurring || (sendMode === "schedule")
+    if (needsTime && timeDirty) { setError("Confirme o horário antes de continuar"); return }
 
     setSaving(true); setError(null)
 
@@ -476,13 +521,8 @@ function UnifiedDrawer({
             {isRecurring ? (
               /* Modo programação — só horário */
               <div className="flex items-center gap-2">
-                <input
-                  type="time" step="3600"
-                  value={schedTime}
-                  onChange={e => { const v = e.target.value; setSchedTime(v ? v.slice(0,3) + "00" : "08:00") }}
-                  className="border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                />
-                <span className="text-[11px] text-[#0F1E3C]/35">disparo na hora exata</span>
+                <TimeConfirmInput value={schedTime} onConfirm={setSchedTime} onDirtyChange={setTimeDirty} />
+                <span className="text-[11px] text-[#0F1E3C]/35">dispara dentro de ~5min do horário</span>
               </div>
             ) : (
               /* Modo campanha — agora ou agendar */
@@ -502,17 +542,13 @@ function UnifiedDrawer({
                   ))}
                 </div>
                 {sendMode === "schedule" && (
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center flex-wrap">
                     <input
                       type="date" value={schedDate}
                       onChange={e => setSchedDate(e.target.value)}
-                      className="flex-1 border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                      className="border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                     />
-                    <input
-                      type="time" value={schedTime}
-                      onChange={e => setSchedTime(e.target.value)}
-                      className="w-28 border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                    />
+                    <TimeConfirmInput value={schedTime} onConfirm={setSchedTime} onDirtyChange={setTimeDirty} />
                   </div>
                 )}
               </div>
@@ -530,7 +566,7 @@ function UnifiedDrawer({
         <div className="px-5 py-4 border-t border-[#0F1E3C]/8">
           <button
             onClick={submit}
-            disabled={saving}
+            disabled={saving || ((isRecurring || sendMode === "schedule") && timeDirty)}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50"
           >
             {saving ? (

@@ -7,6 +7,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/auth/",
   "/api/whatsapp/webhook",
   "/api/whatsapp/cron",
+  "/api/marketing/cron",
   "/api/orders/expire",
   "/api/lifecycle/migrate",
   "/api/chat/migrate",
