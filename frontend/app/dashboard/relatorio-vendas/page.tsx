@@ -1,9 +1,11 @@
 "use client"
 
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp } from "lucide-react"
+import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, XCircle, Printer, X, Loader2 } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
+import Toggle from "@/components/Toggle"
+import PdvReceiptModal, { type SaleReceipt } from "@/app/dashboard/pdv/PdvReceiptModal"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ type OrderRecord = {
   totalValue: string | null
   dueDate: string | null
   paidAt: string | null
+  pixConfirmed: boolean | null
   createdAt: string
   contactName: string | null
   contactPhone: string | null
@@ -141,6 +144,8 @@ export default function RelatorioVendasPage() {
   const [avarias,      setAvarias]      = useState<AvariaRecord[]>([])
   const [loading,      setLoading]      = useState(true)
   const [expanded,     setExpanded]     = useState<Set<string>>(new Set())
+  const [canceling,    setCanceling]    = useState<OrderRecord | null>(null)
+  const [reprinting,   setReprinting]   = useState<SaleReceipt | null>(null)
 
   const load = useCallback(async () => {
     const dates = getPeriodDates(period, rangeStart, rangeEnd)
@@ -252,6 +257,38 @@ export default function RelatorioVendasPage() {
 
     return { totalR, pedidos: ords.length, concludedCount: concluded.length, pecas, metros, avarPecas, avarProductCount, ticket, lucroTotal, margemMedia }
   }, [entries])
+
+  function buildReceipt(o: OrderRecord): SaleReceipt {
+    const paymentMethod = o.pixConfirmed ? "pix" : o.dueDate && !o.paidAt ? "prazo" : "dinheiro"
+    return {
+      id: o.id,
+      number: o.number,
+      total: Number(o.totalValue ?? 0),
+      paymentMethod,
+      dueDate: o.dueDate ?? undefined,
+      contact: { name: o.contactName, phone: o.contactPhone },
+      items: (o.items ?? []).map((item, i) => ({
+        key: `${o.id}-${i}`,
+        productName: item.productName,
+        color: item.color ?? "",
+        size: item.size ?? "",
+        qty: item.qty,
+        unitPrice: item.unitPrice ?? 0,
+        metros: isDtf(item.productName) ? item.qty : undefined,
+        precoPorMetro: isDtf(item.productName),
+      })),
+    }
+  }
+
+  async function handleCancelConfirm(order: OrderRecord, notify: boolean) {
+    await fetch(`/api/orders/${order.id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "cancelado", actor: "dashboard", notifyClient: notify }),
+    })
+    setCanceling(null)
+    await load()
+  }
 
   function toggle(key: string) {
     setExpanded(prev => {
@@ -404,17 +441,18 @@ export default function RelatorioVendasPage() {
               <th className="text-center px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Peças</th>
               <th className="text-center px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Pagamento</th>
               <th className="text-right  px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Valor</th>
+              <th className="text-right  px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Ação</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#0F1E3C]/4">
             {loading ? (
               <tr>
-                <td colSpan={8} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td>
+                <td colSpan={9} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td>
               </tr>
             ) : entries.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhuma venda no período</td>
+                <td colSpan={9} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhuma venda no período</td>
               </tr>
             ) : entries.map(entry => {
 
@@ -480,6 +518,28 @@ export default function RelatorioVendasPage() {
                       <td className={`px-4 py-3.5 text-right font-black whitespace-nowrap ${isConcluido ? "text-[#0F1E3C]" : "text-[#0F1E3C]/40"}`}>
                         {fmtR(o.totalValue)}
                       </td>
+                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isConcluido && (
+                            <button
+                              onClick={() => setReprinting(buildReceipt(o))}
+                              title="Reimprimir comprovante"
+                              className="p-1.5 rounded-lg border border-[#0F1E3C]/10 text-[#0F1E3C]/40 hover:border-[#4361EE]/40 hover:text-[#4361EE] hover:bg-[#4361EE]/5 transition-colors"
+                            >
+                              <Printer size={13} />
+                            </button>
+                          )}
+                          {o.status !== "cancelado" && (
+                            <button
+                              onClick={() => setCanceling(o)}
+                              title="Cancelar venda"
+                              className="p-1.5 rounded-lg border border-[#0F1E3C]/10 text-[#0F1E3C]/40 hover:border-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            >
+                              <XCircle size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3.5">
                         {hasItems && (
                           <ChevronRight size={13} className={`text-[#0F1E3C]/20 transition-transform ${isOpen ? "rotate-90 text-[#4361EE]" : ""}`} />
@@ -490,7 +550,7 @@ export default function RelatorioVendasPage() {
                     {/* Expanded items */}
                     {isOpen && (
                       <tr key={`${key}-items`}>
-                        <td colSpan={8} className="bg-[#F4F6FB] px-10 py-3">
+                        <td colSpan={9} className="bg-[#F4F6FB] px-10 py-3">
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="border-b border-[#0F1E3C]/8">
@@ -578,12 +638,83 @@ export default function RelatorioVendasPage() {
                     {a.salePrice != null ? fmtR(a.salePrice) : "—"}
                   </td>
                   <td className="px-4 py-3.5" />
+                  <td className="px-4 py-3.5" />
                 </tr>
               )
             })}
           </tbody>
         </table>
       </div>
+
+      {/* ── Modal Reimprimir ── */}
+      {reprinting && (
+        <PdvReceiptModal receipt={reprinting} onClose={() => setReprinting(null)} />
+      )}
+
+      {/* ── Modal Cancelar Venda ── */}
+      {canceling && (
+        <CancelarVendaModal
+          order={canceling}
+          onClose={() => setCanceling(null)}
+          onConfirm={notify => handleCancelConfirm(canceling, notify)}
+        />
+      )}
     </div>
+  )
+}
+
+// ─── CancelarVendaModal ─────────────────────────────────────────────────────
+
+function CancelarVendaModal({
+  order, onClose, onConfirm,
+}: {
+  order: OrderRecord; onClose: () => void; onConfirm: (notify: boolean) => Promise<void>
+}) {
+  const [notify, setNotify] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  async function confirm() {
+    setSaving(true)
+    try { await onConfirm(notify) } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
+            <div className="flex items-center gap-2">
+              <XCircle size={18} className="text-red-500" />
+              <h2 className="text-base font-bold text-[#0F1E3C]">Cancelar Venda</h2>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40"><X size={16} /></button>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="rounded-xl bg-red-50 border border-red-100 p-4">
+              <p className="text-sm font-bold text-[#0F1E3C]">{order.number} · {order.contactName || "Balcão"}</p>
+              <p className="text-xs text-[#0F1E3C]/50 mt-0.5">{fmtR(order.totalValue)}</p>
+            </div>
+            <p className="text-sm text-[#0F1E3C]/60">
+              Tem certeza? A venda será marcada como <strong>cancelada</strong> — se o estoque já tinha saído, ele volta automaticamente.
+            </p>
+            <div className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6">
+              <Toggle on={notify} onChange={() => setNotify(v => !v)} />
+              <p className="text-sm font-semibold text-[#0F1E3C]">Avisar cliente por WhatsApp</p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
+                Voltar
+              </button>
+              <button onClick={confirm} disabled={saving}
+                className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white rounded-xl py-2.5 text-sm font-bold disabled:opacity-60 transition-colors">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                {saving ? "Cancelando..." : "Confirmar Cancelamento"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }

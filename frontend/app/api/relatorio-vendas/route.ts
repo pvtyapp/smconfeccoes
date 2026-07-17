@@ -32,6 +32,7 @@ export async function GET(req: Request) {
           o.total_value  AS "totalValue",
           o.due_date     AS "dueDate",
           o.paid_at      AS "paidAt",
+          o.pix_confirmed AS "pixConfirmed",
           o.created_at   AS "createdAt",
           c.name         AS "contactName",
           c.phone        AS "contactPhone",

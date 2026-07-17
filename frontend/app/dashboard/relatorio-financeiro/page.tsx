@@ -74,9 +74,11 @@ export type StockValuation = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type PresetKey = "mes_atual" | "mes_anterior" | "7d" | "30d" | "60d" | "range"
+type PresetKey = "hoje" | "ontem" | "mes_atual" | "mes_anterior" | "7d" | "30d" | "60d" | "range"
 
 const PRESETS: { key: PresetKey; label: string }[] = [
+  { key: "hoje",         label: "Hoje"         },
+  { key: "ontem",        label: "Ontem"        },
   { key: "mes_atual",    label: "Mês atual"    },
   { key: "mes_anterior", label: "Mês anterior" },
   { key: "7d",           label: "7 dias"       },
@@ -118,6 +120,8 @@ function getPresetDates(key: PresetKey, rs: string, re: string): [string, string
   const t = todayBR()
   const [y, m] = t.split("-").map(Number)
   switch (key) {
+    case "hoje":         return [t, t]
+    case "ontem":        { const d = subDaysBR(1); return [d, d] }
     case "mes_atual":    return [`${y}-${String(m).padStart(2, "0")}-01`, t]
     case "mes_anterior": {
       const pm = m === 1 ? 12 : m - 1
