@@ -26,12 +26,22 @@ export async function campaignSend(
 ): Promise<string | null> {
   await assertEvolutionOpen()
 
-  const number = jid
+  const bareNumber = jid
     .replace("@s.whatsapp.net", "")
     .replace("@g.us", "")
     .replace("@lid", "")
 
-  if (!/^\d+$/.test(number)) {
+  // Grupo legado do WhatsApp (criado antes da mudança pro formato só-número)
+  // vem como "<telefone-criador>-<timestamp>@g.us", com hífen — a Evolution só
+  // resolve esse formato recebendo o JID completo, número puro sem o "@g.us"
+  // ela não remonta. Confirmado batendo direto no /group/fetchAllGroups da
+  // Evolution: ela mesma reporta esses grupos com esse JID, não é dado velho
+  // do nosso lado. Sem esse caso, metade dos grupos configurados (os mais
+  // antigos) sempre falhava silenciosamente no envio.
+  const isLegacyGroupJid = jid.endsWith("@g.us") && /^\d+-\d+$/.test(bareNumber)
+  const number = isLegacyGroupJid ? jid : bareNumber
+
+  if (!isLegacyGroupJid && !/^\d+$/.test(number)) {
     throw new Error(`JID inválido para envio: ${jid}`)
   }
 

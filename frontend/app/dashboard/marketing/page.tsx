@@ -962,7 +962,10 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
                     <p className="text-xs text-[#0F1E3C]/30">Nenhuma execução ainda.</p>
                   </div>
                 ) : (
-                  executions.map(ex => (
+                  executions.map(ex => {
+                    const expected = schedule.audienceType === "groups" ? schedule.audienceGroupJids.length : null
+                    const partial = expected != null && ex.sentCount < expected
+                    return (
                     <div key={ex.id} className="bg-[#F9FAFC] rounded-xl border border-[#0F1E3C]/6 p-3 flex gap-3 items-start">
                       {ex.mediaUrl && (
                         <a href={ex.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0">
@@ -973,14 +976,15 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
                         <p className="text-xs text-[#0F1E3C] whitespace-pre-wrap line-clamp-2">{ex.content}</p>
                         <div className="flex items-center gap-3 mt-1">
                           <span className="text-[10px] text-[#0F1E3C]/40">{fmtBR(ex.executedAt)}</span>
-                          <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
-                            <CheckCircle size={9} /> {ex.sentCount} enviados
+                          <span className={`text-[10px] font-semibold flex items-center gap-1 ${partial ? "text-amber-600" : "text-emerald-600"}`}>
+                            <CheckCircle size={9} /> {ex.sentCount}{expected != null ? `/${expected}` : ""} enviados
                           </span>
                           {ex.errorCount > 0 && <span className="text-[10px] text-red-500">{ex.errorCount} erros</span>}
                         </div>
                       </div>
                     </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
             )}

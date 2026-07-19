@@ -89,13 +89,19 @@ export async function GET(req: Request) {
           const qp: string[] = []
           if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }
           const { rows } = await pool.query(q, qp)
-          contactRcpts = rows.slice(0, 5)
+          // Teto explícito por orçamento de tempo: maxDuration=280s, delay
+          // anti-ban de 3-8s por destinatário (grupos deste disparo entram no
+          // mesmo laço, mesmo orçamento) — 20 dá folga segura mesmo somado aos
+          // grupos configurados hoje. Sem teto nenhum, uma programação pra
+          // "todos os clientes" com base grande estouraria o timeout.
+          contactRcpts = rows.slice(0, 20)
         }
         const groupRcpts: Rcpt[] = (sched.audience_type === "groups" || sched.audience_type === "mixed")
           ? ((sched.audience_group_jids ?? []) as string[]).map(jid => ({ jid, name: jid.split("@")[0] }))
           : []
         const rcpts: Rcpt[] = [...contactRcpts, ...groupRcpts]
         let sentCount = 0
+        let errorCount = 0
         for (const r of rcpts) {
           try {
             const msg = (item.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
@@ -110,11 +116,14 @@ export async function GET(req: Request) {
               ).catch(() => {})
             }
             sentCount++; results.scheduleSent++
-          } catch { results.errors++ }
+          } catch (e) {
+            errorCount++; results.errors++
+            console.error("[marketing/cron] falha ao enviar pro destinatário", r.jid, "—", e instanceof Error ? e.message : e)
+          }
           await randDelay()
         }
-        await pool.query(`INSERT INTO marketing_schedule_executions (schedule_id, item_id, content, media_url, sent_count, error_count) VALUES ($1,$2,$3,$4,$5,0)`,
-          [sched.id, item.id, item.content, item.mediaUrl ?? null, sentCount]).catch(() => {})
+        await pool.query(`INSERT INTO marketing_schedule_executions (schedule_id, item_id, content, media_url, sent_count, error_count) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [sched.id, item.id, item.content, item.mediaUrl ?? null, sentCount, errorCount]).catch(() => {})
         await pool.query(`UPDATE marketing_schedules SET last_executed_at = NOW() WHERE id = $1`, [sched.id])
         await pool.query(`UPDATE marketing_schedule_items SET last_sent_at = NOW(), sent_count = sent_count + $1 WHERE id = $2`, [sentCount, item.id])
       } catch { results.errors++ }
