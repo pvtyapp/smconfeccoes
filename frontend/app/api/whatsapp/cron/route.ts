@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { novo: number; ausente: number; frio: number; cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; evoRestarted?: boolean; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0 }
+  const results: { novo: number; ausente: number; frio: number; cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evoRestarted?: boolean; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -492,9 +492,10 @@ export async function GET(req: Request) {
 
   // ── 10. Mídia TTL 48h + evicção 500MB + delete mensagens > 14 dias ────────────
   try {
-    const { mediaCleared, messagesDeleted } = await runMediaCleanup()
-    results.mediaCleared    = mediaCleared
-    results.messagesDeleted = messagesDeleted
+    const { mediaCleared, messagesDeleted, dtfAttachmentsCleared } = await runMediaCleanup()
+    results.mediaCleared           = mediaCleared
+    results.messagesDeleted        = messagesDeleted
+    results.dtfAttachmentsCleared  = dtfAttachmentsCleared
   } catch { results.errors++ }
 
   // Nota: campanhas avulsas ("enviar agora"/agendadas) e schedules recorrentes

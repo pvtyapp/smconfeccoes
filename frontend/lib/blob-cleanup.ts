@@ -24,15 +24,40 @@ export async function cleanDtfBlobsOnConclude(
 }
 
 /**
+ * Called by the hourly cron. NULLs dtf_order_attachments.blob_url (base64, not a
+ * real URL despite the column name) for pedidos concluded/cancelled >48h ago —
+ * this table had no TTL at all and was the main driver of the 2026-07-21 disk-full
+ * incident (2.2GB in 117 rows, ~18MB avg per attachment).
+ */
+export async function cleanDtfAttachments(): Promise<number> {
+  try {
+    const { rowCount } = await pool.query(`
+      UPDATE dtf_order_attachments a
+      SET blob_url = NULL
+      FROM dtf_pedidos p
+      WHERE a.pedido_id = p.id
+        AND a.blob_url IS NOT NULL
+        AND p.status IN ('concluido', 'cancelado')
+        AND COALESCE(p.concluded_at, p.created_at) < NOW() - INTERVAL '48 hours'
+    `)
+    return rowCount ?? 0
+  } catch (e) {
+    console.error("[dtfAttachmentsCleanup]:", e)
+    return 0
+  }
+}
+
+/**
  * Called by the hourly cron.
  * 1. NULLs media_data older than 48h (TTL)
  * 2. Marks stuck media as failed (media_type set, media_data never arrived, > 2h old)
  * 3. Evicts oldest media_data if total > 500MB
  * 4. Deletes wa_messages older than 14 days
  */
-export async function runMediaCleanup(): Promise<{ mediaCleared: number; messagesDeleted: number }> {
+export async function runMediaCleanup(): Promise<{ mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number }> {
   let mediaCleared  = 0
   let messagesDeleted = 0
+  let dtfAttachmentsCleared = 0
 
   // 1. TTL 48h — NULL media_data, mark as failed
   try {
@@ -92,5 +117,8 @@ export async function runMediaCleanup(): Promise<{ mediaCleared: number; message
     messagesDeleted = rowCount ?? 0
   } catch (e) { console.error("[mediaCleanup] delete mensagens antigas:", e) }
 
-  return { mediaCleared, messagesDeleted }
+  // 5. DTF attachments (dtf_order_attachments.blob_url) — pedidos concluídos/cancelados > 48h
+  dtfAttachmentsCleared = await cleanDtfAttachments()
+
+  return { mediaCleared, messagesDeleted, dtfAttachmentsCleared }
 }
