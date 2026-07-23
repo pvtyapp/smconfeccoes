@@ -68,7 +68,7 @@ export async function GET(
         p.observacao,
         COALESCE(
           json_agg(
-            json_build_object('id', a.id, 'blobUrl', a.blob_url, 'filename', a.filename)
+            json_build_object('id', a.id, 'filename', a.filename)
             ORDER BY a.id
           ) FILTER (WHERE a.id IS NOT NULL), '[]'
         ) AS attachments

@@ -45,7 +45,7 @@ type DtfOrder = {
   dueDate: string | null; paidAt: string | null; createdAt: string
   tipo: "dtf"; metros: number | null; metrosFinais: number | null
   larguraCm: number | null; observacao: string | null
-  attachments: Array<{ id: number; blobUrl: string; filename: string | null }>
+  attachments: Array<{ id: number; filename: string | null }>
 }
 
 type AnyOrder = ProductOrder | DtfOrder
@@ -901,11 +901,12 @@ function DtfOrderRow({ order }: { order: DtfOrder }) {
           {order.attachments?.length > 0 && (
             <div className="space-y-1 pt-1">
               {order.attachments.map(a => (
-                <a key={a.id} href={a.blobUrl} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-xs text-[#7C3AED] hover:underline">
-                  <Download size={10} /> {a.filename ?? `arquivo-${a.id}`}
-                </a>
+                <p key={a.id} className="text-xs text-[#0F1E3C]/50">{a.filename ?? `arquivo-${a.id}`}</p>
               ))}
+              <a href={`/api/dtf/pedidos/${order.id}/download`} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-[#7C3AED] hover:underline font-semibold">
+                <Download size={10} /> Baixar {order.attachments.length > 1 ? "arquivos (.zip)" : "arquivo"}
+              </a>
             </div>
           )}
         </div>
