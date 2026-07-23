@@ -7,7 +7,7 @@ import {
   Megaphone, Calendar, Plus, Trash2, Send, Image, X,
   Clock, Users, RefreshCw, ChevronDown, ChevronUp,
   CheckCircle, AlertCircle, Loader2, ToggleLeft, ToggleRight,
-  CalendarClock, Layers, Save, SlidersHorizontal, Check,
+  CalendarClock, Layers, Save, SlidersHorizontal, Check, Pencil,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -783,9 +783,10 @@ function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick }: {
 
 // ─── Schedule Modal ───────────────────────────────────────────────────────────
 
-function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
+function ScheduleModal({ schedule, groups, stats, onClose, onToggle, onRefresh }: {
   schedule: Schedule
   groups: Group[]
+  stats: Stats | null
   onClose: () => void
   onToggle: () => void
   onRefresh: () => void
@@ -798,6 +799,65 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
   const [newContent, setNewContent] = useState("")
   const [newMedia,   setNewMedia]  = useState<string | null>(null)
   const [addingItem, setAddingItem] = useState(false)
+  const [editingItemId, setEditingItemId] = useState<number | null>(null)
+
+  // Editar nome/dias/horário/audiência sem apagar e recriar a programação
+  const [editingMeta,   setEditingMeta]   = useState(false)
+  const [editName,      setEditName]      = useState(schedule.name)
+  const [editDays,      setEditDays]      = useState<number[]>(schedule.daysOfWeek)
+  const [editTime,      setEditTime]      = useState(schedule.timeOfDay.slice(0, 5))
+  const [editTimeDirty, setEditTimeDirty] = useState(false)
+  const [editAudType,   setEditAudType]   = useState(schedule.audienceType)
+  const [editLifecycle, setEditLifecycle] = useState(schedule.audienceLifecycle ?? "all")
+  const [editGroupJids, setEditGroupJids] = useState<string[]>(schedule.audienceGroupJids)
+  const [savingMeta,    setSavingMeta]    = useState(false)
+  const [metaError,     setMetaError]     = useState<string | null>(null)
+
+  function openEditMeta() {
+    setEditName(schedule.name)
+    setEditDays(schedule.daysOfWeek)
+    setEditTime(schedule.timeOfDay.slice(0, 5))
+    setEditTimeDirty(false)
+    setEditAudType(schedule.audienceType)
+    setEditLifecycle(schedule.audienceLifecycle ?? "all")
+    setEditGroupJids(schedule.audienceGroupJids)
+    setMetaError(null)
+    setEditingMeta(true)
+  }
+
+  function toggleEditDay(d: number) {
+    setEditDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort())
+  }
+
+  async function saveMeta() {
+    if (!editName.trim()) { setMetaError("Nome obrigatório"); return }
+    if (editDays.length === 0) { setMetaError("Selecione ao menos um dia"); return }
+    if (editTimeDirty) { setMetaError("Confirme o horário antes de salvar"); return }
+    if ((editAudType === "groups" || editAudType === "mixed") && editGroupJids.length === 0) {
+      setMetaError("Selecione ao menos um grupo"); return
+    }
+    setSavingMeta(true); setMetaError(null)
+    const r = await fetch(`/api/marketing/schedules/${schedule.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: editName.trim(),
+        daysOfWeek: editDays,
+        timeOfDay: editTime,
+        audienceType: editAudType,
+        audienceLifecycle: editAudType !== "groups" ? editLifecycle : null,
+        audienceGroupJids: editGroupJids,
+      }),
+    })
+    if (r.ok) {
+      onRefresh()
+      setEditingMeta(false)
+    } else {
+      const d = await r.json().catch(() => ({}))
+      setMetaError(d.error ?? "Erro ao salvar")
+    }
+    setSavingMeta(false)
+  }
 
   const daysLabel = schedule.daysOfWeek.length === 7 ? "Todos os dias"
     : schedule.daysOfWeek.length === 5 && !schedule.daysOfWeek.includes(0) && !schedule.daysOfWeek.includes(6)
@@ -835,20 +895,39 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
     else loadHistory()
   }, [panel])
 
-  async function addItem() {
+  function startEditItem(item: ScheduleItem) {
+    setEditingItemId(item.id)
+    setNewContent(item.content)
+    setNewMedia(item.mediaUrl)
+  }
+
+  function cancelEditItem() {
+    setEditingItemId(null)
+    setNewContent("")
+    setNewMedia(null)
+  }
+
+  async function saveItem() {
     if (!newContent.trim()) return
     setAddingItem(true)
-    const r = await fetch(`/api/marketing/schedules/${schedule.id}/items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: newContent, mediaUrl: newMedia }),
-    })
-    if (r.ok) { setNewContent(""); setNewMedia(null); loadItems(); onRefresh() }
+    const r = editingItemId
+      ? await fetch(`/api/marketing/schedules/${schedule.id}/items/${editingItemId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: newContent, mediaUrl: newMedia }),
+        })
+      : await fetch(`/api/marketing/schedules/${schedule.id}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: newContent, mediaUrl: newMedia }),
+        })
+    if (r.ok) { setNewContent(""); setNewMedia(null); setEditingItemId(null); loadItems(); onRefresh() }
     setAddingItem(false)
   }
 
   async function deleteItem(itemId: number) {
     await fetch(`/api/marketing/schedules/${schedule.id}/items/${itemId}`, { method: "DELETE" })
+    if (editingItemId === itemId) cancelEditItem()
     loadItems()
     onRefresh()
   }
@@ -868,13 +947,20 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
                     <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full flex-shrink-0">Pausado</span>
                   )}
                 </div>
-                <div className="flex items-center gap-3 mt-0.5 text-[11px] text-[#0F1E3C]/40 flex-wrap">
-                  <span className="flex items-center gap-1"><Clock size={9} /> {schedule.timeOfDay.slice(0,5)} · {daysLabel}</span>
-                  <span className={audienceLabel === "Sem grupos definidos" ? "text-amber-500 font-semibold" : ""}>{audienceLabel}</span>
-                  <span className="flex items-center gap-1"><Layers size={9} /> {schedule.itemCount} item{schedule.itemCount !== 1 ? "s" : ""}</span>
-                </div>
+                {!editingMeta && (
+                  <div className="flex items-center gap-3 mt-0.5 text-[11px] text-[#0F1E3C]/40 flex-wrap">
+                    <span className="flex items-center gap-1"><Clock size={9} /> {schedule.timeOfDay.slice(0,5)} · {daysLabel}</span>
+                    <span className={audienceLabel === "Sem grupos definidos" ? "text-amber-500 font-semibold" : ""}>{audienceLabel}</span>
+                    <span className="flex items-center gap-1"><Layers size={9} /> {schedule.itemCount} item{schedule.itemCount !== 1 ? "s" : ""}</span>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                <button onClick={() => editingMeta ? setEditingMeta(false) : openEditMeta()}
+                  title="Editar programação"
+                  className={`p-1.5 rounded-lg transition-colors ${editingMeta ? "bg-[#4361EE]/10 text-[#4361EE]" : "text-[#0F1E3C]/30 hover:bg-[#F4F6FB] hover:text-[#4361EE]"}`}>
+                  <Pencil size={15} />
+                </button>
                 <button onClick={() => { onToggle(); onRefresh() }} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors">
                   {schedule.active
                     ? <ToggleRight size={24} className="text-[#4361EE]" />
@@ -884,20 +970,76 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
               </div>
             </div>
 
-            <div className="flex gap-1 mt-3">
-              {(["fila", "historico"] as const).map(p => (
-                <button key={p} onClick={() => setPanel(p)}
-                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
-                    panel === p ? "bg-[#F4F6FB] text-[#4361EE] border border-[#0F1E3C]/8" : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
-                  }`}
-                >
-                  {p === "fila" ? `Fila (${items.length || schedule.itemCount})` : "Histórico"}
-                </button>
-              ))}
-            </div>
+            {editingMeta ? (
+              <div className="mt-3 space-y-3 bg-[#F9FAFC] rounded-xl p-3 border border-[#0F1E3C]/8">
+                <div>
+                  <label className="text-[10px] font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1 block">Nome</label>
+                  <input
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1 block">Dias</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {DAYS.map((d, i) => (
+                      <button key={i} onClick={() => toggleEditDay(i)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                          editDays.includes(i) ? "bg-[#4361EE] text-white" : "bg-white text-[#0F1E3C]/50 hover:bg-[#4361EE]/10"
+                        }`}>{d}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1 block">Horário</label>
+                  <TimeConfirmInput value={editTime} onConfirm={setEditTime} onDirtyChange={setEditTimeDirty} />
+                </div>
+
+                <AudiencePicker
+                  audienceType={editAudType} lifecycle={editLifecycle}
+                  groupJids={editGroupJids} groups={groups} stats={stats}
+                  onType={setEditAudType} onLifecycle={setEditLifecycle} onGroups={setEditGroupJids}
+                />
+
+                {metaError && (
+                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                    <AlertCircle size={13} className="text-red-500 shrink-0" />
+                    <p className="text-xs text-red-600">{metaError}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button onClick={() => setEditingMeta(false)}
+                    className="flex-1 py-2 rounded-xl border border-[#0F1E3C]/10 text-xs font-semibold text-[#0F1E3C]/50 hover:bg-white transition-colors">
+                    Cancelar
+                  </button>
+                  <button onClick={saveMeta} disabled={savingMeta || editTimeDirty}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-[#4361EE] text-white text-xs font-bold hover:bg-[#3451d1] disabled:opacity-50 transition-colors">
+                    {savingMeta ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                    {savingMeta ? "Salvando..." : "Salvar alterações"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-1 mt-3">
+                {(["fila", "historico"] as const).map(p => (
+                  <button key={p} onClick={() => setPanel(p)}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                      panel === p ? "bg-[#F4F6FB] text-[#4361EE] border border-[#0F1E3C]/8" : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
+                    }`}
+                  >
+                    {p === "fila" ? `Fila (${items.length || schedule.itemCount})` : "Histórico"}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Body */}
+          {!editingMeta && (
           <div className="flex-1 overflow-y-auto p-5">
             {panel === "fila" && (
               <div className="space-y-3">
@@ -926,27 +1068,42 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
                             {item.sentCount > 0 && <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado</span>}
                           </div>
                         </div>
-                        <button onClick={() => deleteItem(item.id)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400 shrink-0">
-                          <X size={12} />
-                        </button>
+                        <div className="flex flex-col gap-1 shrink-0">
+                          <button onClick={() => startEditItem(item)} className="p-1 rounded hover:bg-[#4361EE]/8 text-[#0F1E3C]/25 hover:text-[#4361EE]">
+                            <Pencil size={12} />
+                          </button>
+                          <button onClick={() => deleteItem(item.id)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
+                            <X size={12} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
 
                 <div className="space-y-2 pt-2 border-t border-[#0F1E3C]/6">
-                  <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">Adicionar à fila</p>
+                  <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">
+                    {editingItemId ? "Editando item" : "Adicionar à fila"}
+                  </p>
                   <textarea
                     value={newContent} onChange={e => setNewContent(e.target.value)}
                     rows={3} placeholder="Texto do próximo post..."
                     className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                   />
                   <ImageUpload value={newMedia} onChange={setNewMedia} />
-                  <button onClick={addItem} disabled={!newContent.trim() || addingItem}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 bg-[#4361EE] text-white text-xs font-bold rounded-xl hover:bg-[#3451d1] disabled:opacity-40 transition-colors">
-                    {addingItem ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-                    Adicionar à fila
-                  </button>
+                  <div className="flex gap-2">
+                    {editingItemId && (
+                      <button onClick={cancelEditItem}
+                        className="py-2 px-3 rounded-xl border border-[#0F1E3C]/10 text-xs font-semibold text-[#0F1E3C]/50 hover:bg-white transition-colors">
+                        Cancelar
+                      </button>
+                    )}
+                    <button onClick={saveItem} disabled={!newContent.trim() || addingItem}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-[#4361EE] text-white text-xs font-bold rounded-xl hover:bg-[#3451d1] disabled:opacity-40 transition-colors">
+                      {addingItem ? <Loader2 size={12} className="animate-spin" /> : editingItemId ? <Save size={12} /> : <Plus size={12} />}
+                      {editingItemId ? "Salvar alteração" : "Adicionar à fila"}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -989,6 +1146,7 @@ function ScheduleModal({ schedule, groups, onClose, onToggle, onRefresh }: {
               </div>
             )}
           </div>
+          )}
 
           <div className="px-5 py-4 border-t border-[#0F1E3C]/8">
             <button onClick={onClose} className="w-full py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#F4F6FB] transition-colors border border-[#0F1E3C]/8">
@@ -2046,6 +2204,7 @@ export default function MarketingPage() {
         <ScheduleModal
           schedule={selectedSchedule}
           groups={groups}
+          stats={stats}
           onClose={() => setSelectedSchedule(null)}
           onToggle={() => toggleSchedule(selectedSchedule)}
           onRefresh={loadAll}

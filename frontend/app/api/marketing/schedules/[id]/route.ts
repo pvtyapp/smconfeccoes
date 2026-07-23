@@ -7,8 +7,37 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params
-    const { active } = await req.json() as { active: boolean }
-    await pool.query(`UPDATE marketing_schedules SET active = $1 WHERE id = $2`, [active, id])
+    const body = await req.json() as {
+      active?: boolean
+      name?: string
+      daysOfWeek?: number[]
+      timeOfDay?: string
+      audienceType?: string
+      audienceLifecycle?: string | null
+      audienceGroupJids?: string[]
+    }
+
+    // Só atualiza os campos que vieram no body — o toggle de ligar/desligar
+    // (usado pela tela toda vez que clica no botão) manda só {active}, e a
+    // edição completa da programação manda todos os outros junto.
+    const sets: string[] = []
+    const vals: unknown[] = []
+    function set(col: string, val: unknown) {
+      vals.push(val)
+      sets.push(`${col} = $${vals.length}`)
+    }
+    if (body.active !== undefined)            set("active", body.active)
+    if (body.name !== undefined)               set("name", body.name)
+    if (body.daysOfWeek !== undefined)         set("days_of_week", body.daysOfWeek)
+    if (body.timeOfDay !== undefined)          set("time_of_day", body.timeOfDay)
+    if (body.audienceType !== undefined)       set("audience_type", body.audienceType)
+    if (body.audienceLifecycle !== undefined)  set("audience_lifecycle", body.audienceLifecycle)
+    if (body.audienceGroupJids !== undefined)  set("audience_group_jids", body.audienceGroupJids)
+
+    if (sets.length === 0) return NextResponse.json({ error: "Nada para atualizar" }, { status: 400 })
+
+    vals.push(id)
+    await pool.query(`UPDATE marketing_schedules SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals)
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

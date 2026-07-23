@@ -88,12 +88,19 @@ export async function GET(req: Request) {
                      AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
           const qp: string[] = []
           if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }
+          // Quem nunca recebeu (NULL) ou recebeu há mais tempo entra primeiro —
+          // sem isso, o teto de 20 abaixo sempre pegava a mesma fatia da lista
+          // (sem ORDER BY o Postgres devolve em ordem física estável) e o resto
+          // da base nunca era alcançado, execução após execução.
+          q += ` ORDER BY last_marketing_sent_at ASC NULLS FIRST`
           const { rows } = await pool.query(q, qp)
           // Teto explícito por orçamento de tempo: maxDuration=280s, delay
           // anti-ban de 3-8s por destinatário (grupos deste disparo entram no
           // mesmo laço, mesmo orçamento) — 20 dá folga segura mesmo somado aos
           // grupos configurados hoje. Sem teto nenhum, uma programação pra
-          // "todos os clientes" com base grande estouraria o timeout.
+          // "todos os clientes" com base grande estouraria o timeout. Combinado
+          // com o ORDER BY acima, cada execução avança pra próxima fatia —
+          // gira por toda a base em vários dias em vez de travar nos mesmos 20.
           contactRcpts = rows.slice(0, 20)
         }
         const groupRcpts: Rcpt[] = (sched.audience_type === "groups" || sched.audience_type === "mixed")
