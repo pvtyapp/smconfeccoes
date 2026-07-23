@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { X, Loader2, Trash2 } from "lucide-react"
+import { todayBR } from "@/lib/tz"
 
 type Variant = {
   variantId: string
@@ -37,6 +38,11 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
 
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState("")
+
+  // Produto ou DTF — mesmo modal, abas separadas (DTF entra sempre como triagem
+  // virgem, igual ao pedido criado automaticamente quando o cliente manda arquivo
+  // solto no chat; metros/largura/arte são preenchidos depois, no card do pedido)
+  const [tab, setTab] = useState<"produto" | "dtf">("produto")
 
   useEffect(() => {
     fetch("/api/stock/balance")
@@ -124,6 +130,34 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
     }
   }
 
+  async function handleSubmitDtf() {
+    setSaving(true)
+    setError("")
+    try {
+      const res = await fetch("/api/dtf/pedidos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contactId,
+          data: todayBR(),
+          status: "triagem",
+          source: "manual",
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setError(d.error ?? "Erro ao criar pedido DTF")
+        return
+      }
+      onCreated()
+      onClose()
+    } catch {
+      setError("Erro de conexão")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
@@ -134,8 +168,32 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40"><X size={16} /></button>
           </div>
 
+          <div className="flex gap-1 px-5 pt-3 flex-shrink-0">
+            <button type="button" onClick={() => setTab("produto")}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-colors ${
+                tab === "produto" ? "bg-[#4361EE]/12 text-[#3451D4]" : "text-[#0F1E3C]/35 hover:bg-[#0F1E3C]/4"
+              }`}>
+              Produto
+            </button>
+            <button type="button" onClick={() => setTab("dtf")}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-colors ${
+                tab === "dtf" ? "bg-[#7C3AED]/12 text-[#6B2FD1]" : "text-[#0F1E3C]/35 hover:bg-[#0F1E3C]/4"
+              }`}>
+              DTF
+            </button>
+          </div>
+
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {loading ? (
+            {tab === "dtf" ? (
+              <>
+                <p className="text-xs text-[#0F1E3C]/50 leading-relaxed">
+                  Cria um pedido DTF novo em <span className="font-bold text-[#0F1E3C]">triagem</span>, sem metros,
+                  largura ou arte ainda — igual ao pedido virgem criado quando o cliente manda um arquivo solto no
+                  chat. Metros, largura e a arte são preenchidos depois, direto no card do pedido.
+                </p>
+                {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+              </>
+            ) : loading ? (
               <div className="flex items-center justify-center py-10">
                 <Loader2 size={20} className="animate-spin text-[#0F1E3C]/30" />
               </div>
@@ -216,10 +274,13 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
             <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">
               Cancelar
             </button>
-            <button onClick={handleSubmit} disabled={items.length === 0 || saving}
-              className="flex-1 flex items-center justify-center gap-2 bg-[#4361EE] hover:bg-[#3451D4] text-white rounded-xl py-2.5 text-sm font-bold disabled:opacity-40 transition-colors">
+            <button onClick={tab === "dtf" ? handleSubmitDtf : handleSubmit}
+              disabled={saving || (tab === "produto" && items.length === 0)}
+              className={`flex-1 flex items-center justify-center gap-2 text-white rounded-xl py-2.5 text-sm font-bold disabled:opacity-40 transition-colors ${
+                tab === "dtf" ? "bg-[#7C3AED] hover:bg-[#6B2FD1]" : "bg-[#4361EE] hover:bg-[#3451D4]"
+              }`}>
               {saving && <Loader2 size={14} className="animate-spin" />}
-              Criar Pedido
+              {tab === "dtf" ? "Criar Pedido DTF" : "Criar Pedido"}
             </button>
           </div>
         </div>
