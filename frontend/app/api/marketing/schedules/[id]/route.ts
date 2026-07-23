@@ -34,6 +34,16 @@ export async function PATCH(
     if (body.audienceLifecycle !== undefined)  set("audience_lifecycle", body.audienceLifecycle)
     if (body.audienceGroupJids !== undefined)  set("audience_group_jids", body.audienceGroupJids)
 
+    // Mesma trava da criação: se o horário está sendo alterado pra um que já
+    // passou hoje, marca como "já executado hoje" pra não disparar na hora
+    // de salvar a edição — só entra em vigor na próxima ocorrência.
+    if (body.timeOfDay !== undefined) {
+      const nowBR = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(new Date())
+      if (body.timeOfDay.slice(0, 5) <= nowBR) set("last_executed_at", new Date())
+    }
+
     if (sets.length === 0) return NextResponse.json({ error: "Nada para atualizar" }, { status: 400 })
 
     vals.push(id)

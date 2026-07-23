@@ -700,12 +700,13 @@ function CampaignModal({ campaign, onClose, onCancel }: {
 
 // ─── Schedule Card ────────────────────────────────────────────────────────────
 
-function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick }: {
+function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick, onEdit }: {
   schedule: Schedule
   groups: Group[]
   onToggle: () => void
   onDelete: () => void
   onClick: () => void
+  onEdit: () => void
 }) {
   const [deleting, setDeleting] = useState(false)
 
@@ -770,6 +771,13 @@ function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick }: {
         </div>
 
         <button
+          onClick={e => { e.stopPropagation(); onEdit() }}
+          className="p-1.5 rounded-lg hover:bg-[#4361EE]/8 text-[#0F1E3C]/25 hover:text-[#4361EE] transition-colors flex-shrink-0"
+          title="Editar programação"
+        >
+          <Pencil size={13} />
+        </button>
+        <button
           onClick={handleDelete}
           disabled={deleting}
           className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400 transition-colors flex-shrink-0 disabled:opacity-40"
@@ -783,10 +791,11 @@ function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick }: {
 
 // ─── Schedule Modal ───────────────────────────────────────────────────────────
 
-function ScheduleModal({ schedule, groups, stats, onClose, onToggle, onRefresh }: {
+function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle, onRefresh }: {
   schedule: Schedule
   groups: Group[]
   stats: Stats | null
+  startInEdit?: boolean
   onClose: () => void
   onToggle: () => void
   onRefresh: () => void
@@ -801,8 +810,12 @@ function ScheduleModal({ schedule, groups, stats, onClose, onToggle, onRefresh }
   const [addingItem, setAddingItem] = useState(false)
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
 
-  // Editar nome/dias/horário/audiência sem apagar e recriar a programação
-  const [editingMeta,   setEditingMeta]   = useState(false)
+  // Editar nome/dias/horário/audiência sem apagar e recriar a programação.
+  // startInEdit já abre direto aqui (botão de editar veio da listagem, sem
+  // precisar clicar de novo dentro do modal) — os campos abaixo já nascem
+  // com o valor atual da programação, então não precisa de nenhum efeito
+  // pra "resetar" nada na abertura.
+  const [editingMeta,   setEditingMeta]   = useState(!!startInEdit)
   const [editName,      setEditName]      = useState(schedule.name)
   const [editDays,      setEditDays]      = useState<number[]>(schedule.daysOfWeek)
   const [editTime,      setEditTime]      = useState(schedule.timeOfDay.slice(0, 5))
@@ -1904,6 +1917,7 @@ export default function MarketingPage() {
   const [createDrawer,     setCreateDrawer]    = useState(false)
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
+  const [scheduleEditIntent, setScheduleEditIntent] = useState(false)
 
   const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollingIdRef = useRef<number | null>(null)
@@ -2165,7 +2179,8 @@ export default function MarketingPage() {
                         groups={groups}
                         onToggle={() => toggleSchedule(s)}
                         onDelete={loadAll}
-                        onClick={() => setSelectedSchedule(s)}
+                        onClick={() => { setScheduleEditIntent(false); setSelectedSchedule(s) }}
+                        onEdit={() => { setScheduleEditIntent(true); setSelectedSchedule(s) }}
                       />
                     ))}
                   </div>
@@ -2205,7 +2220,8 @@ export default function MarketingPage() {
           schedule={selectedSchedule}
           groups={groups}
           stats={stats}
-          onClose={() => setSelectedSchedule(null)}
+          startInEdit={scheduleEditIntent}
+          onClose={() => { setSelectedSchedule(null); setScheduleEditIntent(false) }}
           onToggle={() => toggleSchedule(selectedSchedule)}
           onRefresh={loadAll}
         />

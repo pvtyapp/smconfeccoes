@@ -44,10 +44,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "name e timeOfDay obrigatórios" }, { status: 400 })
     }
 
+    // O cron considera a programação "atrasada" (dispara na próxima passada,
+    // até 5min) quando time_of_day já passou hoje e ela nunca rodou ainda.
+    // Sem isso, criar uma programação às 17h pro horário 09h disparava na
+    // hora — em vez de só valer a partir do próximo dia configurado. Se o
+    // horário escolhido ainda não chegou hoje, deixa null mesmo, pra poder
+    // disparar hoje na hora certa.
+    const nowBR = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(new Date())
+    const alreadyPassedToday = timeOfDay.slice(0, 5) <= nowBR
+
     const { rows } = await pool.query(`
       INSERT INTO marketing_schedules
-        (name, days_of_week, time_of_day, audience_type, audience_lifecycle, audience_group_jids)
-      VALUES ($1,$2,$3,$4,$5,$6)
+        (name, days_of_week, time_of_day, audience_type, audience_lifecycle, audience_group_jids, last_executed_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
       RETURNING id
     `, [
       name,
@@ -56,6 +67,7 @@ export async function POST(req: Request) {
       audienceType ?? "groups",
       audienceLifecycle ?? null,
       audienceGroupJids ?? [],
+      alreadyPassedToday ? new Date() : null,
     ])
 
     return NextResponse.json({ id: rows[0].id })
