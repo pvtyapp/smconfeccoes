@@ -1,10 +1,14 @@
 import { pool } from "@/lib/db"
-import { campaignSend } from "@/lib/whatsapp/campaignSend"
+import { campaignSend, EvolutionDisconnectedError } from "@/lib/whatsapp/campaignSend"
 
 type Recipient = { jid: string; id?: number; name: string; isGroup?: boolean }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s, evita padrão previsível
+const randDelayGroup  = () => sleep(3000 + Math.random() * 5000)   // 3-8s, grupo — risco baixo, ritmo de sempre
+const randDelayClient = () => sleep(8000 + Math.random() * 12000)  // 8-20s, cliente individual — mais devagar
+
+const BATCH_SIZE     = 30
+const BATCH_COOLDOWN_MS = 5 * 60 * 1000
 
 // Processa até maxMessages destinatários de uma campanha "sending", um de cada vez, com
 // trava atômica (só avança se sent_count bater exato) — chamada por /api/marketing/tick
@@ -12,6 +16,13 @@ const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s, evita padr
 // e /api/whatsapp/cron (maxMessages=8, sem campaignId — pega a mais antiga em fila).
 // Antes existiam 2 cópias divergentes dessa lógica sem essa trava, que podiam mandar a
 // mesma mensagem duas vezes se rodassem ao mesmo tempo.
+//
+// Destinatário individual (cliente) manda pela instância isolada de marketing; grupo
+// continua na instância principal, como sempre. Se content_variants existir (texto
+// reescrito por IA), cada destinatário pega uma variação em rodízio em vez do texto
+// único. A cada 30 clientes processados entra uma pausa de 5min (pause_reason=
+// 'batch_cooldown'); se a Evolution reportar desconectada, pausa também
+// (pause_reason='disconnected') e só volta com ação manual do operador.
 export async function processCampaignBatch(
   maxMessages: number,
   campaignId?: number
@@ -19,14 +30,20 @@ export async function processCampaignBatch(
   let processed = 0
   let errors = 0
 
+  await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS content_variants JSONB`).catch(() => {})
+  await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS paused_until TIMESTAMPTZ`).catch(() => {})
+  await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS pause_reason TEXT`).catch(() => {})
+
   for (let i = 0; i < maxMessages; i++) {
     const { rows } = campaignId
       ? await pool.query(`
-          SELECT id, content, media_url, recipients_json, sent_count, total_count
+          SELECT id, content, media_url, recipients_json, sent_count, total_count,
+                 content_variants, paused_until, pause_reason
           FROM marketing_campaigns WHERE id = $1 AND status = 'sending'
         `, [campaignId])
       : await pool.query(`
-          SELECT id, content, media_url, recipients_json, sent_count, total_count
+          SELECT id, content, media_url, recipients_json, sent_count, total_count,
+                 content_variants, paused_until, pause_reason
           FROM marketing_campaigns
           WHERE status = 'sending'
           ORDER BY created_at ASC
@@ -34,6 +51,16 @@ export async function processCampaignBatch(
         `)
     const camp = rows[0]
     if (!camp) break
+
+    if (camp.pause_reason === "disconnected") break
+
+    if (camp.pause_reason === "batch_cooldown") {
+      if (camp.paused_until && new Date(camp.paused_until as string) > new Date()) break
+      await pool.query(
+        `UPDATE marketing_campaigns SET pause_reason = NULL, paused_until = NULL WHERE id = $1`,
+        [camp.id]
+      )
+    }
 
     if (!camp.recipients_json) {
       await pool.query(`UPDATE marketing_campaigns SET status = 'sent', executed_at = NOW() WHERE id = $1`, [camp.id])
@@ -58,7 +85,10 @@ export async function processCampaignBatch(
 
     const recipient = recipients[idx]
     const mediaUrl = camp.media_url as string | null
+    const variants = camp.content_variants as string[] | null
+    const instance: "main" | "marketing" = recipient.isGroup ? "main" : "marketing"
     let hasError = false
+    let disconnected = false
     let skipped = false
 
     let sendJid = recipient.jid as string
@@ -83,16 +113,20 @@ export async function processCampaignBatch(
     if (!skipped) {
       try {
         const firstName = ((recipient.name as string | null) ?? "").split(" ")[0]
+        const baseContent = (!recipient.isGroup && variants && variants.length > 0)
+          ? variants[idx % variants.length]
+          : (camp.content as string)
         const msg = recipient.isGroup
-          ? (camp.content as string)
-          : (camp.content as string).replace(/\{nome\}/g, firstName)
+          ? baseContent
+          : baseContent.replace(/\{nome\}/g, firstName)
 
         let msgId: string | null = null
         try {
-          msgId = await campaignSend(sendJid, msg, mediaUrl)
+          msgId = await campaignSend(sendJid, msg, mediaUrl, instance)
         } catch (mediaErr) {
+          if (mediaErr instanceof EvolutionDisconnectedError) throw mediaErr
           console.error("[processCampaignBatch] sendMedia falhou para", sendJid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
-          if (mediaUrl) msgId = await campaignSend(recipient.jid, msg, null)
+          if (mediaUrl) msgId = await campaignSend(recipient.jid, msg, null, instance)
           else throw mediaErr
         }
 
@@ -107,6 +141,7 @@ export async function processCampaignBatch(
         }
         processed++
       } catch (e) {
+        if (e instanceof EvolutionDisconnectedError) disconnected = true
         console.error("[processCampaignBatch] erro final no recipient", recipient.jid, "—", e instanceof Error ? e.message : e)
         hasError = true
         errors++
@@ -124,8 +159,26 @@ export async function processCampaignBatch(
       [hasError ? 1 : 0, isDone, camp.id]
     )
 
+    if (disconnected) {
+      await pool.query(
+        `UPDATE marketing_campaigns SET pause_reason = 'disconnected' WHERE id = $1`,
+        [camp.id]
+      )
+      break
+    }
+
     if (isDone) break
-    if (maxMessages > 1 && i < maxMessages - 1) await randDelay()
+
+    if (!recipient.isGroup && newCount % BATCH_SIZE === 0) {
+      const pausedUntil = new Date(Date.now() + BATCH_COOLDOWN_MS)
+      await pool.query(
+        `UPDATE marketing_campaigns SET pause_reason = 'batch_cooldown', paused_until = $1 WHERE id = $2`,
+        [pausedUntil, camp.id]
+      )
+      break
+    }
+
+    if (maxMessages > 1 && i < maxMessages - 1) await (recipient.isGroup ? randDelayGroup() : randDelayClient())
   }
 
   return { processed, errors }

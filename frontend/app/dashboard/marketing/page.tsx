@@ -31,6 +31,9 @@ type Campaign = {
   totalCount: number
   executedAt: string | null
   createdAt: string
+  contentVariants: string[] | null
+  pauseReason: string | null
+  pausedUntil: string | null
 }
 
 type Schedule = {
@@ -103,8 +106,9 @@ const STATE_META: Record<string, { label: string; color: string; bg: string }> =
 }
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
-  scheduled: { label: "Agendado",  cls: "bg-amber-100 text-amber-700" },
-  sending:   { label: "Enviando",  cls: "bg-blue-100 text-blue-700"   },
+  scheduled:  { label: "Agendado",   cls: "bg-amber-100 text-amber-700" },
+  generating: { label: "Preparando", cls: "bg-purple-100 text-purple-700" },
+  sending:    { label: "Enviando",   cls: "bg-blue-100 text-blue-700"   },
   sent:      { label: "Enviado",   cls: "bg-emerald-100 text-emerald-700" },
   failed:    { label: "Falhou",    cls: "bg-red-100 text-red-700"     },
   cancelled: { label: "Cancelado", cls: "bg-slate-100 text-slate-500" },
@@ -200,6 +204,7 @@ function ImageUpload({
 function AudiencePicker({
   audienceType, lifecycle, groupJids, groups,
   onType, onLifecycle, onGroups, stats,
+  includeColdNew, onIncludeColdNew,
 }: {
   audienceType: string
   lifecycle: string
@@ -209,6 +214,8 @@ function AudiencePicker({
   onLifecycle: (v: string) => void
   onGroups: (v: string[]) => void
   stats: Stats | null
+  includeColdNew?: boolean
+  onIncludeColdNew?: (v: boolean) => void
 }) {
   function toggleGroup(jid: string) {
     onGroups(groupJids.includes(jid)
@@ -216,11 +223,17 @@ function AudiencePicker({
       : [...groupJids, jid])
   }
 
+  const coldCount = stats
+    ? Number(stats.byState.find(s => s.state === "frio")?.total ?? 0)
+      + Number(stats.byState.find(s => s.state === "new")?.total ?? 0)
+    : 0
+
   const reach = (() => {
     if (!stats) return 0
     if (audienceType === "groups") return groupJids.length
-    const base = lifecycle === "all" ? stats.total
+    let base = lifecycle === "all" ? stats.total
       : Number(stats.byState.find(s => s.state === lifecycle)?.total ?? 0)
+    if (lifecycle === "all" && !includeColdNew && onIncludeColdNew) base -= coldCount
     if (audienceType === "mixed") return base + groupJids.length
     return base
   })()
@@ -259,6 +272,21 @@ function AudiencePicker({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+      )}
+
+      {(audienceType === "lifecycle" || audienceType === "mixed") && lifecycle === "all" && onIncludeColdNew && (
+        <label className="flex items-center gap-2 cursor-pointer px-1">
+          <input
+            type="checkbox"
+            checked={!!includeColdNew}
+            onChange={e => onIncludeColdNew(e.target.checked)}
+            className="rounded"
+          />
+          <span className="text-xs text-[#0F1E3C]/60">
+            Incluir clientes <strong className="font-semibold">frios</strong> e <strong className="font-semibold">novos sem pedido</strong>
+            {coldCount > 0 && <span className="text-[#0F1E3C]/35"> ({coldCount})</span>}
+          </span>
+        </label>
       )}
 
       {(audienceType === "groups" || audienceType === "mixed") && (
@@ -348,6 +376,7 @@ function UnifiedDrawer({
   const [audienceType, setAudienceType] = useState("lifecycle")
   const [lifecycle,    setLifecycle]    = useState("all")
   const [groupJids,    setGroupJids]    = useState<string[]>([])
+  const [includeColdNew, setIncludeColdNew] = useState(false)
   const [daysOfWeek,   setDaysOfWeek]   = useState<number[]>([])
   const [sendMode,     setSendMode]     = useState<"now" | "schedule">("now")
   const [schedDate,    setSchedDate]    = useState("")
@@ -360,7 +389,7 @@ function UnifiedDrawer({
 
   function reset() {
     setTitle(""); setContent(""); setMediaUrl(null)
-    setAudienceType("lifecycle"); setLifecycle("all"); setGroupJids([])
+    setAudienceType("lifecycle"); setLifecycle("all"); setGroupJids([]); setIncludeColdNew(false)
     setDaysOfWeek([]); setSendMode("now"); setSchedDate(""); setSchedTime("08:00")
     setSaving(false); setError(null)
   }
@@ -419,6 +448,7 @@ function UnifiedDrawer({
           audienceLifecycle: audienceType !== "groups" ? lifecycle : null,
           audienceGroupJids: groupJids,
           scheduledAt,
+          includeColdNew,
         }),
       })
       if (r.ok) {
@@ -492,6 +522,7 @@ function UnifiedDrawer({
             audienceType={audienceType} lifecycle={lifecycle}
             groupJids={groupJids} groups={groups} stats={stats}
             onType={setAudienceType} onLifecycle={setLifecycle} onGroups={setGroupJids}
+            includeColdNew={includeColdNew} onIncludeColdNew={setIncludeColdNew}
           />
 
           {/* Quando enviar */}
@@ -594,7 +625,7 @@ function CampaignModal({ campaign, onClose, onCancel }: {
 }) {
   const [cancelling, setCancelling] = useState(false)
   const sm = STATUS_META[campaign.status] ?? { label: campaign.status, cls: "bg-slate-100 text-slate-500" }
-  const isCancellable = campaign.status === "scheduled" || campaign.status === "sending"
+  const isCancellable = campaign.status === "scheduled" || campaign.status === "sending" || campaign.status === "generating"
 
   const statusLabel = (() => {
     if (campaign.status === "cancelled" && campaign.executedAt) {
@@ -644,7 +675,16 @@ function CampaignModal({ campaign, onClose, onCancel }: {
             )}
 
             <div>
-              <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-1.5">Mensagem</p>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">
+                  Mensagem {campaign.status === "generating" ? "(referência)" : ""}
+                </p>
+                {campaign.contentVariants && campaign.contentVariants.length > 0 && (
+                  <span className="text-[9px] font-bold text-[#7C3AED] bg-[#7C3AED]/8 px-2 py-0.5 rounded-full">
+                    {campaign.contentVariants.length} versões geradas por IA
+                  </span>
+                )}
+              </div>
               <div className="bg-[#F4F6FB] rounded-xl px-4 py-3">
                 <p className="text-sm text-[#0F1E3C] whitespace-pre-wrap">{campaign.content}</p>
               </div>
@@ -695,6 +735,146 @@ function CampaignModal({ campaign, onClose, onCancel }: {
         </div>
       </div>
     </>
+  )
+}
+
+// ─── Monitor de Envio (marketing isolado) ─────────────────────────────────────
+
+type MonitorData = {
+  campaign: {
+    id: number; title: string; content: string
+    sentCount: number; errorCount: number; totalCount: number
+    status: string; contentVariants: string[] | null
+    pauseReason: string | null; pausedUntil: string | null
+  } | null
+  instanceState: "connected" | "disconnected" | "not_configured"
+}
+
+function MarketingMonitor() {
+  const [data, setData] = useState<MonitorData | null>(null)
+  const [resuming, setResuming] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/marketing/monitor")
+      if (r.ok) setData(await r.json())
+    } catch { /* tenta de novo no próximo poll */ }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 10_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  async function resume() {
+    if (!data?.campaign) return
+    setResuming(true)
+    await fetch(`/api/marketing/campaigns/${data.campaign.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "resume" }),
+    })
+    await load()
+    setResuming(false)
+  }
+
+  if (!data) return null
+  const { campaign, instanceState } = data
+
+  // Sem campanha ativa e tudo certo — nada pra mostrar
+  if (!campaign && instanceState !== "disconnected" && instanceState !== "not_configured") return null
+
+  const isGenerating = campaign?.status === "generating"
+  const isPausedCooldown = campaign?.pauseReason === "batch_cooldown"
+  const isPausedDown = campaign?.pauseReason === "disconnected"
+  const pill = isPausedDown ? { label: "Caído", cls: "bg-red-50 text-red-600 border-red-200" }
+    : isPausedCooldown ? { label: "Em pausa", cls: "bg-amber-50 text-amber-600 border-amber-200" }
+    : isGenerating ? { label: "Preparando", cls: "bg-emerald-50 text-emerald-600 border-emerald-200" }
+    : campaign ? { label: "Conectado", cls: "bg-emerald-50 text-emerald-600 border-emerald-200" }
+    : instanceState === "not_configured" ? { label: "Não configurado", cls: "bg-slate-100 text-slate-500 border-slate-200" }
+    : { label: "Caído", cls: "bg-red-50 text-red-600 border-red-200" }
+
+  const pct = campaign && campaign.totalCount > 0 ? Math.min(100, (campaign.sentCount / campaign.totalCount) * 100) : 0
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden mb-4">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6">
+        <p className="text-xs font-bold text-[#0F1E3C]">Monitor de Envio — Marketing</p>
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${pill.cls}`}>{pill.label}</span>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {instanceState === "not_configured" && !campaign && (
+          <p className="text-xs text-[#0F1E3C]/40">
+            Número de marketing ainda não conectado — escaneie o QR na instância <code className="bg-[#F4F6FB] px-1 rounded">smconfeccoes-marketing</code> pra ativar o isolamento.
+          </p>
+        )}
+
+        {isPausedDown && (
+          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+            <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-xs text-red-700"><strong>Número de marketing caiu.</strong> Envio pausado pra não arriscar mais.</p>
+              <p className="text-[10px] text-red-500/70 mt-0.5">
+                {campaign?.sentCount ?? 0} de {campaign?.totalCount ?? 0} já enviados até aqui.
+              </p>
+              <button onClick={resume} disabled={resuming}
+                className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 disabled:opacity-50 transition-colors">
+                {resuming ? <Loader2 size={11} className="animate-spin" /> : null}
+                Já reconectei, retomar envio
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isPausedCooldown && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+            <Clock size={14} className="text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs text-amber-700"><strong>Pausa programada anti-spam.</strong> 30 mensagens enviadas — respirando antes de continuar.</p>
+              {campaign?.pausedUntil && (
+                <p className="text-[10px] text-amber-600/70 mt-0.5">
+                  Retoma sozinho às {new Date(campaign.pausedUntil).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} — não precisa fazer nada.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {campaign && isGenerating && (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs font-semibold text-[#0F1E3C]">Gerando variações com IA</p>
+            </div>
+            <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
+              <div className="h-full rounded-full bg-gradient-to-r from-[#7C3AED] to-[#4361EE] animate-pulse" style={{ width: "60%" }} />
+            </div>
+            <p className="text-[10px] text-[#0F1E3C]/35 mt-1.5">Preparando textos diferentes pra {campaign.totalCount} clientes — a fila começa sozinha quando terminar.</p>
+          </div>
+        )}
+
+        {campaign && !isGenerating && (
+          <div>
+            <div className="flex items-baseline justify-between mb-1.5">
+              <p className="text-xs font-semibold text-[#0F1E3C] truncate max-w-[70%]">{campaign.title || "Campanha"}</p>
+              <span className="text-[10px] text-[#0F1E3C]/40 font-mono">{campaign.sentCount} / {campaign.totalCount}</span>
+            </div>
+            <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${isPausedDown || isPausedCooldown ? "bg-[#0F1E3C]/20" : "bg-gradient-to-r from-[#4361EE] to-[#7C3AED]"}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[#0F1E3C]/40">
+              <span>Enviados: <b className="text-[#0F1E3C]">{campaign.sentCount}</b></span>
+              <span>Erros: <b className={campaign.errorCount > 0 ? "text-red-500" : "text-[#0F1E3C]"}>{campaign.errorCount}</b></span>
+              {!isPausedDown && !isPausedCooldown && <span>Ritmo: 8-20s, pausa de 5min a cada 30</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1950,10 +2130,10 @@ export default function MarketingPage() {
         body: JSON.stringify({ campaignId }),
       })
       if (!r.ok) return
-      const d = await r.json() as { done: boolean; sentCount: number; totalCount: number }
+      const d = await r.json() as { done: boolean; status: string; sentCount: number; totalCount: number; pauseReason: string | null }
       setCampaigns(prev => prev.map(c =>
         c.id === campaignId
-          ? { ...c, sentCount: d.sentCount, totalCount: d.totalCount, status: d.done ? "sent" : "sending" }
+          ? { ...c, sentCount: d.sentCount, totalCount: d.totalCount, status: d.status }
           : c
       ))
       if (d.done) stopPolling()
@@ -1968,9 +2148,9 @@ export default function MarketingPage() {
   }
 
   useEffect(() => {
-    const sending = campaigns.find(c => c.status === "sending")
-    if (sending && pollingIdRef.current !== sending.id) startPolling(sending.id)
-    else if (!sending && pollingIdRef.current !== null) stopPolling()
+    const active = campaigns.find(c => c.status === "sending" || c.status === "generating")
+    if (active && pollingIdRef.current !== active.id) startPolling(active.id)
+    else if (!active && pollingIdRef.current !== null) stopPolling()
   }, [campaigns])
 
   useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
@@ -2135,6 +2315,8 @@ export default function MarketingPage() {
               <Plus size={13} /> Criar
             </button>
           </div>
+
+          <MarketingMonitor />
 
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>

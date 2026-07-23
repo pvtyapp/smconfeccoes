@@ -1,17 +1,29 @@
-const EVO_URL  = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY  = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INST = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+const EVO_URL      = (process.env.EVOLUTION_API_URL           ?? "").trim().replace(/\/+$/, "")
+const EVO_KEY       = (process.env.EVOLUTION_API_KEY            ?? "").trim()
+const EVO_INST_MAIN = (process.env.EVOLUTION_INSTANCE           ?? "").trim()
+const EVO_INST_MKT  = (process.env.EVOLUTION_INSTANCE_MARKETING ?? "").trim()
 
-async function assertEvolutionOpen(): Promise<void> {
-  const res = await fetch(`${EVO_URL}/instance/connectionState/${EVO_INST}`, {
+// Erro específico de conexão caída — quem chama precisa diferenciar isso de
+// um erro normal de envio (ex: número inválido), pra pausar a campanha em vez
+// de só contar como "+1 erro" e seguir tentando os próximos contra um número
+// já desconectado.
+export class EvolutionDisconnectedError extends Error {
+  constructor(state: string) {
+    super(`WhatsApp desconectado (state=${state}) — envio pausado`)
+    this.name = "EvolutionDisconnectedError"
+  }
+}
+
+async function assertEvolutionOpen(instance: string): Promise<void> {
+  const res = await fetch(`${EVO_URL}/instance/connectionState/${instance}`, {
     headers: { apikey: EVO_KEY },
     signal: AbortSignal.timeout(4_000),
   })
-  if (!res.ok) throw new Error(`Evolution status check falhou (${res.status})`)
+  if (!res.ok) throw new EvolutionDisconnectedError(`http_${res.status}`)
   const data = await res.json() as { instance?: { state?: string }; state?: string }
   const state = data?.instance?.state ?? data?.state
   if (state !== "open") {
-    throw new Error(`WhatsApp desconectado (state=${state ?? "unknown"}) — campanha pausada`)
+    throw new EvolutionDisconnectedError(state ?? "unknown")
   }
 }
 
@@ -19,12 +31,20 @@ async function assertEvolutionOpen(): Promise<void> {
 // Retorna o message_id real da Evolution — necessário pra gravar em wa_messages
 // com o mesmo dedupe (ON CONFLICT message_id) usado pelo resto do sistema;
 // sem isso, qualquer sync/reconcile recria a mesma mensagem de campanha.
+//
+// instance: qual número da Evolution usa pra mandar. Default é o principal
+// (grupos, comportamento de sempre). Cliente individual de campanha usa o
+// número isolado de marketing (EVOLUTION_INSTANCE_MARKETING) quando
+// configurado — cai pro principal se ainda não tiver sido linkado, pra não
+// travar o sistema no meio da migração.
 export async function campaignSend(
   jid: string,
   content: string,
-  mediaUrl?: string | null
+  mediaUrl?: string | null,
+  instance: "main" | "marketing" = "main"
 ): Promise<string | null> {
-  await assertEvolutionOpen()
+  const EVO_INST = instance === "marketing" && EVO_INST_MKT ? EVO_INST_MKT : EVO_INST_MAIN
+  await assertEvolutionOpen(EVO_INST)
 
   const bareNumber = jid
     .replace("@s.whatsapp.net", "")
