@@ -69,17 +69,21 @@ type Relatorio = {
   topClientes: TopCliente[]
 }
 
-type PeriodoKey = "7d" | "30d" | "90d" | "tudo"
+type PeriodoKey = "hoje" | "7d" | "30d" | "90d" | "tudo"
 
 const PERIODOS: { key: PeriodoKey; label: string }[] = [
+  { key: "hoje", label: "Hoje"    },
   { key: "7d",   label: "7 dias"  },
   { key: "30d",  label: "30 dias" },
   { key: "90d",  label: "90 dias" },
   { key: "tudo", label: "Tudo"    },
 ]
 
+const PEDIDOS_PAGE_SIZE = 20
+
 function calcRange(key: PeriodoKey): { from: string; to: string } | null {
   if (key === "tudo") return null
+  if (key === "hoje") return { from: todayBR(), to: todayBR() }
   const days = key === "7d" ? 7 : key === "30d" ? 30 : 90
   return { from: subDaysBR(days - 1), to: todayBR() }
 }
@@ -110,9 +114,11 @@ export default function DTFRelatorioPage() {
   const [periodo, setPeriodo] = useState<PeriodoKey>("30d")
   const [data, setData]       = useState<Relatorio | null>(null)
   const [loading, setLoading] = useState(true)
+  const [pedidosPage, setPedidosPage] = useState(1)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setPedidosPage(1)
     const range = calcRange(periodo)
     const qs = range ? `?from=${range.from}&to=${range.to}` : ""
     const r = await fetch(`/api/dtf/relatorio${qs}`)
@@ -419,44 +425,74 @@ export default function DTFRelatorioPage() {
           )}
 
           {/* ── Pedidos do período ── */}
-          {data.pedidos.length > 0 && (
-            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-50">
-                <BarChart2 size={16} className="text-[#4361EE]" />
-                <span className="font-semibold text-sm text-[#0F1E3C]">Pedidos no Período</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
-                      <th className="px-5 py-3 text-left">Data</th>
-                      <th className="px-5 py-3 text-left">Cliente</th>
-                      <th className="px-5 py-3 text-right">Metros</th>
-                      <th className="px-5 py-3 text-right">Preço cobrado</th>
-                      <th className="px-5 py-3 text-right">Preço/m</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {data.pedidos.map(p => {
-                      const metros = Number(p.metrosFinais ?? p.metros ?? 0)
-                      const preco  = p.precoCobrado != null ? Number(p.precoCobrado) : null
-                      const precoM = preco != null && metros > 0 ? preco / metros : null
+          {data.pedidos.length > 0 && (() => {
+            const totalPaginas = Math.max(1, Math.ceil(data.pedidos.length / PEDIDOS_PAGE_SIZE))
+            const paginaAtual  = Math.min(pedidosPage, totalPaginas)
+            const inicio       = (paginaAtual - 1) * PEDIDOS_PAGE_SIZE
+            const pedidosPagina = data.pedidos.slice(inicio, inicio + PEDIDOS_PAGE_SIZE)
 
-                      return (
-                        <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
-                          <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
-                          <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
-                          <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
-                          <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
-                          <td className="px-5 py-3 text-right text-xs font-mono text-gray-500">{fmtCpm(precoM)}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+            return (
+              <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between gap-2 px-5 py-4 border-b border-gray-50">
+                  <div className="flex items-center gap-2">
+                    <BarChart2 size={16} className="text-[#4361EE]" />
+                    <span className="font-semibold text-sm text-[#0F1E3C]">Pedidos no Período</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400">{data.pedidos.length} pedido{data.pedidos.length !== 1 ? "s" : ""}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
+                        <th className="px-5 py-3 text-left">Data</th>
+                        <th className="px-5 py-3 text-left">Cliente</th>
+                        <th className="px-5 py-3 text-right">Metros</th>
+                        <th className="px-5 py-3 text-right">Preço cobrado</th>
+                        <th className="px-5 py-3 text-right">Preço/m</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {pedidosPagina.map(p => {
+                        const metros = Number(p.metrosFinais ?? p.metros ?? 0)
+                        const preco  = p.precoCobrado != null ? Number(p.precoCobrado) : null
+                        const precoM = preco != null && metros > 0 ? preco / metros : null
+
+                        return (
+                          <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
+                            <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
+                            <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
+                            <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
+                            <td className="px-5 py-3 text-right text-xs font-mono text-gray-500">{fmtCpm(precoM)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {totalPaginas > 1 && (
+                  <div className="flex items-center justify-between px-5 py-3 border-t border-gray-50">
+                    <button
+                      onClick={() => setPedidosPage(p => Math.max(1, p - 1))}
+                      disabled={paginaAtual === 1}
+                      className="text-xs font-semibold text-[#4361EE] disabled:text-gray-300 disabled:cursor-not-allowed hover:underline"
+                    >
+                      ← Anterior
+                    </button>
+                    <span className="text-xs text-gray-400">Página {paginaAtual} de {totalPaginas}</span>
+                    <button
+                      onClick={() => setPedidosPage(p => Math.min(totalPaginas, p + 1))}
+                      disabled={paginaAtual === totalPaginas}
+                      className="text-xs font-semibold text-[#4361EE] disabled:text-gray-300 disabled:cursor-not-allowed hover:underline"
+                    >
+                      Próxima →
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )
+          })()}
         </>
       )}
     </div>

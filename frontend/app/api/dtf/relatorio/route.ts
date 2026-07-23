@@ -8,17 +8,20 @@ export async function GET(req: Request) {
     const to   = searchParams.get("to")
 
     const dateCond = from && to
-      ? `WHERE status != 'cancelado' AND data BETWEEN $1 AND $2`
-      : `WHERE status != 'cancelado'`
+      ? `WHERE p.status != 'cancelado' AND p.data BETWEEN $1 AND $2`
+      : `WHERE p.status != 'cancelado'`
     const params = from && to ? [from, to] : []
 
-    // Pedidos no período
+    // Pedidos no período — cliente via contact_id (mesmo fallback do Top Clientes,
+    // o campo de texto p.cliente não é mais preenchido por pedido nenhum)
     const { rows: pedidos } = await pool.query(`
-      SELECT id, data, cliente, metros, metros_finais AS "metrosFinais",
-             preco_cobrado AS "precoCobrado", observacao, status
-      FROM dtf_pedidos
+      SELECT p.id, p.data, COALESCE(c.name, p.cliente) AS cliente,
+             p.metros, p.metros_finais AS "metrosFinais",
+             p.preco_cobrado AS "precoCobrado", p.observacao, p.status
+      FROM dtf_pedidos p
+      LEFT JOIN wa_contacts c ON c.id = p.contact_id
       ${dateCond}
-      ORDER BY data DESC, id DESC
+      ORDER BY p.data DESC, p.id DESC
     `, params)
 
     const totalMetros  = pedidos.reduce((s, p) => s + Number(p.metrosFinais ?? p.metros ?? 0), 0)
