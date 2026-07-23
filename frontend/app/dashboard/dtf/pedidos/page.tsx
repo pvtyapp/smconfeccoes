@@ -38,15 +38,19 @@ type PrinterRefil = {
   }>
 }
 
+type FilmPedidoLink = { id: number; number: string; status: string; metros: number }
+
 type FilmBobina = {
   id: number
   impressoraId: number
   tamanhoM: number
   abertaEm: string
   metrosUsados: number
+  metrosReservados: number
   metrosRestantes: number
   pctUsado: number
   obs: string | null
+  pedidos: FilmPedidoLink[]
   historico: Array<{
     id: number; tamanhoM: number; metrosUsados: number; desperdicioM: number
     abertaEm: string; fechadaEm: string
@@ -120,9 +124,13 @@ export default function DTFDashboardPage() {
   const [filmBobinas,    setFilmBobinas]    = useState<FilmBobina[]>([])
   const [filmAlertaM,    setFilmAlertaM]    = useState(80)
   const [filmTamanhoM,   setFilmTamanhoM]   = useState(100)
-  const [filmTrocaImp,   setFilmTrocaImp]   = useState<number | null>(null)
-  const [filmTrocaForm,  setFilmTrocaForm]  = useState({ tamanhoM: "100", obs: "", metrosOverride: "" })
-  const [filmTrocando,   setFilmTrocando]   = useState(false)
+  const [filmTrocaImp,     setFilmTrocaImp]     = useState<number | null>(null)
+  const [filmWizardStep,   setFilmWizardStep]   = useState<1 | 2>(1)
+  const [filmNovaForm,     setFilmNovaForm]     = useState({ tamanhoM: "100", obs: "" })
+  const [filmTemPendente,  setFilmTemPendente]  = useState<boolean | null>(null)
+  const [filmReservas,     setFilmReservas]     = useState<Record<number, string>>({})
+  const [filmTrocando,     setFilmTrocando]     = useState(false)
+  const [filmError,        setFilmError]        = useState("")
   const [filmHistOpen,   setFilmHistOpen]   = useState<number | null>(null)
 
   const [printerRefis,  setPrinterRefis]  = useState<PrinterRefil[]>([])
@@ -196,23 +204,59 @@ export default function DTFDashboardPage() {
     }
   }
 
+  function abrirWizardTroca(impressoraId: number) {
+    setFilmTrocaImp(impressoraId)
+    setFilmWizardStep(1)
+    setFilmNovaForm({ tamanhoM: String(filmTamanhoM), obs: "" })
+    setFilmTemPendente(null)
+    setFilmReservas({})
+    setFilmError("")
+  }
+  function abrirWizardInstalar(impressoraId: number) {
+    setFilmTrocaImp(impressoraId)
+    setFilmWizardStep(2)
+    setFilmNovaForm({ tamanhoM: String(filmTamanhoM), obs: "" })
+    setFilmTemPendente(null)
+    setFilmReservas({})
+    setFilmError("")
+  }
+  function fecharWizardFilm() {
+    setFilmTrocaImp(null)
+  }
+  function toggleReserva(pedidoId: number, metrosPedido: number) {
+    setFilmReservas(prev => {
+      const next = { ...prev }
+      if (pedidoId in next) delete next[pedidoId]
+      else next[pedidoId] = String(metrosPedido)
+      return next
+    })
+  }
+
   async function trocarBobina(impressoraId: number) {
     setFilmTrocando(true)
-    const override = filmTrocaForm.metrosOverride.trim()
-    await fetch("/api/dtf/film-bobinas", {
+    setFilmError("")
+    const reservas = Object.entries(filmReservas)
+      .map(([pedidoId, metros]) => ({ pedidoId: Number(pedidoId), metros: parseFloat(metros) }))
+      .filter(r => !isNaN(r.metros) && r.metros > 0)
+
+    const r = await fetch("/api/dtf/film-bobinas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         impressoraId,
-        tamanhoM: parseFloat(filmTrocaForm.tamanhoM) || 100,
-        obs: filmTrocaForm.obs || null,
-        metrosUsadosOverride: override ? parseFloat(override) : undefined,
+        tamanhoM: parseFloat(filmNovaForm.tamanhoM) || 100,
+        obs: filmNovaForm.obs || null,
+        reservas,
       }),
     })
-    setFilmTrocaImp(null)
-    setFilmTrocaForm({ tamanhoM: "100", obs: "", metrosOverride: "" })
     setFilmTrocando(false)
-    loadFilm()
+    if (r.ok) {
+      fecharWizardFilm()
+      loadFilm()
+    } else {
+      const d = await r.json()
+      setFilmError(d.error ?? "Erro ao salvar")
+    }
   }
 
   return (
@@ -452,7 +496,7 @@ export default function DTFDashboardPage() {
                       )}
                     </div>
                     <button
-                      onClick={() => { setFilmTrocaImp(b.impressoraId); setFilmTrocaForm({ tamanhoM: String(b.tamanhoM), obs: "", metrosOverride: b.metrosUsados.toFixed(2) }) }}
+                      onClick={() => abrirWizardTroca(b.impressoraId)}
                       className="text-[10px] font-bold text-[#7C3AED] hover:underline"
                     >
                       Trocar bobina
@@ -470,6 +514,9 @@ export default function DTFDashboardPage() {
                     <div className="flex items-center justify-between mt-1.5">
                       <span className="text-[11px] font-bold text-[#0F1E3C]">
                         {Number(b.metrosUsados).toFixed(2)} m usados
+                        {b.metrosReservados > 0 && (
+                          <span className="font-normal text-[#7C3AED]"> (+ {Number(b.metrosReservados).toFixed(2)} m reservados)</span>
+                        )}
                       </span>
                       <span className={`text-[11px] font-bold ${isCritical ? "text-red-600" : isAlert ? "text-amber-600" : "text-[#0F1E3C]/50"}`}>
                         {Number(b.metrosRestantes).toFixed(2)} m restantes
@@ -486,17 +533,43 @@ export default function DTFDashboardPage() {
                     </div>
                   </div>
 
-                  {/* Form: Trocar bobina */}
-                  {filmTrocaImp === b.impressoraId && (
-                    <div className="border-t border-[#7C3AED]/15 pt-3 space-y-2">
-                      <p className="text-[10px] font-bold text-[#7C3AED] uppercase tracking-wider">Nova Bobina</p>
+                  {/* Passo 1: Encerrar — sem perguntar nada, só mostra o cálculo */}
+                  {filmTrocaImp === b.impressoraId && filmWizardStep === 1 && (() => {
+                    const desperdicioAtual = Math.max(0, Number(b.tamanhoM) - Number(b.metrosUsados))
+                    return (
+                      <div className="border-t border-[#7C3AED]/15 pt-3 space-y-2.5">
+                        <p className="text-[10px] font-bold text-[#7C3AED] uppercase tracking-wider">Encerrar Bobina</p>
+                        <div className={`rounded-xl px-3 py-2.5 text-xs leading-relaxed ${desperdicioAtual > 0 ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>
+                          Trocar só acontece quando a bobina esgota — o sistema já calcula sozinho pelos pedidos vinculados:{" "}
+                          <strong>{Number(b.metrosUsados).toFixed(2)} m</strong> usados de <strong>{Number(b.tamanhoM).toFixed(2)} m</strong>,{" "}
+                          <strong>{desperdicioAtual.toFixed(2)} m</strong> de desperdício. Nada pra digitar aqui.
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setFilmWizardStep(2)}
+                            className="bg-[#7C3AED] text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-[#6D28D9] transition-colors"
+                          >
+                            Confirmar encerramento →
+                          </button>
+                          <button onClick={fecharWizardFilm} className="text-xs text-[#0F1E3C]/40 hover:text-[#0F1E3C]">
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Passo 2: Abrir bobina nova — pergunta só o que precisa ser perguntado */}
+                  {filmTrocaImp === b.impressoraId && filmWizardStep === 2 && (
+                    <div className="border-t border-[#7C3AED]/15 pt-3 space-y-2.5">
+                      <p className="text-[10px] font-bold text-[#7C3AED] uppercase tracking-wider">Abrir Bobina Nova</p>
                       <div className="flex gap-2">
                         <div className="flex-1">
                           <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Tamanho (m)</label>
                           <input
                             type="number" min="1" step="1"
-                            value={filmTrocaForm.tamanhoM}
-                            onChange={e => setFilmTrocaForm(f => ({ ...f, tamanhoM: e.target.value }))}
+                            value={filmNovaForm.tamanhoM}
+                            onChange={e => setFilmNovaForm(f => ({ ...f, tamanhoM: e.target.value }))}
                             className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
                           />
                         </div>
@@ -504,37 +577,77 @@ export default function DTFDashboardPage() {
                           <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Obs</label>
                           <input
                             type="text" placeholder="Fornecedor, lote..."
-                            value={filmTrocaForm.obs}
-                            onChange={e => setFilmTrocaForm(f => ({ ...f, obs: e.target.value }))}
+                            value={filmNovaForm.obs}
+                            onChange={e => setFilmNovaForm(f => ({ ...f, obs: e.target.value }))}
                             className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
                           />
                         </div>
                       </div>
+
                       <div>
-                        <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">
-                          Metros usados na bobina atual (ajuste manual)
-                        </label>
-                        <input
-                          type="number" min="0" step="0.01"
-                          value={filmTrocaForm.metrosOverride}
-                          onChange={e => setFilmTrocaForm(f => ({ ...f, metrosOverride: e.target.value }))}
-                          className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                        />
-                        <p className="text-[9px] text-[#0F1E3C]/30 mt-1">
-                          Calculado automaticamente pelos pedidos vinculados a essa bobina. Se ela acabou no meio
-                          de um pedido (parte saiu nessa, parte vai sair na próxima), corrija aqui — só afeta o
-                          desperdício mostrado no monitor, nunca entra em relatório financeiro.
+                        <p className="text-[10px] text-[#0F1E3C]/40 mb-1.5">
+                          Tem pedido em andamento que vai puxar metros dessa bobina nova?
                         </p>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setFilmTemPendente(true)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                              filmTemPendente === true ? "bg-[#7C3AED] text-white border-[#7C3AED]" : "bg-white text-[#0F1E3C]/50 border-gray-200"
+                            }`}>
+                            Sim
+                          </button>
+                          <button type="button" onClick={() => { setFilmTemPendente(false); setFilmReservas({}) }}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                              filmTemPendente === false ? "bg-[#7C3AED] text-white border-[#7C3AED]" : "bg-white text-[#0F1E3C]/50 border-gray-200"
+                            }`}>
+                            Não
+                          </button>
+                        </div>
                       </div>
+
+                      {filmTemPendente && (
+                        <div className="space-y-2">
+                          {b.pedidos.filter(p => p.status === "em_producao").length === 0 ? (
+                            <p className="text-[10px] text-[#0F1E3C]/30 italic">Nenhum pedido em produção nesta impressora.</p>
+                          ) : (
+                            b.pedidos.filter(p => p.status === "em_producao").map(p => {
+                              const checked = p.id in filmReservas
+                              return (
+                                <div key={p.id} className={`border rounded-xl px-3 py-2 space-y-1.5 transition-colors ${checked ? "border-[#7C3AED] bg-[#7C3AED]/5" : "border-gray-200"}`}>
+                                  <label className="flex items-center gap-2 text-xs font-semibold text-[#0F1E3C] cursor-pointer">
+                                    <input type="checkbox" checked={checked} onChange={() => toggleReserva(p.id, p.metros)} />
+                                    {p.number}
+                                    <span className="text-[10px] font-normal text-[#0F1E3C]/40 ml-auto">pedido de {Number(p.metros).toFixed(2)} m</span>
+                                  </label>
+                                  {checked && (
+                                    <div className="flex items-center gap-2 pl-6">
+                                      <span className="text-[10px] text-[#0F1E3C]/40">Reservar</span>
+                                      <input type="number" step="0.1" min="0" value={filmReservas[p.id]}
+                                        onChange={e => setFilmReservas(f => ({ ...f, [p.id]: e.target.value }))}
+                                        className="w-20 border border-[#7C3AED]/20 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20" />
+                                      <span className="text-[10px] text-[#0F1E3C]/40">m desta bobina</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })
+                          )}
+                          <p className="text-[9px] text-[#0F1E3C]/30">
+                            Reserva provisória — quando o pedido virar &quot;Pronto&quot;, a metragem final confirmada substitui essa estimativa sozinha.
+                          </p>
+                        </div>
+                      )}
+
+                      {filmError && <p className="text-[10px] text-red-600 bg-red-50 px-3 py-2 rounded-lg">{filmError}</p>}
+
                       <div className="flex gap-2">
                         <button
                           onClick={() => trocarBobina(b.impressoraId)}
                           disabled={filmTrocando}
                           className="bg-[#7C3AED] text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-[#6D28D9] transition-colors disabled:opacity-50"
                         >
-                          {filmTrocando ? "Salvando..." : "Confirmar troca"}
+                          {filmTrocando ? "Salvando..." : "Confirmar abertura"}
                         </button>
-                        <button onClick={() => setFilmTrocaImp(null)} className="text-xs text-[#0F1E3C]/40 hover:text-[#0F1E3C]">
+                        <button onClick={fecharWizardFilm} className="text-xs text-[#0F1E3C]/40 hover:text-[#0F1E3C]">
                           Cancelar
                         </button>
                       </div>
@@ -579,7 +692,7 @@ export default function DTFDashboardPage() {
               {Array.from({ length: numImpressoras }, (_, i) => i + 1)
                 .filter(n => !filmBobinas.some(b => b.impressoraId === n))
                 .map(n => (
-                  <button key={n} onClick={() => { setFilmTrocaImp(n); setFilmTrocaForm({ tamanhoM: "100", obs: "", metrosOverride: "" }) }}
+                  <button key={n} onClick={() => abrirWizardInstalar(n)}
                     className="text-xs font-semibold text-[#7C3AED] border border-[#7C3AED]/30 px-3 py-1.5 rounded-xl hover:bg-[#7C3AED]/5 transition-colors">
                     + Instalar bobina na Impressora {n}
                   </button>
@@ -587,30 +700,31 @@ export default function DTFDashboardPage() {
             </div>
           )}
 
-          {/* Form de instalação para impressoras sem bobina ativa */}
+          {/* Form de instalação para impressoras sem bobina ativa (não tem o que encerrar) */}
           {filmTrocaImp !== null && !filmBobinas.some(b => b.impressoraId === filmTrocaImp) && (
             <div className="bg-white border border-[#7C3AED]/20 rounded-2xl p-4 space-y-3">
               <p className="text-xs font-bold text-[#7C3AED]">Instalar bobina na Impressora {filmTrocaImp}</p>
               <div className="flex gap-3">
                 <div>
                   <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Tamanho (m)</label>
-                  <input type="number" min="1" value={filmTrocaForm.tamanhoM}
-                    onChange={e => setFilmTrocaForm(f => ({ ...f, tamanhoM: e.target.value }))}
+                  <input type="number" min="1" value={filmNovaForm.tamanhoM}
+                    onChange={e => setFilmNovaForm(f => ({ ...f, tamanhoM: e.target.value }))}
                     className="w-24 border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"/>
                 </div>
                 <div className="flex-1">
                   <label className="text-[10px] text-[#0F1E3C]/40 mb-1 block">Obs</label>
-                  <input type="text" placeholder="Fornecedor, lote..." value={filmTrocaForm.obs}
-                    onChange={e => setFilmTrocaForm(f => ({ ...f, obs: e.target.value }))}
+                  <input type="text" placeholder="Fornecedor, lote..." value={filmNovaForm.obs}
+                    onChange={e => setFilmNovaForm(f => ({ ...f, obs: e.target.value }))}
                     className="w-full border border-[#7C3AED]/20 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"/>
                 </div>
               </div>
+              {filmError && <p className="text-[10px] text-red-600 bg-red-50 px-3 py-2 rounded-lg">{filmError}</p>}
               <div className="flex gap-2">
                 <button onClick={() => trocarBobina(filmTrocaImp!)} disabled={filmTrocando}
                   className="bg-[#7C3AED] text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-[#6D28D9] disabled:opacity-50 transition-colors">
                   {filmTrocando ? "Salvando..." : "Instalar"}
                 </button>
-                <button onClick={() => setFilmTrocaImp(null)} className="text-xs text-[#0F1E3C]/40">Cancelar</button>
+                <button onClick={fecharWizardFilm} className="text-xs text-[#0F1E3C]/40">Cancelar</button>
               </div>
             </div>
           )}

@@ -32,7 +32,8 @@ export async function POST(
     const { rows } = await client.query(`
       SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at,
              p.preco_cobrado AS preco_cobrado_db, p.impressora_id,
-             p.film_bobina_id, p.refil_ids,
+             p.film_bobina_id, p.refil_ids, p.metros_bobina_antiga,
+             p.metros_finais AS metros_finais_db, p.metros AS metros_db,
              c.name AS "contactName", COALESCE(c.phone_jid, c.jid) AS jid
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
@@ -56,6 +57,23 @@ export async function POST(
             due_date      = $3
         WHERE id = $4
       `, [metrosFinais ?? null, precoCobrado ?? null, dueDate ?? null, id])
+
+      // Pedido reservado numa troca de bobina (esgotou no meio dele) — "Pronto"
+      // é o momento em que a metragem final é conhecida de verdade, então é
+      // aqui que a reserva provisória vira definitiva. metros_bobina_antiga
+      // já está congelado desde a troca (a bobina antiga já fechou, não muda
+      // mais) — o que sobra da metragem final é o que realmente veio da
+      // bobina nova, ajustando pra mais ou pra menos o que foi reservado.
+      const { rows: reservaRows } = await client.query(`
+        SELECT id FROM dtf_pedido_bobina_uso WHERE pedido_id = $1 AND status = 'reservado'
+      `, [id])
+      if (reservaRows[0] && pedido.metros_bobina_antiga != null) {
+        const metrosFinalTotal = Number(metrosFinais ?? pedido.metros_finais_db ?? pedido.metros_db ?? 0)
+        const metrosNovaFinal = Math.max(0, metrosFinalTotal - Number(pedido.metros_bobina_antiga))
+        await client.query(`
+          UPDATE dtf_pedido_bobina_uso SET metros = $2, status = 'confirmado' WHERE id = $1
+        `, [reservaRows[0].id, metrosNovaFinal])
+      }
 
       if (pedido.contact_id) {
         await client.query(`
@@ -134,6 +152,15 @@ export async function POST(
             concluded_at = CASE WHEN $1 = 'concluido' THEN NOW() ELSE concluded_at END
         WHERE id = $2
       `, [status, id])
+
+      // Cancelou antes de chegar em "Pronto" — libera a reserva provisória
+      // de volta pro saldo disponível da bobina nova.
+      if (status === "cancelado") {
+        await client.query(`
+          DELETE FROM dtf_pedido_bobina_uso WHERE pedido_id = $1 AND status = 'reservado'
+        `, [id])
+      }
+
       await client.query("COMMIT")
 
       // cancelado WA

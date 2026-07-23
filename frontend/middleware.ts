@@ -16,6 +16,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/pedidos/migrate2",
   "/api/dtf/pedidos/migrate3",
   "/api/dtf/pedidos/migrate4",
+  "/api/dtf/pedidos/migrate7",
   "/api/dtf/film-bobinas/migrate-v2",
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",

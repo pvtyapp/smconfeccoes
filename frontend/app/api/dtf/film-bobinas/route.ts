@@ -12,7 +12,15 @@ export async function GET() {
                 FROM dtf_pedidos p
                 WHERE p.film_bobina_id = b.id AND p.status != 'cancelado'),
                0
-             )::float AS "metrosUsados"
+             )::float AS "metrosUsadosPedidos",
+             COALESCE(
+               (SELECT SUM(u.metros) FROM dtf_pedido_bobina_uso u WHERE u.bobina_id = b.id AND u.status = 'reservado'),
+               0
+             )::float AS "metrosReservados",
+             COALESCE(
+               (SELECT SUM(u.metros) FROM dtf_pedido_bobina_uso u WHERE u.bobina_id = b.id AND u.status = 'confirmado'),
+               0
+             )::float AS "metrosConfirmados"
       FROM dtf_film_bobinas b
       WHERE b.fechada_em IS NULL
       ORDER BY b.impressora_id
@@ -35,12 +43,42 @@ export async function GET() {
       porImpressora[imp].push(h)
     }
 
-    const result = ativas.map(b => ({
-      ...b,
-      metrosRestantes: Number(b.tamanhoM) - Number(b.metrosUsados),
-      pctUsado: Number(b.tamanhoM) > 0 ? (Number(b.metrosUsados) / Number(b.tamanhoM)) * 100 : 0,
-      historico: porImpressora[b.impressoraId as number] ?? [],
-    }))
+    // Pedidos em produção vinculados a cada bobina ativa — usado pelo passo
+    // "abrir bobina nova" pra listar quem pode precisar de reserva na próxima.
+    const bobinaIds = ativas.map(b => b.id)
+    let pedidosPorBobina: Record<number, object[]> = {}
+    if (bobinaIds.length > 0) {
+      const { rows: pedidos } = await pool.query(`
+        SELECT p.film_bobina_id AS "bobinaId", p.id, p.number, p.status,
+               COALESCE(p.metros_finais, p.metros, 0)::float AS metros
+        FROM dtf_pedidos p
+        WHERE p.film_bobina_id = ANY($1::int[]) AND p.status != 'cancelado'
+        ORDER BY p.created_at
+      `, [bobinaIds])
+      pedidosPorBobina = pedidos.reduce((acc: Record<number, object[]>, p) => {
+        const key = p.bobinaId as number
+        if (!acc[key]) acc[key] = []
+        acc[key].push(p)
+        return acc
+      }, {})
+    }
+
+    const result = ativas.map(b => {
+      const comprometido = Number(b.metrosUsadosPedidos) + Number(b.metrosReservados) + Number(b.metrosConfirmados)
+      return {
+        id: b.id,
+        impressoraId: b.impressoraId,
+        tamanhoM: b.tamanhoM,
+        abertaEm: b.abertaEm,
+        obs: b.obs,
+        metrosUsados: Number(b.metrosUsadosPedidos) + Number(b.metrosConfirmados),
+        metrosReservados: Number(b.metrosReservados),
+        metrosRestantes: Number(b.tamanhoM) - comprometido,
+        pctUsado: Number(b.tamanhoM) > 0 ? (comprometido / Number(b.tamanhoM)) * 100 : 0,
+        pedidos: pedidosPorBobina[b.id] ?? [],
+        historico: porImpressora[b.impressoraId as number] ?? [],
+      }
+    })
 
     return NextResponse.json(result)
   } catch (err) {
@@ -52,32 +90,59 @@ export async function GET() {
 export async function POST(req: Request) {
   const client = await pool.connect()
   try {
-    const { impressoraId, tamanhoM = 100, obs, metrosUsadosOverride } = await req.json()
+    const {
+      impressoraId,
+      tamanhoM = 100,
+      obs,
+      reservas = [] as { pedidoId: number; metros: number }[],
+    } = await req.json()
     if (!impressoraId) return NextResponse.json({ error: "impressoraId obrigatorio" }, { status: 400 })
 
     await client.query("BEGIN")
 
-    // Fechar bobina ativa anterior se existir
+    // Bobina ativa anterior (se existir)
     const { rows: ativas } = await client.query(`
-      SELECT b.id, b.tamanho_m,
-             COALESCE(
-               (SELECT SUM(COALESCE(p.metros_finais, p.metros, 0))
-                FROM dtf_pedidos p
-                WHERE p.film_bobina_id = b.id AND p.status != 'cancelado'),
-               0
-             )::float AS metros_usados
-      FROM dtf_film_bobinas b
-      WHERE b.impressora_id = $1 AND b.fechada_em IS NULL
+      SELECT id, tamanho_m FROM dtf_film_bobinas WHERE impressora_id = $1 AND fechada_em IS NULL
     `, [impressoraId])
 
-    // metrosUsadosOverride: quando a bobina acabou no meio de um pedido (ficou
-    // parte impressa nela, parte vai sair na próxima), o cálculo automático por
-    // vínculo não sabe dividir — o operador pode corrigir manualmente aqui.
-    // É só pra registro visual do monitor, nunca entra em relatório financeiro.
+    // Congela, pra cada pedido reservado, quanto já é da bobina antiga —
+    // isso precisa acontecer ANTES de somar o desperdício dela, senão o
+    // pedido inteiro (10m) cairia na bobina antiga que só tinha 5m de fato.
     for (const ativa of ativas) {
-      const metrosUsados = metrosUsadosOverride != null
-        ? Number(metrosUsadosOverride)
-        : Number(ativa.metros_usados)
+      for (const r of reservas) {
+        const metrosReservado = Number(r.metros)
+        if (!r.pedidoId || !(metrosReservado > 0)) continue
+
+        const { rows: pedidoRows } = await client.query(`
+          SELECT id, COALESCE(metros_finais, metros, 0)::float AS total_conhecido
+          FROM dtf_pedidos
+          WHERE id = $1 AND film_bobina_id = $2 AND status != 'cancelado'
+        `, [r.pedidoId, ativa.id])
+        if (!pedidoRows[0]) continue // não pertence a essa bobina — ignora
+
+        const metrosAntiga = Math.max(0, Number(pedidoRows[0].total_conhecido) - metrosReservado)
+        await client.query(
+          `UPDATE dtf_pedidos SET metros_bobina_antiga = $2 WHERE id = $1`,
+          [r.pedidoId, metrosAntiga]
+        )
+      }
+    }
+
+    // Fecha a(s) bobina(s) ativa(s) — desperdício sempre calculado, nunca perguntado.
+    for (const ativa of ativas) {
+      const { rows: usoRows } = await client.query(`
+        SELECT
+          COALESCE(
+            (SELECT SUM(COALESCE(metros_bobina_antiga, metros_finais, metros, 0))
+             FROM dtf_pedidos WHERE film_bobina_id = $1 AND status != 'cancelado'),
+            0
+          ) +
+          COALESCE(
+            (SELECT SUM(metros) FROM dtf_pedido_bobina_uso WHERE bobina_id = $1),
+            0
+          ) AS metros_usados
+      `, [ativa.id])
+      const metrosUsados = Number(usoRows[0].metros_usados)
       const desperdicio  = Math.max(0, Number(ativa.tamanho_m) - metrosUsados)
       await client.query(`
         UPDATE dtf_film_bobinas
@@ -126,6 +191,27 @@ export async function POST(req: Request) {
       VALUES ($1, $2, $3, $4)
       RETURNING id, impressora_id AS "impressoraId", tamanho_m AS "tamanhoM", aberta_em AS "abertaEm"
     `, [impressoraId, tamanhoM, obs ?? null, saidaId])
+    const novaBobinaId = rows[0].id
+
+    // Validar reservas: têm que caber na bobina nova
+    const totalReservado = reservas.reduce((s: number, r: { metros: number }) => s + (Number(r.metros) || 0), 0)
+    if (totalReservado > tamanhoM) {
+      await client.query("ROLLBACK")
+      return NextResponse.json(
+        { error: `Reservas somam ${totalReservado.toFixed(2)} m, maior que os ${tamanhoM} m da bobina nova.` },
+        { status: 422 }
+      )
+    }
+
+    // Grava a reserva provisória — vira definitiva quando o pedido chegar em "Pronto"
+    for (const r of reservas) {
+      const metros = Number(r.metros)
+      if (!r.pedidoId || !(metros > 0)) continue
+      await client.query(`
+        INSERT INTO dtf_pedido_bobina_uso (pedido_id, bobina_id, metros, status)
+        VALUES ($1, $2, $3, 'reservado')
+      `, [r.pedidoId, novaBobinaId, metros])
+    }
 
     await client.query("COMMIT")
     return NextResponse.json(rows[0], { status: 201 })
