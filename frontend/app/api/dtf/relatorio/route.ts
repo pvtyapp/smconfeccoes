@@ -295,16 +295,20 @@ export async function GET(req: Request) {
       ORDER BY impressora_id
     `)
 
-    // Top clientes do período
+    // Top clientes do período — via contact_id (pedidos de chatbot/autoatendimento
+    // não preenchem mais o campo de texto "cliente"; agrupar por ele juntava tudo
+    // numa única linha "(sem nome)"). Agrupa por contact_id pra não juntar dois
+    // clientes diferentes que por acaso tenham o mesmo nome.
     const { rows: topClientes } = await pool.query(`
-      SELECT COALESCE(cliente, '(sem nome)') AS cliente,
+      SELECT COALESCE(c.name, p.cliente, '(sem nome)') AS cliente,
              COUNT(*)::int AS pedidos,
-             SUM(COALESCE(metros_finais, metros, 0))::float AS metros,
-             COALESCE(SUM(preco_cobrado), 0)::float AS receita
-      FROM dtf_pedidos
-      WHERE status != 'cancelado'
-        ${from && to ? "AND data BETWEEN $1 AND $2" : ""}
-      GROUP BY cliente
+             SUM(COALESCE(p.metros_finais, p.metros, 0))::float AS metros,
+             COALESCE(SUM(p.preco_cobrado), 0)::float AS receita
+      FROM dtf_pedidos p
+      LEFT JOIN wa_contacts c ON c.id = p.contact_id
+      WHERE p.status != 'cancelado'
+        ${from && to ? "AND p.data BETWEEN $1 AND $2" : ""}
+      GROUP BY p.contact_id, COALESCE(c.name, p.cliente, '(sem nome)')
       ORDER BY receita DESC
       LIMIT 10
     `, from && to ? [from, to] : [])
