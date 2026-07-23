@@ -255,12 +255,16 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
       ""
     const senderName: string = (msg.pushName as string) || senderJid
 
-    const groupSubject = (msg as Record<string, unknown>).pushName as string || jid
+    // Nome real do grupo (subject) não vem nessa mensagem — só no evento
+    // groups.upsert (abaixo). Usar pushName aqui (nome de quem mandou a
+    // mensagem, não do grupo) grava o nome errado pra sempre, já que o
+    // ON CONFLICT deste INSERT nunca atualiza name — só groups.upsert atualiza.
+    // Cai no jid como placeholder até groups.upsert corrigir.
     await pool.query(`
       INSERT INTO wa_groups (jid, name, updated_at)
       VALUES ($1, $2, NOW())
       ON CONFLICT (jid) DO UPDATE SET updated_at = NOW()
-    `, [jid, groupSubject]).catch(() => {})
+    `, [jid, jid]).catch(() => {})
     await pool.query(`
       INSERT INTO wa_group_messages (group_id, message_id, sender_jid, sender_name, content, media_type)
       SELECT g.id, $1, $2, $3, $4, $5
