@@ -759,6 +759,7 @@ function InstancesPanel({ instances, onChange }: { instances: MonitorInstance[];
   const [newName, setNewName] = useState("")
   const [newLabel, setNewLabel] = useState("")
   const [saving, setSaving] = useState(false)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   async function addInstance() {
     if (!newName.trim() || !newLabel.trim()) return
@@ -784,60 +785,88 @@ function InstancesPanel({ instances, onChange }: { instances: MonitorInstance[];
   async function remove(inst: MonitorInstance) {
     if (!confirm(`Remover "${inst.label}" do cadastro? (não desconecta o número, só sai do rodízio)`)) return
     await fetch(`/api/marketing/instances/${inst.id}`, { method: "DELETE" })
+    if (selectedId === inst.id) setSelectedId(null)
     onChange()
   }
 
+  const connectedCount = instances.filter(i => i.state === "connected").length
+  const selected = instances.find(i => i.id === selectedId) ?? null
+
   return (
-    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden mb-4">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6">
+    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-[0_1px_2px_rgba(15,30,60,.04),0_8px_24px_-8px_rgba(15,30,60,.08)] overflow-hidden mb-4">
+      <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#0F1E3C]/6">
         <p className="text-xs font-bold text-[#0F1E3C]">Números de Marketing</p>
         <button onClick={() => setShowAdd(v => !v)}
-          className="flex items-center gap-1 text-[10px] font-bold text-[#4361EE] hover:text-[#3451d1]">
+          className="flex items-center gap-1 text-[10px] font-bold text-[#3451d1] hover:bg-[#4361EE]/8 px-1.5 py-1 rounded-lg transition-colors">
           <Plus size={11} /> Adicionar
         </button>
       </div>
-      <div className="p-4 space-y-2">
-        {instances.length === 0 && !showAdd && (
-          <p className="text-xs text-[#0F1E3C]/35">
-            Nenhum número cadastrado ainda — envio pra cliente cai no número principal enquanto isso.
-          </p>
-        )}
-        {instances.map(inst => (
-          <div key={inst.id} className="flex items-center justify-between bg-[#F9FAFC] rounded-xl px-3 py-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${inst.state === "connected" ? "bg-emerald-500" : "bg-red-400"}`} />
-              <div className="min-w-0">
-                <p className="text-xs font-bold text-[#0F1E3C] truncate">{inst.label}</p>
-                <p className="text-[10px] text-[#0F1E3C]/35 truncate">{inst.instanceName}</p>
-              </div>
-              {!inst.active && <span className="text-[9px] font-bold bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full flex-shrink-0">Pausado</span>}
-            </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <button onClick={() => toggle(inst)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors">
-                {inst.active ? <ToggleRight size={20} className="text-[#4361EE]" /> : <ToggleLeft size={20} />}
+
+      {instances.length === 0 && !showAdd ? (
+        <p className="text-xs text-[#0F1E3C]/35 px-4 py-4">
+          Nenhum número cadastrado ainda — envio pra cliente cai no número principal enquanto isso.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2 p-3.5">
+          {instances.map((inst, i) => {
+            const isOn = inst.state === "connected"
+            return (
+              <button key={inst.id} onClick={() => setSelectedId(v => v === inst.id ? null : inst.id)}
+                title={inst.label}
+                className={`flex flex-col items-center gap-1.5 py-3 w-16 flex-shrink-0 rounded-2xl border transition-colors ${
+                  isOn ? "bg-emerald-50 border-emerald-200" : "bg-[#F9FAFC] border-[#0F1E3C]/8 opacity-60"
+                } ${selectedId === inst.id ? "ring-2 ring-[#4361EE]/40" : ""}`}>
+                <span className={`w-2 h-2 rounded-full ${isOn ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(5,150,105,.16)]" : "bg-[#0F1E3C]/15"}`} />
+                <span className={`text-base font-black ${isOn ? "text-emerald-600" : "text-[#0F1E3C]/35"}`}>{i + 1}</span>
+                <span className={`text-[8px] font-bold uppercase tracking-wide ${isOn ? "text-emerald-600" : "text-[#0F1E3C]/30"}`}>
+                  {isOn ? "Online" : "Sem QR"}
+                </span>
               </button>
-              <button onClick={() => remove(inst)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
-                <Trash2 size={12} />
-              </button>
-            </div>
+            )
+          })}
+        </div>
+      )}
+
+      {instances.length > 0 && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-[#F9FAFC] border-t border-[#0F1E3C]/6">
+          <p className="text-[10.5px] text-[#0F1E3C]/50"><b className="text-[#0F1E3C] font-extrabold">{connectedCount}</b> de {instances.length} conectados</p>
+          <p className="text-[10.5px] text-[#0F1E3C]/50">Próxima campanha divide em <b className="text-[#0F1E3C] font-extrabold">{Math.max(1, connectedCount)}</b> fatia{connectedCount !== 1 ? "s" : ""}</p>
+        </div>
+      )}
+
+      {selected && (
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-[#0F1E3C]/6">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-[#0F1E3C] truncate">{selected.label}</p>
+            <p className="text-[10px] text-[#0F1E3C]/35 truncate">{selected.instanceName}</p>
           </div>
-        ))}
-        {showAdd && (
-          <div className="space-y-2 pt-2 border-t border-[#0F1E3C]/6">
-            <input value={newName} onChange={e => setNewName(e.target.value)}
-              placeholder="Nome da instância (ex: smconfeccoes-marketing2)"
-              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-            <input value={newLabel} onChange={e => setNewLabel(e.target.value)}
-              placeholder="Rótulo pra você reconhecer (ex: Número 2)"
-              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-            <p className="text-[10px] text-[#0F1E3C]/30">A instância já precisa existir no Evolution, com o QR já escaneado.</p>
-            <button onClick={addInstance} disabled={saving || !newName.trim() || !newLabel.trim()}
-              className="w-full py-2 rounded-xl bg-[#4361EE] text-white text-xs font-bold disabled:opacity-40">
-              {saving ? "Salvando..." : "Cadastrar número"}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {!selected.active && <span className="text-[9px] font-bold bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full mr-1">Pausado</span>}
+            <button onClick={() => toggle(selected)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors">
+              {selected.active ? <ToggleRight size={20} className="text-[#4361EE]" /> : <ToggleLeft size={20} />}
+            </button>
+            <button onClick={() => remove(selected)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
+              <Trash2 size={12} />
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="space-y-2 p-3.5 border-t border-[#0F1E3C]/6">
+          <input value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="Nome da instância (ex: smconfeccoes-marketing2)"
+            className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+          <input value={newLabel} onChange={e => setNewLabel(e.target.value)}
+            placeholder="Rótulo pra você reconhecer (ex: Número 2)"
+            className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+          <p className="text-[10px] text-[#0F1E3C]/30">A instância já precisa existir no Evolution, com o QR já escaneado.</p>
+          <button onClick={addInstance} disabled={saving || !newName.trim() || !newLabel.trim()}
+            className="w-full py-2 rounded-xl bg-[#4361EE] text-white text-xs font-bold disabled:opacity-40">
+            {saving ? "Salvando..." : "Cadastrar número"}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -877,12 +906,20 @@ function MarketingMonitor() {
     <>
       <InstancesPanel instances={instances} onChange={load} />
 
+      {campaigns.length > 0 && (
+        <div className="flex items-baseline justify-between mb-2.5 mt-5">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Envios agora</p>
+        </div>
+      )}
+
       {campaigns.map(campaign => {
         const isGenerating = campaign.status === "generating"
         const isPausedCooldown = campaign.pauseReason === "batch_cooldown"
         const isPausedDown = campaign.pauseReason === "disconnected"
-        const inst = instances.find(i => i.instanceName === campaign.instanceName)
+        const instIdx = instances.findIndex(i => i.instanceName === campaign.instanceName)
+        const inst = instIdx >= 0 ? instances[instIdx] : null
         const numberLabel = inst?.label ?? (campaign.instanceName ? campaign.instanceName : "Número principal")
+        const badgeCls = BADGE_COLORS[Math.max(0, instIdx) % BADGE_COLORS.length]
         const pill = isPausedDown ? { label: "Caído", cls: "bg-red-50 text-red-600 border-red-200" }
           : isPausedCooldown ? { label: "Em pausa", cls: "bg-amber-50 text-amber-600 border-amber-200" }
           : isGenerating ? { label: "Preparando", cls: "bg-purple-50 text-purple-600 border-purple-200" }
@@ -890,19 +927,56 @@ function MarketingMonitor() {
         const pct = campaign.totalCount > 0 ? Math.min(100, (campaign.sentCount / campaign.totalCount) * 100) : 0
 
         return (
-          <div key={campaign.id} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden mb-4">
+          <div key={campaign.id} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-[0_1px_2px_rgba(15,30,60,.04),0_8px_24px_-8px_rgba(15,30,60,.08)] overflow-hidden mb-3">
             <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6">
-              <p className="text-xs font-bold text-[#0F1E3C]">Monitor de Envio — {numberLabel}</p>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${pill.cls}`}>{pill.label}</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-[22px] h-[22px] rounded-lg flex items-center justify-center text-[10px] font-extrabold flex-shrink-0 ${badgeCls}`}>
+                  {instIdx >= 0 ? instIdx + 1 : "•"}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-extrabold text-[#0F1E3C] truncate">{numberLabel}</p>
+                  {campaign.instanceName && <p className="text-[9.5px] text-[#0F1E3C]/35 truncate">{campaign.instanceName}</p>}
+                </div>
+              </div>
+              <span className={`text-[9.5px] font-extrabold px-2.5 py-1 rounded-full border flex-shrink-0 ${pill.cls}`}>{pill.label}</span>
             </div>
 
-            <div className="p-4 space-y-3">
+            <div className="p-4">
+              {isGenerating ? (
+                <>
+                  <div className="h-[9px] rounded-md bg-[#F4F6FB] overflow-hidden mb-2">
+                    <div className="h-full rounded-md bg-gradient-to-r from-[#7C3AED] to-[#4361EE] animate-pulse" style={{ width: "60%" }} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] text-[#0F1E3C]/50">Gerando textos com IA para <b className="text-[#0F1E3C] font-extrabold">{campaign.totalCount}</b> clientes</span>
+                    <span className="text-[10px] text-[#0F1E3C]/35">a fila começa sozinha</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="h-[9px] rounded-md bg-[#F4F6FB] overflow-hidden mb-2">
+                    <div
+                      className={`h-full rounded-md transition-all ${
+                        isPausedDown ? "bg-[#0F1E3C]/15" : isPausedCooldown ? "bg-amber-500/60" : "bg-gradient-to-r from-[#4361EE] to-[#7C3AED]"
+                      }`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] text-[#0F1E3C]/50">
+                      Enviados: <b className="text-[#0F1E3C] font-extrabold">{campaign.sentCount}</b> / {campaign.totalCount}
+                      {campaign.errorCount > 0 && <> · Erros: <b className="text-red-500 font-extrabold">{campaign.errorCount}</b></>}
+                    </span>
+                    {!isPausedDown && !isPausedCooldown && <span className="text-[10px] text-[#0F1E3C]/35">8-20s por envio</span>}
+                  </div>
+                </>
+              )}
+
               {isPausedDown && (
-                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 mt-3">
                   <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-xs text-red-700"><strong>{numberLabel} caiu.</strong> Envio pausado pra não arriscar mais.</p>
-                    <p className="text-[10px] text-red-500/70 mt-0.5">{campaign.sentCount} de {campaign.totalCount} já enviados até aqui.</p>
                     <button onClick={() => resume(campaign.id)} disabled={resumingId === campaign.id}
                       className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 disabled:opacity-50 transition-colors">
                       {resumingId === campaign.id ? <Loader2 size={11} className="animate-spin" /> : null}
@@ -913,7 +987,7 @@ function MarketingMonitor() {
               )}
 
               {isPausedCooldown && (
-                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mt-3">
                   <Clock size={14} className="text-amber-500 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs text-amber-700"><strong>Pausa programada anti-spam.</strong> 30 mensagens enviadas — respirando antes de continuar.</p>
@@ -925,34 +999,6 @@ function MarketingMonitor() {
                   </div>
                 </div>
               )}
-
-              {isGenerating ? (
-                <div>
-                  <p className="text-xs font-semibold text-[#0F1E3C] mb-1.5">Gerando variações com IA</p>
-                  <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
-                    <div className="h-full rounded-full bg-gradient-to-r from-[#7C3AED] to-[#4361EE] animate-pulse" style={{ width: "60%" }} />
-                  </div>
-                  <p className="text-[10px] text-[#0F1E3C]/35 mt-1.5">Preparando textos diferentes pra {campaign.totalCount} clientes — a fila começa sozinha quando terminar.</p>
-                </div>
-              ) : (
-                <div>
-                  <div className="flex items-baseline justify-between mb-1.5">
-                    <p className="text-xs font-semibold text-[#0F1E3C] truncate max-w-[70%]">{campaign.title || "Campanha"}</p>
-                    <span className="text-[10px] text-[#0F1E3C]/40 font-mono">{campaign.sentCount} / {campaign.totalCount}</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${isPausedDown || isPausedCooldown ? "bg-[#0F1E3C]/20" : "bg-gradient-to-r from-[#4361EE] to-[#7C3AED]"}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[#0F1E3C]/40">
-                    <span>Enviados: <b className="text-[#0F1E3C]">{campaign.sentCount}</b></span>
-                    <span>Erros: <b className={campaign.errorCount > 0 ? "text-red-500" : "text-[#0F1E3C]"}>{campaign.errorCount}</b></span>
-                    {!isPausedDown && !isPausedCooldown && <span>Ritmo: 8-20s, pausa de 5min a cada 30</span>}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )
@@ -960,6 +1006,14 @@ function MarketingMonitor() {
     </>
   )
 }
+
+const BADGE_COLORS = [
+  "bg-[#4361EE]/12 text-[#3451D4]",
+  "bg-[#7C3AED]/12 text-[#6B2FD1]",
+  "bg-emerald-500/12 text-emerald-600",
+  "bg-amber-500/12 text-amber-600",
+  "bg-rose-500/12 text-rose-600",
+]
 
 // ─── Schedule Card ────────────────────────────────────────────────────────────
 
