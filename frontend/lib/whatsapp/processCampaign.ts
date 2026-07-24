@@ -33,17 +33,18 @@ export async function processCampaignBatch(
   await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS content_variants JSONB`).catch(() => {})
   await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS paused_until TIMESTAMPTZ`).catch(() => {})
   await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS pause_reason TEXT`).catch(() => {})
+  await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS instance_name TEXT`).catch(() => {})
 
   for (let i = 0; i < maxMessages; i++) {
     const { rows } = campaignId
       ? await pool.query(`
           SELECT id, content, media_url, recipients_json, sent_count, total_count,
-                 content_variants, paused_until, pause_reason
+                 content_variants, paused_until, pause_reason, instance_name
           FROM marketing_campaigns WHERE id = $1 AND status = 'sending'
         `, [campaignId])
       : await pool.query(`
           SELECT id, content, media_url, recipients_json, sent_count, total_count,
-                 content_variants, paused_until, pause_reason
+                 content_variants, paused_until, pause_reason, instance_name
           FROM marketing_campaigns
           WHERE status = 'sending'
           ORDER BY created_at ASC
@@ -86,7 +87,11 @@ export async function processCampaignBatch(
     const recipient = recipients[idx]
     const mediaUrl = camp.media_url as string | null
     const variants = camp.content_variants as string[] | null
-    const instance: "main" | "marketing" = recipient.isGroup ? "main" : "marketing"
+    // Grupo sempre pelo número principal (baixo risco, sempre foi assim).
+    // Cliente usa o número de marketing que essa campanha já recebeu fixo na
+    // criação (pode ser 1 de N números cadastrados) — null cai pro principal
+    // se nenhum número de marketing estava conectado na hora de criar.
+    const instanceName: string | null = recipient.isGroup ? null : (camp.instance_name as string | null)
     let hasError = false
     let disconnected = false
     let skipped = false
@@ -122,11 +127,11 @@ export async function processCampaignBatch(
 
         let msgId: string | null = null
         try {
-          msgId = await campaignSend(sendJid, msg, mediaUrl, instance)
+          msgId = await campaignSend(sendJid, msg, mediaUrl, instanceName)
         } catch (mediaErr) {
           if (mediaErr instanceof EvolutionDisconnectedError) throw mediaErr
           console.error("[processCampaignBatch] sendMedia falhou para", sendJid, "—", mediaErr instanceof Error ? mediaErr.message : mediaErr)
-          if (mediaUrl) msgId = await campaignSend(recipient.jid, msg, null, instance)
+          if (mediaUrl) msgId = await campaignSend(recipient.jid, msg, null, instanceName)
           else throw mediaErr
         }
 

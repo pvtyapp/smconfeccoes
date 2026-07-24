@@ -34,6 +34,7 @@ type Campaign = {
   contentVariants: string[] | null
   pauseReason: string | null
   pausedUntil: string | null
+  instanceName: string | null
 }
 
 type Schedule = {
@@ -367,7 +368,7 @@ function UnifiedDrawer({
   onClose: () => void
   groups: Group[]
   stats: Stats | null
-  onCampaignCreated: (id: number, sendNow: boolean) => void
+  onCampaignCreated: (ids: number[], sendNow: boolean) => void
   onScheduleCreated: () => void
 }) {
   const [title,        setTitle]        = useState("")
@@ -452,8 +453,8 @@ function UnifiedDrawer({
         }),
       })
       if (r.ok) {
-        const { id, sendNow: sn } = await r.json() as { id: number; sendNow: boolean }
-        onCampaignCreated(id, sn)
+        const { ids, sendNow: sn } = await r.json() as { ids: number[]; sendNow: boolean }
+        onCampaignCreated(ids, sn)
         close()
       } else {
         const d = await r.json(); setError(d.error ?? "Erro ao criar campanha")
@@ -738,21 +739,112 @@ function CampaignModal({ campaign, onClose, onCancel }: {
   )
 }
 
-// ─── Monitor de Envio (marketing isolado) ─────────────────────────────────────
+// ─── Números de Marketing + Monitor de Envio ──────────────────────────────────
 
-type MonitorData = {
-  campaign: {
-    id: number; title: string; content: string
-    sentCount: number; errorCount: number; totalCount: number
-    status: string; contentVariants: string[] | null
-    pauseReason: string | null; pausedUntil: string | null
-  } | null
-  instanceState: "connected" | "disconnected" | "not_configured"
+type MonitorCampaign = {
+  id: number; title: string; content: string
+  sentCount: number; errorCount: number; totalCount: number
+  status: string; contentVariants: string[] | null
+  pauseReason: string | null; pausedUntil: string | null
+  instanceName: string | null; createdAt: string
+}
+type MonitorInstance = {
+  id: number; instanceName: string; label: string; active: boolean
+  state: "connected" | "disconnected"
+}
+type MonitorData = { campaigns: MonitorCampaign[]; instances: MonitorInstance[] }
+
+function InstancesPanel({ instances, onChange }: { instances: MonitorInstance[]; onChange: () => void }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [newLabel, setNewLabel] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  async function addInstance() {
+    if (!newName.trim() || !newLabel.trim()) return
+    setSaving(true)
+    const r = await fetch("/api/marketing/instances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instanceName: newName.trim(), label: newLabel.trim() }),
+    })
+    if (r.ok) { setNewName(""); setNewLabel(""); setShowAdd(false); onChange() }
+    setSaving(false)
+  }
+
+  async function toggle(inst: MonitorInstance) {
+    await fetch(`/api/marketing/instances/${inst.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: !inst.active }),
+    })
+    onChange()
+  }
+
+  async function remove(inst: MonitorInstance) {
+    if (!confirm(`Remover "${inst.label}" do cadastro? (não desconecta o número, só sai do rodízio)`)) return
+    await fetch(`/api/marketing/instances/${inst.id}`, { method: "DELETE" })
+    onChange()
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden mb-4">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6">
+        <p className="text-xs font-bold text-[#0F1E3C]">Números de Marketing</p>
+        <button onClick={() => setShowAdd(v => !v)}
+          className="flex items-center gap-1 text-[10px] font-bold text-[#4361EE] hover:text-[#3451d1]">
+          <Plus size={11} /> Adicionar
+        </button>
+      </div>
+      <div className="p-4 space-y-2">
+        {instances.length === 0 && !showAdd && (
+          <p className="text-xs text-[#0F1E3C]/35">
+            Nenhum número cadastrado ainda — envio pra cliente cai no número principal enquanto isso.
+          </p>
+        )}
+        {instances.map(inst => (
+          <div key={inst.id} className="flex items-center justify-between bg-[#F9FAFC] rounded-xl px-3 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${inst.state === "connected" ? "bg-emerald-500" : "bg-red-400"}`} />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-[#0F1E3C] truncate">{inst.label}</p>
+                <p className="text-[10px] text-[#0F1E3C]/35 truncate">{inst.instanceName}</p>
+              </div>
+              {!inst.active && <span className="text-[9px] font-bold bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full flex-shrink-0">Pausado</span>}
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button onClick={() => toggle(inst)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors">
+                {inst.active ? <ToggleRight size={20} className="text-[#4361EE]" /> : <ToggleLeft size={20} />}
+              </button>
+              <button onClick={() => remove(inst)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          </div>
+        ))}
+        {showAdd && (
+          <div className="space-y-2 pt-2 border-t border-[#0F1E3C]/6">
+            <input value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="Nome da instância (ex: smconfeccoes-marketing2)"
+              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+            <input value={newLabel} onChange={e => setNewLabel(e.target.value)}
+              placeholder="Rótulo pra você reconhecer (ex: Número 2)"
+              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+            <p className="text-[10px] text-[#0F1E3C]/30">A instância já precisa existir no Evolution, com o QR já escaneado.</p>
+            <button onClick={addInstance} disabled={saving || !newName.trim() || !newLabel.trim()}
+              className="w-full py-2 rounded-xl bg-[#4361EE] text-white text-xs font-bold disabled:opacity-40">
+              {saving ? "Salvando..." : "Cadastrar número"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function MarketingMonitor() {
   const [data, setData] = useState<MonitorData | null>(null)
-  const [resuming, setResuming] = useState(false)
+  const [resumingId, setResumingId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -767,114 +859,105 @@ function MarketingMonitor() {
     return () => clearInterval(id)
   }, [load])
 
-  async function resume() {
-    if (!data?.campaign) return
-    setResuming(true)
-    await fetch(`/api/marketing/campaigns/${data.campaign.id}`, {
+  async function resume(campaignId: number) {
+    setResumingId(campaignId)
+    await fetch(`/api/marketing/campaigns/${campaignId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "resume" }),
     })
     await load()
-    setResuming(false)
+    setResumingId(null)
   }
 
   if (!data) return null
-  const { campaign, instanceState } = data
-
-  // Sem campanha ativa e tudo certo — nada pra mostrar
-  if (!campaign && instanceState !== "disconnected" && instanceState !== "not_configured") return null
-
-  const isGenerating = campaign?.status === "generating"
-  const isPausedCooldown = campaign?.pauseReason === "batch_cooldown"
-  const isPausedDown = campaign?.pauseReason === "disconnected"
-  const pill = isPausedDown ? { label: "Caído", cls: "bg-red-50 text-red-600 border-red-200" }
-    : isPausedCooldown ? { label: "Em pausa", cls: "bg-amber-50 text-amber-600 border-amber-200" }
-    : isGenerating ? { label: "Preparando", cls: "bg-emerald-50 text-emerald-600 border-emerald-200" }
-    : campaign ? { label: "Conectado", cls: "bg-emerald-50 text-emerald-600 border-emerald-200" }
-    : instanceState === "not_configured" ? { label: "Não configurado", cls: "bg-slate-100 text-slate-500 border-slate-200" }
-    : { label: "Caído", cls: "bg-red-50 text-red-600 border-red-200" }
-
-  const pct = campaign && campaign.totalCount > 0 ? Math.min(100, (campaign.sentCount / campaign.totalCount) * 100) : 0
+  const { campaigns, instances } = data
 
   return (
-    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden mb-4">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6">
-        <p className="text-xs font-bold text-[#0F1E3C]">Monitor de Envio — Marketing</p>
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${pill.cls}`}>{pill.label}</span>
-      </div>
+    <>
+      <InstancesPanel instances={instances} onChange={load} />
 
-      <div className="p-4 space-y-3">
-        {instanceState === "not_configured" && !campaign && (
-          <p className="text-xs text-[#0F1E3C]/40">
-            Número de marketing ainda não conectado — escaneie o QR na instância <code className="bg-[#F4F6FB] px-1 rounded">smconfeccoes-marketing</code> pra ativar o isolamento.
-          </p>
-        )}
+      {campaigns.map(campaign => {
+        const isGenerating = campaign.status === "generating"
+        const isPausedCooldown = campaign.pauseReason === "batch_cooldown"
+        const isPausedDown = campaign.pauseReason === "disconnected"
+        const inst = instances.find(i => i.instanceName === campaign.instanceName)
+        const numberLabel = inst?.label ?? (campaign.instanceName ? campaign.instanceName : "Número principal")
+        const pill = isPausedDown ? { label: "Caído", cls: "bg-red-50 text-red-600 border-red-200" }
+          : isPausedCooldown ? { label: "Em pausa", cls: "bg-amber-50 text-amber-600 border-amber-200" }
+          : isGenerating ? { label: "Preparando", cls: "bg-purple-50 text-purple-600 border-purple-200" }
+          : { label: "Enviando", cls: "bg-blue-50 text-blue-600 border-blue-200" }
+        const pct = campaign.totalCount > 0 ? Math.min(100, (campaign.sentCount / campaign.totalCount) * 100) : 0
 
-        {isPausedDown && (
-          <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
-            <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-xs text-red-700"><strong>Número de marketing caiu.</strong> Envio pausado pra não arriscar mais.</p>
-              <p className="text-[10px] text-red-500/70 mt-0.5">
-                {campaign?.sentCount ?? 0} de {campaign?.totalCount ?? 0} já enviados até aqui.
-              </p>
-              <button onClick={resume} disabled={resuming}
-                className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 disabled:opacity-50 transition-colors">
-                {resuming ? <Loader2 size={11} className="animate-spin" /> : null}
-                Já reconectei, retomar envio
-              </button>
+        return (
+          <div key={campaign.id} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden mb-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6">
+              <p className="text-xs font-bold text-[#0F1E3C]">Monitor de Envio — {numberLabel}</p>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${pill.cls}`}>{pill.label}</span>
             </div>
-          </div>
-        )}
 
-        {isPausedCooldown && (
-          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-            <Clock size={14} className="text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs text-amber-700"><strong>Pausa programada anti-spam.</strong> 30 mensagens enviadas — respirando antes de continuar.</p>
-              {campaign?.pausedUntil && (
-                <p className="text-[10px] text-amber-600/70 mt-0.5">
-                  Retoma sozinho às {new Date(campaign.pausedUntil).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} — não precisa fazer nada.
-                </p>
+            <div className="p-4 space-y-3">
+              {isPausedDown && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+                  <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-xs text-red-700"><strong>{numberLabel} caiu.</strong> Envio pausado pra não arriscar mais.</p>
+                    <p className="text-[10px] text-red-500/70 mt-0.5">{campaign.sentCount} de {campaign.totalCount} já enviados até aqui.</p>
+                    <button onClick={() => resume(campaign.id)} disabled={resumingId === campaign.id}
+                      className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 disabled:opacity-50 transition-colors">
+                      {resumingId === campaign.id ? <Loader2 size={11} className="animate-spin" /> : null}
+                      Já reconectei, retomar envio
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {isPausedCooldown && (
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                  <Clock size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs text-amber-700"><strong>Pausa programada anti-spam.</strong> 30 mensagens enviadas — respirando antes de continuar.</p>
+                    {campaign.pausedUntil && (
+                      <p className="text-[10px] text-amber-600/70 mt-0.5">
+                        Retoma sozinho às {new Date(campaign.pausedUntil).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} — não precisa fazer nada.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {isGenerating ? (
+                <div>
+                  <p className="text-xs font-semibold text-[#0F1E3C] mb-1.5">Gerando variações com IA</p>
+                  <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-[#7C3AED] to-[#4361EE] animate-pulse" style={{ width: "60%" }} />
+                  </div>
+                  <p className="text-[10px] text-[#0F1E3C]/35 mt-1.5">Preparando textos diferentes pra {campaign.totalCount} clientes — a fila começa sozinha quando terminar.</p>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-baseline justify-between mb-1.5">
+                    <p className="text-xs font-semibold text-[#0F1E3C] truncate max-w-[70%]">{campaign.title || "Campanha"}</p>
+                    <span className="text-[10px] text-[#0F1E3C]/40 font-mono">{campaign.sentCount} / {campaign.totalCount}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${isPausedDown || isPausedCooldown ? "bg-[#0F1E3C]/20" : "bg-gradient-to-r from-[#4361EE] to-[#7C3AED]"}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[#0F1E3C]/40">
+                    <span>Enviados: <b className="text-[#0F1E3C]">{campaign.sentCount}</b></span>
+                    <span>Erros: <b className={campaign.errorCount > 0 ? "text-red-500" : "text-[#0F1E3C]"}>{campaign.errorCount}</b></span>
+                    {!isPausedDown && !isPausedCooldown && <span>Ritmo: 8-20s, pausa de 5min a cada 30</span>}
+                  </div>
+                </div>
               )}
             </div>
           </div>
-        )}
-
-        {campaign && isGenerating && (
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs font-semibold text-[#0F1E3C]">Gerando variações com IA</p>
-            </div>
-            <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
-              <div className="h-full rounded-full bg-gradient-to-r from-[#7C3AED] to-[#4361EE] animate-pulse" style={{ width: "60%" }} />
-            </div>
-            <p className="text-[10px] text-[#0F1E3C]/35 mt-1.5">Preparando textos diferentes pra {campaign.totalCount} clientes — a fila começa sozinha quando terminar.</p>
-          </div>
-        )}
-
-        {campaign && !isGenerating && (
-          <div>
-            <div className="flex items-baseline justify-between mb-1.5">
-              <p className="text-xs font-semibold text-[#0F1E3C] truncate max-w-[70%]">{campaign.title || "Campanha"}</p>
-              <span className="text-[10px] text-[#0F1E3C]/40 font-mono">{campaign.sentCount} / {campaign.totalCount}</span>
-            </div>
-            <div className="h-2 rounded-full bg-[#F4F6FB] overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${isPausedDown || isPausedCooldown ? "bg-[#0F1E3C]/20" : "bg-gradient-to-r from-[#4361EE] to-[#7C3AED]"}`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[#0F1E3C]/40">
-              <span>Enviados: <b className="text-[#0F1E3C]">{campaign.sentCount}</b></span>
-              <span>Erros: <b className={campaign.errorCount > 0 ? "text-red-500" : "text-[#0F1E3C]"}>{campaign.errorCount}</b></span>
-              {!isPausedDown && !isPausedCooldown && <span>Ritmo: 8-20s, pausa de 5min a cada 30</span>}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+        )
+      })}
+    </>
   )
 }
 
@@ -2100,7 +2183,7 @@ export default function MarketingPage() {
   const [scheduleEditIntent, setScheduleEditIntent] = useState(false)
 
   const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollingIdRef = useRef<number | null>(null)
+  const pollingIdsRef = useRef<Set<number>>(new Set())
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -2119,7 +2202,7 @@ export default function MarketingPage() {
 
   function stopPolling() {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null }
-    pollingIdRef.current = null
+    pollingIdsRef.current = new Set()
   }
 
   const tickCampaign = useCallback(async (campaignId: number) => {
@@ -2136,21 +2219,29 @@ export default function MarketingPage() {
           ? { ...c, sentCount: d.sentCount, totalCount: d.totalCount, status: d.status }
           : c
       ))
-      if (d.done) stopPolling()
+      if (d.done) pollingIdsRef.current.delete(campaignId)
     } catch { /* retry next tick */ }
   }, [])
 
-  function startPolling(campaignId: number) {
-    stopPolling()
-    pollingIdRef.current = campaignId
-    tickCampaign(campaignId)
-    tickRef.current = setInterval(() => tickCampaign(campaignId), 30_000)
+  // Cada número (instância) roda sua campanha independente — várias podem
+  // estar "sending" ao mesmo tempo quando o envio pra clientes é dividido
+  // entre N números. Um intervalo só cutuca todas as que estão ativas.
+  function pollAll() {
+    for (const id of pollingIdsRef.current) tickCampaign(id)
+  }
+
+  function startPolling(campaignIds: number[]) {
+    for (const id of campaignIds) pollingIdsRef.current.add(id)
+    if (!tickRef.current) {
+      pollAll()
+      tickRef.current = setInterval(pollAll, 30_000)
+    }
   }
 
   useEffect(() => {
-    const active = campaigns.find(c => c.status === "sending" || c.status === "generating")
-    if (active && pollingIdRef.current !== active.id) startPolling(active.id)
-    else if (!active && pollingIdRef.current !== null) stopPolling()
+    const active = campaigns.filter(c => c.status === "sending" || c.status === "generating")
+    if (active.length > 0) startPolling(active.map(c => c.id))
+    else if (pollingIdsRef.current.size > 0) stopPolling()
   }, [campaigns])
 
   useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
@@ -2174,12 +2265,12 @@ export default function MarketingPage() {
     fetch("/api/marketing/migrate", { method: "POST" }).then(() => loadAll())
   }, [loadAll])
 
-  function handleCampaignCreated(campaignId: number, sendNow: boolean) {
-    loadAll().then(() => { if (sendNow) startPolling(campaignId) })
+  function handleCampaignCreated(campaignIds: number[], sendNow: boolean) {
+    loadAll().then(() => { if (sendNow) startPolling(campaignIds) })
   }
 
   async function cancelCampaign(id: number) {
-    if (pollingIdRef.current === id) stopPolling()
+    pollingIdsRef.current.delete(id)
     await fetch(`/api/marketing/campaigns/${id}`, { method: "DELETE" })
     await loadAll()
   }

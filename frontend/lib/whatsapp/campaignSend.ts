@@ -1,7 +1,6 @@
-const EVO_URL      = (process.env.EVOLUTION_API_URL           ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY       = (process.env.EVOLUTION_API_KEY            ?? "").trim()
-const EVO_INST_MAIN = (process.env.EVOLUTION_INSTANCE           ?? "").trim()
-const EVO_INST_MKT  = (process.env.EVOLUTION_INSTANCE_MARKETING ?? "").trim()
+const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
+const EVO_KEY       = (process.env.EVOLUTION_API_KEY  ?? "").trim()
+const EVO_INST_MAIN = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
 // Erro específico de conexão caída — quem chama precisa diferenciar isso de
 // um erro normal de envio (ex: número inválido), pra pausar a campanha em vez
@@ -32,18 +31,18 @@ async function assertEvolutionOpen(instance: string): Promise<void> {
 // com o mesmo dedupe (ON CONFLICT message_id) usado pelo resto do sistema;
 // sem isso, qualquer sync/reconcile recria a mesma mensagem de campanha.
 //
-// instance: qual número da Evolution usa pra mandar. Default é o principal
-// (grupos, comportamento de sempre). Cliente individual de campanha usa o
-// número isolado de marketing (EVOLUTION_INSTANCE_MARKETING) quando
-// configurado — cai pro principal se ainda não tiver sido linkado, pra não
-// travar o sistema no meio da migração.
+// instanceName: qual número da Evolution usa pra mandar. null/undefined cai
+// pro principal (grupo, ou cliente quando nenhum número de marketing foi
+// cadastrado/conectado ainda — nunca trava o sistema por falta de config).
+// Cliente individual de campanha recebe o nome do número já escolhido na
+// hora da criação (pode ser 1 de N números cadastrados em marketing_instances).
 export async function campaignSend(
   jid: string,
   content: string,
   mediaUrl?: string | null,
-  instance: "main" | "marketing" = "main"
+  instanceName?: string | null
 ): Promise<string | null> {
-  const EVO_INST = instance === "marketing" && EVO_INST_MKT ? EVO_INST_MKT : EVO_INST_MAIN
+  const EVO_INST = instanceName || EVO_INST_MAIN
   await assertEvolutionOpen(EVO_INST)
 
   const bareNumber = jid
