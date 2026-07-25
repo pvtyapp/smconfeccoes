@@ -533,14 +533,22 @@ async function replyAndSave(contactId: number, jid: string, text: string): Promi
       .then(async (result) => {
         const msgId = (result as { key?: { id?: string } })?.key?.id ?? null
         await pool.query(
-          `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-           VALUES ($1, $2, 'out', $3, NOW())
+          `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, created_at)
+           VALUES ($1, $2, 'out', $3, 'sent', NOW())
            ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
           [contactId, msgId, text]
         ).catch(() => {})
       })
-      .catch(e => {
+      .catch(async (e) => {
         console.error("[WA-webhook] replyAndSave failed:", jid, e instanceof Error ? e.message : e)
+        // Antes essa falha só ia pro console — a resposta do bot sumia sem deixar
+        // rastro nenhum no dashboard. Agora grava como 'failed' mesmo sem message_id
+        // (Evolution nunca respondeu um key.id porque a chamada nem completou).
+        await pool.query(
+          `INSERT INTO wa_messages (contact_id, direction, content, status, created_at)
+           VALUES ($1, 'out', $2, 'failed', NOW())`,
+          [contactId, text]
+        ).catch(() => {})
       })
   )
 }
@@ -703,31 +711,105 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    // Status update (delivery/read ticks)
+    // Status update (delivery/read ticks). A Evolution manda `data` como OBJETO
+    // ÚNICO (não array) com campos soltos (`keyId`, `status` string) — não como
+    // `{key:{id}, update:{status:number}}` que o código antigo esperava. Isso fazia
+    // Array.isArray(body.data) dar false e TODO update ser silenciosamente ignorado
+    // (nenhuma mensagem nesse sistema jamais virou 'delivered'/'read'). Normaliza
+    // pra array e aceita os dois formatos (novo string + legado numérico).
     if (event === "messages.update") {
-      const updates: unknown[] = Array.isArray(body?.data) ? body.data : []
+      const raw = body?.data
+      const updates: Record<string, unknown>[] = Array.isArray(raw)
+        ? (raw as Record<string, unknown>[])
+        : raw && typeof raw === "object" ? [raw as Record<string, unknown>] : []
+
       waitUntil(
-        Promise.all(updates.map(async (upd) => {
-          const u = upd as Record<string, unknown>
+        Promise.all(updates.map(async (u) => {
           const k = u.key as Record<string, unknown> | undefined
-          const msgId      = k?.id as string | undefined
-          const statusCode = (u.update as Record<string, unknown>)?.status as number | undefined
-          if (!msgId || statusCode == null) return
-          const fromMe = Boolean(k?.fromMe)
-          if (fromMe) {
-            const statusStr = statusCode >= 4 ? "read" : statusCode >= 3 ? "delivered" : statusCode >= 2 ? "sent" : null
-            if (statusStr) {
-              await pool.query(
-                `UPDATE wa_messages SET status = $1, updated_at = NOW() WHERE message_id = $2 AND direction = 'out'`,
-                [statusStr, msgId]
-              ).catch(() => {})
+          const msgId = (u.keyId as string | undefined) ?? (k?.id as string | undefined)
+          if (!msgId) return
+          const fromMe = Boolean(u.fromMe ?? k?.fromMe)
+
+          const statusStrRaw = u.status as string | undefined
+
+          // Delete pra todos chega como status "DELETED" dentro do próprio messages.update
+          // nessa versão — não como evento separado. Espelha a exclusão aqui direto.
+          if (statusStrRaw === "DELETED") {
+            await pool.query(`DELETE FROM wa_messages WHERE message_id = $1`, [msgId]).catch(() => {})
+            return
+          }
+
+          let mapped: "sent" | "delivered" | "read" | "failed" | null = null
+          if (statusStrRaw) {
+            mapped =
+              statusStrRaw === "READ" || statusStrRaw === "PLAYED" ? "read" :
+              statusStrRaw === "DELIVERY_ACK"                      ? "delivered" :
+              statusStrRaw === "ERROR"                              ? "failed" :
+              statusStrRaw === "SERVER_ACK" || statusStrRaw === "PENDING" ? "sent" :
+              null
+          } else {
+            // Formato legado, numérico (mantido por segurança caso volte um dia)
+            const statusCode = (u.update as Record<string, unknown> | undefined)?.status as number | undefined
+            if (statusCode != null) {
+              mapped = statusCode >= 4 ? "read" : statusCode >= 3 ? "delivered" : statusCode >= 2 ? "sent" : null
             }
-          } else if (statusCode >= 4) {
+          }
+          if (!mapped) return
+
+          if (fromMe) {
+            await pool.query(
+              `UPDATE wa_messages SET status = $1, updated_at = NOW() WHERE message_id = $2 AND direction = 'out'`,
+              [mapped, msgId]
+            ).catch(() => {})
+          } else if (mapped === "read") {
             await pool.query(
               `UPDATE wa_messages SET read_at = NOW(), updated_at = NOW() WHERE message_id = $1 AND direction = 'in' AND read_at IS NULL`,
               [msgId]
             ).catch(() => {})
           }
+        }))
+      )
+      return NextResponse.json({ ok: true })
+    }
+
+    // Mensagem apagada no WhatsApp ("apagar para todos", só funciona ~60h após o
+    // envio — "apagar só pra mim" é local no aparelho e nunca chega aqui). Espelha
+    // a exclusão em wa_messages. Mesmo formato flat de data que messages.update.
+    if (event === "messages.delete") {
+      const raw = body?.data
+      const items: Record<string, unknown>[] = Array.isArray(raw)
+        ? (raw as Record<string, unknown>[])
+        : raw && typeof raw === "object" ? [raw as Record<string, unknown>] : []
+
+      waitUntil(
+        Promise.all(items.map(async (it) => {
+          const k = it.key as Record<string, unknown> | undefined
+          const msgId =
+            (it.keyId as string | undefined) ?? (k?.id as string | undefined) ?? (it.id as string | undefined)
+          if (!msgId) return
+          await pool.query(`DELETE FROM wa_messages WHERE message_id = $1`, [msgId]).catch(() => {})
+        }))
+      )
+      return NextResponse.json({ ok: true })
+    }
+
+    // Conversa inteira apagada no WhatsApp — apaga as mensagens daqui também. Mantém
+    // o wa_contacts (cliente, pedidos, tags) — só a conversa é efêmera, o cadastro não.
+    if (event === "chats.delete") {
+      const raw = body?.data
+      const items: unknown[] = Array.isArray(raw) ? raw : raw != null ? [raw] : []
+
+      waitUntil(
+        Promise.all(items.map(async (it) => {
+          const chatJid =
+            typeof it === "string" ? it
+            : ((it as Record<string, unknown>)?.remoteJid as string | undefined) ??
+              ((it as Record<string, unknown>)?.id as string | undefined)
+          if (!chatJid) return
+          await pool.query(
+            `DELETE FROM wa_messages WHERE contact_id = (SELECT id FROM wa_contacts WHERE jid = $1 OR phone_jid = $1 LIMIT 1)`,
+            [chatJid]
+          ).catch(() => {})
         }))
       )
       return NextResponse.json({ ok: true })

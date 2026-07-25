@@ -58,10 +58,13 @@ export async function syncMessagesFromEvolution(
   try {
     const where: Record<string, unknown> = { key: { remoteJid: jid } }
     if (options.afterTs) where.messageTimestamp = { $gt: options.afterTs }
+    // Painel de atendimento, não é WhatsApp Web — quando a conversa reaparece (contato
+    // novo/recriado), traz só uma tela (60 msgs, mesmo tamanho de página do chat), não
+    // o histórico inteiro que a Evolution guarda sem TTL do lado dela.
     const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
       method: "POST",
       headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where, limit: 200 }),
+      body: JSON.stringify({ where, limit: 60 }),
       signal: ctrl.signal,
     })
     if (!res.ok) return { pending, processedCount: 0 }

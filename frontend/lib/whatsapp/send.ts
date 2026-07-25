@@ -31,11 +31,15 @@ export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg
 
   await assertEvolutionOpen()
 
-  const number = jid
-    .replace("@s.whatsapp.net", "")
-    .replace("@g.us", "")
-    .replace(/@lid$/, "")   // strip @lid suffix
-    .replace(/:[0-9]+$/, "") // strip :15 device number
+  // Contato @lid: manda o jid completo com sufixo — a Evolution espera o LID inteiro
+  // pra contas migradas, tirar o sufixo vira um "número" inválido e o envio falha.
+  // Pra @s.whatsapp.net/@g.us, sim, manda só os dígitos (telefone ou id do grupo).
+  const number = jid.endsWith("@lid")
+    ? jid
+    : jid
+        .replace("@s.whatsapp.net", "")
+        .replace("@g.us", "")
+        .replace(/:[0-9]+$/, "") // strip :15 device number
 
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 9_000)

@@ -49,23 +49,23 @@ export async function cleanDtfAttachments(): Promise<number> {
 
 /**
  * Called by the hourly cron.
- * 1. NULLs media_data older than 48h (TTL)
+ * 1. NULLs media_data older than 3 days (TTL)
  * 2. Marks stuck media as failed (media_type set, media_data never arrived, > 2h old)
  * 3. Evicts oldest media_data if total > 500MB
- * 4. Deletes wa_messages older than 14 days
+ * 4. Deletes wa_messages older than 7 days
  */
 export async function runMediaCleanup(): Promise<{ mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number }> {
   let mediaCleared  = 0
   let messagesDeleted = 0
   let dtfAttachmentsCleared = 0
 
-  // 1. TTL 48h — NULL media_data, mark as failed
+  // 1. TTL 3 dias — NULL media_data, mark as failed
   try {
     const { rowCount } = await pool.query(`
       UPDATE wa_messages
       SET media_data = NULL, media_failed = true
       WHERE media_data IS NOT NULL
-        AND created_at < NOW() - INTERVAL '48 hours'
+        AND created_at < NOW() - INTERVAL '3 days'
     `)
     mediaCleared += rowCount ?? 0
   } catch (e) { console.error("[mediaCleanup] TTL 48h:", e) }
@@ -103,16 +103,16 @@ export async function runMediaCleanup(): Promise<{ mediaCleared: number; message
     }
   } catch (e) { console.error("[mediaCleanup] evicção tamanho:", e) }
 
-  // 4. Delete messages older than 14 days (unlink DTF attachments first)
+  // 4. Delete messages older than 7 days (unlink DTF attachments first)
   try {
     await pool.query(`
       UPDATE dtf_order_attachments SET wa_message_id = NULL
       WHERE wa_message_id IN (
-        SELECT id FROM wa_messages WHERE created_at < NOW() - INTERVAL '14 days'
+        SELECT id FROM wa_messages WHERE created_at < NOW() - INTERVAL '7 days'
       )
     `)
     const { rowCount } = await pool.query(`
-      DELETE FROM wa_messages WHERE created_at < NOW() - INTERVAL '14 days'
+      DELETE FROM wa_messages WHERE created_at < NOW() - INTERVAL '7 days'
     `)
     messagesDeleted = rowCount ?? 0
   } catch (e) { console.error("[mediaCleanup] delete mensagens antigas:", e) }
