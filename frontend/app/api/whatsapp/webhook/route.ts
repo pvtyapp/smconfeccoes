@@ -109,6 +109,33 @@ async function upsertContactFromMessage(jid: string, rawPushName: string, remote
     }
   }
 
+  // @lid mas já existe um contato com telefone batendo (jid @s.whatsapp.net antigo,
+  // ou phone_jid já resolvido de uma conversa anterior) — reaproveita esse contato e
+  // atualiza o jid pro @lid atual, em vez de criar um segundo contato. Sem isso, toda
+  // vez que o WhatsApp troca o endereçamento desse número, a mensagem seguinte cai
+  // num contato novo (ou pior, num jid que não bate com nada e o INSERT some sem
+  // fundir com o histórico existente).
+  if (jid.endsWith("@lid") && phoneJid && phone.length >= 8) {
+    const { rows } = await pool.query(`
+      SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
+             updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+      FROM wa_contacts WHERE jid != $3 AND (phone = $1 OR phone_jid = $2) LIMIT 1
+    `, [phone, phoneJid, jid]).catch(() => ({ rows: [] as Record<string, unknown>[] }))
+    if (rows[0]) {
+      await pool.query(`
+        UPDATE wa_contacts SET
+          jid       = $1,
+          phone_jid = COALESCE(phone_jid, $2),
+          name      = CASE WHEN name IS NOT NULL THEN name
+                           WHEN $4::text IS NULL THEN name
+                           ELSE $4 END,
+          updated_at = NOW()
+        WHERE id = $3
+      `, [jid, phoneJid, rows[0].id, pushName]).catch(() => {})
+      return rows[0]
+    }
+  }
+
   const { rows } = await pool.query(`
     INSERT INTO wa_contacts (jid, name, phone, phone_jid)
     VALUES ($1, $2, $3, $4)
@@ -854,6 +881,19 @@ export async function POST(req: Request) {
       // exclusivo — em vez de ficar mudo.
       const remoteJidAlt = (key.remoteJidAlt as string) || ""
       const adminUser = await resolveAdminUser(jid, remoteJidAlt).catch(() => null)
+
+      // Autocura: número que já foi vinculado como operador (linked_user_id) mas não
+      // bate mais com nenhum usuário ativo — trocou de número, foi desvinculado ou
+      // renomeado do lado de Usuários. Sem isso o contato fica "preso" pra sempre
+      // marcado como operador, mesmo depois de desfazer o vínculo no cadastro.
+      if (!adminUser) {
+        pool.query(
+          `UPDATE wa_contacts SET linked_user_id = NULL, updated_at = NOW()
+           WHERE linked_user_id IS NOT NULL AND (jid = $1 OR phone_jid = $1 OR ($2 <> '' AND phone_jid = $2))`,
+          [jid, remoteJidAlt]
+        ).catch(() => {})
+      }
+
       if (adminUser) {
         const adminMsgBody = m.message as Record<string, unknown> | undefined
         const adminText: string =
