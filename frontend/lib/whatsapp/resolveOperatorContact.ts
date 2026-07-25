@@ -17,10 +17,20 @@ export async function findOrCreateOperatorContact(
   await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS linked_user_id INTEGER REFERENCES users(id)`).catch(() => {})
 
   const { rows: linked } = await pool.query(
-    `SELECT id FROM wa_contacts WHERE linked_user_id = $1 LIMIT 1`,
+    `SELECT id, jid FROM wa_contacts WHERE linked_user_id = $1 LIMIT 1`,
     [userId]
   )
-  if (linked[0]) return linked[0].id
+  if (linked[0]) {
+    // Mantém o jid sincronizado com a identificação mais recente que o WhatsApp
+    // mandou — sem isso, reply() (que casa por jid/phone_jid bruto) pode achar
+    // ou criar uma linha diferente da que esse lookup por linked_user_id retorna
+    // assim que o número migra de endereçamento (@s.whatsapp.net → @lid), gerando
+    // um contato duplicado que separa mensagem recebida de mensagem enviada.
+    if (linked[0].jid !== jid) {
+      await pool.query(`UPDATE wa_contacts SET jid = $1, updated_at = NOW() WHERE id = $2`, [jid, linked[0].id]).catch(() => {})
+    }
+    return linked[0].id
+  }
 
   const phoneJid = `55${phone}@s.whatsapp.net`
 
