@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
-import { todayBR, fmtDateBR } from "@/lib/tz"
+import { todayBR, fmtDateBR, isWeekendBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
 
@@ -84,6 +84,10 @@ export async function GET(req: Request) {
   }
 
   const today = todayBR()
+  // Cobrança de cliente (seções 7, 8, 8b) só dispara em dia útil (seg-sex).
+  // Pedido vencido no fim de semana não fica sem aviso: cai pra seção 8b
+  // (due_date < hoje) assim que o cron rodar na segunda-feira seguinte.
+  const cobrancaHabilitada = !isWeekendBR()
 
   if (chatbotAtivo && lifecycleActive) {
   // ── 1. Novo D2 — lead que não converteu em 48h ────────────────────────────────
@@ -312,6 +316,7 @@ export async function GET(req: Request) {
   } catch { results.errors++ }
   } // lifecycleActive
 
+  if (cobrancaHabilitada) {
   // ── 7. Cobrança dias corridos ─────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
@@ -360,12 +365,12 @@ export async function GET(req: Request) {
     }
   } catch { results.errors++ }
 
-  // ── 8b. Cobrança de vencido — produto + DTF, a cada 3 dias até pagar ────────
+  // ── 8b. Cobrança de vencido — produto + DTF, um único aviso ─────────────────
   // Diferente das seções 7/8 (aviso só no dia do vencimento, e só pra contato com
   // prazo automático configurado): esta cobre TUDO que já venceu e continua em
   // aberto — inclusive cobrança manual (Nova Cobrança) e pedido DTF, que antes
-  // nunca recebiam lembrete nenhum. Primeiro disparo no dia seguinte ao
-  // vencimento, depois a cada 3 dias (throttle via last_reminder_at).
+  // nunca recebiam lembrete nenhum. Dispara uma única vez, no primeiro dia útil
+  // após o vencimento (last_reminder_at IS NULL) — nunca repete depois disso.
   try {
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0`).catch(() => {})
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMPTZ`).catch(() => {})
@@ -380,7 +385,7 @@ export async function GET(req: Request) {
       WHERE o.due_date < $1
         AND o.paid_at IS NULL
         AND o.status != 'cancelado'
-        AND (o.last_reminder_at IS NULL OR o.last_reminder_at <= NOW() - INTERVAL '3 days')
+        AND o.last_reminder_at IS NULL
     `, [today])
 
     const { rows: overdueDtf } = await pool.query(`
@@ -391,7 +396,7 @@ export async function GET(req: Request) {
       WHERE p.due_date < $1
         AND p.paid_at IS NULL
         AND p.status != 'cancelado'
-        AND (p.last_reminder_at IS NULL OR p.last_reminder_at <= NOW() - INTERVAL '3 days')
+        AND p.last_reminder_at IS NULL
     `, [today])
 
     for (const row of [...overdueOrders, ...overdueDtf]) {
@@ -422,6 +427,7 @@ export async function GET(req: Request) {
     }
     results.cobrancaVencida = overdueOrders.filter(r => r.jid && r.name).length + overdueDtf.filter(r => r.jid && r.name).length
   } catch { results.errors++ }
+  } // cobrancaHabilitada
 
   // ── 9. Reset estados presos do chatbot (> 6h sem atualização) ───────────────
   try {

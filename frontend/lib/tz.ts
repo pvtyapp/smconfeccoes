@@ -15,6 +15,12 @@ export function dateBR(d: Date): string {
   return d.toLocaleDateString("en-CA", { timeZone: TZ })
 }
 
+/** True if today (São Paulo timezone) is Saturday or Sunday */
+export function isWeekendBR(d: Date = new Date()): boolean {
+  const day = d.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short" })
+  return day === "Sat" || day === "Sun"
+}
+
 /** ISO timestamp → "dd/mm/yyyy" in São Paulo timezone */
 export function fmtDateBR(iso: string | null | undefined): string {
   if (!iso) return "—"
