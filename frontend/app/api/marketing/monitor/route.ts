@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { getInstanceState } from "@/lib/whatsapp/evolutionInstances"
+import { getInstanceState } from "@/lib/whatsapp/marketingInstances"
 
 export async function GET() {
   try {

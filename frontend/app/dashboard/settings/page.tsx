@@ -196,6 +196,22 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* WhatsApp */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">WhatsApp</h2>
+            <div className="flex items-start gap-3 bg-[#F4F6FB] rounded-xl px-4 py-3">
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-[#0F1E3C]/70">Número principal e instâncias de marketing</p>
+                <p className="text-[11px] text-[#0F1E3C]/40 mt-0.5">
+                  Ver status de conexão, reconectar via QR code e cadastrar números extras pro rodízio de campanhas.
+                </p>
+              </div>
+              <a href="/dashboard/settings/whatsapp" className="flex-shrink-0 text-[10px] font-bold text-[#4361EE] hover:underline mt-0.5">
+                Gerenciar →
+              </a>
+            </div>
+          </section>
+
           {/* DTF */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Impressão DTF</h2>

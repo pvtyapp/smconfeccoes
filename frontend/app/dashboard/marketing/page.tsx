@@ -754,40 +754,8 @@ type MonitorInstance = {
 }
 type MonitorData = { campaigns: MonitorCampaign[]; instances: MonitorInstance[] }
 
-function InstancesPanel({ instances, onChange }: { instances: MonitorInstance[]; onChange: () => void }) {
-  const [showAdd, setShowAdd] = useState(false)
-  const [newName, setNewName] = useState("")
-  const [newLabel, setNewLabel] = useState("")
-  const [saving, setSaving] = useState(false)
+function InstancesPanel({ instances }: { instances: MonitorInstance[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
-
-  async function addInstance() {
-    if (!newName.trim() || !newLabel.trim()) return
-    setSaving(true)
-    const r = await fetch("/api/marketing/instances", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instanceName: newName.trim(), label: newLabel.trim() }),
-    })
-    if (r.ok) { setNewName(""); setNewLabel(""); setShowAdd(false); onChange() }
-    setSaving(false)
-  }
-
-  async function toggle(inst: MonitorInstance) {
-    await fetch(`/api/marketing/instances/${inst.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: !inst.active }),
-    })
-    onChange()
-  }
-
-  async function remove(inst: MonitorInstance) {
-    if (!confirm(`Remover "${inst.label}" do cadastro? (não desconecta o número, só sai do rodízio)`)) return
-    await fetch(`/api/marketing/instances/${inst.id}`, { method: "DELETE" })
-    if (selectedId === inst.id) setSelectedId(null)
-    onChange()
-  }
 
   const connectedCount = instances.filter(i => i.state === "connected").length
   const selected = instances.find(i => i.id === selectedId) ?? null
@@ -796,13 +764,13 @@ function InstancesPanel({ instances, onChange }: { instances: MonitorInstance[];
     <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-[0_1px_2px_rgba(15,30,60,.04),0_8px_24px_-8px_rgba(15,30,60,.08)] overflow-hidden mb-4">
       <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#0F1E3C]/6">
         <p className="text-xs font-bold text-[#0F1E3C]">Números de Marketing</p>
-        <button onClick={() => setShowAdd(v => !v)}
-          className="flex items-center gap-1 text-[10px] font-bold text-[#3451d1] hover:bg-[#4361EE]/8 px-1.5 py-1 rounded-lg transition-colors">
-          <Plus size={11} /> Adicionar
-        </button>
+        <a href="/dashboard/settings/whatsapp"
+          className="text-[10px] font-bold text-[#3451d1] hover:underline px-1.5 py-1">
+          Gerenciar em Configurações →
+        </a>
       </div>
 
-      {instances.length === 0 && !showAdd ? (
+      {instances.length === 0 ? (
         <p className="text-xs text-[#0F1E3C]/35 px-4 py-4">
           Nenhum número cadastrado ainda — envio pra cliente cai no número principal enquanto isso.
         </p>
@@ -840,31 +808,7 @@ function InstancesPanel({ instances, onChange }: { instances: MonitorInstance[];
             <p className="text-xs font-bold text-[#0F1E3C] truncate">{selected.label}</p>
             <p className="text-[10px] text-[#0F1E3C]/35 truncate">{selected.instanceName}</p>
           </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {!selected.active && <span className="text-[9px] font-bold bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full mr-1">Pausado</span>}
-            <button onClick={() => toggle(selected)} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors">
-              {selected.active ? <ToggleRight size={20} className="text-[#4361EE]" /> : <ToggleLeft size={20} />}
-            </button>
-            <button onClick={() => remove(selected)} className="p-1 rounded hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
-              <Trash2 size={12} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showAdd && (
-        <div className="space-y-2 p-3.5 border-t border-[#0F1E3C]/6">
-          <input value={newName} onChange={e => setNewName(e.target.value)}
-            placeholder="Nome da instância (ex: smconfeccoes-marketing2)"
-            className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-          <input value={newLabel} onChange={e => setNewLabel(e.target.value)}
-            placeholder="Rótulo pra você reconhecer (ex: Número 2)"
-            className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-          <p className="text-[10px] text-[#0F1E3C]/30">A instância já precisa existir no Evolution, com o QR já escaneado.</p>
-          <button onClick={addInstance} disabled={saving || !newName.trim() || !newLabel.trim()}
-            className="w-full py-2 rounded-xl bg-[#4361EE] text-white text-xs font-bold disabled:opacity-40">
-            {saving ? "Salvando..." : "Cadastrar número"}
-          </button>
+          {!selected.active && <span className="text-[9px] font-bold bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full flex-shrink-0">Pausado</span>}
         </div>
       )}
     </div>
@@ -904,7 +848,7 @@ function MarketingMonitor() {
 
   return (
     <>
-      <InstancesPanel instances={instances} onChange={load} />
+      <InstancesPanel instances={instances} />
 
       {campaigns.length > 0 && (
         <div className="flex items-baseline justify-between mb-2.5 mt-5">

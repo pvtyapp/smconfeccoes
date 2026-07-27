@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { generateMarketingVariants } from "@/lib/ai/generateMarketingVariants"
-import { getInstanceState } from "@/lib/whatsapp/evolutionInstances"
+import { getInstanceState } from "@/lib/whatsapp/marketingInstances"
 
 export async function GET() {
   try {
