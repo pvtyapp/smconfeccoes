@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export const dynamic = "force-dynamic"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
 export async function DELETE(req: Request) {
   try {
@@ -23,11 +20,9 @@ export async function DELETE(req: Request) {
 
     // Delete chat from Evolution (clears from PIV's WhatsApp)
     if (jid) {
-      fetch(`${EVO_URL}/chat/delete/${EVO_INSTANCE}`, {
-        method: "DELETE",
-        headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ remoteJid: jid }),
-      }).catch(() => {})
+      getProvider()
+        .then(provider => provider.deleteChat(jid))
+        .catch(() => {})
     }
 
     return NextResponse.json({ ok: true })

@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { deleteBlobs } from "@/lib/blob-cleanup"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export async function POST(req: Request) {
   try {
@@ -20,11 +17,8 @@ export async function POST(req: Request) {
       // onlyLocally=false → delete for everyone (only works for own messages within 60h)
       // onlyLocally=true  → delete from PIV's WhatsApp only
       const locally = onlyLocally ?? !fromMe
-      await fetch(`${EVO_URL}/message/delete/${EVO_INSTANCE}?onlyLocally=${locally}`, {
-        method: "DELETE",
-        headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ id: messageId, remoteJid: jid, fromMe }),
-      }).catch(() => {})
+      const provider = await getProvider()
+      await provider.deleteMessage(messageId, jid, fromMe, locally).catch(() => {})
     }
 
     if (messageDbId) {

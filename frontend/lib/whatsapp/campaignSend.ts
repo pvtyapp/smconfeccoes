@@ -1,5 +1,5 @@
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY       = (process.env.EVOLUTION_API_KEY  ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
+
 const EVO_INST_MAIN = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
 // Erro específico de conexão caída — quem chama precisa diferenciar isso de
@@ -14,13 +14,9 @@ export class EvolutionDisconnectedError extends Error {
 }
 
 async function assertEvolutionOpen(instance: string): Promise<void> {
-  const res = await fetch(`${EVO_URL}/instance/connectionState/${instance}`, {
-    headers: { apikey: EVO_KEY },
-    signal: AbortSignal.timeout(4_000),
-  })
-  if (!res.ok) throw new EvolutionDisconnectedError(`http_${res.status}`)
-  const data = await res.json() as { instance?: { state?: string }; state?: string }
-  const state = data?.instance?.state ?? data?.state
+  const provider = await getProvider()
+  const { state, ok, httpStatus } = await provider.getConnectionState(instance, 4_000)
+  if (!ok) throw new EvolutionDisconnectedError(`http_${httpStatus ?? "network_error"}`)
   if (state !== "open") {
     throw new EvolutionDisconnectedError(state ?? "unknown")
   }
@@ -74,35 +70,25 @@ export async function campaignSend(
     }
     const mimetype = MIME[ext] ?? "image/jpeg"
 
-    const r = await fetch(`${EVO_URL}/message/sendMedia/${EVO_INST}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: EVO_KEY },
-      body: JSON.stringify({
-        number,
-        mediatype: "image",
-        media: mediaUrl,
-        caption: content,
-        mimetype,
-        fileName: rawName,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!r.ok) {
-      const errBody = await r.text().catch(() => "")
-      console.error(`[campaignSend] sendMedia falhou ${r.status} para ${number}:`, errBody.slice(0, 300))
-      throw new Error(`Evolution sendMedia ${r.status}: ${errBody.slice(0, 120)}`)
+    const provider = await getProvider()
+    try {
+      const result = await provider.sendMedia(number, {
+        mediatype: "image", media: mediaUrl, mimetype, fileName: rawName,
+        caption: content, instanceName: EVO_INST, timeoutMs: 15_000,
+      })
+      return result.id
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`[campaignSend] sendMedia falhou para ${number}:`, msg.slice(0, 300))
+      throw new Error(`Evolution sendMedia: ${msg.slice(0, 120)}`)
     }
-    const data = await r.json().catch(() => null) as { key?: { id?: string } } | null
-    return data?.key?.id ?? null
   } else {
-    const r = await fetch(`${EVO_URL}/message/sendText/${EVO_INST}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: EVO_KEY },
-      body: JSON.stringify({ number, text: content }),
-      signal: AbortSignal.timeout(9_000),
-    })
-    if (!r.ok) throw new Error(`Evolution sendText ${r.status}`)
-    const data = await r.json().catch(() => null) as { key?: { id?: string } } | null
-    return data?.key?.id ?? null
+    const provider = await getProvider()
+    try {
+      const result = await provider.sendText(number, content, { instanceName: EVO_INST, timeoutMs: 9_000 })
+      return result.id
+    } catch (e) {
+      throw new Error(`Evolution sendText: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 }

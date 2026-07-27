@@ -1,27 +1,13 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getProvider } from "@/lib/whatsapp/provider"
 
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
 const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
 async function syncGroupMessagesFromEvolution(jid: string, groupId: number) {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 6_000)
   try {
-    const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: 80 }),
-      signal: ctrl.signal,
-    })
-    if (!res.ok) return
-
-    const data = await res.json()
-    const records: unknown[] =
-      Array.isArray(data) ? data :
-      Array.isArray(data?.messages?.records) ? data.messages.records :
-      Array.isArray(data?.records) ? data.records : []
+    const provider = await getProvider()
+    const records = await provider.findMessages({ where: { key: { remoteJid: jid } }, limit: 80 }, 6_000)
 
     for (const r of records) {
       const rec     = r as Record<string, unknown>
@@ -50,7 +36,6 @@ async function syncGroupMessagesFromEvolution(jid: string, groupId: number) {
       ).catch(() => {})
     }
   } catch { /* timeout or Evolution offline */ }
-  finally { clearTimeout(timer) }
 }
 
 export async function GET(req: Request) {

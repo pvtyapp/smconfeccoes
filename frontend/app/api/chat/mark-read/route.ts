@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export async function POST(req: Request) {
   try {
@@ -38,16 +35,11 @@ export async function POST(req: Request) {
       ).catch(() => ({ rows: [] }))
       const sendJid = (cjid[0]?.send_jid as string) || jid
       if (sendJid) {
-        fetch(`${EVO_URL}/message/markAsRead/${EVO_INSTANCE}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", apikey: EVO_KEY },
-          body: JSON.stringify({
-            readMessages: unread.map((r: { message_id: string }) => ({
-              key: { id: r.message_id, fromMe: false, remoteJid: sendJid }
-            }))
-          }),
-          signal: AbortSignal.timeout(5_000),
-        }).catch(e => console.error("[mark-read] Evolution markAsRead falhou:", e instanceof Error ? e.message : e))
+        getProvider()
+          .then(provider => provider.markRead(
+            unread.map((r: { message_id: string }) => ({ id: r.message_id, fromMe: false, remoteJid: sendJid }))
+          ))
+          .catch(e => console.error("[mark-read] Evolution markAsRead falhou:", e instanceof Error ? e.message : e))
       }
     }
 

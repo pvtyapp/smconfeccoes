@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 function extractLastMsg(lm: Record<string, unknown>): { text: string; mediaType: string | null } {
   if (!lm) return { text: "", mediaType: null }
@@ -27,16 +24,8 @@ export async function GET(req: Request) {
   const limit = parseInt(searchParams.get("limit") ?? "30")
 
   try {
-    const r = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ skip: 0, limit: 300 }),
-      signal: AbortSignal.timeout(12_000),
-    })
-    if (!r.ok) return NextResponse.json([], { status: 200 })
-
-    const all = await r.json()
-    const items: Record<string, unknown>[] = Array.isArray(all) ? all : []
+    const provider = await getProvider()
+    const items = await provider.findChats({ skip: 0, limit: 300 }, 12_000)
 
     const filtered = items.filter(c => {
       const jid = (c.remoteJid as string) ?? ""

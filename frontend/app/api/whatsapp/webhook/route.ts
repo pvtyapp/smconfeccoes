@@ -10,6 +10,7 @@ import { todayBR } from "@/lib/tz"
 import { sortSizes } from "@/lib/sizeOrder"
 import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
+import { getProvider } from "@/lib/whatsapp/provider"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -39,18 +40,8 @@ async function resolveLidPhoneInBackground(jid: string, contactId: number): Prom
 
     await pool.query(`UPDATE wa_contacts SET phone_jid_synced_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
 
-    const r = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ skip: 0, limit: 500 }),
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (!r.ok) return
-    const d = await r.json()
-    const chats: Record<string, unknown>[] = Array.isArray(d) ? d
-      : Array.isArray(d?.chats)   ? d.chats
-      : Array.isArray(d?.records) ? d.records
-      : []
+    const provider = await getProvider()
+    const chats = await provider.findChats({ skip: 0, limit: 500 }, 8_000)
 
     const match  = chats.find(c => ((c.remoteJid ?? c.id) as string) === jid)
     const lastMsg = match?.lastMessage as Record<string, unknown> | undefined
@@ -459,15 +450,8 @@ async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<Save
 async function reconcileRecentMessages(jid: string): Promise<void> {
   if (!EVO_URL || !EVO_KEY || !EVO_INSTANCE || jid.endsWith("@g.us")) return
   try {
-    const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where: { key: { remoteJid: jid } }, limit: 15 }),
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (!res.ok) return
-    const data = await res.json()
-    const records: Record<string, unknown>[] = data?.messages?.records ?? []
+    const provider = await getProvider()
+    const records = await provider.findMessages({ where: { key: { remoteJid: jid } }, limit: 15 }, 8_000)
     if (records.length === 0) return
 
     const evoIds = records

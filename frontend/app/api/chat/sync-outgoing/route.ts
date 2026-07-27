@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-
-const EVO_URL  = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY  = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INST = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
@@ -15,24 +12,12 @@ export async function GET(req: Request) {
   }
 
   try {
-    const resp = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INST}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        where: { key: { remoteJid: jid, fromMe: true } },
-        limit: 80,
-        sort: { messageTimestamp: -1 },
-      }),
-      signal: AbortSignal.timeout(5000),
-    })
-
-    if (!resp.ok) return NextResponse.json({ synced: 0 })
-
-    const data    = await resp.json()
-    const records = (Array.isArray(data) ? data
-      : Array.isArray(data?.messages?.records) ? data.messages.records
-      : Array.isArray(data?.records) ? data.records
-      : []) as Record<string, unknown>[]
+    const provider = await getProvider()
+    const records = await provider.findMessages({
+      where: { key: { remoteJid: jid, fromMe: true } },
+      limit: 80,
+      sort: { messageTimestamp: -1 },
+    }, 5_000)
 
     let synced = 0
     for (const rec of records) {

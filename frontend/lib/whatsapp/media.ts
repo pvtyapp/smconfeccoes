@@ -1,8 +1,4 @@
-import { put } from "@vercel/blob"
-
-const EVO_URL      = process.env.EVOLUTION_API_URL!
-const EVO_KEY      = process.env.EVOLUTION_API_KEY!
-const EVO_INSTANCE = process.env.EVOLUTION_INSTANCE!
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export type DownloadedMedia = {
   base64: string
@@ -31,24 +27,15 @@ export async function downloadEvolutionMedia(message: unknown): Promise<Download
       }
     }
 
-    const res = await fetch(
-      `${EVO_URL}/chat/getBase64FromMediaMessage/${EVO_INSTANCE}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: EVO_KEY },
-        body: JSON.stringify({ message }),
-        signal: AbortSignal.timeout(45_000),
-      }
-    )
-    if (!res.ok) return null
-    const data = await res.json()
-    if (!data?.base64) return null
+    const provider = await getProvider()
+    const result = await provider.downloadMedia(message)
+    if (!result) return null
 
-    const mimeType  = data.mimetype ?? "application/octet-stream"
-    const extension = data.extension ?? mimeType.split("/")[1] ?? "bin"
+    const mimeType  = result.mimetype
+    const extension = result.extension
     const filename  = `media-${Date.now()}.${extension}`
 
-    return { base64: data.base64, mimeType, extension, filename }
+    return { base64: result.base64, mimeType, extension, filename }
   } catch {
     return null
   }
@@ -88,25 +75,4 @@ export function classifyMediaCategory(
   }
 
   return "foto"
-}
-
-/**
- * Uploads base64 media to Vercel Blob and returns the public URL.
- */
-export async function uploadToBlob(
-  base64: string,
-  mimeType: string,
-  filename: string,
-  folder: "dtf" | "pix" | "media" | "audio" | "docs"
-): Promise<string | null> {
-  try {
-    const buffer = Buffer.from(base64, "base64")
-    const blob   = await put(`sm-attachments/${folder}/${filename}`, buffer, {
-      access: "public",
-      contentType: mimeType,
-    })
-    return blob.url
-  } catch {
-    return null
-  }
 }

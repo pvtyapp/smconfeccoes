@@ -2,34 +2,15 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { waitUntil } from "@vercel/functions"
 import { syncMessagesFromEvolution, downloadSyncedMedia } from "@/lib/whatsapp/syncMessages"
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export const dynamic = "force-dynamic"
 
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
-
 const CONTACTS_PER_CYCLE = 5
 
-function sig(ms: number) {
-  return AbortSignal.timeout ? AbortSignal.timeout(ms) : new AbortController().signal
-}
-
 async function fetchChats(): Promise<Record<string, unknown>[]> {
-  try {
-    const r = await fetch(`${EVO_URL}/chat/findChats/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ skip: 0, limit: 500 }),
-      signal: sig(8_000),
-    })
-    if (!r.ok) return []
-    const d = await r.json()
-    return Array.isArray(d) ? d
-      : Array.isArray(d?.chats)   ? d.chats
-      : Array.isArray(d?.records) ? d.records
-      : []
-  } catch { return [] }
+  const provider = await getProvider()
+  return provider.findChats({ skip: 0, limit: 500 }, 8_000)
 }
 
 function isIndividual(jid: string): boolean {

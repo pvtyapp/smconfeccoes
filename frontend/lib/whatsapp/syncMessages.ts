@@ -1,10 +1,7 @@
 import { pool } from "@/lib/db"
 import { downloadEvolutionMedia, classifyMediaCategory } from "@/lib/whatsapp/media"
 import { waitUntil } from "@vercel/functions"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 export type PendingMedia = { rec: Record<string, unknown>; msgId: string; mediaType: string }
 
@@ -51,8 +48,6 @@ export async function syncMessagesFromEvolution(
   contactId: number,
   options: { afterTs?: number } = {}
 ): Promise<{ pending: PendingMedia[]; processedCount: number }> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 6_000)
   const pending: PendingMedia[] = []
   let records: unknown[] = []
   try {
@@ -61,22 +56,8 @@ export async function syncMessagesFromEvolution(
     // Painel de atendimento, não é WhatsApp Web — quando a conversa reaparece (contato
     // novo/recriado), traz só uma tela (60 msgs, mesmo tamanho de página do chat), não
     // o histórico inteiro que a Evolution guarda sem TTL do lado dela.
-    const res = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where, limit: 60 }),
-      signal: ctrl.signal,
-    })
-    if (!res.ok) return { pending, processedCount: 0 }
-
-    const data = await res.json()
-    records =
-      Array.isArray(data) ? data :
-      Array.isArray(data?.messages?.records) ? data.messages.records :
-      Array.isArray(data?.records) ? data.records :
-      Array.isArray(data?.data) ? data.data :
-      Array.isArray(data?.messages) ? data.messages :
-      []
+    const provider = await getProvider()
+    records = await provider.findMessages({ where, limit: 60 }, 6_000)
 
     for (const r of records) {
       const rec = r as Record<string, unknown>
@@ -183,7 +164,6 @@ export async function syncMessagesFromEvolution(
       }
     }
   } catch { /* timeout or Evolution offline */ }
-  finally { clearTimeout(timer) }
   return { pending, processedCount: records.length }
 }
 

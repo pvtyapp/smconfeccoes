@@ -6,6 +6,7 @@ import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { todayBR, fmtDateBR, isWeekendBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
+import { getProvider } from "@/lib/whatsapp/provider"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
@@ -24,17 +25,11 @@ export async function GET(req: Request) {
   // in progress), "qr" and "banned" (require manual intervention). Throttled to 2h
   // to avoid restart loops after a WhatsApp session ban.
   try {
-    const EVO_URL  = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-    const EVO_KEY  = (process.env.EVOLUTION_API_KEY  ?? "").trim()
     const EVO_INST = (process.env.EVOLUTION_INSTANCE ?? "").trim()
-    if (EVO_URL && EVO_KEY && EVO_INST) {
-      const stateRes = await fetch(`${EVO_URL}/instance/connectionState/${EVO_INST}`, {
-        headers: { apikey: EVO_KEY },
-        signal: AbortSignal.timeout(5_000),
-      })
-      if (stateRes.ok) {
-        const stateData = await stateRes.json() as { instance?: { state?: string }; state?: string }
-        const state = stateData?.instance?.state ?? stateData?.state
+    if (EVO_INST) {
+      const provider = await getProvider()
+      const { state, ok } = await provider.getConnectionState(EVO_INST, 5_000)
+      if (ok) {
         if (state !== "open") {
           const SKIP_STATES = ["connecting", "qr", "banned", "refused"]
           if (SKIP_STATES.includes(state ?? "")) {
@@ -48,11 +43,8 @@ export async function GET(req: Request) {
             const minsSince   = lastRestart ? (Date.now() - lastRestart.getTime()) / 60_000 : Infinity
             if (minsSince > 120) {
               console.log(`[cron] Evolution state=${state}, reiniciando (último restart: ${lastRestart ? minsSince.toFixed(0) + "min atrás" : "nunca"})`)
-              await fetch(`${EVO_URL}/instance/restart/${EVO_INST}`, {
-                method: "PUT",
-                headers: { apikey: EVO_KEY },
-                signal: AbortSignal.timeout(10_000),
-              }).catch(e => console.error("[cron] falha ao reiniciar Evolution:", e instanceof Error ? e.message : e))
+              await provider.restartInstance(EVO_INST)
+                .catch(e => console.error("[cron] falha ao reiniciar Evolution:", e instanceof Error ? e.message : e))
               await pool.query(
                 `INSERT INTO app_settings (key, value) VALUES ('evo_last_restart', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
                 [new Date().toISOString()]

@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 interface MediaInfo {
   mediaType: string | null
@@ -65,19 +62,8 @@ export async function GET(req: Request) {
   if (!jid) return NextResponse.json({ error: "jid obrigatório" }, { status: 400 })
 
   try {
-    const r = await fetch(`${EVO_URL}/chat/findMessages/${EVO_INSTANCE}`, {
-      method: "POST",
-      headers: { apikey: EVO_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ where: { key: { remoteJid: jid } }, skip, limit }),
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!r.ok) return NextResponse.json({ messages: [], hasMore: false })
-
-    const data = await r.json()
-    const raw: Record<string, unknown>[] =
-      Array.isArray(data) ? data :
-      Array.isArray(data?.messages?.records) ? data.messages.records :
-      Array.isArray(data?.records) ? data.records : []
+    const provider = await getProvider()
+    const raw = await provider.findMessages({ where: { key: { remoteJid: jid } }, skip, limit }, 15_000)
 
     // Filter out system messages with no useful content
     const filtered = raw.filter(m => {

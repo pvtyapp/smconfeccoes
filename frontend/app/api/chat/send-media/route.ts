@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-
-const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
-const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
-const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
+import { getProvider } from "@/lib/whatsapp/provider"
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 
@@ -43,38 +40,22 @@ export async function POST(req: Request) {
     else if (mimeType.startsWith("video/")) mediatype = "video"
     else if (mimeType.startsWith("audio/")) mediatype = "audio"
 
-    // Resolve real send JID: @lid contacts need the @s.whatsapp.net JID
-    let sendJid = jid
-    if (contactId && jid.endsWith("@lid")) {
-      const { rows } = await pool.query(
-        `SELECT COALESCE(phone_jid, CONCAT(phone, '@s.whatsapp.net')) AS send_jid
-         FROM wa_contacts WHERE id = $1 AND phone_jid IS NOT NULL LIMIT 1`,
-        [Number(contactId)]
-      ).catch(() => ({ rows: [] as { send_jid: string }[] }))
-      if (rows[0]?.send_jid) sendJid = rows[0].send_jid
-    }
+    // Manda no jid original (@lid quando é esse o caso) — Evolution passou a
+    // rejeitar envio em @s.whatsapp.net pra contatos migrados. Mesmo fix de
+    // app/api/chat/send/route.ts.
+    const sendJid = jid
 
     const number = sendJid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
-    let evoRes: Record<string, unknown> | null = null
     let evoMsgId: string | null = null
 
     try {
-      const endpoint = mediatype === "document"
-        ? `${EVO_URL}/message/sendDocument/${EVO_INSTANCE}`
-        : `${EVO_URL}/message/sendMedia/${EVO_INSTANCE}`
-
-      const r = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: EVO_KEY },
-        body: JSON.stringify({ number, mediatype, mimetype: mimeType, caption: caption ?? "", media: base64, fileName }),
-        signal: AbortSignal.timeout(12_000),
+      const provider = await getProvider()
+      const result = await provider.sendMedia(number, {
+        mediatype, mimetype: mimeType, caption: caption ?? "", media: base64, fileName,
+        timeoutMs: 12_000,
       })
-
-      if (r.ok) {
-        evoRes = await r.json() as Record<string, unknown>
-        evoMsgId = (evoRes?.key as Record<string, unknown>)?.id as string ?? null
-      }
+      evoMsgId = result.id
     } catch { /* non-blocking */ }
 
     // Save to DB — store base64 directly in media_data (PostgreSQL storage)
