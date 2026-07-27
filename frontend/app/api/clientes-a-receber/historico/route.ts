@@ -13,7 +13,11 @@ export async function GET(req: Request) {
     const contactId = searchParams.get("contactId")
     const q         = searchParams.get("q")?.trim()
 
-    const conds: string[] = []
+    // DTF confirma pagamento pelo mesmo endpoint /pay tanto pra prazo real
+    // quanto pra pedido comum que só foi pago depois (sem due_date) — histórico
+    // é só prazo/parcelado, então filtra pelo due_date do pedido de origem, o
+    // mesmo critério que já define "cobrança" na lista de pendentes.
+    const conds: string[] = ["COALESCE(o.due_date, d.due_date) IS NOT NULL"]
     const params: (string | number)[] = []
 
     if (from) { params.push(from); conds.push(`pay.created_at::date >= $${params.length}`) }
