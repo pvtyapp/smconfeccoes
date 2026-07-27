@@ -15,7 +15,7 @@ export async function POST(
     }
 
     const { rows } = await pool.query(`
-      SELECT o.id, o.number, o.status, o.paid_at, o.total_value, o.amount_paid,
+      SELECT o.id, o.number, o.status, o.source, o.paid_at, o.total_value, o.amount_paid,
              o.due_date::text AS due_date, o.contact_id AS "contactId",
              COALESCE(c.phone_jid, c.jid) AS jid, c.name AS "contactName"
       FROM orders o
@@ -43,6 +43,14 @@ export async function POST(
       : Math.round((alreadyPaid + received) * 100) / 100
     const isFull = totalValue != null ? newAmountPaid >= totalValue - 0.01 : true
 
+    // Venda PDV: mercadoria já saiu no ato da venda, "pronto" a prazo só
+    // significa "aguardando pagamento" — sem etapa de entrega separada, ao
+    // contrário do pedido de produção normal (onde "concluido" = entregue de
+    // verdade). Quitar o prazo de uma venda PDV fecha o ciclo igual à vista já
+    // fecha na criação (ver finalStatus em /api/pdv). Nunca promove pedido de
+    // produção: lá "concluido" é um evento de entrega distinto de "pago".
+    const closesPdvCycle = isFull && rows[0].source === "pdv" && rows[0].status === "pronto"
+
     const note = [
       isFull ? "Pagamento confirmado manualmente" : "Pagamento parcial confirmado manualmente",
       `Valor: R$ ${received.toFixed(2).replace(".", ",")}`,
@@ -54,9 +62,11 @@ export async function POST(
       UPDATE orders
       SET amount_paid   = $2,
           paid_at       = CASE WHEN $3 THEN NOW() ELSE paid_at END,
-          pix_confirmed = CASE WHEN $3 THEN true ELSE pix_confirmed END
+          pix_confirmed = CASE WHEN $3 THEN true ELSE pix_confirmed END,
+          status        = CASE WHEN $4 THEN 'concluido' ELSE status END,
+          completed_at  = CASE WHEN $4 THEN NOW() ELSE completed_at END
       WHERE id = $1
-    `, [id, newAmountPaid, isFull])
+    `, [id, newAmountPaid, isFull, closesPdvCycle])
 
     await pool.query(`
       INSERT INTO order_events (order_id, status, actor, note)

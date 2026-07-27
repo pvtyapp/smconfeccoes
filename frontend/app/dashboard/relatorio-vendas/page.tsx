@@ -27,6 +27,7 @@ type OrderRecord = {
   dueDate: string | null
   paidAt: string | null
   pixConfirmed: boolean | null
+  paymentMethod: string | null
   createdAt: string
   contactName: string | null
   contactPhone: string | null
@@ -259,7 +260,10 @@ export default function RelatorioVendasPage() {
   }, [entries])
 
   function buildReceipt(o: OrderRecord): SaleReceipt {
-    const paymentMethod = o.pixConfirmed ? "pix" : o.dueDate && !o.paidAt ? "prazo" : "dinheiro"
+    // payment_method só existe pra vendas feitas após essa coluna ser criada —
+    // pedidos antigos ou de fora do PDV caem no palpite por heurística de antes.
+    const paymentMethod = o.paymentMethod
+      ?? (o.pixConfirmed ? "pix" : o.dueDate && !o.paidAt ? "prazo" : "dinheiro")
     return {
       id: o.id,
       number: o.number,
@@ -648,7 +652,7 @@ export default function RelatorioVendasPage() {
 
       {/* ── Modal Reimprimir ── */}
       {reprinting && (
-        <PdvReceiptModal receipt={reprinting} onClose={() => setReprinting(null)} />
+        <PdvReceiptModal receipt={reprinting} onClose={() => setReprinting(null)} autoPrint />
       )}
 
       {/* ── Modal Cancelar Venda ── */}

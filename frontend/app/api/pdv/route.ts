@@ -29,6 +29,8 @@ export async function POST(req: Request) {
     if (!Array.isArray(items) || items.length === 0)
       return NextResponse.json({ error: "items é obrigatório" }, { status: 400 })
 
+    await client.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT`)
+
     await client.query("BEGIN")
 
     // 1. Resolve contact
@@ -95,10 +97,10 @@ export async function POST(req: Request) {
     const isPrazo = paymentMethod === "prazo"
     const finalStatus = isPrazo ? "pronto" : "concluido"
     const orderRes = await client.query(`
-      INSERT INTO orders (number, contact_id, notes, source, total_value, due_date, status)
-      VALUES ($1, $2, $3, 'pdv', $4, $5, $6)
+      INSERT INTO orders (number, contact_id, notes, source, total_value, due_date, status, payment_method)
+      VALUES ($1, $2, $3, 'pdv', $4, $5, $6, $7)
       RETURNING id, number
-    `, [number, resolvedContactId, notes || null, total, isPrazo ? (dueDate || null) : null, finalStatus])
+    `, [number, resolvedContactId, notes || null, total, isPrazo ? (dueDate || null) : null, finalStatus, paymentMethod || null])
 
     const orderId = orderRes.rows[0].id
 

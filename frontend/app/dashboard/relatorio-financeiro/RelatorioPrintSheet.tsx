@@ -2,6 +2,7 @@
 
 import type { ReportData, StockValuation } from "./page"
 import { CHANNEL_LABEL } from "./page"
+import PrintShell from "@/components/print/PrintShell"
 
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
@@ -77,17 +78,8 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
   const topProducts = data.productRanking.slice(0, 20)
 
   return (
-    <div className="hidden print:block fixed inset-0 bg-white z-[100]">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-relatorio, .print-relatorio * { visibility: visible !important; }
-          .print-relatorio { position: fixed; top: 0; left: 0; right: 0; }
-          @page { size: A4 portrait; margin: 12mm 14mm; }
-          .print-avoid-break { page-break-inside: avoid; }
-        }
-      `}</style>
-      <div className="print-relatorio" style={{ fontFamily: "'Arial', 'Helvetica', sans-serif", color: NAVY }}>
+    <PrintShell wrapperClass="print-relatorio" pageMargin="12mm 14mm" onDone={onDone}>
+      <div style={{ fontFamily: "'Arial', 'Helvetica', sans-serif", color: NAVY }}>
 
         {/* Cabeçalho */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
@@ -256,7 +248,6 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
           <span style={{ fontSize: "7px", color: "#aaa" }}>Relatório Financeiro · {emitDate} {emitTime}</span>
         </div>
       </div>
-      <button onClick={onDone} className="print:hidden mt-2 text-xs text-gray-400">fechar</button>
-    </div>
+    </PrintShell>
   )
 }

@@ -7,6 +7,7 @@ import {
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import RelatorioPrintSheet from "./RelatorioPrintSheet"
+import { printWhenReady } from "@/components/print/print-utils"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -205,7 +206,7 @@ export default function RelatorioFinanceiroPage() {
 
   function handleExtrairRelatorio() {
     setShowReport(true)
-    setTimeout(() => window.print(), 300)
+    printWhenReady()
   }
 
   const load = useCallback(async () => {

@@ -4,10 +4,12 @@ import { useState, useMemo, useEffect, useCallback } from "react"
 import {
   Plus, X, ChevronRight, Check, Clock, CheckCircle2,
   Layers, Calendar, ChevronDown, ChevronUp,
-  History, Pencil,
+  History, Pencil, Printer,
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
+import FichaProducaoPrintSheet from "./FichaProducaoPrintSheet"
+import { printWhenReady } from "@/components/print/print-utils"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type OrderStatus   = "em_andamento" | "concluida" | "em_revisao" | "encerrada"
@@ -777,6 +779,8 @@ export default function ProgramacaoPage() {
   const [loading, setLoading] = useState(true)
   const [showNova, setShowNova]   = useState(false)
   const [concluding, setConcluding] = useState<Order | null>(null)
+  const [fichaSheets, setFichaSheets] = useState(4)
+  const [showFichaPrint, setShowFichaPrint] = useState(false)
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
@@ -789,6 +793,12 @@ export default function ProgramacaoPage() {
   }, [])
 
   useEffect(() => { loadOrders() }, [loadOrders])
+
+  function handlePrintFichas() {
+    setShowFichaPrint(true)
+    printWhenReady()
+  }
+
   const [period, setPeriod]       = useState("30d")
   const [rangeStart, setRangeStart] = useState("")
   const [rangeEnd, setRangeEnd]   = useState("")
@@ -824,10 +834,23 @@ export default function ProgramacaoPage() {
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>Programação de Produção</h1>
           <p className="text-xs text-[#0F1E3C]/45 mt-1">Ordens vinculadas a matéria prima · custo calculado por bobina</p>
         </div>
-        <button onClick={()=>setShowNova(true)}
-          className="flex items-center gap-2 mt-1 px-4 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] transition-colors">
-          <Plus size={14}/> Nova Ordem
-        </button>
+        <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-1.5 pl-3 pr-1 py-2 rounded-xl border border-[#0F1E3C]/10 bg-white"
+            title="Fichas em branco, 3 por folha — pra anotar na mão quando o PC não estiver disponível">
+            <span className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wide">Folhas</span>
+            <input type="number" min={1} max={30} value={fichaSheets}
+              onChange={e => setFichaSheets(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
+              className="w-11 text-center text-sm font-bold text-[#0F1E3C] outline-none" />
+          </div>
+          <button onClick={handlePrintFichas}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-sm font-bold text-[#0F1E3C]/70 hover:bg-[#0F1E3C]/6 transition-colors">
+            <Printer size={14}/> Imprimir Fichas
+          </button>
+          <button onClick={()=>setShowNova(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] transition-colors">
+            <Plus size={14}/> Nova Ordem
+          </button>
+        </div>
       </div>
 
       {/* Summary */}
@@ -899,6 +922,7 @@ export default function ProgramacaoPage() {
       {/* Modals */}
       {showNova   && <NovaOrdemModal  onClose={()=>setShowNova(false)} onSuccess={loadOrders}/>}
       {concluding && <ConcluirModal  order={concluding} onClose={()=>setConcluding(null)} onSuccess={loadOrders}/>}
+      {showFichaPrint && <FichaProducaoPrintSheet sheets={fichaSheets} onDone={()=>setShowFichaPrint(false)} />}
     </div>
   )
 }

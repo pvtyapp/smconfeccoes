@@ -21,6 +21,15 @@ export async function GET(req: Request) {
       console.error("[relatorio-vendas:alter-defect-stock]", e instanceof Error ? e.message : e)
     }
 
+    // payment_method: pagamento real escolhido no PDV (pix/débito/crédito/dinheiro/prazo).
+    // Sem essa coluna, o reimprimir tinha que adivinhar por heurística e podia
+    // reimprimir um comprovante de cartão mostrando "Dinheiro".
+    try {
+      await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT`)
+    } catch (e) {
+      console.error("[relatorio-vendas:alter-orders-payment-method]", e instanceof Error ? e.message : e)
+    }
+
     let orders: unknown[] = []
     try {
       const r = await pool.query(`
@@ -33,6 +42,7 @@ export async function GET(req: Request) {
           o.due_date     AS "dueDate",
           o.paid_at      AS "paidAt",
           o.pix_confirmed AS "pixConfirmed",
+          o.payment_method AS "paymentMethod",
           o.created_at   AS "createdAt",
           c.name         AS "contactName",
           c.phone        AS "contactPhone",

@@ -5,6 +5,7 @@ import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock,
 import type { Order, OrderItem } from "./page"
 import { subDaysBR } from "@/lib/tz"
 import PrintSheet from "./PrintSheet"
+import { printWhenReady } from "@/components/print/print-utils"
 import Toggle from "@/components/Toggle"
 import ConfirmDialog from "@/components/ConfirmDialog"
 
@@ -117,7 +118,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     setHasPrinted(true)
     try { localStorage.setItem(`print_${order.id}`, JSON.stringify({ hash: currentHash })) } catch { /* ignora */ }
     setShowPrint(true)
-    setTimeout(() => window.print(), 300)
+    printWhenReady()
   }
 
   const isTriagem    = order.status === "triagem"

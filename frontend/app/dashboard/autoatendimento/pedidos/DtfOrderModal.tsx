@@ -6,6 +6,7 @@ import type { DtfOrder } from "./DtfOrderCard"
 import { subDaysBR } from "@/lib/tz"
 import Toggle from "@/components/Toggle"
 import TwoViaPrintSheet from "./TwoViaPrintSheet"
+import { printWhenReady } from "@/components/print/print-utils"
 
 type Props = {
   order: DtfOrder
@@ -80,7 +81,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
     setHasPrinted(true)
     try { localStorage.setItem(`dtf_print_${order.id}`, "1") } catch { /* ignore */ }
     setShowPrint(true)
-    setTimeout(() => window.print(), 300)
+    printWhenReady()
   }
 
   async function downloadArtes() {

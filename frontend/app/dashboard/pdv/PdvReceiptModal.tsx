@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react"
 import { X, Printer, Check } from "lucide-react"
 import { fmtR } from "@/lib/format"
+import PrintShell from "@/components/print/PrintShell"
+import { printWhenReady } from "@/components/print/print-utils"
 
 export type ReceiptItem = {
   key: string
@@ -65,7 +67,7 @@ export default function PdvReceiptModal({ receipt, onClose, autoPrint }: Props) 
   useEffect(() => {
     if (autoPrint) {
       setShowPrint(true)
-      setTimeout(() => window.print(), 300)
+      printWhenReady()
     }
   }, [autoPrint])
 
@@ -81,7 +83,7 @@ export default function PdvReceiptModal({ receipt, onClose, autoPrint }: Props) 
 
   function handlePrint() {
     setShowPrint(true)
-    setTimeout(() => window.print(), 300)
+    printWhenReady()
   }
 
   const isTermica = printFormat === "termica"
@@ -219,7 +221,9 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
     dinheiro: "Dinheiro", pix: "Pix", debito: "Débito", credito: "Crédito", prazo: "Prazo",
   }
 
-  // A4 — ≤8 itens: 2 vias na mesma folha (LOJA em cima, CLIENTE embaixo) | >8 itens: 2 páginas
+  // Compacta o padding/logo quando cabem poucos itens — mas quem decide se as 2
+  // vias cabem numa folha só ou viram folha 2 é o fluxo normal do documento,
+  // nunca uma altura forçada (era isso que cortava conteúdo antes).
   const splitSheet = receipt.items.length <= 8
 
   function renderVia(via: "LOJA" | "CLIENTE") {
@@ -345,33 +349,15 @@ function ReceiptPrintSheet({ receipt, clientName, clientPhone, printDate, printT
   }
 
   return (
-    <div className="hidden print:block bg-white">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-receipt, .print-receipt * { visibility: visible !important; }
-          /* absolute (não fixed!) — fixed corta conteúdo que passa de 1 página na
-             impressão do Chrome; absolute deixa a 2ª via fluir pra folha 2 de verdade */
-          .print-receipt { position: absolute; top: 0; left: 0; right: 0; }
-          @page { size: ${isTermica ? "80mm 297mm" : "A4"} portrait; margin: 0; }
-        }
-      `}</style>
-      <div className="print-receipt">
-        {isTermica ? (
-          renderVia("CLIENTE")
-        ) : splitSheet ? (
-          <div style={{ display: "grid", gridTemplateRows: "1fr 1fr", height: "100%" }}>
-            <div style={{ borderBottom: "1.5px dashed #bbb", overflow: "hidden" }}>{renderVia("LOJA")}</div>
-            <div style={{ overflow: "hidden" }}>{renderVia("CLIENTE")}</div>
-          </div>
-        ) : (
-          <>
-            {renderVia("LOJA")}
-            <div style={{ pageBreakBefore: "always" }}>{renderVia("CLIENTE")}</div>
-          </>
-        )}
-      </div>
-      <button onClick={onDone} className="print:hidden mt-2 text-xs text-gray-400">fechar</button>
-    </div>
+    <PrintShell wrapperClass="print-receipt" pageSize={isTermica ? "80mm 297mm portrait" : "A4 portrait"} onDone={onDone}>
+      {isTermica ? (
+        renderVia("CLIENTE")
+      ) : (
+        <>
+          <div className="print-avoid-break">{renderVia("LOJA")}</div>
+          <div className="print-avoid-break" style={{ borderTop: "1.5px dashed #bbb" }}>{renderVia("CLIENTE")}</div>
+        </>
+      )}
+    </PrintShell>
   )
 }

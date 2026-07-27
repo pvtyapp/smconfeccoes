@@ -5,13 +5,32 @@ import {
   RefreshCw, CheckCircle, AlertCircle, Clock, DollarSign,
   Plus, X, Loader2, Search, TrendingDown, ChevronUp, ChevronDown,
   Banknote, CreditCard, Smartphone, ArrowRightLeft, Bell, XCircle,
+  History, Receipt, FileDown, Printer, Calendar,
 } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 import Toggle from "@/components/Toggle"
+import ClienteExtratoModal from "./ClienteExtratoModal"
 
 type Contact = { id: number; name: string | null; phone: string; paymentTermEnabled: boolean }
 
-type PendingOrder = {
+export type Payment = {
+  id: number
+  kind: "produto" | "dtf"
+  orderId: number
+  orderNumber: string
+  orderTotal: number | null
+  contactId: number
+  contactName: string | null
+  contactPhone: string | null
+  amount: number
+  method: string | null
+  notes: string | null
+  createdAt: string
+  parcelaNum: number
+  totalParcelas: number
+}
+
+export type PendingOrder = {
   id: number
   number: string
   status: string
@@ -40,15 +59,27 @@ const METHODS = [
   { key: "transferencia", label: "Transf.",  Icon: ArrowRightLeft  },
 ]
 
-function fmtCurrency(val: number | null | undefined) {
+export function fmtCurrency(val: number | null | undefined) {
   if (val === null || val === undefined) return "—"
   return `R$ ${Number(val).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
 }
 
-function fmtPhone(phone: string) {
+export function fmtPhone(phone: string | null | undefined) {
+  if (!phone) return "—"
   const p = phone.replace(/\D/g, "")
   if (p.length === 11) return `(${p.slice(0, 2)}) ${p.slice(2, 7)}-${p.slice(7)}`
   return phone
+}
+
+export function fmtDateTimeBR(iso: string) {
+  return new Date(iso).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  })
+}
+
+export const METHOD_LABEL: Record<string, string> = {
+  pix: "Pix", dinheiro: "Dinheiro", cartao: "Cartão", transferencia: "Transferência",
 }
 
 function owed(o: PendingOrder) { return o.remaining ?? o.totalValue ?? 0 }
@@ -67,7 +98,31 @@ const DUE_BADGE = {
   sem_data: { label: "Sem data",   cls: "bg-gray-100 text-gray-500 border-gray-200",    dot: "bg-gray-300"   },
 }
 
+type Tab = "pendentes" | "historico"
+type HistPreset = "7d" | "30d" | "mes_atual" | "tudo" | "range"
+
+const HIST_PRESETS: { key: HistPreset; label: string }[] = [
+  { key: "7d",        label: "7 dias"    },
+  { key: "30d",       label: "30 dias"   },
+  { key: "mes_atual", label: "Mês atual" },
+  { key: "tudo",      label: "Tudo"      },
+  { key: "range",     label: "Período"   },
+]
+
+function histPresetDates(key: HistPreset, rs: string, re: string): [string, string] | null {
+  const t = todayBR()
+  if (key === "7d")  return [subDaysBR(6), t]
+  if (key === "30d") return [subDaysBR(29), t]
+  if (key === "mes_atual") {
+    const [y, m] = t.split("-").map(Number)
+    return [`${y}-${String(m).padStart(2, "0")}-01`, t]
+  }
+  if (key === "tudo") return null
+  return (rs && re) ? [rs, re] : null
+}
+
 export default function ClientesAReceberPage() {
+  const [tab,       setTab]       = useState<Tab>("pendentes")
   const [orders,    setOrders]    = useState<PendingOrder[]>([])
   const [loading,   setLoading]   = useState(true)
   const [filter,    setFilter]    = useState("all")
@@ -76,6 +131,14 @@ export default function ClientesAReceberPage() {
   const [baixa,     setBaixa]     = useState<PendingOrder | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [canceling, setCanceling] = useState<PendingOrder | null>(null)
+  const [extrato,   setExtrato]   = useState<{ id: number; name: string | null; phone: string | null } | null>(null)
+
+  // ── Histórico de pagamentos (só prazo/parcelado, receivable_payments) ──────
+  const [payments,     setPayments]     = useState<Payment[]>([])
+  const [histLoading,  setHistLoading]  = useState(false)
+  const [histPreset,   setHistPreset]   = useState<HistPreset>("30d")
+  const [histFrom,     setHistFrom]     = useState("")
+  const [histTo,       setHistTo]       = useState("")
 
   const today    = todayBR()
   const weekAhead = subDaysBR(-7)
@@ -89,6 +152,21 @@ export default function ClientesAReceberPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const histRange = histPresetDates(histPreset, histFrom, histTo)
+
+  const loadHistorico = useCallback(async () => {
+    setHistLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (histRange) { params.set("from", histRange[0]); params.set("to", histRange[1]) }
+      if (search.trim()) params.set("q", search.trim())
+      const res = await fetch(`/api/clientes-a-receber/historico?${params}`)
+      setPayments(await res.json())
+    } finally { setHistLoading(false) }
+  }, [histRange?.[0], histRange?.[1], search])
+
+  useEffect(() => { if (tab === "historico") loadHistorico() }, [tab, loadHistorico])
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   const totalPending   = orders.reduce((s, o) => s + owed(o), 0)
@@ -129,6 +207,38 @@ export default function ClientesAReceberPage() {
       }
       return (a.contactName ?? "").localeCompare(b.contactName ?? "") * dir
     })
+
+  // ── Histórico stats + export ─────────────────────────────────────────────
+  const histTotal        = payments.reduce((s, p) => s + p.amount, 0)
+  const histByMethod: Record<string, number> = {}
+  for (const p of payments) {
+    const key = p.method ?? "outro"
+    histByMethod[key] = (histByMethod[key] ?? 0) + p.amount
+  }
+
+  function exportHistoricoCsv() {
+    const header = ["Data", "Cliente", "Telefone", "Pedido", "Valor", "Forma", "Parcela", "Observação"]
+    const lines = payments.map(p => [
+      fmtDateTimeBR(p.createdAt),
+      p.contactName ?? "Sem nome",
+      p.contactPhone ?? "",
+      p.orderNumber,
+      p.amount.toFixed(2).replace(".", ","),
+      METHOD_LABEL[p.method ?? ""] ?? p.method ?? "—",
+      p.totalParcelas > 1 ? `Parcial ${p.parcelaNum}/${p.totalParcelas}` : "Integral",
+      p.notes ?? "",
+    ])
+    const csv = [header, ...lines]
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(";"))
+      .join("\r\n")
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `historico-pagamentos_${histRange ? `${histRange[0]}_${histRange[1]}` : "tudo"}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   async function handleCancelConfirm(order: PendingOrder) {
     await fetch(statusUrl(order), {
@@ -184,6 +294,26 @@ export default function ClientesAReceberPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Tabs ────────────────────────────────────────────────────────────── */}
+      <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-sm font-semibold bg-white w-fit">
+        <button onClick={() => setTab("pendentes")}
+          className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${
+            tab === "pendentes" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"
+          }`}
+        >
+          <DollarSign size={14} /> Em Aberto
+        </button>
+        <button onClick={() => setTab("historico")}
+          className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${
+            tab === "historico" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"
+          }`}
+        >
+          <History size={14} /> Histórico
+        </button>
+      </div>
+
+      {tab === "pendentes" && <>
 
       {/* ── Stats ───────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -315,7 +445,13 @@ export default function ClientesAReceberPage() {
                 >
                   {/* Cliente */}
                   <div className="min-w-0">
-                    <p className="font-bold text-[#0F1E3C] text-sm truncate">{o.contactName || "Sem nome"}</p>
+                    <button
+                      onClick={e => { e.stopPropagation(); setExtrato({ id: o.contactId, name: o.contactName, phone: o.contactPhone }) }}
+                      className="font-bold text-[#0F1E3C] text-sm truncate hover:text-[#4361EE] hover:underline text-left"
+                      title="Ver extrato do cliente"
+                    >
+                      {o.contactName || "Sem nome"}
+                    </button>
                     <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{fmtPhone(o.contactPhone)}</p>
                   </div>
 
@@ -397,6 +533,134 @@ export default function ClientesAReceberPage() {
         </div>
       )}
 
+      </>}
+
+      {tab === "historico" && <>
+
+      {/* ── Histórico: stats ────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-7 h-7 rounded-xl bg-emerald-100 flex items-center justify-center">
+              <Receipt size={14} className="text-emerald-600" />
+            </div>
+            <span className="text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">Recebido no Período</span>
+          </div>
+          <p className="text-2xl font-black text-[#0F1E3C]">{fmtCurrency(histTotal)}</p>
+          <p className="text-xs text-[#0F1E3C]/30 mt-1">{payments.length} pagamento{payments.length !== 1 ? "s" : ""}</p>
+        </div>
+
+        {METHODS.map(({ key, label, Icon }) => (
+          <div key={key} className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-xl bg-[#0F1E3C]/6 flex items-center justify-center">
+                <Icon size={14} className="text-[#0F1E3C]/50" />
+              </div>
+              <span className="text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{label}</span>
+            </div>
+            <p className="text-2xl font-black text-[#0F1E3C]">{fmtCurrency(histByMethod[key] ?? 0)}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Histórico: período + busca + export ────────────────────────────── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-xs font-semibold bg-white">
+          {HIST_PRESETS.map(({ key, label }) => (
+            <button key={key} onClick={() => setHistPreset(key)}
+              className={`px-3.5 py-2 transition-colors ${
+                histPreset === key ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {histPreset === "range" && (
+          <div className="flex items-center gap-2 text-xs">
+            <Calendar size={13} className="text-[#0F1E3C]/30" />
+            <input type="date" value={histFrom} onChange={e => setHistFrom(e.target.value)}
+              className="border border-[#0F1E3C]/10 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C]" />
+            <span className="text-[#0F1E3C]/30">até</span>
+            <input type="date" value={histTo} onChange={e => setHistTo(e.target.value)}
+              className="border border-[#0F1E3C]/10 rounded-lg px-2 py-1.5 text-xs text-[#0F1E3C]" />
+          </div>
+        )}
+
+        <div className="relative flex-1 min-w-48 max-w-72">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0F1E3C]/30 pointer-events-none" />
+          <input
+            className="w-full pl-8 pr-3 py-2 rounded-xl border border-[#0F1E3C]/10 text-sm bg-white text-[#0F1E3C] placeholder:text-[#0F1E3C]/30 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+            placeholder="Buscar cliente..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+
+        <button
+          onClick={exportHistoricoCsv}
+          disabled={payments.length === 0}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#0F1E3C]/10 text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/6 text-xs font-bold transition-colors disabled:opacity-40 ml-auto"
+        >
+          <FileDown size={13} /> Exportar CSV
+        </button>
+      </div>
+
+      {/* ── Histórico: tabela ───────────────────────────────────────────────── */}
+      {histLoading ? (
+        <div className="flex items-center justify-center py-20 gap-2 text-[#0F1E3C]/30">
+          <Loader2 size={20} className="animate-spin" />
+          <span className="text-sm">Carregando...</span>
+        </div>
+      ) : payments.length === 0 ? (
+        <div className="flex flex-col items-center py-20 gap-3 text-[#0F1E3C]/25">
+          <History size={40} strokeWidth={1} />
+          <p className="text-sm font-medium">Nenhum pagamento registrado nesse período</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+          <div className="grid grid-cols-[110px_1fr_100px_90px_110px_120px] gap-3 px-5 py-3 border-b border-[#0F1E3C]/6 bg-[#F4F6FB] text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">
+            <span>Data</span>
+            <span>Cliente</span>
+            <span>Pedido</span>
+            <span className="text-right">Valor</span>
+            <span>Forma</span>
+            <span>Situação</span>
+          </div>
+          <div className="divide-y divide-[#0F1E3C]/5">
+            {payments.map(p => (
+              <div key={p.id} className="grid grid-cols-[110px_1fr_100px_90px_110px_120px] gap-3 px-5 py-3.5 items-center hover:bg-[#F4F6FB] transition-colors">
+                <p className="text-xs text-[#0F1E3C]/60">{fmtDateTimeBR(p.createdAt)}</p>
+                <div className="min-w-0">
+                  <button
+                    onClick={() => setExtrato({ id: p.contactId, name: p.contactName, phone: p.contactPhone })}
+                    className="font-bold text-[#0F1E3C] text-sm truncate hover:text-[#4361EE] hover:underline text-left"
+                    title="Ver extrato do cliente"
+                  >
+                    {p.contactName || "Sem nome"}
+                  </button>
+                </div>
+                <span className="text-xs font-bold text-[#0F1E3C]/70 bg-[#0F1E3C]/6 px-2 py-1 rounded-lg w-fit">{p.orderNumber}</span>
+                <p className="text-sm font-black text-[#0F1E3C] text-right">{fmtCurrency(p.amount)}</p>
+                <p className="text-xs text-[#0F1E3C]/60">{METHOD_LABEL[p.method ?? ""] ?? p.method ?? "—"}</p>
+                {p.totalParcelas > 1 ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 w-fit">
+                    Parcial {p.parcelaNum}/{p.totalParcelas}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 w-fit">
+                    Integral
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      </>}
+
       {/* ── Modal Dar Baixa ──────────────────────────────────────────────────── */}
       {baixa && (
         <DarBaixaModal
@@ -420,6 +684,17 @@ export default function ClientesAReceberPage() {
         <NovaCobrancaModal
           onClose={() => setShowModal(false)}
           onSuccess={async () => { setShowModal(false); await load() }}
+        />
+      )}
+
+      {/* ── Modal Extrato do Cliente ──────────────────────────────────────────── */}
+      {extrato && (
+        <ClienteExtratoModal
+          contactId={extrato.id}
+          contactName={extrato.name}
+          contactPhone={extrato.phone}
+          pending={orders.filter(o => o.contactId === extrato.id)}
+          onClose={() => setExtrato(null)}
         />
       )}
     </div>
