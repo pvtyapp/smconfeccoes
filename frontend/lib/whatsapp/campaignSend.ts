@@ -44,7 +44,6 @@ export async function campaignSend(
   const bareNumber = jid
     .replace("@s.whatsapp.net", "")
     .replace("@g.us", "")
-    .replace("@lid", "")
 
   // Grupo legado do WhatsApp (criado antes da mudança pro formato só-número)
   // vem como "<telefone-criador>-<timestamp>@g.us", com hífen — a Evolution só
@@ -54,9 +53,14 @@ export async function campaignSend(
   // do nosso lado. Sem esse caso, metade dos grupos configurados (os mais
   // antigos) sempre falhava silenciosamente no envio.
   const isLegacyGroupJid = jid.endsWith("@g.us") && /^\d+-\d+$/.test(bareNumber)
-  const number = isLegacyGroupJid ? jid : bareNumber
+  // Contato @lid: a Evolution exige o jid completo com sufixo pra contas
+  // migradas — tirar o "@lid" e mandar só os dígitos (que não são um telefone
+  // de verdade, são um id opaco interno) faz a Evolution rejeitar o envio.
+  // Mesma regra usada em lib/whatsapp/send.ts.
+  const isLid = jid.endsWith("@lid")
+  const number = (isLegacyGroupJid || isLid) ? jid : bareNumber
 
-  if (!isLegacyGroupJid && !/^\d+$/.test(number)) {
+  if (!isLegacyGroupJid && !isLid && !/^\d+$/.test(number)) {
     throw new Error(`JID inválido para envio: ${jid}`)
   }
 

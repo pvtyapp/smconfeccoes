@@ -442,11 +442,31 @@ async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<Save
   }
 }
 
+// Mesmo mapeamento usado no handler de messages.update (status real que o
+// WhatsApp confirmou pra mensagem) — extraído aqui pra ser reaproveitado pelo
+// reconcile também, ver comentário em reconcileRecentMessages.
+function mapEvoStatus(raw: string | undefined): "sent" | "delivered" | "read" | "failed" | null {
+  if (!raw) return null
+  return raw === "READ" || raw === "PLAYED"        ? "read"
+       : raw === "DELIVERY_ACK"                     ? "delivered"
+       : raw === "ERROR"                            ? "failed"
+       : raw === "SERVER_ACK" || raw === "PENDING"   ? "sent"
+       : null
+}
+
 // Confere as últimas mensagens desse contato direto na Evolution contra o que temos
 // salvo — se alguma sumiu (ex: 2 arquivos chegando quase juntos, um se perde por
 // algum motivo), recupera na hora. Roda em background (waitUntil) depois de toda
 // mensagem processada, então qualquer "irmã perdida" é resgatada em segundos, não
 // precisa esperar um cron passar depois.
+//
+// Também corrige o STATUS de mensagem que já existe aqui — o webhook messages.update
+// só chega uma vez, na hora; se ele se perder por qualquer motivo, a mensagem fica
+// presa em "sent" pra sempre mesmo tendo dado erro de verdade na Evolution (achado
+// de auditoria 2026-07-28: contato com sessão quebrada mostrava "sent" no painel
+// pra 49 de 52 mensagens que na Evolution constavam como ERROR). Como aqui sempre
+// busca o histórico completo da Evolution, aproveita pra corrigir o que já existe,
+// não só recuperar o que sumiu.
 async function reconcileRecentMessages(jid: string): Promise<void> {
   if (!EVO_URL || !EVO_KEY || !EVO_INSTANCE || jid.endsWith("@g.us")) return
   try {
@@ -468,24 +488,42 @@ async function reconcileRecentMessages(jid: string): Promise<void> {
     if (!contactId) return
 
     const { rows: known } = await pool.query(
-      `SELECT message_id FROM wa_messages WHERE contact_id = $1 AND message_id = ANY($2::text[])`,
+      `SELECT message_id, status FROM wa_messages WHERE contact_id = $1 AND message_id = ANY($2::text[])`,
       [contactId, evoIds]
     )
-    const knownIds = new Set(known.map(r => r.message_id as string))
+    const knownStatus = new Map(known.map(r => [r.message_id as string, r.status as string | null]))
     const missing = records.filter(r => {
       const id = (r.key as Record<string, unknown> | undefined)?.id as string | undefined
-      return id && !knownIds.has(id)
+      return id && !knownStatus.has(id)
     })
-    if (missing.length === 0) return
 
-    console.error(`[webhook] reconcile: ${missing.length} mensagem(ns) recuperada(s) pra ${jid}`)
-    for (const rec of missing) {
-      const key = rec.key as Record<string, unknown> | undefined
-      if (key?.fromMe) {
-        await handleFromMeMessage(rec, jid, key)
-      } else {
-        await saveInboundMessage(rec)
+    if (missing.length > 0) {
+      console.error(`[webhook] reconcile: ${missing.length} mensagem(ns) recuperada(s) pra ${jid}`)
+      for (const rec of missing) {
+        const key = rec.key as Record<string, unknown> | undefined
+        if (key?.fromMe) {
+          await handleFromMeMessage(rec, jid, key)
+        } else {
+          await saveInboundMessage(rec)
+        }
       }
+    }
+
+    // Corrige status desatualizado das que já existem (só as que nós mandamos)
+    for (const rec of records) {
+      const key = rec.key as Record<string, unknown> | undefined
+      const id = key?.id as string | undefined
+      if (!id || !key?.fromMe || !knownStatus.has(id)) continue
+
+      const updates = rec.MessageUpdate as Array<{ status?: string }> | undefined
+      const lastRaw = updates?.length ? updates[updates.length - 1]?.status : undefined
+      const mapped = mapEvoStatus(lastRaw)
+      if (!mapped || mapped === knownStatus.get(id)) continue
+
+      await pool.query(
+        `UPDATE wa_messages SET status = $1, updated_at = NOW() WHERE message_id = $2 AND direction = 'out'`,
+        [mapped, id]
+      ).catch(() => {})
     }
   } catch (e) {
     console.error("[webhook] reconcileRecentMessages falhou:", jid, e instanceof Error ? e.message : e)
@@ -750,15 +788,8 @@ export async function POST(req: Request) {
             return
           }
 
-          let mapped: "sent" | "delivered" | "read" | "failed" | null = null
-          if (statusStrRaw) {
-            mapped =
-              statusStrRaw === "READ" || statusStrRaw === "PLAYED" ? "read" :
-              statusStrRaw === "DELIVERY_ACK"                      ? "delivered" :
-              statusStrRaw === "ERROR"                              ? "failed" :
-              statusStrRaw === "SERVER_ACK" || statusStrRaw === "PENDING" ? "sent" :
-              null
-          } else {
+          let mapped: "sent" | "delivered" | "read" | "failed" | null = mapEvoStatus(statusStrRaw)
+          if (!statusStrRaw) {
             // Formato legado, numérico (mantido por segurança caso volte um dia)
             const statusCode = (u.update as Record<string, unknown> | undefined)?.status as number | undefined
             if (statusCode != null) {

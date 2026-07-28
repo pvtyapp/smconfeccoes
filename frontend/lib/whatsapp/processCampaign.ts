@@ -99,9 +99,7 @@ export async function processCampaignBatch(
     let sendJid = recipient.jid as string
     if (recipient.id && !recipient.isGroup) {
       const { rows: jr } = await pool.query(
-        `SELECT COALESCE(phone_jid,
-           CASE WHEN jid NOT LIKE '%@lid' THEN jid ELSE NULL END
-         ) AS send_jid,
+        `SELECT jid AS send_jid,
          COALESCE(marketing_optout, false) AS optout,
          last_marketing_sent_at
          FROM wa_contacts WHERE id = $1`,
@@ -113,7 +111,6 @@ export async function processCampaignBatch(
       else if (g?.last_marketing_sent_at && (Date.now() - new Date(g.last_marketing_sent_at).getTime()) < 20 * 60 * 60 * 1000) skipped = true
       else if (g?.send_jid) sendJid = g.send_jid
     }
-    if (!skipped && sendJid.endsWith("@lid")) skipped = true
 
     if (!skipped) {
       try {
