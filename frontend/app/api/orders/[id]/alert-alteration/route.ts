@@ -18,7 +18,7 @@ export async function POST(
 
     const { rows } = await pool.query(`
       SELECT o.id, o.number, o.contact_id, o.stock_alert AS "stockAlert",
-             COALESCE(c.phone_jid, c.jid) AS jid
+             c.jid AS jid
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.id = $1

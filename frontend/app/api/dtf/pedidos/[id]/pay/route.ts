@@ -17,7 +17,7 @@ export async function POST(
     const { rows } = await pool.query(`
       SELECT p.id, p.number, p.paid_at, p.preco_cobrado, p.amount_paid,
              p.due_date::text AS due_date, p.contact_id AS "contactId",
-             COALESCE(c.phone_jid, c.jid) AS jid, c.name AS "contactName"
+             c.jid AS jid, c.name AS "contactName"
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1

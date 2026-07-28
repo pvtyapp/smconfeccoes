@@ -85,7 +85,7 @@ export async function GET(req: Request) {
   // ── 1. Novo D2 — lead que não converteu em 48h ────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
+      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'new'
       AND linked_user_id IS NULL
         AND COALESCE(novo_seq, 0) = 0
@@ -93,7 +93,6 @@ export async function GET(req: Request) {
         AND created_at < NOW() - INTERVAL '2 days'
         AND NOT COALESCE(marketing_optout, false)
         AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
       LIMIT 3
     `)
     for (const c of rows.rows) {
@@ -152,7 +151,7 @@ export async function GET(req: Request) {
   // ── 3. Ativo → Ausente D15 ────────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
+      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'active'
       AND linked_user_id IS NULL
         AND last_order_at IS NOT NULL
@@ -161,7 +160,6 @@ export async function GET(req: Request) {
                           'dtf_verificando','dtf_coletando','cross_sell_dtf','cross_sell_produto')
         AND NOT COALESCE(marketing_optout, false)
         AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
       LIMIT 3
     `)
     for (const c of rows.rows) {
@@ -203,7 +201,7 @@ export async function GET(req: Request) {
   // ── 4. Ausente D30 ────────────────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
+      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'ausente'
       AND linked_user_id IS NULL
         AND ausente_seq = 1
@@ -211,7 +209,6 @@ export async function GET(req: Request) {
         AND last_order_at < NOW() - INTERVAL '30 days'
         AND NOT COALESCE(marketing_optout, false)
         AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
       LIMIT 3
     `)
     for (const c of rows.rows) {
@@ -248,7 +245,7 @@ export async function GET(req: Request) {
   // ── 5. Ausente D45 (última mensagem) ─────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT id, jid, name, COALESCE(phone_jid, jid) AS send_jid FROM wa_contacts
+      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
       WHERE lifecycle_state = 'ausente'
       AND linked_user_id IS NULL
         AND ausente_seq = 2
@@ -256,7 +253,6 @@ export async function GET(req: Request) {
         AND last_order_at < NOW() - INTERVAL '45 days'
         AND NOT COALESCE(marketing_optout, false)
         AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-        AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
       LIMIT 3
     `)
     for (const c of rows.rows) {
@@ -312,7 +308,7 @@ export async function GET(req: Request) {
   // ── 7. Cobrança dias corridos ─────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT o.id, o.number, o.total_value, c.id AS "contactId", c.jid, c.name, COALESCE(c.phone_jid, c.jid) AS send_jid
+      SELECT o.id, o.number, o.total_value, c.id AS "contactId", c.jid, c.name, c.jid AS send_jid
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.due_date = $1
@@ -334,7 +330,7 @@ export async function GET(req: Request) {
   // ── 8. Cobrança data fixa ─────────────────────────────────────────────────────
   try {
     const rows = await pool.query(`
-      SELECT c.id AS "contactId", c.jid, c.name, COALESCE(c.phone_jid, c.jid) AS send_jid,
+      SELECT c.id AS "contactId", c.jid, c.name, c.jid AS send_jid,
              array_agg(o.number ORDER BY o.created_at) AS numbers,
              SUM(o.total_value) AS total_sum
       FROM orders o
@@ -371,7 +367,7 @@ export async function GET(req: Request) {
 
     const { rows: overdueOrders } = await pool.query(`
       SELECT o.id, o.number, o.total_value, o.amount_paid, o.due_date::text AS due_date,
-             o.contact_id AS "contactId", COALESCE(c.phone_jid, c.jid) AS jid, c.name
+             o.contact_id AS "contactId", c.jid, c.name
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.due_date < $1
@@ -382,7 +378,7 @@ export async function GET(req: Request) {
 
     const { rows: overdueDtf } = await pool.query(`
       SELECT p.id, p.number, p.preco_cobrado AS total_value, p.amount_paid, p.due_date::text AS due_date,
-             p.contact_id AS "contactId", COALESCE(c.phone_jid, c.jid) AS jid, COALESCE(c.name, p.cliente) AS name
+             p.contact_id AS "contactId", c.jid, COALESCE(c.name, p.cliente) AS name
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.due_date < $1

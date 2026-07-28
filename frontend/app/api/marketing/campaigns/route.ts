@@ -173,12 +173,11 @@ async function resolveContacts(
   if (audienceType === "groups") return []
 
   let q = `
-    SELECT id, COALESCE(phone_jid, jid) AS jid, name
+    SELECT id, jid, name
     FROM wa_contacts
     WHERE jid IS NOT NULL
       AND linked_user_id IS NULL
       AND NOT COALESCE(marketing_optout, false)
-      AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
   `
   const params: (string | null)[] = []
 

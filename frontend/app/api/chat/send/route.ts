@@ -27,17 +27,10 @@ export async function POST(req: Request) {
       : ""
     const text = `${signature}${content.trim()}`
 
-    // Resolve the actual send JID: for @lid contacts, use phone_jid (@s.whatsapp.net)
-    // so Evolution sends using the real phone number and fromMe webhook comes back correctly
-    let sendJid = jid
-    if (contactId && jid.endsWith("@lid")) {
-      const { rows: jidRows } = await pool.query(
-        `SELECT COALESCE(phone_jid, CONCAT(phone, '@s.whatsapp.net')) AS send_jid
-         FROM wa_contacts WHERE id = $1 AND phone_jid IS NOT NULL LIMIT 1`,
-        [contactId]
-      ).catch(() => ({ rows: [] as { send_jid: string }[] }))
-      if (jidRows[0]?.send_jid) sendJid = jidRows[0].send_jid
-    }
+    // Manda no jid original (@lid quando é esse o caso). Evolution passou a rejeitar
+    // envio em @s.whatsapp.net pra contatos migrados — forçar essa troca (como era
+    // antes) é o que estava quebrando o envio. @lid é o que a WhatsApp aceita hoje.
+    const sendJid = jid
 
     const quoted: QuotedMsg | undefined = quotedMsgId
       ? { id: quotedMsgId, fromMe: quotedFromMe ?? false, remoteJid: sendJid, content: quotedContent ?? "" }

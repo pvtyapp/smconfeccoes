@@ -16,7 +16,7 @@ export async function GET() {
         c.id                  AS "contactId",
         c.name                AS "contactName",
         c.phone               AS "contactPhone",
-        COALESCE(c.phone_jid, c.jid) AS "contactJid",
+        c.jid                 AS "contactJid",
         'produto'             AS "kind"
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
@@ -38,7 +38,7 @@ export async function GET() {
         c.id                   AS "contactId",
         COALESCE(c.name, p.cliente) AS "contactName",
         c.phone                AS "contactPhone",
-        COALESCE(c.phone_jid, c.jid) AS "contactJid",
+        c.jid                   AS "contactJid",
         'dtf'                  AS "kind"
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id

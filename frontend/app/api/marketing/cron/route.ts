@@ -81,10 +81,9 @@ export async function GET(req: Request) {
         type Rcpt = { id?: number; jid: string; name: string }
         let contactRcpts: Rcpt[] = []
         if (sched.audience_type !== "groups") {
-          let q = `SELECT id, COALESCE(phone_jid, jid) AS jid, name FROM wa_contacts
+          let q = `SELECT id, jid, name FROM wa_contacts
                    WHERE jid IS NOT NULL AND NOT COALESCE(marketing_optout,false)
                      AND linked_user_id IS NULL
-                     AND (jid NOT LIKE '%@lid' OR phone_jid IS NOT NULL)
                      AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')`
           const qp: string[] = []
           if (sched.audience_type !== "all" && sched.audience_lifecycle) { qp.push(sched.audience_lifecycle); q += ` AND lifecycle_state = $1` }

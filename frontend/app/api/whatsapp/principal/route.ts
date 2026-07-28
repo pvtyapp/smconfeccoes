@@ -1,29 +1,28 @@
 import { NextResponse } from "next/server"
-import { wppconnectProvider } from "@/lib/whatsapp/provider/wppconnectProvider"
+import { evolutionProvider } from "@/lib/whatsapp/provider/evolutionProvider"
 
-const SESSION = (process.env.WPPCONNECT_SESSION_NAME ?? "").trim()
+const EVO_INSTANCE = (process.env.EVOLUTION_INSTANCE ?? "").trim()
 
-// Status do número principal — hoje é a sessão de teste (WPPCONNECT_SESSION_NAME);
-// quando o principal de produção migrar de verdade da Evolution pro WPPConnect
-// (Fase 3/4), essa mesma rota passa a apontar pra sessão real, sem mudar o
-// contrato pro frontend.
+// Status do número principal — a instância Evolution de produção que atende
+// chatbot, cobrança e lifecycle.
 export async function GET() {
-  if (!SESSION) {
-    return NextResponse.json({ error: "WPPCONNECT_SESSION_NAME não configurada" }, { status: 500 })
+  if (!EVO_INSTANCE) {
+    return NextResponse.json({ error: "EVOLUTION_INSTANCE não configurada" }, { status: 500 })
   }
-  const { state, ok } = await wppconnectProvider.getConnectionState(SESSION, 8_000)
+  const { state, ok } = await evolutionProvider.getConnectionState(EVO_INSTANCE, 8_000)
   return NextResponse.json({
-    instanceName: SESSION,
+    instanceName: EVO_INSTANCE,
     state: ok ? state : null,
     connected: state === "open",
   })
 }
 
-// POST — inicia a sessão principal se ainda não estiver rodando.
+// POST — pede um QR novo pra reconectar o principal (a instância já existe na
+// Evolution, isso não cria nada — só reabre a sessão pra escanear de novo).
 export async function POST() {
-  if (!SESSION) {
-    return NextResponse.json({ error: "WPPCONNECT_SESSION_NAME não configurada" }, { status: 500 })
+  if (!EVO_INSTANCE) {
+    return NextResponse.json({ error: "EVOLUTION_INSTANCE não configurada" }, { status: 500 })
   }
-  const result = await wppconnectProvider.createInstance(SESSION)
-  return NextResponse.json(result)
+  const { base64 } = await evolutionProvider.getQrCode(EVO_INSTANCE)
+  return NextResponse.json({ qrcodeBase64: base64 })
 }

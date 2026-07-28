@@ -233,7 +233,7 @@ export default function WhatsAppSettingsPage() {
                 <div>
                   <label className="text-[10px] font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1 block">Identificador da instância</label>
                   <input className={inputCls} value={newInstanceName} onChange={e => setNewInstanceName(e.target.value)} placeholder="Ex: comercial-2" />
-                  <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Só letras, números e hífen — vira o nome da sessão no WPPConnect.</p>
+                  <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Só letras, números e hífen — vira o nome da instância na Evolution.</p>
                 </div>
                 {createError && <p className="text-[11px] text-red-600">{createError}</p>}
                 <div className="flex gap-2">

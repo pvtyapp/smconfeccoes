@@ -125,7 +125,7 @@ export async function POST(req: Request) {
     // Avisa o cliente — mesma mensagem que o chatbot manda quando cria um pedido
     if (isNewOrder) {
       const { rows: contactRows } = await pool.query(
-        `SELECT COALESCE(phone_jid, jid) AS jid FROM wa_contacts WHERE id = $1`,
+        `SELECT jid FROM wa_contacts WHERE id = $1`,
         [contactId]
       )
       const jid = contactRows[0]?.jid as string | undefined

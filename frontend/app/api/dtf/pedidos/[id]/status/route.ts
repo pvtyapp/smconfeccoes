@@ -34,7 +34,7 @@ export async function POST(
              p.preco_cobrado AS preco_cobrado_db, p.impressora_id,
              p.film_bobina_id, p.refil_ids, p.metros_bobina_antiga,
              p.metros_finais AS metros_finais_db, p.metros AS metros_db,
-             c.name AS "contactName", COALESCE(c.phone_jid, c.jid) AS jid
+             c.name AS "contactName", c.jid AS jid
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { getInstanceState } from "@/lib/whatsapp/marketingInstances"
-import { wppconnectProvider } from "@/lib/whatsapp/provider/wppconnectProvider"
+import { evolutionProvider } from "@/lib/whatsapp/provider/evolutionProvider"
 
 async function ensureTable() {
   await pool.query(`
@@ -16,7 +16,7 @@ async function ensureTable() {
 }
 
 // GET — lista todo número comercial cadastrado, com o estado de conexão
-// checado ao vivo no WPPConnect (não fica salvo, é sempre a foto de agora).
+// checado ao vivo na Evolution (não fica salvo, é sempre a foto de agora).
 export async function GET() {
   try {
     await ensureTable()
@@ -35,12 +35,8 @@ export async function GET() {
   }
 }
 
-// POST — cria a sessão de verdade no WPPConnect (o "nome" já é a identidade,
-// não tem passo de criação separado) e já registra pra aparecer na lista.
-// Devolve o QR code na resposta pra já poder escanear. Nota: campanha só
-// consegue disparar de verdade pra esse número quando campaignSend.ts também
-// ganhar suporte a WPPConnect (ainda usa Evolution) — cadastro/conexão já
-// funciona antes disso, por design.
+// POST — cria a instância de verdade na Evolution e já registra pra aparecer
+// na lista. Devolve o QR code na resposta pra já poder escanear.
 export async function POST(req: Request) {
   try {
     await ensureTable()
@@ -49,9 +45,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "instanceName e label obrigatórios" }, { status: 400 })
     }
 
-    const created = await wppconnectProvider.createInstance(instanceName.trim())
+    const created = await evolutionProvider.createInstance(instanceName.trim())
     if (!created.ok) {
-      return NextResponse.json({ error: "Não foi possível iniciar a sessão no WPPConnect — confira o nome e tente de novo" }, { status: 502 })
+      return NextResponse.json({ error: "Não foi possível criar a instância na Evolution — confira o nome e tente de novo" }, { status: 502 })
     }
 
     const { rows } = await pool.query(`
