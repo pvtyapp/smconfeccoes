@@ -6,24 +6,8 @@ import {
   Search, Send, MessageCircle, ChevronLeft, Printer, History,
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot, UserCheck,
   Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
-  Image as ImageIcon, Video as VideoIcon, Plus, TriangleAlert,
+  Image as ImageIcon, Video as VideoIcon, Plus,
 } from "lucide-react"
-
-// ─── Faixa de aviso — envio de mensagem fora do ar ────────────────────────────
-// Temporário: só o ENVIO está com problema. Painel continua servindo pra
-// coletar/gerenciar pedido — responder o cliente é manual, pelo WhatsApp do
-// celular, até resolvermos.
-
-function AvisoFaixa() {
-  return (
-    <div className="flex items-center gap-2.5 px-4 py-2 flex-shrink-0" style={{ background: "#5C3A00" }}>
-      <TriangleAlert size={14} className="text-amber-300 flex-shrink-0" />
-      <p className="text-[11.5px] leading-snug" style={{ color: "#FFE4B0" }}>
-        <b>Envio de mensagem não está funcionando.</b> Responda o cliente manualmente pelo WhatsApp do celular — use este painel só pra coletar os pedidos.
-      </p>
-    </div>
-  )
-}
 import OrderCard from "./OrderCard"
 import OrderModal from "./OrderModal"
 import AudioPlayer from "./AudioPlayer"
@@ -123,7 +107,7 @@ type Message = {
   mediaCategory: string | null
   fileName: string | null
   caption: string | null
-  status: "sent" | "delivered" | "read" | "played" | null
+  status: "sent" | "delivered" | "read" | "played" | "failed" | null
   quotedId: string | null
   quotedText: string | null
   createdAt: string
@@ -1151,9 +1135,7 @@ export default function PedidosPage() {
   }
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
-      <AvisoFaixa />
-      <div className="flex-1 flex overflow-hidden min-h-0">
+    <div className="absolute inset-0 flex overflow-hidden">
 
       {/* ── LEFT: WA-style contact panel ── */}
       <div className="w-[360px] flex-shrink-0 flex flex-col border-r border-black/30" style={{ background: "#111B21" }}>
@@ -2687,7 +2669,6 @@ export default function PedidosPage() {
           animation: led-spin 2.2s linear infinite;
         }
       `}</style>
-      </div>
     </div>
   )
 }
