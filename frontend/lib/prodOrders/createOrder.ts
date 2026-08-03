@@ -4,6 +4,10 @@ export type CreateProdOrderInput = {
   productId: string
   selectedColors: string[]
   entries: { entryId: number; color?: string }[]
+  // Plano de corte (Nova Ordem preenche a grade já na criação). Sem isso,
+  // mantém o comportamento antigo: toda combinação color×size nasce zerada
+  // (chamada legada, ex. bot administrativo do WhatsApp).
+  grade?: { color: string; size: string; qtyPlanned: number }[]
 }
 
 export type CreateProdOrderResult = {
@@ -16,7 +20,7 @@ export type CreateProdOrderResult = {
 // pela tela de Programação de Produção quanto pelo bot administrativo do WhatsApp,
 // pra garantir que os dois caminhos criem exatamente a mesma coisa.
 export async function createProdOrder(input: CreateProdOrderInput): Promise<CreateProdOrderResult> {
-  const { productId, selectedColors, entries } = input
+  const { productId, selectedColors, entries, grade } = input
   if (!productId || !selectedColors?.length) {
     throw new Error("productId e selectedColors são obrigatórios")
   }
@@ -53,10 +57,11 @@ export async function createProdOrder(input: CreateProdOrderInput): Promise<Crea
 
     for (const color of selectedColors) {
       for (const size of sizes) {
+        const qtyPlanned = grade?.find(g => g.color === color && g.size === size)?.qtyPlanned ?? 0
         await client.query(`
           INSERT INTO prod_order_items (order_id, product_name, color, size, qty_planned)
-          VALUES ($1, $2, $3, $4, 0)
-        `, [id, productName, color, size])
+          VALUES ($1, $2, $3, $4, $5)
+        `, [id, productName, color, size, qtyPlanned])
       }
     }
 

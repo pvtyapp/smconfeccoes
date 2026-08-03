@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import { todayBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import {
@@ -818,6 +818,150 @@ function InsumoCard({
   )
 }
 
+// ─── BobinasFechadasReport ──────────────────────────────────────────────────────
+type ClosedBobina = {
+  id: number; number: string
+  productId: number; productName: string; color: string
+  tecido: string; tipoTecido: "aberto" | "tubular"
+  pesoKg: number; gramatura: number; larguraM: number; precoKg: number
+  totalQty: number; totalCost: number
+  totalPiecesProduced: number; costPerPiece: number | null
+  createdAt: string; exhaustedAt: string
+  ordens: number
+  sizeBreakdown: { size: string; qty: number }[]
+}
+
+function BobinasFechadasReport({
+  periodo, rangeStart, rangeEnd, onSetPeriodo,
+}: {
+  periodo: PeriodoKey; rangeStart: string; rangeEnd: string; onSetPeriodo: (p: PeriodoKey) => void
+}) {
+  const [bobinas, setBobinas] = useState<ClosedBobina[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    fetch("/api/raw-material-entries?closedSummary=1")
+      .then(r => r.json())
+      .then((data: ClosedBobina[]) => setBobinas(Array.isArray(data) ? data : []))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const filtered = useMemo(() => {
+    const NOW = new Date()
+    const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86400000)
+    return bobinas.filter(b => {
+      const d = new Date(b.exhaustedAt)
+      if (periodo === "hoje")  return d.toDateString() === NOW.toDateString()
+      if (periodo === "7d")    return d >= daysAgo(7)
+      if (periodo === "30d")   return d >= daysAgo(30)
+      if (periodo === "60d")   return d >= daysAgo(60)
+      if (periodo === "range" && rangeStart && rangeEnd)
+        return d >= new Date(rangeStart) && d <= new Date(rangeEnd + "T23:59:59")
+      return true
+    })
+  }, [bobinas, periodo, rangeStart, rangeEnd])
+
+  const totalGasto  = filtered.reduce((s, b) => s + Number(b.totalCost), 0)
+  const totalPecas  = filtered.reduce((s, b) => s + Number(b.totalPiecesProduced), 0)
+  const custoMedio  = totalPecas > 0 ? totalGasto / totalPecas : 0
+
+  const PERIODOS: { key: PeriodoKey; label: string }[] = [
+    { key:"hoje", label:"Hoje" }, { key:"7d", label:"7d" },
+    { key:"30d", label:"30d" },   { key:"60d", label:"60d" },
+    { key:"range", label:"Período" },
+  ]
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-[#0F1E3C]">Bobinas fechadas</h2>
+        <div className="flex items-center gap-1.5">
+          {PERIODOS.map(p => (
+            <button key={p.key} onClick={() => onSetPeriodo(p.key)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1 ${
+                periodo === p.key ? "bg-[#4361EE] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/5"
+              }`}>
+              {p.key === "range" && <Calendar size={11}/>}
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 mb-3">
+        <div className="grid grid-cols-4 divide-x divide-[#0F1E3C]/6">
+          <div className="px-5 py-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Gasto no período</p>
+            <p className="text-xl font-black text-[#0F1E3C]">{fmtR(totalGasto)}</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Peças cortadas</p>
+            <p className="text-xl font-black text-[#0F1E3C]">{totalPecas}</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Custo médio / peça</p>
+            <p className="text-xl font-black text-emerald-600">{custoMedio > 0 ? fmtR(custoMedio) : "—"}</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Bobinas fechadas</p>
+            <p className="text-xl font-black text-[#4361EE]">{filtered.length}</p>
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-8 text-[#0F1E3C]/30"><p className="text-sm">Carregando…</p></div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 gap-2 text-[#0F1E3C]/25">
+          <Layers size={22}/><p className="text-xs font-semibold">Nenhuma bobina fechada no período</p>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {filtered.map(b => {
+            const custoPorPeca = b.totalPiecesProduced > 0 ? Number(b.totalCost) / b.totalPiecesProduced : null
+            return (
+              <div key={b.id} className="bg-white rounded-2xl border border-[#0F1E3C]/8 px-5 py-4">
+                <div className="flex items-start gap-5">
+                  <div className="w-40 flex-shrink-0">
+                    <p className="text-sm font-bold text-[#0F1E3C]">{b.color}</p>
+                    <p className="text-xs text-[#0F1E3C]/45 mt-0.5">{b.tecido} · {b.productName}</p>
+                    <span className="inline-block mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/6 text-[#0F1E3C]/40">
+                      Fechada {new Date(b.exhaustedAt).toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                  <div className="flex-1 grid grid-cols-4 gap-3">
+                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-0.5">Peso</p><p className="text-xs font-bold text-[#0F1E3C]">{Number(b.pesoKg).toFixed(1)} kg</p></div>
+                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-0.5">Gramatura</p><p className="text-xs font-bold text-[#0F1E3C]">{b.gramatura} g/m²</p></div>
+                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-0.5">Preço/kg</p><p className="text-xs font-bold text-[#0F1E3C]">{fmtR(b.precoKg)}</p></div>
+                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-0.5">Metragem</p><p className="text-xs font-bold text-[#0F1E3C]">≈ {Number(b.totalQty).toFixed(1)} m</p></div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-[10px] text-[#0F1E3C]/45">{b.totalPiecesProduced} peças</p>
+                    <p className="text-xl font-black text-emerald-600">{custoPorPeca ? fmtR(custoPorPeca) : "—"}</p>
+                    <p className="text-[10px] text-[#0F1E3C]/40">bobina {fmtR(b.totalCost)}</p>
+                  </div>
+                </div>
+                {b.sizeBreakdown?.length > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap pt-3 mt-3 border-t border-dashed border-[#0F1E3C]/10">
+                    <span className="text-[10px] font-bold text-[#0F1E3C]/35">Peças cortadas:</span>
+                    {b.sizeBreakdown.map(sb => (
+                      <span key={sb.size} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#F9FAFB] border border-[#0F1E3C]/6 text-[#0F1E3C]/60">
+                        {sb.size} <b className="text-[#0F1E3C]">{sb.qty}</b>
+                      </span>
+                    ))}
+                    <span className="text-[10px] text-[#0F1E3C]/35 ml-auto">{b.ordens} {b.ordens===1 ? "ordem" : "ordens"}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function MateriasPrimasPage() {
   const [insumos,            setInsumos]            = useState<InsumoRaiz[]>([])
@@ -1026,11 +1170,30 @@ export default function MateriasPrimasPage() {
 
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>Matéria Prima</h1>
-          <p className="text-xs text-[#0F1E3C]/45 mt-1">Insumos e variações por cor · estoque para produção</p>
+          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>Insumos</h1>
+          <p className="text-xs text-[#0F1E3C]/45 mt-1 max-w-md">
+            Bobina de tecido nasce na Programação de Produção agora — aqui você só acompanha o que já foi fechado.
+          </p>
+        </div>
+      </div>
+
+      <BobinasFechadasReport periodo={periodo} rangeStart={rangeStart} rangeEnd={rangeEnd} onSetPeriodo={setPeriodo} />
+
+      <div className="flex items-start gap-2.5 rounded-xl bg-[#4361EE]/5 border border-[#4361EE]/15 px-4 py-3">
+        <Info size={14} className="text-[#4361EE] flex-shrink-0 mt-0.5"/>
+        <p className="text-xs text-[#0F1E3C]/60 leading-snug">
+          <b className="text-[#0F1E3C]">Bobina em aberto agora</b> aparece na Programação de Produção, não aqui — ela só entra nessa lista quando for finalizada.
+        </p>
+      </div>
+
+      {/* Outros insumos */}
+      <div className="flex items-start justify-between pt-2">
+        <div>
+          <h2 className="text-sm font-bold text-[#0F1E3C]">Outros insumos</h2>
+          <p className="text-xs text-[#0F1E3C]/40 mt-0.5">Linha, aviamento e afins — não entram no corte por cor, cadastro continua manual</p>
         </div>
         <button onClick={() => setShowNovoInsumo(true)}
-          className="flex items-center gap-2 mt-1 px-4 py-2 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 transition-colors">
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 transition-colors">
           <Plus size={14}/> Novo Insumo
         </button>
       </div>

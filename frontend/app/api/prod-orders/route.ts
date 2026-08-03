@@ -120,13 +120,13 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { productId, selectedColors } = body
+    const { productId, selectedColors, grade } = body
 
     // Support both entries:[{entryId, color}] and legacy entryIds:number[]
     const entries: { entryId: number; color?: string }[] =
       body.entries ?? (body.entryIds ?? []).map((id: number) => ({ entryId: id }))
 
-    const result = await createProdOrder({ productId, selectedColors, entries })
+    const result = await createProdOrder({ productId, selectedColors, entries, grade })
     return NextResponse.json(result, { status: 201 })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

@@ -33,11 +33,16 @@ type Order = {
   logs: OrderLog[]
   createdAt: string; concludedAt?: string
 }
-type AvailableEntry = {
-  id: number; number: string; materialId: number; materialName: string; unit: string
-  variantId: number | null; varianteName: string | null
-  totalQty: number; totalCost: number; status: "disponivel" | "usada"
-  totalPiecesProduced: number
+// Bobina aberta de um produto+cor — vem de /api/raw-material-entries com
+// productId+color, ou openSummary=1 pro banner do topo da página.
+type OpenBobina = {
+  id: number; number: string
+  productId: number; productName: string; color: string
+  tecido: string; tipoTecido: "aberto" | "tubular"
+  pesoKg: number; gramatura: number; larguraM: number; precoKg: number
+  totalQty: number; unitPrice: number; totalCost: number
+  status: "usada" | "disponivel"
+  diasAberta: number; ordens: number; pecas: number
 }
 
 // ─── Types (shared) ────────────────────────────────────────────────────────────
@@ -237,88 +242,207 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
   )
 }
 
-// ─── NovaOrdemModal ────────────────────────────────────────────────────────────
-type MaterialPick = {
-  materialId: number; materialName: string; unit: string
-  color: string; entryId: number; entryNumber: string; totalQty: number; totalCost: number
-}
+// ─── NovaOrdemModal — bobina nasce no clique da cor ────────────────────────────
+type TipoTecido = "aberto" | "tubular"
+
+type ColorBobina =
+  | {
+      reuse: true
+      entryId: number; tecido: string
+      diasAberta: number; ordens: number; pecas: number
+      sizes: Record<string, string>
+    }
+  | {
+      reuse: false
+      tecido: string; tipoTecido: TipoTecido | null
+      pesoKg: string; gramatura: string; larguraM: string; precoKg: string
+      sizes: Record<string, string>
+    }
 
 const DRAFT_KEY = "programacao_nova_ordem_draft"
 
-function saveDraft(productId: string | null, selectedColors: string[], matPicks: MaterialPick[], step: string) {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ productId, selectedColors, matPicks, step })) } catch {}
+function saveDraft(productId: string | null, selectedColors: string[], colorData: Record<string, ColorBobina>, step: string) {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ productId, selectedColors, colorData, step })) } catch {}
 }
 function clearDraft() {
   try { localStorage.removeItem(DRAFT_KEY) } catch {}
 }
-function loadDraft(): { productId: string | null; selectedColors: string[]; matPicks: MaterialPick[]; step: string } | null {
+function loadDraft(): { productId: string | null; selectedColors: string[]; colorData: Record<string, ColorBobina>; step: string } | null {
   try { const v = localStorage.getItem(DRAFT_KEY); return v ? JSON.parse(v) : null } catch { return null }
 }
 
+function numOrNaN(v: string | undefined): number {
+  if (v === undefined || v === "") return NaN
+  return parseFloat(v.replace(",", "."))
+}
+
+function calcBobina(cd: Extract<ColorBobina, { reuse: false }>) {
+  const peso = numOrNaN(cd.pesoKg), gram = numOrNaN(cd.gramatura), larg = numOrNaN(cd.larguraM), preco = numOrNaN(cd.precoKg)
+  if (!peso || !gram || !larg) return { metros: null as number | null, custo: null as number | null }
+  const larguraCorte = cd.tipoTecido === "tubular" ? larg * 2 : larg
+  const metros = (peso * 1000) / (gram * larguraCorte)
+  const custo = preco ? peso * preco : null
+  return { metros, custo }
+}
+
+function piecesFor(cd: ColorBobina): number {
+  return Object.values(cd.sizes).reduce((s, v) => s + (parseInt(v) || 0), 0)
+}
+
+function colorComplete(cd: ColorBobina): boolean {
+  if (piecesFor(cd) === 0) return false
+  if (cd.reuse) return true
+  if (!cd.tecido || !cd.tipoTecido) return false
+  return [cd.pesoKg, cd.gramatura, cd.larguraM, cd.precoKg].every(v => numOrNaN(v) > 0)
+}
+
 function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
-  type Step = "grade" | "materiais"
+  type Step = "produto" | "cores"
   const draft = loadDraft()
-  const [step, setStep]               = useState<Step>((draft?.step as Step) ?? "grade")
+  const [step, setStep]               = useState<Step>((draft?.step as Step) ?? "produto")
   const [productId, setProductId]     = useState<string | null>(draft?.productId ?? null)
   const [selectedColors, setSelectedColors] = useState<string[]>(draft?.selectedColors ?? [])
-  const [matPicks, setMatPicks]       = useState<MaterialPick[]>(draft?.matPicks ?? [])
+  const [colorData, setColorData]     = useState<Record<string, ColorBobina>>(draft?.colorData ?? {})
+  const [saving, setSaving]           = useState(false)
+  const [error, setError]             = useState<string | null>(null)
 
-  // Fetched data
-  const [products,  setProducts]  = useState<MockProduct[]>([])
-  const [entries,   setEntries]   = useState<AvailableEntry[]>([])
+  const [products, setProducts] = useState<MockProduct[]>([])
 
   useEffect(() => {
     fetch("/api/products").then(r => r.json()).then((data: { id:string; name:string; colors:string[]; sizes:string[] }[]) =>
       setProducts(data.filter(p => p.colors?.length && p.sizes?.length))
     ).catch(() => {})
-    fetch("/api/raw-material-entries?status=disponivel,usada").then(r => r.json()).then(
-      (data: AvailableEntry[]) => setEntries(data)
-    ).catch(() => {})
   }, [])
 
-  const product     = products.find(p => p.id === productId) ?? null
-  const gradeValid  = !!product && selectedColors.length > 0
-  const stepOrder: Step[] = ["grade","materiais"]
+  const product = products.find(p => p.id === productId) ?? null
+  const stepOrder: Step[] = ["produto","cores"]
   const stepIdx = stepOrder.indexOf(step)
 
-  function toggleColor(c: string) {
-    setSelectedColors(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
+  async function toggleColor(c: string) {
+    if (selectedColors.includes(c)) {
+      setSelectedColors(prev => prev.filter(x => x !== c))
+      return
+    }
+    setSelectedColors(prev => [...prev, c])
+    if (colorData[c] || !productId) return
+    try {
+      const res = await fetch(`/api/raw-material-entries?productId=${productId}&color=${encodeURIComponent(c)}`)
+      const rows: OpenBobina[] = res.ok ? await res.json() : []
+      if (rows.length) {
+        const b = rows[0]
+        setColorData(prev => ({ ...prev, [c]: {
+          reuse: true, entryId: b.id, tecido: b.tecido,
+          diasAberta: b.diasAberta, ordens: b.ordens, pecas: b.pecas, sizes: {},
+        }}))
+        return
+      }
+    } catch {}
+    setColorData(prev => ({ ...prev, [c]: {
+      reuse: false, tecido: "", tipoTecido: null, pesoKg: "", gramatura: "", larguraM: "", precoKg: "", sizes: {},
+    }}))
   }
 
-  function toggleEntry(entry: AvailableEntry) {
-    const exists = matPicks.some(p => p.entryId === entry.id)
-    if (exists) {
-      setMatPicks(prev => prev.filter(p => p.entryId !== entry.id))
-    } else {
-      setMatPicks(prev => [...prev, {
-        materialId: entry.materialId, materialName: entry.materialName, unit: entry.unit,
-        color: selectedColors[0] ?? "", entryId: entry.id, entryNumber: entry.number,
-        totalQty: entry.totalQty, totalCost: entry.totalCost,
-      }])
+  function setField(color: string, field: "tecido" | "pesoKg" | "gramatura" | "larguraM" | "precoKg", value: string) {
+    setColorData(prev => {
+      const cd = prev[color]
+      if (!cd || cd.reuse) return prev
+      return { ...prev, [color]: { ...cd, [field]: value } }
+    })
+  }
+  function setTipo(color: string, tipo: TipoTecido) {
+    setColorData(prev => {
+      const cd = prev[color]
+      if (!cd || cd.reuse) return prev
+      return { ...prev, [color]: { ...cd, tipoTecido: tipo } }
+    })
+  }
+  function setSize(color: string, size: string, value: string) {
+    setColorData(prev => {
+      const cd = prev[color]
+      if (!cd) return prev
+      return { ...prev, [color]: { ...cd, sizes: { ...cd.sizes, [size]: value } } }
+    })
+  }
+  function forceNewBobina(color: string) {
+    setColorData(prev => ({ ...prev, [color]: {
+      reuse: false, tecido: "", tipoTecido: null, pesoKg: "", gramatura: "", larguraM: "", precoKg: "",
+      sizes: prev[color]?.sizes ?? {},
+    }}))
+  }
+
+  const totalPecas = selectedColors.reduce((s, c) => s + (colorData[c] ? piecesFor(colorData[c]) : 0), 0)
+  const bobinaCostNovas = selectedColors.reduce((s, c) => {
+    const cd = colorData[c]
+    if (!cd || cd.reuse) return s
+    return s + (calcBobina(cd).custo ?? 0)
+  }, 0)
+  const orderComplete = selectedColors.length > 0 && selectedColors.every(c => colorData[c] && colorComplete(colorData[c]))
+
+  function handleSalvarRascunho() {
+    saveDraft(productId, selectedColors, colorData, step)
+    onClose()
+  }
+
+  async function handleCriarOrdem() {
+    if (!productId || !orderComplete) return
+    setSaving(true)
+    setError(null)
+    try {
+      const entries: { entryId: number; color: string }[] = []
+      for (const c of selectedColors) {
+        const cd = colorData[c]
+        if (cd.reuse) {
+          entries.push({ entryId: cd.entryId, color: c })
+        } else {
+          const res = await fetch("/api/raw-material-entries", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              productId, color: c, tecido: cd.tecido, tipoTecido: cd.tipoTecido,
+              pesoKg: numOrNaN(cd.pesoKg), gramatura: numOrNaN(cd.gramatura),
+              larguraM: numOrNaN(cd.larguraM), precoKg: numOrNaN(cd.precoKg),
+            }),
+          })
+          if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Falha ao criar bobina")
+          const created = await res.json()
+          entries.push({ entryId: created.entryId, color: c })
+        }
+      }
+
+      const grade = selectedColors.flatMap(c => {
+        const cd = colorData[c]
+        return Object.entries(cd.sizes)
+          .filter(([, v]) => (parseInt(v) || 0) > 0)
+          .map(([size, v]) => ({ color: c, size, qtyPlanned: parseInt(v) || 0 }))
+      })
+
+      const res = await fetch("/api/prod-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, selectedColors, entries, grade }),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Falha ao criar ordem")
+
+      clearDraft()
+      onSuccess()
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao criar ordem")
+    } finally {
+      setSaving(false)
     }
   }
 
-  // Agrupa em 2 níveis: insumo (categoria raiz) → variação (categoria filha) →
-  // bobinas. Sem isso, bobinas de variações diferentes do mesmo insumo ficavam
-  // misturadas numa lista só, sem dar pra saber qual variação cada uma é.
-  const grouped = entries.reduce((acc, e) => {
-    if (!acc[e.materialName]) acc[e.materialName] = {}
-    const varKey = e.varianteName ?? "Sem variação"
-    if (!acc[e.materialName][varKey]) acc[e.materialName][varKey] = []
-    acc[e.materialName][varKey].push(e)
-    return acc
-  }, {} as Record<string, Record<string, AvailableEntry[]>>)
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
           <div>
             <h3 className="font-bold text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>Nova Ordem de Produção</h3>
             <div className="flex items-center gap-1 mt-2">
-              {[{key:"grade",label:"Grade"},{key:"materiais",label:"Matéria Prima"}].map(({key,label},i) => (
+              {[{key:"produto",label:"Produto"},{key:"cores",label:"Cores & Bobina"}].map(({key,label},i) => (
                 <div key={key} className="flex items-center gap-1">
                   <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 ${
                     i===stepIdx ? "bg-[#4361EE] text-white" : i<stepIdx ? "bg-emerald-100 text-emerald-700" : "bg-[#0F1E3C]/6 text-[#0F1E3C]/30"
@@ -336,171 +460,201 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
 
-          {/* ── STEP 1: Grade ── */}
-          {step === "grade" && (
-            <div className="space-y-5">
-
-              {/* Produto */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">Produto</label>
-                <select
-                  value={productId ?? ""}
-                  onChange={e => { setProductId(e.target.value || null); setSelectedColors([]) }}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20">
-                  <option value="">Selecione o produto...</option>
-                  {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+          {/* ── STEP 1: Produto ── */}
+          {step === "produto" && (
+            <div>
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">Produto</label>
+              <div className="grid grid-cols-3 gap-2.5">
+                {products.map(p => {
+                  const active = p.id === productId
+                  return (
+                    <button key={p.id}
+                      onClick={() => { setProductId(p.id); setSelectedColors([]); setColorData({}) }}
+                      className={`px-3 py-4 rounded-xl border-2 text-center transition-all ${
+                        active ? "border-[#4361EE] bg-[#4361EE]/5" : "border-[#0F1E3C]/10 hover:border-[#4361EE]/40"
+                      }`}>
+                      <p className="text-xs font-bold text-[#0F1E3C]">{p.name}</p>
+                    </button>
+                  )
+                })}
               </div>
-
-              {/* Cores */}
-              {product && (
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">
-                    Cores a produzir
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {product.colors.map(c => {
-                      const active = selectedColors.includes(c)
-                      return (
-                        <button key={c} onClick={() => toggleColor(c)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold border transition-all ${
-                            active
-                              ? "bg-[#4361EE] text-white border-[#4361EE]"
-                              : "border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
-                          }`}>
-                          {active && <Check size={11}/>}
-                          {c}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Resumo grade */}
-              {product && selectedColors.length > 0 && (
-                <div className="px-4 py-3 rounded-xl bg-[#F9FAFB] border border-[#0F1E3C]/6">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-2">Grade gerada</p>
-                  <div className="space-y-1.5">
-                    {selectedColors.map(c => (
-                      <div key={c} className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-[#0F1E3C] w-24">{c}</span>
-                        <div className="flex flex-wrap gap-1">
-                          {product.sizes.map(s => (
-                            <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-[#4361EE]/8 text-[#4361EE] font-bold">{s}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-[#0F1E3C]/30 mt-2">
-                    {selectedColors.length * product.sizes.length} variações · quantidades preenchidas ao concluir
-                  </p>
-                </div>
-              )}
             </div>
           )}
 
-          {/* ── STEP 2: Matéria Prima ── */}
-          {step === "materiais" && (
+          {/* ── STEP 2: Cores & Bobina ── */}
+          {step === "cores" && product && (
             <div className="space-y-4">
-              <p className="text-xs text-[#0F1E3C]/40">Selecione as bobinas/lotes usados nessa ordem</p>
-
-              {Object.keys(grouped).length === 0 ? (
-                <div className="flex flex-col items-center py-8 gap-2 text-[#0F1E3C]/25">
-                  <Layers size={22}/>
-                  <p className="text-xs font-semibold">Nenhuma matéria prima disponível</p>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">
+                  Cores — clique pra marcar (1 ou mais)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {product.colors.map(c => {
+                    const active = selectedColors.includes(c)
+                    const hasOpen = colorData[c]?.reuse
+                    return (
+                      <button key={c} onClick={() => toggleColor(c)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold border transition-all ${
+                          active ? "bg-[#4361EE] text-white border-[#4361EE]" : "border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+                        }`}>
+                        {active && <Check size={11}/>}
+                        {c}
+                        {hasOpen && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 ml-1">BOBINA ABERTA</span>}
+                      </button>
+                    )
+                  })}
                 </div>
-              ) : (
-                Object.entries(grouped).map(([matName, byVariant]) => (
-                  <div key={matName}>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">{matName}</p>
-                    <div className="space-y-3">
-                      {Object.entries(byVariant).map(([varName, matEntries]) => (
-                        <div key={varName}>
-                          <p className="text-[10px] font-semibold text-[#0F1E3C]/35 mb-1.5 pl-1">↳ {varName}</p>
-                          <div className="space-y-1.5">
-                            {matEntries.map(entry => {
-                              const selected = matPicks.some(p => p.entryId === entry.id)
-                              return (
-                                <button key={entry.id} onClick={() => toggleEntry(entry)}
-                                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all ${
-                                    selected ? "border-[#4361EE]/30 bg-[#4361EE]/5" : "border-[#0F1E3C]/8 hover:bg-[#F9FAFB]"
-                                  }`}>
-                                  <div className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border-2 transition-all ${
-                                    selected ? "bg-[#4361EE] border-[#4361EE]" : "border-[#0F1E3C]/20"
-                                  }`}>
-                                    {selected && <Check size={10} className="text-white" strokeWidth={3}/>}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-semibold text-[#0F1E3C]">{entry.number}</p>
-                                    <p className="text-xs text-[#0F1E3C]/40">
-                                      {entry.totalQty} {entry.unit} · {fmtR(entry.totalCost)}
-                                      {entry.totalPiecesProduced > 0 ? ` · ${entry.totalPiecesProduced} pç já produzidas` : ""}
-                                    </p>
-                                  </div>
-                                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
-                                    entry.status === "disponivel" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                                  }`}>{entry.status === "disponivel" ? "DISPONÍVEL" : "EM USO"}</span>
-                                </button>
-                              )
-                            })}
+              </div>
+
+              {selectedColors.length === 0 && (
+                <p className="text-xs text-[#0F1E3C]/35">Marque ao menos uma cor acima pra continuar.</p>
+              )}
+
+              {selectedColors.map(c => {
+                const cd = colorData[c]
+                if (!cd) return null
+                return (
+                  <div key={c} className="rounded-xl border border-[#0F1E3C]/10 overflow-hidden">
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-[#F9FAFB] border-b border-[#0F1E3C]/6">
+                      <p className="text-sm font-bold text-[#0F1E3C] flex-1">{c}</p>
+                    </div>
+
+                    {cd.reuse ? (
+                      <div className="flex items-start gap-2.5 mx-4 mt-3 px-3.5 py-3 rounded-xl bg-amber-50 border border-amber-200">
+                        <Layers size={14} className="text-amber-600 flex-shrink-0 mt-0.5"/>
+                        <p className="text-xs text-[#0F1E3C]/70 leading-snug">
+                          <b className="text-amber-700">Bobina aberta reaproveitada</b> — {cd.tecido}, aberta há {cd.diasAberta} dia(s), {cd.ordens} ordem(ns) já usaram essa bobina ({cd.pecas} peças até agora).{" "}
+                          <button onClick={() => forceNewBobina(c)} className="font-bold text-[#4361EE] hover:underline">trocar por bobina nova</button>
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="px-4 pt-3">
+                        <div className="grid grid-cols-4 gap-2.5">
+                          <div className="col-span-2">
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-1">Tecido</label>
+                            <input type="text" placeholder="Digite o tecido" value={cd.tecido}
+                              onChange={e => setField(c, "tecido", e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
                           </div>
+                          <div className="col-span-2">
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-1">Tipo</label>
+                            <div className="flex gap-1.5">
+                              <button type="button" onClick={() => setTipo(c, "aberto")}
+                                className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all ${
+                                  cd.tipoTecido === "aberto" ? "bg-[#4361EE] border-[#4361EE] text-white" : "border-[#0F1E3C]/12 text-[#0F1E3C]/50"
+                                }`}>Aberto</button>
+                              <button type="button" onClick={() => setTipo(c, "tubular")}
+                                className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all ${
+                                  cd.tipoTecido === "tubular" ? "bg-[#4361EE] border-[#4361EE] text-white" : "border-[#0F1E3C]/12 text-[#0F1E3C]/50"
+                                }`}>Tubular</button>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-1">Peso (kg)</label>
+                            <input type="text" inputMode="decimal" placeholder="0,0" value={cd.pesoKg}
+                              onChange={e => setField(c, "pesoKg", e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-1">Gramatura (g/m²)</label>
+                            <input type="text" inputMode="decimal" placeholder="0" value={cd.gramatura}
+                              onChange={e => setField(c, "gramatura", e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-1">
+                              {cd.tipoTecido === "tubular" ? "Boca do tubo (m)" : "Largura (m)"}
+                            </label>
+                            <input type="text" inputMode="decimal" placeholder="0,00" value={cd.larguraM}
+                              onChange={e => setField(c, "larguraM", e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-1">Preço/kg (R$)</label>
+                            <input type="text" inputMode="decimal" placeholder="0,00" value={cd.precoKg}
+                              onChange={e => setField(c, "precoKg", e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
+                          </div>
+                        </div>
+
+                        {cd.tipoTecido === "tubular" && (
+                          <p className="text-[10px] text-[#0F1E3C]/40 mt-2">
+                            Boca de {numOrNaN(cd.larguraM) || "—"} m → largura de corte ≈ {(numOrNaN(cd.larguraM) ? numOrNaN(cd.larguraM) * 2 : 0).toFixed(2)} m (tubo aberto).
+                          </p>
+                        )}
+
+                        {(() => {
+                          const r = calcBobina(cd)
+                          const pecas = piecesFor(cd)
+                          return (
+                            <div className="mt-3 mb-1 px-3.5 py-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                              <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700/70 mb-0.5">Custo estimado / peça</p>
+                              <p className="text-xl font-black text-emerald-700">
+                                {(r.custo && pecas > 0) ? fmtR(r.custo / pecas) : "—"}
+                              </p>
+                              <p className="text-[10px] text-[#0F1E3C]/40 mt-1">
+                                Metragem ≈ {r.metros ? `${r.metros.toFixed(1)} m` : "—"} · Bobina ≈ {r.custo ? fmtR(r.custo) : "—"}
+                              </p>
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Grade de tamanhos */}
+                    <div className="grid gap-2 px-4 pb-4 pt-1" style={{ gridTemplateColumns: `repeat(${product.sizes.length}, 1fr)` }}>
+                      {product.sizes.map(s => (
+                        <div key={s} className="text-center">
+                          <p className="text-[10px] font-bold text-[#0F1E3C]/45 mb-1">{s}</p>
+                          <input type="text" inputMode="numeric" placeholder="0"
+                            value={cd.sizes[s] ?? ""}
+                            onChange={e => setSize(c, s, e.target.value)}
+                            className="w-full text-center px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-sm font-bold text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"/>
                         </div>
                       ))}
                     </div>
                   </div>
-                ))
-              )}
+                )
+              })}
 
-              {matPicks.length > 0 && (
-                <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-[#4361EE]/6 border border-[#4361EE]/15">
-                  <span className="text-xs text-[#0F1E3C]/50">{matPicks.length} {matPicks.length === 1 ? "bobina selecionada" : "bobinas selecionadas"}</span>
-                  <span className="text-sm font-black text-[#4361EE]">{fmtR(matPicks.reduce((s,m) => s + Number(m.totalCost), 0))}</span>
-                </div>
-              )}
-
+              {error && <p className="text-xs font-semibold text-red-600 px-1">{error}</p>}
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-[#0F1E3C]/8 flex-shrink-0 bg-[#F9FAFB]">
-          <button onClick={() => { if (stepIdx===0) { clearDraft(); onClose() } else setStep(stepOrder[stepIdx-1]) }}
-            className="px-4 py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
-            {stepIdx===0 ? "Cancelar" : "Voltar"}
-          </button>
-          <div className="flex gap-2">
-            {step==="materiais" && (
-              <button onClick={() => { saveDraft(productId, selectedColors, matPicks, step); onClose() }}
-                className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 transition-colors">
-                Salvar rascunho
-              </button>
-            )}
-            <button
-              disabled={step==="grade" && !gradeValid}
-              onClick={async () => {
-                if (stepIdx < stepOrder.length - 1) {
-                  setStep(stepOrder[stepIdx + 1])
-                } else {
-                  // Create order via API
-                  await fetch("/api/prod-orders", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      productId,
-                      selectedColors,
-                      entries: matPicks.map(m => ({ entryId: m.entryId, color: m.color })),
-                    }),
-                  })
-                  clearDraft()
-                  onSuccess()
-                  onClose()
-                }
-              }}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] disabled:opacity-40 transition-colors">
-              {stepIdx===stepOrder.length-1 ? <><Check size={14}/> Criar Ordem</> : <>Continuar <ChevronRight size={14}/></>}
+        <div className="flex flex-col gap-2 px-6 py-4 border-t border-[#0F1E3C]/8 flex-shrink-0 bg-[#F9FAFB]">
+          {step === "cores" && (
+            <p className="text-[10px] text-[#0F1E3C]/35 leading-snug">
+              <b>Salvar rascunho</b> guarda no seu navegador do jeito que estiver, mesmo incompleto. <b>Criar Ordem</b> exige tecido, tipo, peso, gramatura, largura e preço/kg de cada bobina nova, e ao menos 1 peça em algum tamanho de cada cor.
+            </p>
+          )}
+          <div className="flex items-center justify-between">
+            <button onClick={() => { if (stepIdx===0) { clearDraft(); onClose() } else setStep(stepOrder[stepIdx-1]) }}
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
+              {stepIdx===0 ? "Cancelar" : "Voltar"}
             </button>
+            <div className="flex items-center gap-3">
+              {step === "cores" && (
+                <>
+                  {totalPecas > 0 && (
+                    <span className="text-xs text-[#0F1E3C]/45">
+                      {totalPecas} pç{bobinaCostNovas > 0 ? ` · bobina(s) nova(s) ${fmtR(bobinaCostNovas)}` : ""}
+                    </span>
+                  )}
+                  <button onClick={handleSalvarRascunho} disabled={selectedColors.length===0}
+                    className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 disabled:opacity-40 transition-colors">
+                    Salvar rascunho
+                  </button>
+                </>
+              )}
+              <button
+                disabled={(step==="produto" && !productId) || (step==="cores" && (!orderComplete || saving))}
+                onClick={() => { if (step==="produto") setStep("cores"); else handleCriarOrdem() }}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] disabled:opacity-40 transition-colors">
+                {step==="cores" ? <><Check size={14}/> {saving ? "Criando..." : "Criar Ordem"}</> : <>Continuar <ChevronRight size={14}/></>}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -773,6 +927,55 @@ function HistoryRow({ order }: { order: Order }) {
   )
 }
 
+// ─── BobinasAbertasBanner ───────────────────────────────────────────────────────
+function BobinasAbertasBanner() {
+  const [bobinas, setBobinas] = useState<OpenBobina[]>([])
+  const [finalizing, setFinalizing] = useState<number | null>(null)
+
+  const load = useCallback(() => {
+    fetch("/api/raw-material-entries?openSummary=1").then(r => r.json()).then(setBobinas).catch(() => {})
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  async function finalizar(id: number) {
+    setFinalizing(id)
+    try {
+      await fetch(`/api/raw-material-entries/${id}/finalizar`, { method: "POST" })
+      load()
+    } finally {
+      setFinalizing(null)
+    }
+  }
+
+  if (!bobinas.length) return null
+
+  return (
+    <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3.5">
+      <div className="flex items-center gap-2 mb-2.5">
+        <Layers size={14} className="text-amber-600"/>
+        <p className="text-xs font-bold text-amber-700">{bobinas.length} {bobinas.length === 1 ? "bobina em aberto" : "bobinas em aberto"}</p>
+      </div>
+      <div className="space-y-1.5">
+        {bobinas.map(b => (
+          <div key={b.id} className="flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-3.5 py-2.5">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-[#0F1E3C]">{b.tecido} · {b.color} — {b.productName}</p>
+              <p className="text-[10.5px] text-[#0F1E3C]/50 mt-0.5">
+                aberta há <b className="text-[#0F1E3C]/70">{b.diasAberta} dia(s)</b> · <b className="text-[#0F1E3C]/70">{b.ordens}</b> ordem(ns) já cortaram dela · <b className="text-[#0F1E3C]/70">{b.pecas}</b> peças · {fmtR(b.totalCost)} investido até agora
+              </p>
+            </div>
+            <button onClick={() => finalizar(b.id)} disabled={finalizing === b.id}
+              className="flex-shrink-0 text-[11px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50">
+              {finalizing === b.id ? "Finalizando..." : "Finalizar bobina"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function ProgramacaoPage() {
   const [orders, setOrders] = useState<Order[]>([])
@@ -852,6 +1055,8 @@ export default function ProgramacaoPage() {
           </button>
         </div>
       </div>
+
+      <BobinasAbertasBanner/>
 
       {/* Summary */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">

@@ -36,11 +36,24 @@ export async function concludeProdOrder(
 
     let anyCostCalculated = false
     for (const m of (materials ?? [])) {
+      // Cada bobina só deve ser creditada com as peças da COR dela, não da
+      // ordem inteira (uma ordem pode ter 2+ cores, cada uma com sua própria
+      // bobina). Sem cor definida no vínculo (link antigo), cai no total da
+      // ordem como sempre foi.
+      const { rows: pomRows } = await client.query(
+        `SELECT color FROM prod_order_materials WHERE order_id = $1 AND entry_id = $2`,
+        [orderId, m.entryId]
+      )
+      const matColor = pomRows[0]?.color as string | null | undefined
+      const piecesForThis = matColor
+        ? grade.filter(g => g.color === matColor).reduce((s, g) => s + (g.qty ?? 0), 0)
+        : totalProduced
+
       await client.query(`
         UPDATE prod_order_materials
         SET pieces_from_entry = $1, exhausted_here = $2
         WHERE order_id = $3 AND entry_id = $4
-      `, [totalProduced, m.exhausted ?? false, orderId, m.entryId])
+      `, [piecesForThis, m.exhausted ?? false, orderId, m.entryId])
 
       if (m.exhausted) {
         await client.query(`
@@ -51,7 +64,7 @@ export async function concludeProdOrder(
             total_pieces_produced = total_pieces_produced + $1,
             cost_per_piece = total_cost / NULLIF(total_pieces_produced + $1, 0)
           WHERE id = $2
-        `, [totalProduced, m.entryId])
+        `, [piecesForThis, m.entryId])
         anyCostCalculated = true
       } else {
         await client.query(`
@@ -60,7 +73,7 @@ export async function concludeProdOrder(
             status = 'usada',
             total_pieces_produced = total_pieces_produced + $1
           WHERE id = $2 AND status != 'esgotada'
-        `, [totalProduced, m.entryId])
+        `, [piecesForThis, m.entryId])
       }
     }
 

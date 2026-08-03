@@ -3,11 +3,13 @@ import { pool } from "@/lib/db"
 
 export async function GET() {
   try {
-    // Materials with variants
+    // Materials with variants — exclui os que nascem sozinhos do fluxo de
+    // bobina de tecido (Programação de Produção); esses aparecem só no
+    // relatório de Insumos, não aqui no cadastro manual de "outros insumos".
     const { rows: mats } = await pool.query(`
       SELECT id, name, unit, unit_price AS "unitPrice", status
       FROM raw_materials
-      WHERE status = 'active'
+      WHERE status = 'active' AND product_id IS NULL
       ORDER BY name ASC
     `)
 

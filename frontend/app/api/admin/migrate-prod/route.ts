@@ -5,6 +5,12 @@ import { pool } from "@/lib/db"
 // Idempotent — safe to run multiple times.
 // Creates: prod_order_logs, size_weights
 // Alters:  prod_order_materials (adds color column)
+//          raw_materials (product_id), raw_material_entries (ficha técnica da
+//          bobina de tecido: tecido, tipo_tecido, peso_kg, gramatura, largura_m,
+//          preco_kg) — fluxo novo de bobina nascendo na Programação de Produção
+// Replaces: calculate_sku_costs() — custo de material passa a ser por cor
+//          (cada cor tem sua bobina própria), custo de costura continua pool
+//          da ordem inteira (tempo de costura não depende de qual bobina veio)
 export async function POST() {
   try {
     await pool.query(`
@@ -47,6 +53,147 @@ export async function POST() {
 
     await pool.query(`
       ALTER TABLE prod_order_materials ADD COLUMN IF NOT EXISTS color TEXT
+    `)
+
+    // ── Bobina de tecido nascendo na Programação de Produção ──────────────────
+    await pool.query(`ALTER TABLE raw_materials ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)`)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_raw_materials_product ON raw_materials(product_id)`)
+
+    await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS tecido TEXT`)
+    await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS tipo_tecido TEXT CHECK (tipo_tecido IN ('aberto','tubular'))`)
+    await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS peso_kg NUMERIC(10,3)`)
+    await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS gramatura NUMERIC(10,2)`)
+    await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS largura_m NUMERIC(6,3)`)
+    await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS preco_kg NUMERIC(10,2)`)
+
+    // ── calculate_sku_costs: custo de material agora é por cor ────────────────
+    // Antes: somava o custo de material de TODAS as bobinas da ordem num pote só
+    // e distribuía por peso de tamanho pra todas as cores igual. Com 1 bobina por
+    // cor isso ficava errado sempre que a ordem tinha 2+ cores com bobinas de
+    // custo diferente. Agora o material é somado e distribuído só dentro de cada
+    // cor; a costura continua sendo um pool da ordem inteira (tempo de costura
+    // não muda conforme a bobina).
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION calculate_sku_costs(
+        p_order_id         INTEGER,
+        p_sewing_cost_total NUMERIC DEFAULT 0
+      ) RETURNS VOID LANGUAGE plpgsql AS $$
+      DECLARE
+        v_product_id   INTEGER;
+        v_product_name TEXT;
+        v_color        TEXT;
+        v_total_material NUMERIC;
+        v_row          RECORD;
+        v_weight       NUMERIC;
+        v_weight_total_color NUMERIC;
+        v_weight_total_order NUMERIC;
+        v_cost_mat_per_wunit NUMERIC;
+        v_cost_sew_per_wunit NUMERIC;
+        v_cost_mat     NUMERIC;
+        v_cost_sew     NUMERIC;
+        v_cost_total   NUMERIC;
+        v_old_avg_mat  NUMERIC;
+        v_old_avg_sew  NUMERIC;
+        v_old_count    INTEGER;
+      BEGIN
+        SELECT product_id, COALESCE(product_name,'') INTO v_product_id, v_product_name
+        FROM prod_orders WHERE id = p_order_id;
+
+        -- Weighted total da ordem inteira (usado só pra ratear custo de costura)
+        SELECT COALESCE(SUM(
+          poi.qty_produced *
+          COALESCE(
+            (SELECT sw.weight FROM size_weights sw WHERE sw.product_id = v_product_id AND sw.size = poi.size LIMIT 1),
+            (SELECT sw.weight FROM size_weights sw WHERE sw.product_id IS NULL AND sw.size = poi.size LIMIT 1),
+            1.0
+          )
+        ), 0)
+        INTO v_weight_total_order
+        FROM prod_order_items poi
+        WHERE poi.order_id = p_order_id AND poi.qty_produced > 0;
+
+        IF v_weight_total_order = 0 THEN RETURN; END IF;
+
+        v_cost_sew_per_wunit := p_sewing_cost_total / v_weight_total_order;
+
+        -- Para cada cor da ordem, separado
+        FOR v_color IN
+          SELECT DISTINCT color FROM prod_order_items
+          WHERE order_id = p_order_id AND qty_produced > 0
+        LOOP
+          -- Custo de material só das bobinas ligadas a ESSA cor
+          SELECT COALESCE(SUM(
+            rme.unit_price * rme.total_qty *
+            (pom.pieces_from_entry::NUMERIC / NULLIF(rme.total_pieces_produced,0))
+          ), 0)
+          INTO v_total_material
+          FROM prod_order_materials pom
+          JOIN raw_material_entries rme ON rme.id = pom.entry_id
+          WHERE pom.order_id = p_order_id AND pom.color = v_color;
+
+          -- Weighted total só dessa cor (pra ratear o material dela)
+          SELECT COALESCE(SUM(
+            poi.qty_produced *
+            COALESCE(
+              (SELECT sw.weight FROM size_weights sw WHERE sw.product_id = v_product_id AND sw.size = poi.size LIMIT 1),
+              (SELECT sw.weight FROM size_weights sw WHERE sw.product_id IS NULL AND sw.size = poi.size LIMIT 1),
+              1.0
+            )
+          ), 0)
+          INTO v_weight_total_color
+          FROM prod_order_items poi
+          WHERE poi.order_id = p_order_id AND poi.color = v_color AND poi.qty_produced > 0;
+
+          v_cost_mat_per_wunit := CASE WHEN v_weight_total_color > 0 THEN v_total_material / v_weight_total_color ELSE 0 END;
+
+          FOR v_row IN
+            SELECT size, SUM(qty_produced) AS qty
+            FROM prod_order_items
+            WHERE order_id = p_order_id AND color = v_color AND qty_produced > 0
+            GROUP BY size
+          LOOP
+            SELECT COALESCE(
+              (SELECT sw.weight FROM size_weights sw WHERE sw.product_id = v_product_id AND sw.size = v_row.size LIMIT 1),
+              (SELECT sw.weight FROM size_weights sw WHERE sw.product_id IS NULL AND sw.size = v_row.size LIMIT 1),
+              1.0
+            ) INTO v_weight;
+
+            v_cost_mat   := v_cost_mat_per_wunit * v_weight;
+            v_cost_sew   := v_cost_sew_per_wunit * v_weight;
+            v_cost_total := v_cost_mat + v_cost_sew;
+
+            INSERT INTO sku_cost_records
+              (order_id, product_id, product_name, color, size, qty_produced,
+               size_weight, cost_material, cost_sewing, cost_total)
+            VALUES
+              (p_order_id, v_product_id, v_product_name, v_color, v_row.size, v_row.qty,
+               v_weight, v_cost_mat, v_cost_sew, v_cost_total)
+            ON CONFLICT DO NOTHING;
+
+            SELECT avg_material, avg_sewing, sample_count
+            INTO v_old_avg_mat, v_old_avg_sew, v_old_count
+            FROM product_variant_costs
+            WHERE product_id = v_product_id AND color = v_color AND size = v_row.size;
+
+            IF NOT FOUND THEN
+              INSERT INTO product_variant_costs
+                (product_id, product_name, color, size, avg_material, avg_sewing, avg_total, sample_count)
+              VALUES
+                (v_product_id, v_product_name, v_color, v_row.size,
+                 v_cost_mat, v_cost_sew, v_cost_total, v_row.qty);
+            ELSE
+              UPDATE product_variant_costs SET
+                avg_material  = (v_old_avg_mat * v_old_count + v_cost_mat * v_row.qty) / (v_old_count + v_row.qty),
+                avg_sewing    = (v_old_avg_sew * v_old_count + v_cost_sew * v_row.qty) / (v_old_count + v_row.qty),
+                avg_total     = ((v_old_avg_mat + v_old_avg_sew) * v_old_count + v_cost_total * v_row.qty) / (v_old_count + v_row.qty),
+                sample_count  = v_old_count + v_row.qty,
+                last_updated  = NOW()
+              WHERE product_id = v_product_id AND color = v_color AND size = v_row.size;
+            END IF;
+          END LOOP;
+        END LOOP;
+      END;
+      $$
     `)
 
     return NextResponse.json({ success: true, message: "Migração concluída" })
