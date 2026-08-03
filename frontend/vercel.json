@@ -7,10 +7,6 @@
     {
       "path": "/api/marketing/cron",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/whatsapp/retry-failed",
-      "schedule": "*/30 * * * *"
     }
   ]
 }

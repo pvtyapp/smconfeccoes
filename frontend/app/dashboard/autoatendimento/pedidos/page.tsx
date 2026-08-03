@@ -1581,11 +1581,13 @@ export default function PedidosPage() {
                                   <span className={`flex items-center justify-end gap-1 text-[10px] select-none ${extra ?? ""}`} style={{ color: "#667781" }}>
                                     {fmtTime(m.createdAt)}
                                     {isOut && (
-                                      m.status === "read" || m.status === "played"
-                                        ? <span className="font-bold" style={{ color: "#53BDEB" }}>✓✓</span>
-                                        : m.status === "delivered"
-                                          ? <span className="font-bold" style={{ color: "#667781" }}>✓✓</span>
-                                          : <span className="font-bold" style={{ color: "#667781" }}>✓</span>
+                                      m.status === "failed"
+                                        ? <span className="font-bold" style={{ color: "#F15C6D" }} title="Falha no envio">⚠</span>
+                                        : m.status === "read" || m.status === "played"
+                                          ? <span className="font-bold" style={{ color: "#53BDEB" }}>✓✓</span>
+                                          : m.status === "delivered"
+                                            ? <span className="font-bold" style={{ color: "#667781" }}>✓✓</span>
+                                            : <span className="font-bold" style={{ color: "#667781" }}>✓</span>
                                     )}
                                   </span>
                                 )
