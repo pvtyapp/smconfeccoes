@@ -196,7 +196,17 @@ export async function POST() {
       $$
     `)
 
-    return NextResponse.json({ success: true, message: "Migração concluída" })
+    const { rows: dbInfo } = await pool.query(`SELECT current_database() AS db, inet_server_addr()::text AS host`)
+    const { rows: cols } = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name='raw_material_entries' AND column_name IN ('tecido','tipo_tecido','peso_kg','gramatura','largura_m','preco_kg')
+      ORDER BY column_name
+    `)
+
+    return NextResponse.json({
+      success: true, message: "Migração concluída",
+      diag: { db: dbInfo[0], colunasNovas: cols.map(c => c.column_name) },
+    })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
