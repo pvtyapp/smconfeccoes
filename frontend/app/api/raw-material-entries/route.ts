@@ -28,7 +28,7 @@ async function fetchOpenBobinas(productId: string | null, color: string | null) 
       FROM prod_order_materials GROUP BY entry_id
     ) agg ON agg.entry_id = rme.id
     WHERE rm.product_id IS NOT NULL AND rme.status != 'esgotada'
-      AND ($1::int IS NULL OR rm.product_id = $1)
+      AND ($1::uuid IS NULL OR rm.product_id = $1::uuid)
       AND ($2::text IS NULL OR rmv.name = $2)
     ORDER BY rme.created_at ASC
   `, [productId ?? null, color ?? null])

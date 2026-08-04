@@ -56,7 +56,7 @@ export async function POST() {
     `)
 
     // ── Bobina de tecido nascendo na Programação de Produção ──────────────────
-    await pool.query(`ALTER TABLE raw_materials ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)`)
+    await pool.query(`ALTER TABLE raw_materials ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(id)`)
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_raw_materials_product ON raw_materials(product_id)`)
 
     await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS tecido TEXT`)
@@ -79,7 +79,7 @@ export async function POST() {
         p_sewing_cost_total NUMERIC DEFAULT 0
       ) RETURNS VOID LANGUAGE plpgsql AS $$
       DECLARE
-        v_product_id   INTEGER;
+        v_product_id   UUID;
         v_product_name TEXT;
         v_color        TEXT;
         v_total_material NUMERIC;
