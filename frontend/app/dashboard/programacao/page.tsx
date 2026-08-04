@@ -14,7 +14,7 @@ import { printWhenReady } from "@/components/print/print-utils"
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type OrderStatus   = "em_andamento" | "concluida" | "em_revisao" | "encerrada"
 type CostStatus    = "pendente" | "calculado"
-type GradeRow      = { color: string; size: string; qtyProduced?: number }
+type GradeRow      = { color: string; size: string; qtyPlanned: number; qtyProduced: number | null }
 type MaterialLink  = {
   materialId: number; materialName: string
   entryId: number; entryNumber: string; unit: string
@@ -23,6 +23,8 @@ type MaterialLink  = {
   piecesFromEntry: number
   exhaustedHere: boolean
   entryStatus: "disponivel" | "usada" | "esgotada"
+  // Ficha técnica da bobina de tecido (fluxo novo) — null pra bobina antiga/outros insumos
+  tecido: string | null; tipoTecido: "aberto" | "tubular" | null; pesoKg: number | null
 }
 type OrderLog      = { at: string; text: string }
 type Order = {
@@ -50,6 +52,23 @@ type MockProduct = { id: string; name: string; colors: string[]; sizes: string[]
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
+// Um tamanho só aparece se tiver plano de corte ou produção real — combinação
+// zerada (produto tem esse tamanho mas a ordem não usou) não vira chip vazio.
+// qtyProduced vem NULL do banco antes de Concluir Ordem — nunca usar
+// `!== undefined` aqui, `null !== undefined` é true e vazava "×null" na tela.
+function gradeChipLabel(r: GradeRow): { text: string; produced: boolean } | null {
+  if (r.qtyProduced != null) return { text: `${r.size}×${r.qtyProduced}`, produced: true }
+  if (r.qtyPlanned > 0) return { text: `${r.size}×${r.qtyPlanned}`, produced: false }
+  return null
+}
+
+// Bobina de tecido do fluxo novo mostra a ficha técnica (o que interessa de
+// verdade); bobina antiga/outros insumos cai pro nome do material como sempre.
+function materialLabel(mat: MaterialLink): string {
+  if (mat.tecido) return `${mat.tecido} · ${mat.tipoTecido === "tubular" ? "tubular" : "aberto"}${mat.pesoKg ? ` · ${Number(mat.pesoKg).toFixed(1)}kg` : ""}`
+  return mat.materialName
+}
+
 const PERIOD_OPTIONS = [
   { key:"hoje", label:"Hoje",   days:0  },
   { key:"7d",   label:"7 dias", days:7  },
@@ -61,8 +80,10 @@ const PERIOD_OPTIONS = [
 
 // ─── ConcluirModal ─────────────────────────────────────────────────────────────
 function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: () => void; onSuccess: () => void }) {
+  // Começa com o que foi planejado na criação — chute melhor que campo vazio,
+  // continua 100% editável (corte real quase sempre difere um pouco do plano).
   const [produced, setProduced] = useState<Record<string, string>>(() =>
-    Object.fromEntries(order.grade.map((_,i) => [`${i}`, ""]))
+    Object.fromEntries(order.grade.map((g,i) => [`${i}`, g.qtyPlanned > 0 ? String(g.qtyPlanned) : ""]))
   )
   // per bobina: kg/m → exhausted yes/no | unidade → deduct yes/no
   const [matStates, setMatStates] = useState<Record<number, { exhausted: boolean; deduct: boolean }>>(() =>
@@ -121,6 +142,7 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
                             className="flex-1 px-2 py-1 rounded-lg border border-[#0F1E3C]/12 text-sm font-bold text-center text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
                           />
                           <span className="text-[10px] text-[#0F1E3C]/35">pç</span>
+                          {g.qtyPlanned > 0 && <span className="text-[9px] text-[#0F1E3C]/30 flex-shrink-0">plan. {g.qtyPlanned}</span>}
                         </div>
                       )
                     })}
@@ -148,7 +170,7 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
                   return (
                     <div key={mat.entryId} className={`rounded-xl border overflow-hidden ${!isUnit && st.exhausted ? "border-emerald-200" : "border-[#0F1E3C]/10"}`}>
                       <div className={`px-4 py-3 ${!isUnit && st.exhausted ? "bg-emerald-50" : "bg-[#F9FAFB]"}`}>
-                        <p className="text-sm font-bold text-[#0F1E3C]">{mat.materialName} · {mat.entryNumber}</p>
+                        <p className="text-sm font-bold text-[#0F1E3C]">{materialLabel(mat)} · {mat.entryNumber}</p>
                         <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
                           {mat.totalQty} {mat.unit} · {fmtR(mat.totalCost)}
                           {mat.color ? ` · cor: ${mat.color}` : ""}
@@ -676,6 +698,7 @@ function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => voi
   },[order.grade])
 
   const totalProduced = order.grade.reduce((s,r)=>s+(r.qtyProduced??0),0)
+  const totalPlanned  = order.grade.reduce((s,r)=>s+r.qtyPlanned,0)
   const isAndamento  = order.status === "em_andamento"
   const isEncerrada  = order.status === "encerrada"
 
@@ -756,21 +779,32 @@ function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => voi
               <div key={color}>
                 <p className="text-[10px] font-bold text-[#0F1E3C]/45 mb-1">{color}</p>
                 <div className="flex flex-wrap gap-1">
-                  {rows.map(r => (
-                    <span key={r.size} className="text-xs rounded-lg px-2 py-0.5 font-semibold border bg-[#F4F6FB] border-[#0F1E3C]/8 text-[#0F1E3C]/70">
-                      {r.size}{r.qtyProduced !== undefined ? `×${r.qtyProduced}` : ""}
-                    </span>
-                  ))}
+                  {rows.map(r => {
+                    const chip = gradeChipLabel(r)
+                    if (!chip) return null
+                    return (
+                      <span key={r.size} className={`text-xs rounded-lg px-2 py-0.5 font-semibold border ${
+                        chip.produced ? "bg-[#F4F6FB] border-[#0F1E3C]/8 text-[#0F1E3C]/70" : "border-dashed border-[#0F1E3C]/15 text-[#0F1E3C]/45"
+                      }`}>
+                        {chip.text}
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
             ))}
           </div>
-          {totalProduced > 0 && (
+          {totalProduced > 0 ? (
             <div className="flex items-center gap-2 mt-3">
               <span className="text-xs text-[#0F1E3C]/40">Total produzido:</span>
               <span className="text-sm font-black text-[#0F1E3C]">{totalProduced} pç</span>
             </div>
-          )}
+          ) : totalPlanned > 0 ? (
+            <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
+              <Clock size={12} className="text-amber-600 flex-shrink-0"/>
+              <span className="text-xs text-amber-700">Plano: {totalPlanned} pç · aguardando corte e conclusão</span>
+            </div>
+          ) : null}
         </div>
 
         {/* Materials + cost */}
@@ -780,7 +814,7 @@ function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => voi
             {order.materials.map(mat => (
               <div key={`${mat.entryId}-${mat.color}`} className="flex items-center gap-2">
                 <Layers size={11} className="text-[#4361EE] flex-shrink-0"/>
-                <span className="text-xs text-[#0F1E3C]/70 truncate">{mat.materialName}</span>
+                <span className="text-xs text-[#0F1E3C]/70 truncate">{materialLabel(mat)}</span>
                 <span className="text-[10px] text-[#0F1E3C]/35">cor: {mat.color}</span>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ml-auto flex-shrink-0 ${
                   mat.entryStatus==="esgotada" ? "bg-[#0F1E3C]/6 text-[#0F1E3C]/30" :
@@ -883,11 +917,15 @@ function HistoryRow({ order }: { order: Order }) {
                   <div key={color}>
                     <p className="text-[10px] font-semibold text-[#0F1E3C]/40 mb-1">{color}</p>
                     <div className="flex flex-wrap gap-1">
-                      {rows.map(r => (
-                        <span key={r.size} className="text-xs rounded-lg px-2 py-0.5 font-semibold border bg-white border-[#0F1E3C]/8 text-[#0F1E3C]/70">
-                          {r.size}{r.qtyProduced !== undefined ? `×${r.qtyProduced}` : ""}
-                        </span>
-                      ))}
+                      {rows.map(r => {
+                        const chip = gradeChipLabel(r)
+                        if (!chip) return null
+                        return (
+                          <span key={r.size} className="text-xs rounded-lg px-2 py-0.5 font-semibold border bg-white border-[#0F1E3C]/8 text-[#0F1E3C]/70">
+                            {chip.text}
+                          </span>
+                        )
+                      })}
                     </div>
                   </div>
                 ))}
@@ -901,7 +939,7 @@ function HistoryRow({ order }: { order: Order }) {
                 {order.materials.map(mat => (
                   <div key={`${mat.entryId}-${mat.color}`} className="flex items-center gap-2">
                     <Layers size={11} className="text-[#4361EE] flex-shrink-0"/>
-                    <span className="text-xs text-[#0F1E3C]/60 truncate">{mat.materialName} · {mat.entryNumber}</span>
+                    <span className="text-xs text-[#0F1E3C]/60 truncate">{materialLabel(mat)} · {mat.entryNumber}</span>
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ml-auto flex-shrink-0 ${
                       mat.entryStatus === "esgotada" ? "bg-[#0F1E3C]/6 text-[#0F1E3C]/30" : "bg-amber-100 text-amber-700"
                     }`}>

@@ -66,6 +66,21 @@ export async function POST() {
     await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS largura_m NUMERIC(6,3)`)
     await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN IF NOT EXISTS preco_kg NUMERIC(10,2)`)
 
+    // unit_price só tinha 2 casas decimais — ao recalcular total_cost (coluna
+    // gerada = total_qty × unit_price) o arredondamento divergia alguns
+    // centavos do peso×preço/kg original. Mais casas, menos deriva. Postgres não
+    // deixa alterar o tipo de uma coluna usada por coluna gerada — precisa
+    // dropar e recriar (idempotente: só corre se ainda estiver em 2 casas).
+    const { rows: upScale } = await pool.query(`
+      SELECT numeric_scale FROM information_schema.columns
+      WHERE table_name='raw_material_entries' AND column_name='unit_price'
+    `)
+    if (upScale[0]?.numeric_scale < 4) {
+      await pool.query(`ALTER TABLE raw_material_entries DROP COLUMN total_cost`)
+      await pool.query(`ALTER TABLE raw_material_entries ALTER COLUMN unit_price TYPE NUMERIC(10,4)`)
+      await pool.query(`ALTER TABLE raw_material_entries ADD COLUMN total_cost NUMERIC(10,2) GENERATED ALWAYS AS (total_qty * unit_price) STORED`)
+    }
+
     // ── calculate_sku_costs: custo de material agora é por cor ────────────────
     // Antes: somava o custo de material de TODAS as bobinas da ordem num pote só
     // e distribuía por peso de tamanho pra todas as cores igual. Com 1 bobina por

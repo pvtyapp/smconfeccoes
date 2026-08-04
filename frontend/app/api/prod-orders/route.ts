@@ -25,15 +25,18 @@ export async function GET(req: Request) {
 
     const ids = orders.map(o => o.id)
 
-    // Grade items
+    // Grade items — qtyPlanned é o plano de corte (preenchido já na criação, no
+    // fluxo novo); qtyProduced só existe depois de Concluir Ordem.
     const { rows: items } = await pool.query(`
-      SELECT order_id AS "orderId", color, size, qty_produced AS "qtyProduced"
+      SELECT order_id AS "orderId", color, size,
+        qty_planned AS "qtyPlanned", qty_produced AS "qtyProduced"
       FROM prod_order_items
       WHERE order_id = ANY($1)
       ORDER BY color, size
     `, [ids])
 
-    // Materials (with color — fallback to empty string if column doesn't exist yet)
+    // Materials (com ficha técnica da bobina de tecido, quando existir — fallback
+    // sem cor/ficha técnica se as colunas ainda não existirem nesse banco)
     const { rows: mats } = await pool.query(`
       SELECT
         pom.order_id AS "orderId",
@@ -44,7 +47,8 @@ export async function GET(req: Request) {
         pom.pieces_from_entry AS "piecesFromEntry",
         pom.exhausted_here AS "exhaustedHere",
         rme.status AS "entryStatus",
-        COALESCE(pom.color, '') AS "color"
+        COALESCE(pom.color, '') AS "color",
+        rme.tecido, rme.tipo_tecido AS "tipoTecido", rme.peso_kg AS "pesoKg"
       FROM prod_order_materials pom
       JOIN raw_material_entries rme ON rme.id = pom.entry_id
       JOIN raw_materials rm ON rm.id = rme.material_id
@@ -59,7 +63,8 @@ export async function GET(req: Request) {
         pom.pieces_from_entry AS "piecesFromEntry",
         pom.exhausted_here AS "exhaustedHere",
         rme.status AS "entryStatus",
-        '' AS "color"
+        '' AS "color",
+        NULL AS "tecido", NULL AS "tipoTecido", NULL AS "pesoKg"
       FROM prod_order_materials pom
       JOIN raw_material_entries rme ON rme.id = pom.entry_id
       JOIN raw_materials rm ON rm.id = rme.material_id
