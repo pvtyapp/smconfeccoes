@@ -6,7 +6,7 @@ import {
   Layers, Calendar, ChevronDown, ChevronUp,
   History, Pencil, Printer,
 } from "lucide-react"
-import { todayBR, subDaysBR } from "@/lib/tz"
+import { todayBR, subDaysBR, dateBR, fmtDateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import FichaProducaoPrintSheet from "./FichaProducaoPrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
@@ -732,8 +732,8 @@ function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => voi
               </span>
             </div>
             <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-              {order.number} · {new Date(order.createdAt).toLocaleDateString("pt-BR")}
-              {order.concludedAt ? ` → ${new Date(order.concludedAt).toLocaleDateString("pt-BR")}` : ""}
+              {order.number} · {fmtDateBR(order.createdAt)}
+              {order.concludedAt ? ` → ${fmtDateBR(order.concludedAt)}` : ""}
             </p>
           </div>
         </div>
@@ -884,7 +884,7 @@ function HistoryRow({ order }: { order: Order }) {
             </span>
           </div>
           <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-            {order.concludedAt ? new Date(order.concludedAt).toLocaleDateString("pt-BR") : "—"} · {totalProduced} pç
+            {order.concludedAt ? fmtDateBR(order.concludedAt) : "—"} · {totalProduced} pç
           </p>
         </div>
 
@@ -1048,10 +1048,15 @@ export default function ProgramacaoPage() {
   const active    = orders.filter(o => o.status === "em_andamento")
   const concluded = useMemo(() => {
     const done = orders.filter(o => o.status === "concluida")
+    // concludedAt vem cru do banco (timestamp completo em UTC — o banco roda
+    // em UTC, não Brasil). Comparar direto contra "hoje"/cutoff (que já são
+    // datas no fuso do Brasil) nunca batia certo — "Hoje" ficava sempre vazio
+    // e pedido concluído depois das 21h caía no dia seguinte. dateBR() converte
+    // pro fuso certo antes de comparar, mesmo padrão já usado em Costura e Revisão.
     if (period === "range") {
       return done.filter(o => {
         if (!o.concludedAt) return false
-        const d = o.concludedAt
+        const d = dateBR(new Date(o.concludedAt))
         if (rangeStart && d < rangeStart) return false
         if (rangeEnd   && d > rangeEnd)   return false
         return true
@@ -1059,11 +1064,11 @@ export default function ProgramacaoPage() {
     }
     if (period === "hoje") {
       const today = todayBR()
-      return done.filter(o => o.concludedAt === today)
+      return done.filter(o => o.concludedAt && dateBR(new Date(o.concludedAt)) === today)
     }
     const days = { "7d":7,"15d":15,"30d":30,"60d":60 }[period] ?? 30
     const cutoff = subDaysBR(days)
-    return done.filter(o => o.concludedAt && o.concludedAt >= cutoff)
+    return done.filter(o => o.concludedAt && dateBR(new Date(o.concludedAt)) >= cutoff)
   }, [orders, period, rangeStart, rangeEnd])
 
   return (

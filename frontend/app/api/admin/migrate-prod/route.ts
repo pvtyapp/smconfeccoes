@@ -211,6 +211,10 @@ export async function POST() {
       $$
     `)
 
+    // Marca quando a ficha de revisão foi impressa — é isso que separa "entrou"
+    // de "em andamento" na Costura e Revisão, sem precisar de um status manual novo.
+    await pool.query(`ALTER TABLE prod_orders ADD COLUMN IF NOT EXISTS ficha_revisao_impressa_at TIMESTAMPTZ`)
+
     const { rows: dbInfo } = await pool.query(`SELECT current_database() AS db, inet_server_addr()::text AS host`)
     const { rows: cols } = await pool.query(`
       SELECT column_name FROM information_schema.columns

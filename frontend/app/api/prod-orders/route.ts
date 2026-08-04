@@ -15,7 +15,8 @@ export async function GET(req: Request) {
         po.id, po.number, po.product_id AS "productId", po.product_name AS "productName",
         po.status, po.cost_status AS "costStatus",
         po.unit_cost AS "unitCost", po.total_cost AS "totalCost",
-        po.created_at AS "createdAt", po.concluded_at AS "concludedAt"
+        po.created_at AS "createdAt", po.concluded_at AS "concludedAt",
+        po.ficha_revisao_impressa_at AS "fichaImpressaAt"
       FROM prod_orders po
       WHERE ($1::text[] IS NULL OR po.status = ANY($1))
       ORDER BY po.created_at DESC

@@ -1,8 +1,10 @@
 "use client"
 
 import { useState, useMemo, useEffect, useCallback } from "react"
-import { CheckCircle2, Clock, X, Check, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react"
+import { CheckCircle2, Clock, X, Check, AlertTriangle, ChevronDown, ChevronUp, Printer, PlayCircle } from "lucide-react"
 import { todayBR, subDaysBR, dateBR } from "@/lib/tz"
+import { printWhenReady } from "@/components/print/print-utils"
+import RevisaoPrintSheet, { type RevisaoFichaData } from "./RevisaoPrintSheet"
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type RevisaoStatus = "aguardando" | "concluida"
@@ -27,6 +29,7 @@ type OrdemRevisao = {
   totalPecas:    number
   totalAprovadas?: number
   totalAvarias?:   number
+  fichaImpressaAt?: string | null
 }
 
 // ─── Período ────────────────────────────────────────────────────────────────────
@@ -210,7 +213,7 @@ function colorChips(grade: GradeItem[]): { shown: string[]; extra: number } {
   return { shown: colors.slice(0, 2), extra: Math.max(0, colors.length - 2) }
 }
 
-function PendingCard({ ordem, onClick }: { ordem: OrdemRevisao; onClick: () => void }) {
+function PendingCard({ ordem, onClick, onPrint }: { ordem: OrdemRevisao; onClick: () => void; onPrint: () => void }) {
   const { shown, extra } = useMemo(() => colorChips(ordem.grade), [ordem.grade])
   return (
     <div className="led-wrap relative aspect-square">
@@ -219,6 +222,13 @@ function PendingCard({ ordem, onClick }: { ordem: OrdemRevisao; onClick: () => v
         <button onClick={onClick}
           className="h-full w-full rounded-[18px] bg-white flex flex-col items-center justify-center
             text-center gap-1.5 p-4 cursor-pointer hover:scale-[1.03] transition-transform relative">
+          <button
+            onClick={e => { e.stopPropagation(); onPrint() }}
+            title="Imprimir ficha de revisão"
+            className="absolute top-2.5 right-2.5 w-7 h-7 rounded-lg bg-[#F9FAFB] border border-[#0F1E3C]/8 text-[#0F1E3C]/40
+              hover:bg-[#4361EE]/10 hover:text-[#4361EE] flex items-center justify-center transition-colors">
+            <Printer size={12}/>
+          </button>
           <p className="text-sm font-black text-[#0F1E3C] leading-tight">{ordem.productName}</p>
           <div className="flex gap-1 flex-wrap justify-center">
             {shown.map(c => (
@@ -263,6 +273,7 @@ function mapOrder(o: {
   revisedAt?: string | null
   totalAprovadas?: number
   totalAvarias?:   number
+  fichaImpressaAt?: string | null
 }): OrdemRevisao {
   const grade: GradeItem[] = (o.grade ?? [])
     .filter(g => (g.qtyProduced ?? 0) > 0)
@@ -276,6 +287,7 @@ function mapOrder(o: {
     revisedAt:     o.revisedAt   ?? null,
     totalAprovadas: o.totalAprovadas ?? 0,
     totalAvarias:   o.totalAvarias   ?? 0,
+    fichaImpressaAt: o.fichaImpressaAt ?? null,
   }
 }
 
@@ -283,6 +295,7 @@ export default function CosturaRevisaoPage() {
   const [ordens, setOrdens] = useState<OrdemRevisao[]>([])
   const [loading, setLoading] = useState(true)
   const [revisando, setRevisando] = useState<OrdemRevisao | null>(null)
+  const [printando, setPrintando] = useState<RevisaoFichaData | null>(null)
   const [histOpen, setHistOpen] = useState(false)
   const [period, setPeriod] = useState<PeriodKey>("hoje")
 
@@ -303,6 +316,18 @@ export default function CosturaRevisaoPage() {
 
   const pendentes  = ordens.filter(o => o.status === "aguardando")
   const concluidas = ordens.filter(o => o.status === "concluida")
+
+  // "Em andamento" nasce sozinho quando a ficha é impressa — sem status
+  // manual novo pra alguém lembrar de trocar.
+  const entraram    = pendentes.filter(o => !o.fichaImpressaAt)
+  const emAndamento = pendentes.filter(o => !!o.fichaImpressaAt)
+
+  async function handlePrint(ordem: OrdemRevisao) {
+    await fetch(`/api/prod-orders/${ordem.id}/print-ficha`, { method: "POST" }).catch(() => {})
+    setPrintando({ number: ordem.number, productName: ordem.productName, totalPecas: ordem.totalPecas, grade: ordem.grade })
+    printWhenReady()
+    loadOrdens()
+  }
 
   // Dashboard e histórico respeitam o período — pendentes fica sempre com a fila toda
   const [periodFrom, periodTo] = getPeriodRange(period)
@@ -371,18 +396,35 @@ export default function CosturaRevisaoPage() {
         </div>
       </div>
 
-      {/* Pendentes */}
-      {pendentes.length > 0 && (
+      {/* Em andamento — ficha já impressa, operador acompanhando no papel */}
+      {emAndamento.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <PlayCircle size={13} className="text-[#4361EE]"/>
+            <p className="text-xs font-bold uppercase tracking-wider text-[#0F1E3C]/35">
+              Em Andamento ({emAndamento.length})
+            </p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+            {emAndamento.map(o => (
+              <PendingCard key={o.id} ordem={o} onClick={() => setRevisando(o)} onPrint={() => handlePrint(o)}/>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Entraram — ninguém tocou ainda */}
+      {entraram.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Clock size={13} className="text-amber-500"/>
             <p className="text-xs font-bold uppercase tracking-wider text-[#0F1E3C]/35">
-              Aguardando Revisão ({pendentes.length})
+              Entraram ({entraram.length})
             </p>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
-            {pendentes.map(o => (
-              <PendingCard key={o.id} ordem={o} onClick={() => setRevisando(o)}/>
+            {entraram.map(o => (
+              <PendingCard key={o.id} ordem={o} onClick={() => setRevisando(o)} onPrint={() => handlePrint(o)}/>
             ))}
           </div>
         </div>
@@ -428,6 +470,10 @@ export default function CosturaRevisaoPage() {
           onClose={() => setRevisando(null)}
           onConcluir={handleConcluir}
         />
+      )}
+
+      {printando && (
+        <RevisaoPrintSheet ordem={printando} onDone={() => setPrintando(null)}/>
       )}
 
       <style jsx global>{`
