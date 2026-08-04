@@ -18,7 +18,8 @@ async function fetchOpenBobinas(productId: string | null, color: string | null) 
       rme.status, rme.created_at AS "createdAt",
       EXTRACT(DAY FROM NOW() - rme.created_at)::int AS "diasAberta",
       COALESCE(agg.ordens, 0)::int AS "ordens",
-      COALESCE(agg.pecas, 0)::int AS "pecas"
+      COALESCE(agg.pecas, 0)::int AS "pecas",
+      active.numbers AS "activeOrderNumber"
     FROM raw_material_entries rme
     JOIN raw_materials rm ON rm.id = rme.material_id
     JOIN products p ON p.id = rm.product_id
@@ -27,6 +28,12 @@ async function fetchOpenBobinas(productId: string | null, color: string | null) 
       SELECT entry_id, COUNT(DISTINCT order_id) AS ordens, SUM(pieces_from_entry) AS pecas
       FROM prod_order_materials GROUP BY entry_id
     ) agg ON agg.entry_id = rme.id
+    LEFT JOIN LATERAL (
+      SELECT string_agg(DISTINCT po2.number, ', ') AS numbers
+      FROM prod_order_materials pom2
+      JOIN prod_orders po2 ON po2.id = pom2.order_id
+      WHERE pom2.entry_id = rme.id AND po2.status = 'em_andamento'
+    ) active ON true
     WHERE rm.product_id IS NOT NULL AND rme.status != 'esgotada'
       AND ($1::uuid IS NULL OR rm.product_id = $1::uuid)
       AND ($2::text IS NULL OR rmv.name = $2)

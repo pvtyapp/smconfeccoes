@@ -61,12 +61,13 @@ function RevisaoModal({
 }: {
   ordem:      OrdemRevisao
   onClose:    () => void
-  onConcluir: (id: number, grade: GradeItem[]) => void
+  onConcluir: (id: number, grade: GradeItem[]) => Promise<void>
 }) {
   // avarias[i] = qty avaria para o item grade[i]
   const [avarias, setAvarias] = useState<Record<number, string>>(
     Object.fromEntries(ordem.grade.map((_, i) => [i, "0"]))
   )
+  const [submitting, setSubmitting] = useState(false)
 
   const rows = ordem.grade.map((g, i) => {
     const av = Math.min(Math.max(Number(avarias[i]) || 0, 0), g.qty)
@@ -87,12 +88,18 @@ function RevisaoModal({
     return [...map.entries()]
   }, [rows])
 
-  function handleConcluir() {
+  async function handleConcluir() {
     const finalGrade: GradeItem[] = rows.map(r => ({
       color: r.color, size: r.size, qty: r.qty,
       aprovadas: r.aprovada, avarias: r.avaria,
     }))
-    onConcluir(ordem.id, finalGrade)
+    setSubmitting(true)
+    try {
+      await onConcluir(ordem.id, finalGrade)
+    } catch {
+      alert("Falha ao concluir revisão — confere a conexão e tenta de novo")
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -186,17 +193,17 @@ function RevisaoModal({
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-[#0F1E3C]/6 flex-shrink-0">
-          <button onClick={onClose}
-            className="px-4 py-2 text-sm text-[#0F1E3C]/40 hover:text-[#0F1E3C] transition-colors">
+          <button onClick={onClose} disabled={submitting}
+            className="px-4 py-2 text-sm text-[#0F1E3C]/40 hover:text-[#0F1E3C] transition-colors disabled:opacity-40">
             Cancelar
           </button>
           <button
-            disabled={!valid}
+            disabled={!valid || submitting}
             onClick={handleConcluir}
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold
               disabled:opacity-40 hover:bg-[#3451d1] transition-colors">
             <Check size={15}/>
-            Concluir Revisão
+            {submitting ? "Concluindo..." : "Concluir Revisão"}
           </button>
         </div>
       </div>
@@ -213,37 +220,54 @@ function colorChips(grade: GradeItem[]): { shown: string[]; extra: number } {
   return { shown: colors.slice(0, 2), extra: Math.max(0, colors.length - 2) }
 }
 
-function PendingCard({ ordem, onClick, onPrint }: { ordem: OrdemRevisao; onClick: () => void; onPrint: () => void }) {
+// stage="entraram": ninguém tocou ainda — LED liga, só dá pra imprimir e
+// iniciar (não abre revisão, papel ainda nem existe no chão de fábrica).
+// stage="andamento": ficha já impressa, operador cortando/revisando no papel
+// — LED desliga (deixou de ser urgente), card abre a revisão de verdade.
+function PendingCard({ ordem, stage, onClick, onPrint }: {
+  ordem: OrdemRevisao; stage: "entraram" | "andamento"; onClick: () => void; onPrint: () => void
+}) {
   const { shown, extra } = useMemo(() => colorChips(ordem.grade), [ordem.grade])
-  return (
-    <div className="led-wrap relative aspect-square">
-      <div className="led-glow"/>
-      <div className="led-ring h-full w-full">
-        <button onClick={onClick}
-          className="h-full w-full rounded-[18px] bg-white flex flex-col items-center justify-center
-            text-center gap-1.5 p-4 cursor-pointer hover:scale-[1.03] transition-transform relative">
-          <button
-            onClick={e => { e.stopPropagation(); onPrint() }}
-            title="Imprimir ficha de revisão"
-            className="absolute top-2.5 right-2.5 w-7 h-7 rounded-lg bg-[#F9FAFB] border border-[#0F1E3C]/8 text-[#0F1E3C]/40
-              hover:bg-[#4361EE]/10 hover:text-[#4361EE] flex items-center justify-center transition-colors">
-            <Printer size={12}/>
-          </button>
-          <p className="text-sm font-black text-[#0F1E3C] leading-tight">{ordem.productName}</p>
-          <div className="flex gap-1 flex-wrap justify-center">
-            {shown.map(c => (
-              <span key={c} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">{c}</span>
-            ))}
-            {extra > 0 && (
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/8 text-[#0F1E3C]/50">+{extra}</span>
-            )}
-          </div>
-          <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-bold text-[#0F1E3C]/40
-            bg-[#F9FAFB] border border-[#0F1E3C]/8 px-2.5 py-0.5 rounded-full">
-            {ordem.totalPecas} pç
-          </span>
-        </button>
+
+  const card = (
+    <div className="h-full w-full rounded-[18px] bg-white flex flex-col items-center justify-center text-center gap-1.5 p-4 relative">
+      <p className="text-sm font-black text-[#0F1E3C] leading-tight">{ordem.productName}</p>
+      <div className="flex gap-1 flex-wrap justify-center">
+        {shown.map(c => (
+          <span key={c} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">{c}</span>
+        ))}
+        {extra > 0 && (
+          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/8 text-[#0F1E3C]/50">+{extra}</span>
+        )}
       </div>
+      <span className="text-[10px] font-bold text-[#0F1E3C]/40 bg-[#F9FAFB] border border-[#0F1E3C]/8 px-2.5 py-0.5 rounded-full mt-1">
+        {ordem.totalPecas} pç
+      </span>
+      {stage === "entraram" ? (
+        <button onClick={e => { e.stopPropagation(); onPrint() }}
+          className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-[#4361EE] text-white text-[11px] font-bold hover:bg-[#3451D1] transition-colors">
+          <Printer size={12}/> Imprimir e Iniciar
+        </button>
+      ) : (
+        <button onClick={onClick}
+          className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-500 text-white text-[11px] font-bold hover:bg-emerald-600 transition-colors">
+          <CheckCircle2 size={12}/> Concluir
+        </button>
+      )}
+    </div>
+  )
+
+  if (stage === "entraram") {
+    return (
+      <div className="led-wrap relative aspect-square">
+        <div className="led-glow"/>
+        <div className="led-ring h-full w-full">{card}</div>
+      </div>
+    )
+  }
+  return (
+    <div className="relative aspect-square border border-[#0F1E3C]/8 rounded-[18px] hover:border-[#4361EE]/25 transition-colors">
+      {card}
     </div>
   )
 }
@@ -343,11 +367,15 @@ export default function CosturaRevisaoPage() {
   const pctAvaria       = totalRevisadas > 0 ? (totalAvarias / totalRevisadas) * 100 : 0
 
   async function handleConcluir(id: number, finalGrade: GradeItem[]) {
-    await fetch(`/api/prod-orders/${id}/revision`, {
+    const res = await fetch(`/api/prod-orders/${id}/revision`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ grade: finalGrade }),
     })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.error || "Falha ao concluir revisão")
+    }
     setRevisando(null)
     loadOrdens()
   }
@@ -407,7 +435,7 @@ export default function CosturaRevisaoPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
             {emAndamento.map(o => (
-              <PendingCard key={o.id} ordem={o} onClick={() => setRevisando(o)} onPrint={() => handlePrint(o)}/>
+              <PendingCard key={o.id} ordem={o} stage="andamento" onClick={() => setRevisando(o)} onPrint={() => handlePrint(o)}/>
             ))}
           </div>
         </div>
@@ -424,7 +452,7 @@ export default function CosturaRevisaoPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
             {entraram.map(o => (
-              <PendingCard key={o.id} ordem={o} onClick={() => setRevisando(o)} onPrint={() => handlePrint(o)}/>
+              <PendingCard key={o.id} ordem={o} stage="entraram" onClick={() => setRevisando(o)} onPrint={() => handlePrint(o)}/>
             ))}
           </div>
         </div>

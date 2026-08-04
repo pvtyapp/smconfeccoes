@@ -24,6 +24,14 @@ export async function concludeProdOrder(
   try {
     await client.query("BEGIN")
 
+    // Reivindica a ordem atomicamente — segundo clique (ou retry de rede)
+    // encontra status já != 'em_andamento' e aborta sem duplicar nada.
+    const { rows: claimed } = await client.query(
+      `UPDATE prod_orders SET status = 'concluida' WHERE id = $1 AND status = 'em_andamento' RETURNING id`,
+      [orderId]
+    )
+    if (!claimed.length) throw new Error("Ordem já foi concluída ou não está em andamento")
+
     for (const g of grade) {
       await client.query(`
         UPDATE prod_order_items
@@ -67,12 +75,20 @@ export async function concludeProdOrder(
         `, [piecesForThis, m.entryId])
         anyCostCalculated = true
       } else {
+        // Peças sempre somam na bobina, mesmo se ela já foi fechada (banner
+        // "Finalizar bobina") antes dessa ordem terminar de cortar — sem essa
+        // soma, peças reais somem da bobina pra sempre (era o Bug 2 da auditoria).
+        // Se já estava esgotada, recalcula custo/peça agora que a bobina tem
+        // mais peças contabilizadas — repara o custo em branco desse cenário.
         await client.query(`
           UPDATE raw_material_entries
           SET
-            status = 'usada',
-            total_pieces_produced = total_pieces_produced + $1
-          WHERE id = $2 AND status != 'esgotada'
+            total_pieces_produced = total_pieces_produced + $1,
+            status = CASE WHEN status = 'esgotada' THEN status ELSE 'usada' END,
+            cost_per_piece = CASE WHEN status = 'esgotada'
+              THEN total_cost / NULLIF(total_pieces_produced + $1, 0)
+              ELSE cost_per_piece END
+          WHERE id = $2
         `, [piecesForThis, m.entryId])
       }
     }
@@ -119,7 +135,6 @@ export async function concludeProdOrder(
     const { rows: orderRows } = await client.query(`
       UPDATE prod_orders
       SET
-        status       = 'concluida',
         cost_status  = $1,
         concluded_at = NOW()
       WHERE id = $2

@@ -33,6 +33,14 @@ export async function POST(
     try {
       await client.query("BEGIN")
 
+      // Reivindica a ordem atomicamente — segundo clique (ou retry) encontra
+      // status já != 'concluida' e aborta antes de duplicar estoque/avarias.
+      const { rows: claimed } = await client.query(
+        `UPDATE prod_orders SET status='encerrada' WHERE id=$1 AND status='concluida' RETURNING id`,
+        [id]
+      )
+      if (!claimed.length) throw new Error("Ordem já foi encerrada ou não está aguardando revisão")
+
       for (const g of grade) {
         const aprovadas = g.aprovadas ?? 0
         const avarias   = g.avarias   ?? 0
@@ -88,11 +96,6 @@ export async function POST(
           ON CONFLICT DO NOTHING
         `, [id, color, vals.total, vals.approved, vals.defect])
       }
-
-      // Mark order as encerrada
-      await client.query(
-        `UPDATE prod_orders SET status='encerrada' WHERE id=$1`, [id]
-      )
 
       await client.query("COMMIT")
 
@@ -164,6 +167,7 @@ export async function POST(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    const status = msg.includes("já foi encerrada") ? 409 : 500
+    return NextResponse.json({ error: msg }, { status })
   }
 }

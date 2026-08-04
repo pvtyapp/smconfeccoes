@@ -8,6 +8,22 @@ import { pool } from "@/lib/db"
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
+
+    // Bloqueia fechar uma bobina que ainda está em uso por ordem não concluída
+    // — fechar cedo demais trava o custo/peça em branco pra sempre (peças que
+    // essa ordem ainda vai produzir nunca mais entram na conta da bobina).
+    const { rows: activeOrders } = await pool.query(`
+      SELECT DISTINCT po.number
+      FROM prod_order_materials pom
+      JOIN prod_orders po ON po.id = pom.order_id
+      WHERE pom.entry_id = $1 AND po.status = 'em_andamento'
+    `, [id])
+    if (activeOrders.length) {
+      return NextResponse.json({
+        error: `Em uso na ordem ${activeOrders.map(o => o.number).join(", ")} — conclua ela primeiro`,
+      }, { status: 409 })
+    }
+
     const { rows } = await pool.query(`
       UPDATE raw_material_entries
       SET status = 'esgotada',

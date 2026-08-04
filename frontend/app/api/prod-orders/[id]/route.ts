@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { updateProdOrder, deleteProdOrder } from "@/lib/prodOrders/updateOrder"
 
 export async function GET(
   _req: Request,
@@ -40,5 +41,39 @@ export async function GET(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+
+// PATCH /api/prod-orders/[id]
+// body: { selectedColors: string[], entries: {entryId,color}[], grade: {color,size,qtyPlanned}[] }
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+    const { selectedColors, entries, grade } = await req.json()
+    await updateProdOrder(Number(id), { selectedColors, entries: entries ?? [], grade: grade ?? [] })
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const status = msg.includes("obrigatório") || msg.includes("Só dá pra") || msg.includes("esgotado") ? 400 : 500
+    return NextResponse.json({ error: msg }, { status })
+  }
+}
+
+// DELETE /api/prod-orders/[id]
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+    await deleteProdOrder(Number(id))
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const status = msg.includes("Só dá pra") || msg.includes("não encontrada") ? 400 : 500
+    return NextResponse.json({ error: msg }, { status })
   }
 }

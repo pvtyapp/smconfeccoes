@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from "react"
 import {
   Plus, X, ChevronRight, Check, Clock, CheckCircle2,
   Layers, Calendar, ChevronDown, ChevronUp,
-  History, Pencil, Printer,
+  History, Pencil, Printer, Trash2,
 } from "lucide-react"
 import { todayBR, subDaysBR, dateBR, fmtDateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
@@ -25,10 +25,11 @@ type MaterialLink  = {
   entryStatus: "disponivel" | "usada" | "esgotada"
   // Ficha técnica da bobina de tecido (fluxo novo) — null pra bobina antiga/outros insumos
   tecido: string | null; tipoTecido: "aberto" | "tubular" | null; pesoKg: number | null
+  gramatura: number | null; larguraM: number | null; precoKg: number | null
 }
 type OrderLog      = { at: string; text: string }
 type Order = {
-  id: number; number: string; productName: string
+  id: number; number: string; productId: string; productName: string
   status: OrderStatus; costStatus: CostStatus
   grade: GradeRow[]; materials: MaterialLink[]
   unitCost?: number; totalCost?: number
@@ -45,6 +46,7 @@ type OpenBobina = {
   totalQty: number; unitPrice: number; totalCost: number
   status: "usada" | "disponivel"
   diasAberta: number; ordens: number; pecas: number
+  activeOrderNumber: string | null
 }
 
 // ─── Types (shared) ────────────────────────────────────────────────────────────
@@ -85,12 +87,16 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
   const [produced, setProduced] = useState<Record<string, string>>(() =>
     Object.fromEntries(order.grade.map((g,i) => [`${i}`, g.qtyPlanned > 0 ? String(g.qtyPlanned) : ""]))
   )
-  // per bobina: kg/m → exhausted yes/no | unidade → deduct yes/no
-  const [matStates, setMatStates] = useState<Record<number, { exhausted: boolean; deduct: boolean }>>(() =>
-    Object.fromEntries(order.materials.map(m => [m.entryId, { exhausted: false, deduct: true }]))
+  // per bobina: kg/m → exhausted yes/no/undecided | unidade → deduct yes/no
+  // exhausted nasce null de propósito — força escolha explícita, não deixa
+  // passar batido com um "não" implícito (isso já causou bobina fechada errado).
+  const [matStates, setMatStates] = useState<Record<number, { exhausted: boolean | null; deduct: boolean }>>(() =>
+    Object.fromEntries(order.materials.map(m => [m.entryId, { exhausted: null, deduct: true }]))
   )
+  const [submitting, setSubmitting] = useState(false)
 
   const totalProduced = Object.values(produced).reduce((s,v) => s + (Number(v) || 0), 0)
+  const allMaterialsAnswered = order.materials.every(m => matStates[m.entryId]?.exhausted !== null)
 
   // Cost preview when exhausted: bobina_total ÷ (prev_pieces + this_order_pieces)
   function costPreview(mat: typeof order.materials[0]) {
@@ -199,19 +205,24 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
                           // kg/m: foi totalmente esgotada?
                           <div>
                             <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40 mb-2">Bobina foi totalmente esgotada?</p>
-                            <div className="flex gap-2">
+                            <div className={`flex gap-2 rounded-xl transition-all ${st.exhausted===null ? "ring-2 ring-amber-300" : ""}`}>
                               {([true,false] as const).map(val => (
                                 <button key={String(val)} onClick={() => setMatStates(prev => ({...prev,[mat.entryId]:{...prev[mat.entryId],exhausted:val}}))}
-                                  className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all flex items-center justify-center gap-2 ${
+                                  className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-all flex items-center justify-center gap-2 ${
                                     st.exhausted===val
                                       ? val ? "bg-emerald-500 text-white border-emerald-500" : "bg-[#0F1E3C] text-white border-[#0F1E3C]"
-                                      : "border-[#0F1E3C]/12 text-[#0F1E3C]/50"
+                                      : "border-dashed border-[#0F1E3C]/20 text-[#0F1E3C]/40 hover:border-[#0F1E3C]/35"
                                   }`}>
                                   {val ? <><Check size={13}/> Sim, esgotou</> : "Não, ainda tem"}
                                 </button>
                               ))}
                             </div>
-                            {st.exhausted && (
+                            {st.exhausted === null && (
+                              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2 font-semibold">
+                                ⚠ Escolha uma opção pra liberar "Concluir Ordem"
+                              </p>
+                            )}
+                            {st.exhausted === true && (
                               <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2">
                                 Irreversível — o custo/peça desta bobina será calculado agora.
                               </p>
@@ -236,27 +247,39 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
         </div>
 
         <div className="flex gap-3 px-6 py-4 border-t border-[#0F1E3C]/8 flex-shrink-0">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors">Cancelar</button>
+          <button onClick={onClose} disabled={submitting} className="flex-1 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/4 transition-colors disabled:opacity-40">Cancelar</button>
           <button
-            disabled={totalProduced === 0}
+            disabled={totalProduced === 0 || !allMaterialsAnswered || submitting}
             onClick={async () => {
-              const grade = order.grade.map((g, i) => ({
-                color: g.color, size: g.size, qty: Number(produced[`${i}`]) || 0,
-              }))
-              const materials = order.materials.map(m => ({
-                entryId:   m.entryId,
-                exhausted: matStates[m.entryId]?.exhausted ?? false,
-              }))
-              await fetch(`/api/prod-orders/${order.id}/conclude`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ grade, materials }),
-              })
-              onSuccess()
-              onClose()
+              setSubmitting(true)
+              try {
+                const grade = order.grade.map((g, i) => ({
+                  color: g.color, size: g.size, qty: Number(produced[`${i}`]) || 0,
+                }))
+                const materials = order.materials.map(m => ({
+                  entryId:   m.entryId,
+                  exhausted: matStates[m.entryId]?.exhausted ?? false,
+                }))
+                const res = await fetch(`/api/prod-orders/${order.id}/conclude`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ grade, materials }),
+                })
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({}))
+                  alert(body?.error || "Falha ao concluir ordem")
+                  setSubmitting(false)
+                  return
+                }
+                onSuccess()
+                onClose()
+              } catch {
+                alert("Falha ao concluir ordem — confere a conexão e tenta de novo")
+                setSubmitting(false)
+              }
             }}
             className="flex-1 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
-            <CheckCircle2 size={14}/> Concluir Ordem
+            <CheckCircle2 size={14}/> {submitting ? "Concluindo..." : "Concluir Ordem"}
           </button>
         </div>
       </div>
@@ -273,6 +296,9 @@ type ColorBobina =
       entryId: number; tecido: string
       diasAberta: number; ordens: number; pecas: number
       sizes: Record<string, string>
+      // true quando a bobina já nasceu vinculada a ESTA ordem (edição) —
+      // card fica mais simples, sem estatística de "outras ordens".
+      linkedNow?: boolean
     }
   | {
       reuse: false
@@ -280,18 +306,6 @@ type ColorBobina =
       pesoKg: string; gramatura: string; larguraM: string; precoKg: string
       sizes: Record<string, string>
     }
-
-const DRAFT_KEY = "programacao_nova_ordem_draft"
-
-function saveDraft(productId: string | null, selectedColors: string[], colorData: Record<string, ColorBobina>, step: string) {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ productId, selectedColors, colorData, step })) } catch {}
-}
-function clearDraft() {
-  try { localStorage.removeItem(DRAFT_KEY) } catch {}
-}
-function loadDraft(): { productId: string | null; selectedColors: string[]; colorData: Record<string, ColorBobina>; step: string } | null {
-  try { const v = localStorage.getItem(DRAFT_KEY); return v ? JSON.parse(v) : null } catch { return null }
-}
 
 function numOrNaN(v: string | undefined): number {
   if (v === undefined || v === "") return NaN
@@ -318,13 +332,32 @@ function colorComplete(cd: ColorBobina): boolean {
   return [cd.pesoKg, cd.gramatura, cd.larguraM, cd.precoKg].every(v => numOrNaN(v) > 0)
 }
 
-function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+function NovaOrdemModal({ onClose, onSuccess, editOrder }: { onClose: () => void; onSuccess: () => void; editOrder?: Order }) {
   type Step = "produto" | "cores"
-  const draft = loadDraft()
-  const [step, setStep]               = useState<Step>((draft?.step as Step) ?? "produto")
-  const [productId, setProductId]     = useState<string | null>(draft?.productId ?? null)
-  const [selectedColors, setSelectedColors] = useState<string[]>(draft?.selectedColors ?? [])
-  const [colorData, setColorData]     = useState<Record<string, ColorBobina>>(draft?.colorData ?? {})
+  const [step, setStep]               = useState<Step>(editOrder ? "cores" : "produto")
+  const [productId, setProductId]     = useState<string | null>(editOrder?.productId ?? null)
+  const [selectedColors, setSelectedColors] = useState<string[]>(() =>
+    editOrder ? [...new Set(editOrder.grade.map(g => g.color))] : []
+  )
+  // Modo edição: reconstrói o estado da ordem já existente — cor com bobina
+  // vinculada vira card "reuse" simplificado (linkedNow), cor sem bobina vira
+  // formulário em branco igual uma cor nova (é exatamente o "campo faltando").
+  const [colorData, setColorData]     = useState<Record<string, ColorBobina>>(() => {
+    if (!editOrder) return {}
+    const colors = [...new Set(editOrder.grade.map(g => g.color))]
+    const map: Record<string, ColorBobina> = {}
+    for (const c of colors) {
+      const sizes: Record<string, string> = {}
+      for (const g of editOrder.grade) {
+        if (g.color === c && g.qtyPlanned > 0) sizes[g.size] = String(g.qtyPlanned)
+      }
+      const mat = editOrder.materials.find(m => m.color === c)
+      map[c] = mat
+        ? { reuse: true, entryId: mat.entryId, tecido: mat.tecido ?? mat.materialName, diasAberta: 0, ordens: 0, pecas: 0, sizes, linkedNow: true }
+        : { reuse: false, tecido: "", tipoTecido: null, pesoKg: "", gramatura: "", larguraM: "", precoKg: "", sizes }
+    }
+    return map
+  })
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState<string | null>(null)
 
@@ -337,7 +370,7 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
   }, [])
 
   const product = products.find(p => p.id === productId) ?? null
-  const stepOrder: Step[] = ["produto","cores"]
+  const stepOrder: Step[] = editOrder ? ["cores"] : ["produto","cores"]
   const stepIdx = stepOrder.indexOf(step)
 
   async function toggleColor(c: string) {
@@ -400,22 +433,24 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
   }, 0)
   const orderComplete = selectedColors.length > 0 && selectedColors.every(c => colorData[c] && colorComplete(colorData[c]))
 
-  function handleSalvarRascunho() {
-    saveDraft(productId, selectedColors, colorData, step)
-    onClose()
-  }
-
-  async function handleCriarOrdem() {
-    if (!productId || !orderComplete) return
+  // strict=true (Criar Ordem): exige tudo completo, igual sempre foi.
+  // strict=false (Salvar rascunho / Salvar alterações): só exige produto +
+  // 1 cor — cor sem ficha técnica preenchida fica sem bobina vinculada por
+  // enquanto (completa depois pelo Editar), tamanho em branco vira qtyPlanned 0.
+  async function handleSave(strict: boolean) {
+    if (!productId) return
+    if (strict && !orderComplete) return
+    if (!strict && selectedColors.length === 0) return
     setSaving(true)
     setError(null)
     try {
       const entries: { entryId: number; color: string }[] = []
       for (const c of selectedColors) {
         const cd = colorData[c]
+        if (!cd) continue
         if (cd.reuse) {
           entries.push({ entryId: cd.entryId, color: c })
-        } else {
+        } else if (colorComplete(cd) || strict) {
           const res = await fetch("/api/raw-material-entries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -429,27 +464,30 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           const created = await res.json()
           entries.push({ entryId: created.entryId, color: c })
         }
+        // cor incompleta em modo não-estrito: fica sem bobina vinculada por enquanto
       }
 
       const grade = selectedColors.flatMap(c => {
         const cd = colorData[c]
+        if (!cd) return []
         return Object.entries(cd.sizes)
           .filter(([, v]) => (parseInt(v) || 0) > 0)
           .map(([size, v]) => ({ color: c, size, qtyPlanned: parseInt(v) || 0 }))
       })
 
-      const res = await fetch("/api/prod-orders", {
-        method: "POST",
+      const url    = editOrder ? `/api/prod-orders/${editOrder.id}` : "/api/prod-orders"
+      const method = editOrder ? "PATCH" : "POST"
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, selectedColors, entries, grade }),
       })
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Falha ao criar ordem")
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Falha ao salvar ordem")
 
-      clearDraft()
       onSuccess()
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao criar ordem")
+      setError(e instanceof Error ? e.message : "Erro ao salvar ordem")
     } finally {
       setSaving(false)
     }
@@ -462,19 +500,23 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
           <div>
-            <h3 className="font-bold text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>Nova Ordem de Produção</h3>
-            <div className="flex items-center gap-1 mt-2">
-              {[{key:"produto",label:"Produto"},{key:"cores",label:"Cores & Bobina"}].map(({key,label},i) => (
-                <div key={key} className="flex items-center gap-1">
-                  <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 ${
-                    i===stepIdx ? "bg-[#4361EE] text-white" : i<stepIdx ? "bg-emerald-100 text-emerald-700" : "bg-[#0F1E3C]/6 text-[#0F1E3C]/30"
-                  }`}>
-                    {i<stepIdx ? <Check size={9}/> : <span>{i+1}</span>} {label}
+            <h3 className="font-bold text-[#0F1E3C]" style={{ fontFamily:"var(--font-playfair)" }}>
+              {editOrder ? `Editar Ordem — ${editOrder.number}` : "Nova Ordem de Produção"}
+            </h3>
+            {!editOrder && (
+              <div className="flex items-center gap-1 mt-2">
+                {[{key:"produto",label:"Produto"},{key:"cores",label:"Cores & Bobina"}].map(({key,label},i) => (
+                  <div key={key} className="flex items-center gap-1">
+                    <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 ${
+                      i===stepIdx ? "bg-[#4361EE] text-white" : i<stepIdx ? "bg-emerald-100 text-emerald-700" : "bg-[#0F1E3C]/6 text-[#0F1E3C]/30"
+                    }`}>
+                      {i<stepIdx ? <Check size={9}/> : <span>{i+1}</span>} {label}
+                    </div>
+                    {i===0 && <div className={`w-4 h-px ${i<stepIdx ? "bg-emerald-300" : "bg-[#0F1E3C]/10"}`}/>}
                   </div>
-                  {i===0 && <div className={`w-4 h-px ${i<stepIdx ? "bg-emerald-300" : "bg-[#0F1E3C]/10"}`}/>}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 flex items-center justify-center"><X size={15}/></button>
         </div>
@@ -545,8 +587,14 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                       <div className="flex items-start gap-2.5 mx-4 mt-3 px-3.5 py-3 rounded-xl bg-amber-50 border border-amber-200">
                         <Layers size={14} className="text-amber-600 flex-shrink-0 mt-0.5"/>
                         <p className="text-xs text-[#0F1E3C]/70 leading-snug">
-                          <b className="text-amber-700">Bobina aberta reaproveitada</b> — {cd.tecido}, aberta há {cd.diasAberta} dia(s), {cd.ordens} ordem(ns) já usaram essa bobina ({cd.pecas} peças até agora).{" "}
-                          <button onClick={() => forceNewBobina(c)} className="font-bold text-[#4361EE] hover:underline">trocar por bobina nova</button>
+                          {cd.linkedNow ? (
+                            <><b className="text-amber-700">Bobina já criada pra esta ordem</b> — {cd.tecido}. Ficha técnica não muda depois de criada.</>
+                          ) : (
+                            <>
+                              <b className="text-amber-700">Bobina aberta reaproveitada</b> — {cd.tecido}, aberta há {cd.diasAberta} dia(s), {cd.ordens} ordem(ns) já usaram essa bobina ({cd.pecas} peças até agora).{" "}
+                              <button onClick={() => forceNewBobina(c)} className="font-bold text-[#4361EE] hover:underline">trocar por bobina nova</button>
+                            </>
+                          )}
                         </p>
                       </div>
                     ) : (
@@ -648,11 +696,15 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
         <div className="flex flex-col gap-2 px-6 py-4 border-t border-[#0F1E3C]/8 flex-shrink-0 bg-[#F9FAFB]">
           {step === "cores" && (
             <p className="text-[10px] text-[#0F1E3C]/35 leading-snug">
-              <b>Salvar rascunho</b> guarda no seu navegador do jeito que estiver, mesmo incompleto. <b>Criar Ordem</b> exige tecido, tipo, peso, gramatura, largura e preço/kg de cada bobina nova, e ao menos 1 peça em algum tamanho de cada cor.
+              {editOrder ? (
+                <><b>Salvar alterações</b> grava na ordem — cor sem ficha técnica fica pendente, completa numa próxima edição.</>
+              ) : (
+                <><b>Salvar rascunho</b> já cria a ordem de verdade, mesmo incompleta — completa depois pelo Editar. <b>Criar Ordem</b> exige tecido, tipo, peso, gramatura, largura e preço/kg de cada bobina nova, e ao menos 1 peça em algum tamanho de cada cor.</>
+              )}
             </p>
           )}
           <div className="flex items-center justify-between">
-            <button onClick={() => { if (stepIdx===0) { clearDraft(); onClose() } else setStep(stepOrder[stepIdx-1]) }}
+            <button onClick={() => { if (stepIdx===0) onClose(); else setStep(stepOrder[stepIdx-1]) }}
               className="px-4 py-2.5 rounded-xl text-sm font-semibold text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 transition-colors">
               {stepIdx===0 ? "Cancelar" : "Voltar"}
             </button>
@@ -664,18 +716,29 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
                       {totalPecas} pç{bobinaCostNovas > 0 ? ` · bobina(s) nova(s) ${fmtR(bobinaCostNovas)}` : ""}
                     </span>
                   )}
-                  <button onClick={handleSalvarRascunho} disabled={selectedColors.length===0}
-                    className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 disabled:opacity-40 transition-colors">
-                    Salvar rascunho
-                  </button>
+                  {!editOrder && (
+                    <button onClick={() => handleSave(false)} disabled={selectedColors.length===0 || saving}
+                      className="px-4 py-2.5 rounded-xl border border-[#0F1E3C]/12 text-sm font-semibold text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/4 disabled:opacity-40 transition-colors">
+                      Salvar rascunho
+                    </button>
+                  )}
                 </>
               )}
-              <button
-                disabled={(step==="produto" && !productId) || (step==="cores" && (!orderComplete || saving))}
-                onClick={() => { if (step==="produto") setStep("cores"); else handleCriarOrdem() }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] disabled:opacity-40 transition-colors">
-                {step==="cores" ? <><Check size={14}/> {saving ? "Criando..." : "Criar Ordem"}</> : <>Continuar <ChevronRight size={14}/></>}
-              </button>
+              {editOrder ? (
+                <button
+                  disabled={selectedColors.length===0 || saving}
+                  onClick={() => handleSave(false)}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] disabled:opacity-40 transition-colors">
+                  <Check size={14}/> {saving ? "Salvando..." : "Salvar alterações"}
+                </button>
+              ) : (
+                <button
+                  disabled={(step==="produto" && !productId) || (step==="cores" && (!orderComplete || saving))}
+                  onClick={() => { if (step==="produto") setStep("cores"); else handleSave(true) }}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4361EE] text-white text-sm font-bold hover:bg-[#3451D1] disabled:opacity-40 transition-colors">
+                  {step==="cores" ? <><Check size={14}/> {saving ? "Criando..." : "Criar Ordem"}</> : <>Continuar <ChevronRight size={14}/></>}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -685,8 +748,11 @@ function NovaOrdemModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
 }
 
 // ─── OrderBlock ────────────────────────────────────────────────────────────────
-function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => void }) {
+function OrderBlock({ order, onConcluir, onEditar, onDeletar }: {
+  order: Order; onConcluir: () => void; onEditar: () => void; onDeletar: () => Promise<void>
+}) {
   const [showLogs, setShowLogs] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const colorGroups = useMemo(()=>{
     const map = new Map<string,GradeRow[]>()
@@ -744,8 +810,23 @@ function OrderBlock({ order, onConcluir }: { order: Order; onConcluir: () => voi
           </button>
           {isAndamento && (
             <>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#0F1E3C]/10 text-[#0F1E3C]/40 hover:bg-[#0F1E3C]/4 transition-colors">
+              <button onClick={onEditar}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-[#0F1E3C]/10 text-[#0F1E3C]/40 hover:bg-[#0F1E3C]/4 transition-colors">
                 <Pencil size={12}/> Editar
+              </button>
+              <button
+                disabled={deleting}
+                onClick={async () => {
+                  if (!confirm(`Apagar a ordem ${order.number}? Isso não pode ser desfeito.`)) return
+                  setDeleting(true)
+                  try {
+                    await onDeletar()
+                  } finally {
+                    setDeleting(false)
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-red-200 text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40">
+                <Trash2 size={12}/> {deleting ? "Apagando..." : "Deletar"}
               </button>
               <button onClick={onConcluir}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition-colors">
@@ -969,6 +1050,7 @@ function HistoryRow({ order }: { order: Order }) {
 function BobinasAbertasBanner() {
   const [bobinas, setBobinas] = useState<OpenBobina[]>([])
   const [finalizing, setFinalizing] = useState<number | null>(null)
+  const [blockedMsg, setBlockedMsg] = useState<Record<number, string>>({})
 
   const load = useCallback(() => {
     fetch("/api/raw-material-entries?openSummary=1").then(r => r.json()).then(setBobinas).catch(() => {})
@@ -978,8 +1060,14 @@ function BobinasAbertasBanner() {
 
   async function finalizar(id: number) {
     setFinalizing(id)
+    setBlockedMsg(prev => ({ ...prev, [id]: "" }))
     try {
-      await fetch(`/api/raw-material-entries/${id}/finalizar`, { method: "POST" })
+      const res = await fetch(`/api/raw-material-entries/${id}/finalizar`, { method: "POST" })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setBlockedMsg(prev => ({ ...prev, [id]: body?.error || "Não foi possível finalizar" }))
+        return
+      }
       load()
     } finally {
       setFinalizing(null)
@@ -995,20 +1083,35 @@ function BobinasAbertasBanner() {
         <p className="text-xs font-bold text-amber-700">{bobinas.length} {bobinas.length === 1 ? "bobina em aberto" : "bobinas em aberto"}</p>
       </div>
       <div className="space-y-1.5">
-        {bobinas.map(b => (
-          <div key={b.id} className="flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-3.5 py-2.5">
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-[#0F1E3C]">{b.tecido} · {b.color} — {b.productName}</p>
-              <p className="text-[10.5px] text-[#0F1E3C]/50 mt-0.5">
-                aberta há <b className="text-[#0F1E3C]/70">{b.diasAberta} dia(s)</b> · <b className="text-[#0F1E3C]/70">{b.ordens}</b> ordem(ns) já cortaram dela · <b className="text-[#0F1E3C]/70">{b.pecas}</b> peças · {fmtR(b.totalCost)} investido até agora
-              </p>
+        {bobinas.map(b => {
+          const inUse = !!b.activeOrderNumber
+          const msg = blockedMsg[b.id]
+          return (
+            <div key={b.id} className="bg-white rounded-xl border border-amber-200 px-3.5 py-2.5">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-[#0F1E3C]">{b.tecido} · {b.color} — {b.productName}</p>
+                  <p className="text-[10.5px] text-[#0F1E3C]/50 mt-0.5">
+                    aberta há <b className="text-[#0F1E3C]/70">{b.diasAberta} dia(s)</b> · <b className="text-[#0F1E3C]/70">{b.ordens}</b> ordem(ns) já cortaram dela · <b className="text-[#0F1E3C]/70">{b.pecas}</b> peças · {fmtR(b.totalCost)} investido até agora
+                  </p>
+                </div>
+                <button onClick={() => finalizar(b.id)} disabled={finalizing === b.id || inUse}
+                  title={inUse ? `Em uso na ordem ${b.activeOrderNumber} — conclua ela primeiro` : undefined}
+                  className="flex-shrink-0 text-[11px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {finalizing === b.id ? "Finalizando..." : "Finalizar bobina"}
+                </button>
+              </div>
+              {inUse && (
+                <p className="text-[10.5px] text-amber-700 font-semibold mt-2">
+                  🔒 Em uso na ordem {b.activeOrderNumber} — conclua ela primeiro
+                </p>
+              )}
+              {!inUse && msg && (
+                <p className="text-[10.5px] text-red-600 font-semibold mt-2">{msg}</p>
+              )}
             </div>
-            <button onClick={() => finalizar(b.id)} disabled={finalizing === b.id}
-              className="flex-shrink-0 text-[11px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50">
-              {finalizing === b.id ? "Finalizando..." : "Finalizar bobina"}
-            </button>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -1020,6 +1123,7 @@ export default function ProgramacaoPage() {
   const [loading, setLoading] = useState(true)
   const [showNova, setShowNova]   = useState(false)
   const [concluding, setConcluding] = useState<Order | null>(null)
+  const [editing, setEditing] = useState<Order | null>(null)
   const [fichaSheets, setFichaSheets] = useState(4)
   const [showFichaPrint, setShowFichaPrint] = useState(false)
 
@@ -1034,6 +1138,15 @@ export default function ProgramacaoPage() {
   }, [])
 
   useEffect(() => { loadOrders() }, [loadOrders])
+
+  async function handleDeletar(id: number) {
+    const res = await fetch(`/api/prod-orders/${id}`, { method: "DELETE" })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      alert(body?.error || "Falha ao apagar ordem")
+    }
+    loadOrders()
+  }
 
   function handlePrintFichas() {
     setShowFichaPrint(true)
@@ -1122,7 +1235,13 @@ export default function ProgramacaoPage() {
       {active.length > 0 && (
         <div className="space-y-3">
           <p className="text-xs font-bold uppercase tracking-wider text-[#0F1E3C]/35">Em Andamento</p>
-          {active.map(o => <OrderBlock key={o.id} order={o} onConcluir={()=>setConcluding(o)}/>)}
+          {active.map(o => (
+            <OrderBlock key={o.id} order={o}
+              onConcluir={()=>setConcluding(o)}
+              onEditar={()=>setEditing(o)}
+              onDeletar={()=>handleDeletar(o.id)}
+            />
+          ))}
         </div>
       )}
 
@@ -1169,6 +1288,7 @@ export default function ProgramacaoPage() {
 
       {/* Modals */}
       {showNova   && <NovaOrdemModal  onClose={()=>setShowNova(false)} onSuccess={loadOrders}/>}
+      {editing    && <NovaOrdemModal  editOrder={editing} onClose={()=>setEditing(null)} onSuccess={loadOrders}/>}
       {concluding && <ConcluirModal  order={concluding} onClose={()=>setConcluding(null)} onSuccess={loadOrders}/>}
       {showFichaPrint && <FichaProducaoPrintSheet sheets={fichaSheets} onDone={()=>setShowFichaPrint(false)} />}
     </div>

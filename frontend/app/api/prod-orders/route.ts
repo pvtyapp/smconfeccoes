@@ -49,7 +49,8 @@ export async function GET(req: Request) {
         pom.exhausted_here AS "exhaustedHere",
         rme.status AS "entryStatus",
         COALESCE(pom.color, '') AS "color",
-        rme.tecido, rme.tipo_tecido AS "tipoTecido", rme.peso_kg AS "pesoKg"
+        rme.tecido, rme.tipo_tecido AS "tipoTecido", rme.peso_kg AS "pesoKg",
+        rme.gramatura, rme.largura_m AS "larguraM", rme.preco_kg AS "precoKg"
       FROM prod_order_materials pom
       JOIN raw_material_entries rme ON rme.id = pom.entry_id
       JOIN raw_materials rm ON rm.id = rme.material_id
@@ -65,7 +66,8 @@ export async function GET(req: Request) {
         pom.exhausted_here AS "exhaustedHere",
         rme.status AS "entryStatus",
         '' AS "color",
-        NULL AS "tecido", NULL AS "tipoTecido", NULL AS "pesoKg"
+        NULL AS "tecido", NULL AS "tipoTecido", NULL AS "pesoKg",
+        NULL AS "gramatura", NULL AS "larguraM", NULL AS "precoKg"
       FROM prod_order_materials pom
       JOIN raw_material_entries rme ON rme.id = pom.entry_id
       JOIN raw_materials rm ON rm.id = rme.material_id

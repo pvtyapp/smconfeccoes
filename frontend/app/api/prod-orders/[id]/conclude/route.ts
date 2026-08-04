@@ -18,7 +18,7 @@ export async function POST(
     return NextResponse.json({ success: true })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    const status = msg.includes("obrigatório") ? 400 : 500
+    const status = msg.includes("obrigatório") ? 400 : msg.includes("já foi concluída") ? 409 : 500
     return NextResponse.json({ error: msg }, { status })
   }
 }
