@@ -1317,7 +1317,9 @@ function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle
           <div className="flex-1 overflow-y-auto p-5">
             {panel === "fila" && (
               <div className="space-y-3">
-                <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">Rotaciona — próximo é o mais antigo</p>
+                <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">
+                  {items.length > 1 ? "Rotaciona — próximo é o mais antigo" : "Só 1 item cadastrado — sem rotação, sempre sai esse. Adicione mais pra variar."}
+                </p>
 
                 {loadingQ ? (
                   <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-[#4361EE]" /></div>
@@ -1327,8 +1329,8 @@ function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle
                   <div className="space-y-2">
                     {items.map((item, idx) => (
                       <div key={item.id} className="flex gap-2 items-start bg-[#F9FAFC] rounded-xl p-3 border border-[#0F1E3C]/6">
-                        <span className={`text-[10px] font-bold mt-0.5 w-4 shrink-0 ${idx === 0 ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}`}>
-                          {idx === 0 ? "→" : idx + 1}
+                        <span className={`text-[9px] font-bold mt-0.5 w-9 shrink-0 ${idx === 0 ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}`}>
+                          {idx === 0 ? "PRÓXIMO" : idx + 1}
                         </span>
                         {item.mediaUrl && (
                           <a href={item.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0 group relative">
@@ -1339,7 +1341,7 @@ function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle
                           <p className="text-xs text-[#0F1E3C] whitespace-pre-wrap break-words">{item.content}</p>
                           <div className="flex items-center gap-2 mt-1">
                             {item.lastSentAt && <span className="text-[9px] text-[#0F1E3C]/30">Enviado {fmtBR(item.lastSentAt)}</span>}
-                            {item.sentCount > 0 && <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado</span>}
+                            {item.sentCount > 0 && <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado (desde sempre)</span>}
                           </div>
                         </div>
                         <div className="flex flex-col gap-1 shrink-0">
@@ -1359,6 +1361,9 @@ function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle
                   <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">
                     {editingItemId ? "Editando item" : "Adicionar à fila"}
                   </p>
+                  {!editingItemId && (
+                    <p className="text-[10px] text-[#0F1E3C]/35 -mt-1">Não envia agora — só entra na rotação pro dia em que for a vez dele.</p>
+                  )}
                   <textarea
                     value={newContent} onChange={e => setNewContent(e.target.value)}
                     rows={3} placeholder="Texto do próximo post..."
@@ -1599,7 +1604,7 @@ function ScheduleRow({
           {panel === "fila" && (
             <div className="px-4 py-3 space-y-3">
               <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">
-                Rotaciona automaticamente — próximo é o mais antigo
+                {items.length > 1 ? "Rotaciona automaticamente — próximo é o mais antigo" : "Só 1 item cadastrado — sem rotação, sempre sai esse. Adicione mais pra variar."}
               </p>
 
               {loadingQ ? (
@@ -1610,8 +1615,8 @@ function ScheduleRow({
                 <div className="space-y-2">
                   {items.map((item, idx) => (
                     <div key={item.id} className="flex gap-2 items-start bg-white rounded-xl p-3 border border-[#0F1E3C]/6">
-                      <span className={`text-[10px] font-bold mt-0.5 w-4 shrink-0 ${idx === 0 ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}`}>
-                        {idx === 0 ? "→" : idx + 1}
+                      <span className={`text-[9px] font-bold mt-0.5 w-9 shrink-0 ${idx === 0 ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}`}>
+                        {idx === 0 ? "PRÓXIMO" : idx + 1}
                       </span>
                       {item.mediaUrl && (
                         <a href={item.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0">
@@ -1624,7 +1629,7 @@ function ScheduleRow({
                           <span className="text-[9px] text-[#0F1E3C]/30">Enviado {fmtBR(item.lastSentAt)}</span>
                         )}
                         {item.sentCount > 0 && (
-                          <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado</span>
+                          <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado (desde sempre)</span>
                         )}
                         <button onClick={() => deleteItem(item.id)}
                           className="p-1 rounded-lg hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
@@ -1638,6 +1643,7 @@ function ScheduleRow({
 
               {/* Add item */}
               <div className="space-y-2 pt-1">
+                <p className="text-[10px] text-[#0F1E3C]/35">Não envia agora — só entra na rotação pro dia em que for a vez dele.</p>
                 <textarea
                   value={newContent}
                   onChange={e => setNewContent(e.target.value)}
