@@ -302,6 +302,9 @@ type ColorBobina =
     }
   | {
       reuse: false
+      // Já existe uma bobina (incompleta) pra essa cor nessa ordem — edição
+      // deve ATUALIZAR essa linha em vez de criar outra do zero.
+      existingEntryId?: number
       tecido: string; tipoTecido: TipoTecido | null
       pesoKg: string; gramatura: string; larguraM: string; precoKg: string
       sizes: Record<string, string>
@@ -339,9 +342,11 @@ function NovaOrdemModal({ onClose, onSuccess, editOrder }: { onClose: () => void
   const [selectedColors, setSelectedColors] = useState<string[]>(() =>
     editOrder ? [...new Set(editOrder.grade.map(g => g.color))] : []
   )
-  // Modo edição: reconstrói o estado da ordem já existente — cor com bobina
-  // vinculada vira card "reuse" simplificado (linkedNow), cor sem bobina vira
-  // formulário em branco igual uma cor nova (é exatamente o "campo faltando").
+  // Modo edição: reconstrói o estado da ordem já existente. Cor com bobina
+  // COMPLETA vira card "reuse" simplificado (linkedNow, só leitura). Cor sem
+  // bobina, ou com bobina incompleta (rascunho que não preencheu tudo), vira
+  // formulário editável pré-preenchido com o que já tinha sido digitado —
+  // nada do que foi salvo se perde.
   const [colorData, setColorData]     = useState<Record<string, ColorBobina>>(() => {
     if (!editOrder) return {}
     const colors = [...new Set(editOrder.grade.map(g => g.color))]
@@ -352,9 +357,20 @@ function NovaOrdemModal({ onClose, onSuccess, editOrder }: { onClose: () => void
         if (g.color === c && g.qtyPlanned > 0) sizes[g.size] = String(g.qtyPlanned)
       }
       const mat = editOrder.materials.find(m => m.color === c)
-      map[c] = mat
-        ? { reuse: true, entryId: mat.entryId, tecido: mat.tecido ?? mat.materialName, diasAberta: 0, ordens: 0, pecas: 0, sizes, linkedNow: true }
-        : { reuse: false, tecido: "", tipoTecido: null, pesoKg: "", gramatura: "", larguraM: "", precoKg: "", sizes }
+      const matComplete = mat && mat.tecido && mat.tipoTecido && mat.pesoKg && mat.gramatura && mat.larguraM && mat.precoKg
+      if (matComplete) {
+        map[c] = { reuse: true, entryId: mat.entryId, tecido: mat.tecido!, diasAberta: 0, ordens: 0, pecas: 0, sizes, linkedNow: true }
+      } else {
+        map[c] = {
+          reuse: false, existingEntryId: mat?.entryId,
+          tecido: mat?.tecido ?? "", tipoTecido: mat?.tipoTecido ?? null,
+          pesoKg: mat?.pesoKg ? String(mat.pesoKg) : "",
+          gramatura: mat?.gramatura ? String(mat.gramatura) : "",
+          larguraM: mat?.larguraM ? String(mat.larguraM) : "",
+          precoKg: mat?.precoKg ? String(mat.precoKg) : "",
+          sizes,
+        }
+      }
     }
     return map
   })
@@ -450,21 +466,37 @@ function NovaOrdemModal({ onClose, onSuccess, editOrder }: { onClose: () => void
         if (!cd) continue
         if (cd.reuse) {
           entries.push({ entryId: cd.entryId, color: c })
-        } else if (colorComplete(cd) || strict) {
+          continue
+        }
+        // Salva SEMPRE o que foi digitado, completo ou não — só pula se a cor
+        // não tem literalmente nada preenchido ainda (evita bobina vazia à toa).
+        const touched = !!(cd.tecido || cd.tipoTecido || numOrNaN(cd.pesoKg) > 0 ||
+          numOrNaN(cd.gramatura) > 0 || numOrNaN(cd.larguraM) > 0 || numOrNaN(cd.precoKg) > 0)
+        if (!touched && !strict) continue
+
+        const ficha = {
+          tecido: cd.tecido || null, tipoTecido: cd.tipoTecido,
+          pesoKg: numOrNaN(cd.pesoKg), gramatura: numOrNaN(cd.gramatura),
+          larguraM: numOrNaN(cd.larguraM), precoKg: numOrNaN(cd.precoKg),
+        }
+        if (cd.existingEntryId) {
+          const res = await fetch(`/api/raw-material-entries/${cd.existingEntryId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(ficha),
+          })
+          if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Falha ao atualizar bobina")
+          entries.push({ entryId: cd.existingEntryId, color: c })
+        } else {
           const res = await fetch("/api/raw-material-entries", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              productId, color: c, tecido: cd.tecido, tipoTecido: cd.tipoTecido,
-              pesoKg: numOrNaN(cd.pesoKg), gramatura: numOrNaN(cd.gramatura),
-              larguraM: numOrNaN(cd.larguraM), precoKg: numOrNaN(cd.precoKg),
-            }),
+            body: JSON.stringify({ productId, color: c, ...ficha }),
           })
           if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Falha ao criar bobina")
           const created = await res.json()
           entries.push({ entryId: created.entryId, color: c })
         }
-        // cor incompleta em modo não-estrito: fica sem bobina vinculada por enquanto
       }
 
       const grade = selectedColors.flatMap(c => {

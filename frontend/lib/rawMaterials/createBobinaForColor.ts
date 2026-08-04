@@ -5,12 +5,15 @@ export type TipoTecido = "aberto" | "tubular"
 export type CreateBobinaForColorInput = {
   productId: string
   color: string
-  tecido: string
-  tipoTecido: TipoTecido
-  pesoKg: number
-  gramatura: number
-  larguraM: number
-  precoKg: number
+  // Ficha técnica pode vir incompleta — rascunho guarda o que foi digitado e
+  // completa depois pelo Editar. Só quando os 6 campos vêm válidos o custo
+  // é calculado de verdade; incompleto fica com total/preço zerados.
+  tecido?: string | null
+  tipoTecido?: TipoTecido | null
+  pesoKg?: number | null
+  gramatura?: number | null
+  larguraM?: number | null
+  precoKg?: number | null
 }
 
 export type CreateBobinaForColorResult = {
@@ -32,17 +35,18 @@ export async function createBobinaForColor(
 ): Promise<CreateBobinaForColorResult> {
   const { productId, color, tecido, tipoTecido, pesoKg, gramatura, larguraM, precoKg } = input
   if (!productId || !color) throw new Error("productId e color são obrigatórios")
-  if (!tecido || !tipoTecido) throw new Error("tecido e tipoTecido são obrigatórios")
-  if (!pesoKg || !gramatura || !larguraM || !precoKg) {
-    throw new Error("peso, gramatura, largura e preço/kg são obrigatórios")
-  }
+
+  const complete = !!(tecido && tipoTecido && pesoKg && gramatura && larguraM && precoKg)
 
   // Largura de corte real: tubular guarda a boca do tubo (medida fechada) —
   // a largura de corte é o dobro disso. Aberto usa a largura útil direto.
-  const larguraCorte = tipoTecido === "tubular" ? larguraM * 2 : larguraM
-  const totalQty = (pesoKg * 1000) / (gramatura * larguraCorte)
-  const totalCost = pesoKg * precoKg
-  const unitPrice = totalCost / totalQty
+  let totalQty = 0, unitPrice = 0
+  if (complete) {
+    const larguraCorte = tipoTecido === "tubular" ? larguraM! * 2 : larguraM!
+    totalQty = (pesoKg! * 1000) / (gramatura! * larguraCorte)
+    const totalCost = pesoKg! * precoKg!
+    unitPrice = totalCost / totalQty
+  }
 
   const client = await pool.connect()
   try {
