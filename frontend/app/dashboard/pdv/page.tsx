@@ -3,8 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   Search, RefreshCw, ShoppingCart, X, Plus, Minus,
-  Loader2, UserPlus, Store, Check, Receipt,
-  ChevronDown, ChevronUp, Printer,
+  Loader2, UserPlus, Store, Check, Receipt, Printer,
 } from "lucide-react"
 import { todayBR, dateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
@@ -117,6 +116,24 @@ function variantStockClass(v: Variant, inCart: CartItem | undefined): string {
   return "text-[#0F1E3C]/30"
 }
 
+// Cor é texto livre no cadastro — não dá pra ter hex exato de cada uma.
+// Casa por palavra-chave (sem acento) pra achar uma cor aproximada só pra
+// bolinha do bloco; sem match cai num cinza neutro.
+const COLOR_KEYWORDS: [string, string][] = [
+  ["preto", "#171717"], ["branco", "#F8FAFC"], ["cinza", "#9CA3AF"], ["grafite", "#4B5563"],
+  ["chumbo", "#374151"], ["azul marinho", "#1E3A8A"], ["azul royal", "#2563EB"], ["azul", "#3B82F6"],
+  ["vermelh", "#DC2626"], ["bordo", "#7F1D1D"], ["vinho", "#7F1D1D"], ["rosa bebe", "#FBCFE8"],
+  ["rosa", "#EC4899"], ["verde militar", "#4D5D3A"], ["verde", "#16A34A"], ["amarelo", "#FACC15"],
+  ["laranja", "#F97316"], ["roxo", "#7C3AED"], ["roxa", "#7C3AED"], ["lilas", "#C4B5FD"],
+  ["marrom", "#78350F"], ["bege", "#D9C5A0"], ["caramelo", "#B45309"], ["dourado", "#CA8A04"],
+  ["prata", "#D1D5DB"], ["mescla", "#9CA3AF"],
+]
+function colorSwatch(name: string): string {
+  const n = (name ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+  for (const [kw, hex] of COLOR_KEYWORDS) if (n.includes(kw)) return hex
+  return "#CBD5E1"
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PDVPage() {
@@ -128,15 +145,7 @@ export default function PDVPage() {
   const [search, setSearch] = useState("")
   const [cart,   setCart]   = useState<CartItem[]>([])
 
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  function toggleGroup(productId: string) {
-    setExpandedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(productId)) next.delete(productId)
-      else next.add(productId)
-      return next
-    })
-  }
+  const [openProductId, setOpenProductId] = useState<string | null>(null)
 
   // Customer
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
@@ -623,76 +632,38 @@ export default function PDVPage() {
             </div>
           )}
 
-          {/* Collapsible stock product cards */}
+          {/* Product blocks — clica pra abrir o modal com todas as cores/tamanhos */}
           {!loading && filteredStock.length > 0 && (
-            <div className="space-y-3">
+            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
               {filteredStock.map(g => {
-                const collapsed = !expandedGroups.has(g.productId)
-                const colorMap  = new Map<string, Variant[]>()
-                for (const v of g.variants) {
-                  if (!colorMap.has(v.color)) colorMap.set(v.color, [])
-                  colorMap.get(v.color)!.push(v)
-                }
-                const colorGroups = [...colorMap.entries()].sort(([a], [b]) => a.localeCompare(b))
-                colorGroups.forEach(([, variants]) => variants.sort((a, b) => sizeSort(a.size, b.size)))
-
+                const colors = [...new Set(g.variants.map(v => v.color))].filter(Boolean)
+                const inCartQty = cart.filter(i => i.productId === g.productId).reduce((s, i) => s + i.qty, 0)
+                const totalStock = g.variants.reduce((s, v) => s + Math.max(v.currentStock, 0), 0)
+                const dotColor = totalStock === 0 ? "#DC2626" : totalStock < 10 ? "#D97706" : "#059669"
                 return (
-                  <div key={g.productId} className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
-                    <button
-                      onClick={() => toggleGroup(g.productId)}
-                      className="w-full flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/6 bg-[#F9FAFB] hover:bg-[#F0F2F8] transition-colors"
-                    >
-                      <p className="font-bold text-[#0F1E3C] text-sm text-left">{g.productName}</p>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <p className="text-sm font-black text-[#4361EE]">{fmtR(g.price)}</p>
-                        {collapsed
-                          ? <ChevronDown size={14} className="text-[#0F1E3C]/30" />
-                          : <ChevronUp   size={14} className="text-[#0F1E3C]/30" />}
-                      </div>
-                    </button>
-
-                    {!collapsed && (
-                      <div className="px-4 py-3 space-y-2.5">
-                        {colorGroups.map(([color, variants]) => (
-                          <div key={color} className="flex items-center gap-2 flex-wrap">
-                            {color && (
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 w-16 flex-shrink-0 truncate">
-                                {color}
-                              </span>
-                            )}
-                            {variants.map(v => {
-                              const inCart = cart.find(i => i.key === v.variantId)
-                              return (
-                                <button
-                                  key={v.variantId}
-                                  onClick={() => addVariant(v)}
-                                  disabled={v.currentStock <= 0}
-                                  title={
-                                    v.currentStock < 0
-                                      ? `Estoque negativo: ${v.currentStock}`
-                                      : v.currentStock === 0
-                                      ? "Sem estoque"
-                                      : `${v.currentStock} em estoque`
-                                  }
-                                  className={variantBtnClass(v, inCart)}
-                                >
-                                  <span>{v.size || "U"}</span>
-                                  <span className={`text-[9px] font-semibold leading-none mt-0.5 ${variantStockClass(v, inCart)}`}>
-                                    {v.currentStock}
-                                  </span>
-                                  {inCart && (
-                                    <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#4361EE] text-white rounded-full text-[8px] font-black flex items-center justify-center leading-none">
-                                      {inCart.qty}
-                                    </span>
-                                  )}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        ))}
-                      </div>
+                  <button
+                    key={g.productId}
+                    onClick={() => setOpenProductId(g.productId)}
+                    className="relative flex flex-col gap-2.5 text-left bg-white rounded-2xl border border-[#0F1E3C]/8 p-4 hover:border-[#4361EE]/40 hover:shadow-md transition-all"
+                  >
+                    {inCartQty > 0 && (
+                      <span className="absolute top-2.5 right-2.5 bg-[#4361EE] text-white text-[9px] font-black px-2 py-0.5 rounded-full">
+                        {inCartQty} no carrinho
+                      </span>
                     )}
-                  </div>
+                    <div className="flex items-center gap-1">
+                      {colors.slice(0, 5).map(c => (
+                        <span key={c} title={c} className="w-3.5 h-3.5 rounded-[5px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.08)]" style={{ background: colorSwatch(c) }} />
+                      ))}
+                      {colors.length > 5 && <span className="text-[9px] font-bold text-[#0F1E3C]/40">+{colors.length - 5}</span>}
+                    </div>
+                    <p className="font-bold text-[#0F1E3C] text-sm leading-tight">{g.productName}</p>
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#0F1E3C]/40">
+                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: dotColor }} />
+                      {colors.length} {colors.length === 1 ? "cor" : "cores"}
+                    </div>
+                    <p className="text-lg font-black text-[#4361EE] mt-auto">{fmtR(g.price)}</p>
+                  </button>
                 )
               })}
             </div>
@@ -1318,6 +1289,82 @@ export default function PDVPage() {
           </div>
         </div>
       </div>
+
+      {/* Product picker modal — cor/tamanho do produto aberto */}
+      {openProductId && (() => {
+        const g = stockGroups.find(x => x.productId === openProductId)
+        if (!g) return null
+        const colorMap = new Map<string, Variant[]>()
+        for (const v of g.variants) {
+          if (!colorMap.has(v.color)) colorMap.set(v.color, [])
+          colorMap.get(v.color)!.push(v)
+        }
+        const colorGroups = [...colorMap.entries()].sort(([a], [b]) => a.localeCompare(b))
+        colorGroups.forEach(([, variants]) => variants.sort((a, b) => sizeSort(a.size, b.size)))
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setOpenProductId(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
+                <div>
+                  <h3 className="font-bold text-[#0F1E3C]">{g.productName}</h3>
+                  <p className="text-sm font-black text-[#4361EE] mt-0.5">{fmtR(g.price)}</p>
+                </div>
+                <button onClick={() => setOpenProductId(null)} className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 flex items-center justify-center">
+                  <X size={15}/>
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                {colorGroups.map(([color, variants]) => (
+                  <div key={color}>
+                    {color && (
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="w-3 h-3 rounded-[4px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                        <span className="text-xs font-bold text-[#0F1E3C]">{color}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {variants.map(v => {
+                        const inCart = cart.find(i => i.key === v.variantId)
+                        return (
+                          <button
+                            key={v.variantId}
+                            onClick={() => addVariant(v)}
+                            disabled={v.currentStock <= 0}
+                            title={
+                              v.currentStock < 0
+                                ? `Estoque negativo: ${v.currentStock}`
+                                : v.currentStock === 0
+                                ? "Sem estoque"
+                                : `${v.currentStock} em estoque`
+                            }
+                            className={variantBtnClass(v, inCart)}
+                          >
+                            <span>{v.size || "U"}</span>
+                            <span className={`text-[9px] font-semibold leading-none mt-0.5 ${variantStockClass(v, inCart)}`}>
+                              {v.currentStock}
+                            </span>
+                            {inCart && (
+                              <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#4361EE] text-white rounded-full text-[8px] font-black flex items-center justify-center leading-none">
+                                {inCart.qty}
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="px-5 py-3 border-t border-[#0F1E3C]/8 flex-shrink-0">
+                <button onClick={() => setOpenProductId(null)} className="w-full py-2.5 rounded-xl bg-[#0F1E3C] text-white text-sm font-bold hover:bg-[#0F1E3C]/90 transition-colors">
+                  Pronto
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Receipt modal */}
       {receipt && (
