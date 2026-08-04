@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react"
 import { X, Loader2, Trash2, Search } from "lucide-react"
 import { todayBR } from "@/lib/tz"
 import { sizeCompare } from "@/lib/sizeOrder"
+import { colorSwatch } from "@/lib/colorSwatch"
 
 type Variant = {
   variantId: string
@@ -262,7 +263,7 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
                             className="flex flex-col gap-1 text-left px-3 py-2.5 rounded-xl border border-[#0F1E3C]/12 bg-white hover:border-[#4361EE]/40 hover:bg-[#4361EE]/4 transition-colors">
                             <div className="flex items-center gap-1">
                               {p.colors.slice(0, 5).map(c => (
-                                <span key={c} className="w-2.5 h-2.5 rounded-[3px] bg-[#0F1E3C]/15 shadow-[inset_0_0_0_1px_rgba(0,0,0,.08)]"/>
+                                <span key={c} title={c} className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.08)]" style={{ background: colorSwatch(c) }}/>
                               ))}
                               {p.colors.length > 5 && <span className="text-[9px] font-bold text-[#0F1E3C]/35">+{p.colors.length - 5}</span>}
                             </div>
