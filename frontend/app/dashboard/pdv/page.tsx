@@ -634,7 +634,7 @@ export default function PDVPage() {
 
           {/* Product blocks — clica pra abrir o modal com todas as cores/tamanhos */}
           {!loading && filteredStock.length > 0 && (
-            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredStock.map(g => {
                 const colors = [...new Set(g.variants.map(v => v.color))].filter(Boolean)
                 const inCartQty = cart.filter(i => i.productId === g.productId).reduce((s, i) => s + i.qty, 0)
@@ -644,25 +644,25 @@ export default function PDVPage() {
                   <button
                     key={g.productId}
                     onClick={() => setOpenProductId(g.productId)}
-                    className="relative flex flex-col gap-2.5 text-left bg-white rounded-2xl border border-[#0F1E3C]/8 p-4 hover:border-[#4361EE]/40 hover:shadow-md transition-all"
+                    className="relative flex flex-col gap-3 text-left bg-white rounded-2xl border border-[#0F1E3C]/8 p-5 aspect-square justify-center hover:border-[#4361EE]/40 hover:shadow-md transition-all"
                   >
                     {inCartQty > 0 && (
-                      <span className="absolute top-2.5 right-2.5 bg-[#4361EE] text-white text-[9px] font-black px-2 py-0.5 rounded-full">
+                      <span className="absolute top-3 right-3 bg-[#4361EE] text-white text-[10px] font-black px-2 py-0.5 rounded-full">
                         {inCartQty} no carrinho
                       </span>
                     )}
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                       {colors.slice(0, 5).map(c => (
-                        <span key={c} title={c} className="w-3.5 h-3.5 rounded-[5px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.08)]" style={{ background: colorSwatch(c) }} />
+                        <span key={c} title={c} className="w-4 h-4 rounded-[6px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.08)]" style={{ background: colorSwatch(c) }} />
                       ))}
-                      {colors.length > 5 && <span className="text-[9px] font-bold text-[#0F1E3C]/40">+{colors.length - 5}</span>}
+                      {colors.length > 5 && <span className="text-[10px] font-bold text-[#0F1E3C]/40">+{colors.length - 5}</span>}
                     </div>
-                    <p className="font-bold text-[#0F1E3C] text-sm leading-tight">{g.productName}</p>
-                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#0F1E3C]/40">
+                    <p className="font-bold text-[#0F1E3C] text-base leading-tight">{g.productName}</p>
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[#0F1E3C]/40">
                       <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: dotColor }} />
                       {colors.length} {colors.length === 1 ? "cor" : "cores"}
                     </div>
-                    <p className="text-lg font-black text-[#4361EE] mt-auto">{fmtR(g.price)}</p>
+                    <p className="text-xl font-black text-[#4361EE] mt-auto">{fmtR(g.price)}</p>
                   </button>
                 )
               })}
