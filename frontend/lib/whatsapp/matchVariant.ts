@@ -24,7 +24,10 @@ function wordMatch(a: string, b: string): boolean {
   return a === b || b.startsWith(a) || a.startsWith(b)
 }
 
-function score(a: string, b: string): number {
+// Nome do produto continua por aproximação — é só pra achar a linha de
+// produto certa (Camiseta Infantil vs Adulto), tem mais variação de escrita
+// e menos risco de baixar estoque errado se ficar um pouco solto.
+function nameScore(a: string, b: string): number {
   const na = norm(a)
   const nb = norm(b)
   if (na === nb) return 1
@@ -34,6 +37,39 @@ function score(a: string, b: string): number {
   if (shorter.length > 0 && shorter.every(w => longer.some(bw => wordMatch(w, bw)))) return 0.85
   const hits = wa.filter(w => w.length > 2 && wb.some(bw => wordMatch(w, bw))).length
   return hits / Math.max(wa.length, wb.length)
+}
+
+// Tamanho é categórico — ou é o mesmo tamanho, ou não é (não existe "tamanho
+// parecido"). Antes usava a mesma pontuação por palavra do nome, que ignora
+// token com 2 caracteres ou menos — "08" contra "8" nunca pontuava nada
+// (nem contra o tamanho certo, nem contra os errados), e o desempate acabava
+// caindo sempre no primeiro que o banco devolvesse. Com zero à esquerda
+// removido antes de comparar, "08" e "8" são claramente o mesmo tamanho.
+function sizeExact(a: string, b: string): boolean {
+  const na = norm(a)
+  const nb = norm(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  if (/^\d+$/.test(na) && /^\d+$/.test(nb)) return parseInt(na, 10) === parseInt(nb, 10)
+  return false
+}
+
+// Cor precisa bater com o cadastro de verdade — igual, ou o que o cliente
+// disse claramente contido na cor real (ex: "verde" pra "Verde Militar").
+// Antes bastava 1 palavra em comum de várias pra pontuar o suficiente —
+// "rosa pink" "batia" com "Rosa Bebê" só por causa de "rosa", mesmo a cor
+// dita pelo cliente não existindo no catálogo. Sem bater direito, retorna
+// false e o item fica sem variante — melhor não vincular do que vincular
+// errado (baixa estoque da cor/tamanho errado sem ninguém perceber).
+function colorMatch(a: string, b: string): boolean {
+  const na = norm(a)
+  const nb = norm(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  const wa = na.split(/\s+/).filter(Boolean)
+  const wb = nb.split(/\s+/).filter(Boolean)
+  const [shorter, longer] = wa.length <= wb.length ? [wa, wb] : [wb, wa]
+  return shorter.length > 0 && shorter.every(w => longer.some(bw => wordMatch(w, bw)))
 }
 
 type Variant = {
@@ -83,16 +119,17 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
     let bestScore = 0
 
     for (const v of variants) {
-      const nameScore  = score(item.productName, v.productName)
-      const colorScore = item.color ? score(item.color, v.color) : 0.5
-      const sizeScore  = item.size  ? score(item.size,  v.size)  : 0.5
+      const nScore = nameScore(item.productName, v.productName)
+      if (nScore <= 0.5) continue // produto claramente diferente, nem olha cor/tamanho
 
-      if (item.color && colorScore < 0.35) continue
+      // Cor e tamanho não têm mais nota — ou batem de verdade com o cadastro
+      // real dessa variante, ou o item fica sem vínculo (melhor não vincular
+      // do que vincular na cor/tamanho errado sem ninguém perceber).
+      if (item.color && !colorMatch(item.color, v.color)) continue
+      if (item.size && !sizeExact(item.size, v.size)) continue
 
-      const total = nameScore * 0.5 + colorScore * 0.25 + sizeScore * 0.25
-
-      if (total > bestScore && total > 0.5) {
-        bestScore = total
+      if (nScore > bestScore) {
+        bestScore = nScore
         best = v
       }
     }
@@ -100,7 +137,7 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
     const alternatives = best
       ? []
       : variants
-          .filter(v => score(item.productName, v.productName) > 0.5)
+          .filter(v => nameScore(item.productName, v.productName) > 0.5)
           .map(v => [v.color, v.size].filter(Boolean).join(" "))
           .filter(Boolean)
           .slice(0, 5)
