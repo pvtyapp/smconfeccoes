@@ -1,10 +1,12 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw } from "lucide-react"
+import { useState, useEffect, useMemo } from "react"
+import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw, Search } from "lucide-react"
 import type { Order, OrderItem } from "./page"
 import PrintSheet from "./PrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
+import { sizeCompare } from "@/lib/sizeOrder"
+import { colorSwatch } from "@/lib/colorSwatch"
 import Toggle from "@/components/Toggle"
 import ConfirmDialog from "@/components/ConfirmDialog"
 
@@ -59,12 +61,13 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [hasPrinted,    setHasPrinted]    = useState(false)
   const [printedHash,   setPrintedHash]   = useState("")
 
-  // Adicionar item inline (produto → cor → tamanho, mapeado ao estoque; qtd ajusta depois pelo stepper)
+  // Adicionar item inline — mesmo padrão de blocos com busca do Gerenciador de
+  // Pedidos: produto fica aberto com todas as cores/tamanhos juntos, tocar no
+  // tamanho já adiciona (ou soma +1 se já tinha), sem resetar.
   const [addingItem,   setAddingItem]     = useState(false)
   const [products,      setProducts]      = useState<ProductOption[]>([])
+  const [addSearch,     setAddSearch]     = useState("")
   const [addProd,       setAddProd]       = useState<ProductOption | null>(null)
-  const [addColor,      setAddColor]      = useState("")
-  const [addSize,       setAddSize]       = useState("")
   const [addVariants,   setAddVariants]   = useState<VariantOption[]>([])
 
   useEffect(() => {
@@ -146,44 +149,73 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         setProducts(all.filter(p => p.status === "active"))
       }
     }
-    setAddProd(null); setAddColor(""); setAddSize(""); setAddVariants([])
+    setAddProd(null); setAddSearch(""); setAddVariants([])
     setAddingItem(true)
   }
 
   function cancelAddItem() {
-    setAddingItem(false); setAddProd(null); setAddColor(""); setAddSize(""); setAddVariants([])
+    setAddingItem(false); setAddProd(null); setAddSearch(""); setAddVariants([])
   }
 
-  function finalizeNewItem(prod: ProductOption, color: string, size: string, variants: VariantOption[]) {
-    const variant = variants.find(v => v.color === color && v.size === size)
-    setItems(prev => [...prev, {
-      id: 0, productId: prod.id, productName: prod.name,
-      color, size, qty: 1,
-      qtyConfirmed: null, isService: false, variantNote: null,
-      variantId: variant?.id ?? null,
-      unitPrice: variant?.salePrice ?? prod.salePrice ?? null,
-    }])
-    cancelAddItem()
+  const filteredAddBlocks = useMemo(() => {
+    const q = addSearch.toLowerCase().trim()
+    return q ? products.filter(p => p.name.toLowerCase().includes(q)) : products
+  }, [products, addSearch])
+
+  // Cores + tamanhos do produto aberto, todos juntos — tocar no tamanho já
+  // adiciona (ou soma +1 se já tinha), produto continua aberto pro próximo.
+  const openAddColorGroups = useMemo(() => {
+    const map = new Map<string, VariantOption[]>()
+    for (const v of addVariants) {
+      if (!map.has(v.color)) map.set(v.color, [])
+      map.get(v.color)!.push(v)
+    }
+    const groups = [...map.entries()]
+    groups.forEach(([, vs]) => vs.sort((a, b) => sizeCompare(a.size, b.size)))
+    return groups
+  }, [addVariants])
+
+  function addQtyFor(variantId: string | null): number {
+    if (!variantId) return 0
+    return items.reduce((s, i) => s + (i.variantId === variantId ? i.qty : 0), 0)
+  }
+
+  function pickSize(color: string, size: string) {
+    if (!addProd) return
+    const variant = addVariants.find(v => v.color === color && v.size === size)
+    setItems(prev => {
+      const idx = variant ? prev.findIndex(i => i.variantId === variant.id) : -1
+      if (idx >= 0) {
+        const next = [...prev]
+        next[idx] = { ...next[idx], qty: next[idx].qty + 1 }
+        return next
+      }
+      return [...prev, {
+        id: 0, productId: addProd.id, productName: addProd.name,
+        color, size, qty: 1,
+        qtyConfirmed: null, isService: false, variantNote: null,
+        variantId: variant?.id ?? null,
+        unitPrice: variant?.salePrice ?? addProd.salePrice ?? null,
+      }]
+    })
+    // Produto continua aberto — dá pra lançar o próximo tamanho/cor direto
   }
 
   async function selectAddProduct(p: ProductOption) {
-    setAddProd(p); setAddColor(""); setAddSize("")
+    setAddProd(p)
     const res = await fetch(`/api/variants?productId=${p.id}`)
     const variants: VariantOption[] = res.ok ? await res.json() : []
     setAddVariants(variants)
-    if (p.colors.length === 0 && p.sizes.length === 0) finalizeNewItem(p, "", "", variants)
-  }
-
-  function chooseAddColor(c: string) {
-    setAddColor(c)
-    if (!addProd) return
-    if (addProd.sizes.length === 0 || addSize) finalizeNewItem(addProd, c, addSize, addVariants)
-  }
-
-  function chooseAddSize(s: string) {
-    setAddSize(s)
-    if (!addProd) return
-    if (addProd.colors.length === 0 || addColor) finalizeNewItem(addProd, addColor, s, addVariants)
+    if (p.colors.length === 0 && p.sizes.length === 0) {
+      setItems(prev => [...prev, {
+        id: 0, productId: p.id, productName: p.name,
+        color: "", size: "", qty: 1,
+        qtyConfirmed: null, isService: false, variantNote: null,
+        variantId: variants[0]?.id ?? null,
+        unitPrice: variants[0]?.salePrice ?? p.salePrice ?? null,
+      }])
+      cancelAddItem()
+    }
   }
 
   async function saveItems() {
@@ -424,7 +456,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                 <div className="rounded-2xl border border-dashed border-purple-300 bg-purple-50/50 p-3 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-purple-700">
-                      {addProd ? addProd.name : "Selecionar produto"}
+                      {addProd ? addProd.name : "Adicionar item"}
                     </span>
                     <button onClick={cancelAddItem} className="text-[#0F1E3C]/30 hover:text-[#0F1E3C]">
                       <X size={14} />
@@ -432,47 +464,62 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                   </div>
 
                   {!addProd ? (
-                    <select
-                      autoFocus
-                      value=""
-                      onChange={e => {
-                        const p = products.find(p => p.id === e.target.value) ?? null
-                        if (p) selectAddProduct(p)
-                      }}
-                      className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] bg-white focus:outline-none">
-                      <option value="">Selecionar produto...</option>
-                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
+                    <>
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#0F1E3C]/30 pointer-events-none"/>
+                        <input autoFocus value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Buscar produto..."
+                          className="w-full pl-8 pr-3 py-2 rounded-xl border border-purple-200 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-purple-300/40"/>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {filteredAddBlocks.map(p => (
+                          <button key={p.id} type="button" onClick={() => selectAddProduct(p)}
+                            className="flex flex-col gap-1 text-left px-3 py-2.5 rounded-xl border border-[#0F1E3C]/12 bg-white hover:border-purple-400 hover:bg-purple-50 transition-colors">
+                            <div className="flex items-center gap-1">
+                              {p.colors.slice(0, 5).map(c => (
+                                <span key={c} title={c} className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.08)]" style={{ background: colorSwatch(c) }}/>
+                              ))}
+                              {p.colors.length > 5 && <span className="text-[9px] font-bold text-[#0F1E3C]/35">+{p.colors.length - 5}</span>}
+                            </div>
+                            <span className="text-xs font-bold text-[#0F1E3C] leading-tight">{p.name}</span>
+                            {p.salePrice != null && <span className="text-xs font-black text-purple-600">R$ {p.salePrice.toFixed(2).replace(".", ",")}</span>}
+                          </button>
+                        ))}
+                        {filteredAddBlocks.length === 0 && (
+                          <p className="col-span-2 text-center text-xs text-[#0F1E3C]/30 py-4">Nada encontrado</p>
+                        )}
+                      </div>
+                    </>
                   ) : (
                     <>
-                      {addProd.colors.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {addProd.colors.map(c => (
-                            <button key={c} type="button" onClick={() => chooseAddColor(c)}
-                              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
-                                addColor === c
-                                  ? "bg-purple-600 text-white border-purple-600"
-                                  : "bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-purple-300"
-                              }`}>
-                              {c}
-                            </button>
-                          ))}
+                      <button type="button" onClick={() => { setAddProd(null); setAddVariants([]) }}
+                        className="text-[11px] font-bold text-[#0F1E3C]/40 hover:text-purple-600 hover:bg-[#0F1E3C]/4 px-2 py-1 rounded-lg transition-colors -mt-1">
+                        ↩ trocar produto
+                      </button>
+                      {openAddColorGroups.map(([c, vs]) => (
+                        <div key={c} className="space-y-1.5">
+                          {c && <p className="text-[10px] font-bold text-[#0F1E3C]/40">{c}</p>}
+                          <div className="flex flex-wrap gap-1.5">
+                            {vs.map(v => {
+                              const q = addQtyFor(v.id)
+                              return (
+                                <button key={v.id} type="button" onClick={() => pickSize(v.color, v.size)}
+                                  className={`relative px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+                                    q > 0
+                                      ? "bg-purple-600 text-white border-purple-600"
+                                      : "bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:bg-purple-600 hover:text-white hover:border-purple-600"
+                                  }`}>
+                                  {q > 0 && (
+                                    <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#0F1E3C] text-white rounded-full text-[8px] font-black flex items-center justify-center leading-none">
+                                      {q}
+                                    </span>
+                                  )}
+                                  {v.size || "U"}
+                                </button>
+                              )
+                            })}
+                          </div>
                         </div>
-                      )}
-                      {addProd.sizes.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {addProd.sizes.map(s => (
-                            <button key={s} type="button" onClick={() => chooseAddSize(s)}
-                              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
-                                addSize === s
-                                  ? "bg-purple-600 text-white border-purple-600"
-                                  : "bg-white border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:border-purple-300"
-                              }`}>
-                              {s}
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                      ))}
                     </>
                   )}
                 </div>
@@ -491,8 +538,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             <span className="text-sm font-black text-[#0F1E3C]">{totalQty} unidades</span>
           </div>
 
-          {/* Imprimir Ficha de Separação — disponível a partir de em_separacao */}
-          {(isSeparacao || isPronte) && (
+          {/* Imprimir Ficha de Separação — só em em_separacao, 1 via, uso interno */}
+          {isSeparacao && (
             <div className="space-y-2 pt-1">
               {needsReprint && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
@@ -523,6 +570,16 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                   {hasPrinted ? (needsReprint ? "Reimprimir Ficha" : "Reimprimir") : "Imprimir Ficha de Separação"}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Reimprimir Ordem do Pedido — só em pronto, sempre 2 vias (loja+cliente) */}
+          {isPronte && (
+            <div className="pt-1">
+              <button onClick={() => { setOrderPrint(true); printWhenReady() }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-[#0F1E3C]/60 text-sm font-medium hover:bg-[#0F1E3C]/6 transition-colors">
+                <Printer size={14} /> Reimprimir Ordem do Pedido
+              </button>
             </div>
           )}
 
