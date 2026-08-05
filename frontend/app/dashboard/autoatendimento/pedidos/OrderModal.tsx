@@ -84,6 +84,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [notifyClient,  setNotifyClient]  = useState(true)
   const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
   const [askingPayment, setAskingPayment] = useState(false)
+  // null = ainda não escolheu — não deixa concluir sem marcar Sim ou Não.
+  const [paymentChoice, setPaymentChoice] = useState<boolean | null>(null)
   const [dueDate,       setDueDate]       = useState("")
   const [error,         setError]         = useState("")
   const [sendingConfirmation, setSendingConfirmation] = useState(false)
@@ -593,7 +595,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[#0F1E3C]/8 space-y-2.5">
 
-          {/* PRONTO — pergunta de pagamento ao concluir a entrega */}
+          {/* PRONTO — pergunta de pagamento ao concluir a entrega. Não conclui
+              sem marcar Sim ou Não primeiro — "Não" só revela o prazo, não
+              fecha mais o painel. */}
           {isPronte && askingPayment && (
             <div className="rounded-xl border border-[#0F1E3C]/10 bg-[#F4F6FB] p-3 space-y-2.5">
               <p className="text-xs font-bold text-[#0F1E3C]">Pedido já foi pago?</p>
@@ -602,27 +606,32 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                   className="flex-1 py-2 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-semibold disabled:opacity-50">
                   Sim
                 </button>
-                <button onClick={() => setAskingPayment(v => !v)} disabled={saving}
-                  className="flex-1 py-2 rounded-xl bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold disabled:opacity-50">
+                <button onClick={() => setPaymentChoice(false)} disabled={saving}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors ${
+                    paymentChoice === false
+                      ? "bg-[#0F1E3C] text-white"
+                      : "bg-white border border-dashed border-[#0F1E3C]/25 text-[#0F1E3C]/50 hover:border-[#0F1E3C]/40"
+                  }`}>
                   Não
                 </button>
               </div>
-              {/* "Não" já revela o campo de prazo abaixo (mesmo painel, sem trocar de tela) */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
-                  Se não pagou — vencimento *
-                </label>
-                <input
-                  type="date"
-                  value={dueDate}
-                  onChange={e => { setDueDate(e.target.value); setError("") }}
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                />
-                <button onClick={handleConcluirPrazo} disabled={saving}
-                  className="w-full py-2 rounded-xl border border-[#0F1E3C]/15 text-[#0F1E3C] text-sm font-semibold hover:bg-[#0F1E3C]/4 disabled:opacity-50">
-                  Concluir a Prazo
-                </button>
-              </div>
+              {paymentChoice === false && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
+                    Vencimento *
+                  </label>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={e => { setDueDate(e.target.value); setError("") }}
+                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                  />
+                  <button onClick={handleConcluirPrazo} disabled={saving || !dueDate}
+                    className="w-full py-2 rounded-xl border border-[#0F1E3C]/15 text-[#0F1E3C] text-sm font-semibold hover:bg-[#0F1E3C]/4 disabled:opacity-50">
+                    Concluir a Prazo
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

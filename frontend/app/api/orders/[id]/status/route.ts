@@ -78,8 +78,12 @@ export async function POST(
       )
 
     } else if (status === "pronto") {
-      // Separação concluída — sem mudança de DB especial
-      await client.query("UPDATE orders SET status = $1 WHERE id = $2", [status, id])
+      // Selo Pagou/Não pagou nasce marcado "Não pagou" — nunca fica em branco
+      // pro operador ter que adivinhar o padrão.
+      await client.query(
+        `UPDATE orders SET status = $1, paid_label = COALESCE(paid_label, false) WHERE id = $2`,
+        [status, id]
+      )
 
     } else if (status === "concluido") {
       // Entregue — aqui (e só aqui) o estoque de fato sai do sistema. Anti-duplicata:
