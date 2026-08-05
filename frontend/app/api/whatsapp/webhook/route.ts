@@ -1865,11 +1865,10 @@ async function createOrderDirect(
     return
   }
 
+  // Kanban 3 estágios: nada sai pro cliente na criação — Triagem é onde o
+  // pedido é captado/alterado em silêncio. Só fala com o cliente quando o
+  // operador clicar "Solicitar Confirmação" no dashboard.
   await setState(contactId, "triagem", { orderId, orderNumber })
-  const { rows: contactRows } = await pool.query(`SELECT name FROM wa_contacts WHERE id = $1`, [contactId]).catch(() => ({ rows: [] as { name: string | null }[] }))
-  const firstName = contactRows[0]?.name?.trim().split(" ")[0]
-  const saudacao  = firstName ? `${firstName}, seu` : "Seu"
-  await replyAndSave(contactId, jid, `${saudacao} pedido foi anotado.\nPedido *${orderNumber}*.`)
 
   pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
     const opJid = rows[0]?.value
@@ -1952,8 +1951,8 @@ async function createTriagemVirgem(
 
   if (!isNewOrder) return
 
-  await replyAndSave(contactId, jid, `✅ Pedido *${orderNumber}* anotado!\n\nVamos organizar! Se precisar ajustar algo é só falar.`)
-
+  // Kanban 3 estágios: nada sai pro cliente na criação — só quando o operador
+  // clicar "Solicitar Confirmação" no dashboard, já com os itens montados.
   pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
     const opJid = rows[0]?.value
     if (opJid && opJid !== jid) {

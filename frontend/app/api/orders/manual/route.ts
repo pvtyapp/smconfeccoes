@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 
 // POST /api/orders/manual
 // body: { contactId: number, items: { variantId: string, qty: number }[] }
@@ -122,17 +121,9 @@ export async function POST(req: Request) {
       [contactId, JSON.stringify({ orderId, orderNumber })]
     ).catch(() => {})
 
-    // Avisa o cliente — mesma mensagem que o chatbot manda quando cria um pedido
-    if (isNewOrder) {
-      const { rows: contactRows } = await pool.query(
-        `SELECT jid FROM wa_contacts WHERE id = $1`,
-        [contactId]
-      )
-      const jid = contactRows[0]?.jid as string | undefined
-      if (jid) {
-        await sendAndSave(contactId, jid, `✅ Pedido *${orderNumber}* anotado!\n\nVamos organizar! Se precisar ajustar algo é só falar.`)
-      }
-    }
+    // Kanban 3 estágios: nada sai pro cliente na criação — Triagem é onde o
+    // pedido é captado/alterado em silêncio. Só fala com o cliente quando o
+    // operador clicar "Solicitar Confirmação" (POST /request-confirmation).
 
     return NextResponse.json({ ok: true, orderId, orderNumber, isNewOrder })
   } catch (err) {

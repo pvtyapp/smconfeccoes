@@ -120,6 +120,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
   const isTriagem      = order.status === "triagem"
   const aguardandoConf = isTriagem && !!order.confirmationRequestedAt
+  // Editou item depois de já ter solicitado confirmação — reaproveita o mesmo
+  // mecanismo de hash usado em Separação pra "Reconfirmar Pedido".
+  const triagemPendingEdit = aguardandoConf && hasPendingEdit
   const isSeparacao    = order.status === "em_separacao"
   const isPronte       = order.status === "pronto"
   const isDone         = order.status === "concluido" || order.status === "cancelado"
@@ -199,12 +202,15 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     })
   }
 
-  // TRIAGEM — solicita confirmação ao cliente, fica na mesma coluna (sub-estado)
+  // TRIAGEM — solicita confirmação ao cliente, fica na mesma coluna (sub-estado).
+  // Reaproveitada também pro "Reenviar Confirmação" (mesma ação, dispara de novo
+  // quando o operador edita item depois de já ter mandado a primeira vez).
   async function handleSolicitarConfirmacao() {
     setSendingConfirmation(true)
     try {
       await saveItems()
       await fetch(`/api/orders/${order.id}/request-confirmation`, { method: "POST" })
+      setLastSavedHash(currentHash)
       onRefresh()
     } finally { setSendingConfirmation(false) }
   }
@@ -304,13 +310,26 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           )}
 
           {/* Triagem — aguardando confirmação do cliente */}
-          {aguardandoConf && (
+          {aguardandoConf && !triagemPendingEdit && (
             <div className="flex items-center gap-3 rounded-xl px-4 py-3 bg-purple-50 border border-purple-200">
               <Clock size={14} className="text-purple-500 flex-shrink-0 animate-pulse" />
               <div>
                 <p className="text-xs font-bold text-purple-700">Aguardando confirmação do cliente</p>
                 <p className="text-[10px] mt-0.5 text-purple-500">
                   Mensagem enviada via WhatsApp. Marque quando o cliente confirmar.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Triagem — editou item depois de já ter mandado confirmação: a mensagem que o cliente recebeu ficou desatualizada */}
+          {triagemPendingEdit && (
+            <div className="flex items-center gap-3 rounded-xl px-4 py-3 bg-red-50 border border-red-200">
+              <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-red-700">Pedido mudou depois do envio</p>
+                <p className="text-[10px] mt-0.5 text-red-600">
+                  A lista que o cliente recebeu não bate mais — reenvie antes de avançar.
                 </p>
               </div>
             </div>
@@ -558,61 +577,87 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
             {/* TRIAGEM (novo): solicitar confirmação ao cliente */}
             {isTriagem && !aguardandoConf && (
-              <button onClick={handleSolicitarConfirmacao} disabled={sendingConfirmation}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {sendingConfirmation ? <Loader2 size={13} className="animate-spin" /> : null}
-                Solicitar Confirmação
-              </button>
+              <div className="flex-1 flex flex-col gap-1">
+                <button onClick={handleSolicitarConfirmacao} disabled={sendingConfirmation}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                  {sendingConfirmation ? <Loader2 size={13} className="animate-spin" /> : null}
+                  Solicitar Confirmação
+                </button>
+                <p className="text-[10px] text-center text-[#0F1E3C]/35">manda a lista pro cliente no WhatsApp</p>
+              </div>
             )}
 
-            {/* TRIAGEM (aguardando): operador marca que o cliente confirmou */}
-            {isTriagem && aguardandoConf && (
-              <button
-                onClick={() => setPendingAction({ title: "Cliente confirmou — avançar pedido para Separação?", run: handleClienteConfirmou })}
-                disabled={saving}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                Cliente confirmou <ChevronRight size={14} />
-              </button>
+            {/* TRIAGEM (aguardando, editou depois de mandar): reenvia a confirmação */}
+            {isTriagem && aguardandoConf && triagemPendingEdit && (
+              <div className="flex-1 flex flex-col gap-1">
+                <button onClick={handleSolicitarConfirmacao} disabled={sendingConfirmation}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                  {sendingConfirmation ? <Loader2 size={13} className="animate-spin" /> : <>🔁 Reenviar Confirmação</>}
+                </button>
+                <p className="text-[10px] text-center text-[#0F1E3C]/35">o pedido mudou desde o último envio</p>
+              </div>
+            )}
+
+            {/* TRIAGEM (aguardando, sem mudar nada): operador marca que o cliente confirmou */}
+            {isTriagem && aguardandoConf && !triagemPendingEdit && (
+              <div className="flex-1 flex flex-col gap-1">
+                <button
+                  onClick={() => setPendingAction({ title: "Cliente confirmou — avançar pedido para Separação?", run: handleClienteConfirmou })}
+                  disabled={saving}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  Cliente confirmou <ChevronRight size={14} />
+                </button>
+                <p className="text-[10px] text-center text-[#0F1E3C]/35">avança pro estágio de Separação</p>
+              </div>
             )}
 
             {/* EM SEPARAÇÃO — operador alterou quantidade manualmente: reconfirma com o cliente */}
             {isSeparacao && hasPendingEdit && (
-              <button onClick={handleReconfirmarPedido} disabled={sendingAlteration}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {sendingAlteration ? <Loader2 size={14} className="animate-spin" /> : <>🔁 Reconfirmar Pedido</>}
-              </button>
+              <div className="flex-1 flex flex-col gap-1">
+                <button onClick={handleReconfirmarPedido} disabled={sendingAlteration}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                  {sendingAlteration ? <Loader2 size={14} className="animate-spin" /> : <>🔁 Reconfirmar Pedido</>}
+                </button>
+                <p className="text-[10px] text-center text-[#0F1E3C]/35">manda o novo total pro cliente</p>
+              </div>
             )}
 
             {/* EM SEPARAÇÃO — sem alteração pendente: conclui e imprime a Ordem (2 vias) */}
             {isSeparacao && !hasPendingEdit && (
-              <button
-                onClick={() => setPendingAction({ title: "Concluir separação? Vai imprimir a Ordem do Pedido (2 vias) e avançar pra Pronto.", run: handleConcluirSeparacao })}
-                disabled={saving}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Concluir Separação <ChevronRight size={14} /></>}
-              </button>
+              <div className="flex-1 flex flex-col gap-1">
+                <button
+                  onClick={() => setPendingAction({ title: "Concluir separação? Vai imprimir a Ordem do Pedido (2 vias) e avançar pra Pronto.", run: handleConcluirSeparacao })}
+                  disabled={saving}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Concluir Separação <ChevronRight size={14} /></>}
+                </button>
+                <p className="text-[10px] text-center text-[#0F1E3C]/35">imprime a Ordem do Pedido (2 vias) e avança pra Pronto</p>
+              </div>
             )}
 
             {/* PRONTO: abre a pergunta de pagamento */}
             {isPronte && !askingPayment && (
-              <button onClick={() => setAskingPayment(true)} disabled={saving}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors">
-                <Check size={14} /> Concluir Entrega
-              </button>
+              <div className="flex-1 flex flex-col gap-1">
+                <button onClick={() => setAskingPayment(true)} disabled={saving}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors">
+                  <Check size={14} /> Concluir Entrega
+                </button>
+                <p className="text-[10px] text-center text-[#0F1E3C]/35">pergunta se já foi pago e fecha o pedido</p>
+              </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Print — ficha de separação (manual) */}
+      {/* Print — ficha de separação (manual) — sempre 1 via, só loja */}
       {showPrint && (
-        <PrintSheet order={order} items={items} format={printFormat} onDone={() => setShowPrint(false)} />
+        <PrintSheet order={order} items={items} format={printFormat} vias={1} onDone={() => setShowPrint(false)} />
       )}
 
-      {/* Print — Ordem do Pedido, 2 vias, automático ao Concluir Separação */}
+      {/* Print — Ordem do Pedido, sempre 2 vias (loja + cliente), automático ao Concluir Separação */}
       {orderPrint && (
-        <PrintSheet order={order} items={items} format="a4" title="Ordem do Pedido" onDone={() => setOrderPrint(false)} />
+        <PrintSheet order={order} items={items} format="a4" title="Ordem do Pedido" vias={2} onDone={() => setOrderPrint(false)} />
       )}
 
       {/* Confirmação de avanço de estágio */}

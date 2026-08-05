@@ -2,12 +2,16 @@
 
 import type { Order, OrderItem } from "./page"
 import TwoViaPrintSheet from "./TwoViaPrintSheet"
+import PrintShell from "@/components/print/PrintShell"
 
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
 
-export default function PrintSheet({ order, items, format, title = "Ficha de Separação", onDone }: {
-  order: Order; items: OrderItem[]; format: "a4" | "thermal"; title?: string; onDone: () => void
+// "format" (papel: A4 vs térmica) e "vias" (quantas cópias) são independentes —
+// Ficha de Separação é sempre 1 via (uso interno da loja), Ordem do Pedido é
+// sempre 2 (loja + cliente, tipo cupom fiscal), em qualquer formato de papel.
+export default function PrintSheet({ order, items, format, title = "Ficha de Separação", vias = 1, onDone }: {
+  order: Order; items: OrderItem[]; format: "a4" | "thermal"; title?: string; vias?: 1 | 2; onDone: () => void
 }) {
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
   const tz = "America/Sao_Paulo"
@@ -285,6 +289,14 @@ export default function PrintSheet({ order, items, format, title = "Ficha de Sep
           <span style={{ fontSize: "6.5px", color: "#aaa" }}>{order.number} · {printDate}</span>
         </div>
       </div>
+    )
+  }
+
+  if (vias === 1) {
+    return (
+      <PrintShell wrapperClass="print-a4" onDone={onDone}>
+        {renderFicha("LOJA")}
+      </PrintShell>
     )
   }
 
