@@ -44,6 +44,8 @@ export async function GET(req: Request) {
         o.is_partial           AS "isPartial",
         o.stock_alert          AS "stockAlert",
         COALESCE(o.alteration_sent, false) AS "alterationSent",
+        o.confirmation_requested_at AS "confirmationRequestedAt",
+        o.paid_label           AS "paidLabel",
         (
           SELECT oe2.note LIKE '%ajuste%'
           FROM order_events oe2

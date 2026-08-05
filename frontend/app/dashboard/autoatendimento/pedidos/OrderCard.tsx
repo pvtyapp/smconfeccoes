@@ -5,20 +5,16 @@ import type { Order } from "./page"
 
 const STATUS_LABEL: Record<string, string> = {
   triagem:       "Triagem",
-  confirmando:   "Aguard. Confirmação",
   em_separacao:  "Em Separação",
   pronto:        "Pronto p/ Retirada",
-  pago:          "Pago",
   concluido:     "Retirado",
   cancelado:     "Cancelado",
 }
 
 const STATUS_COLOR: Record<string, string> = {
   triagem:       "bg-amber-50 text-amber-700 border-amber-200",
-  confirmando:   "bg-purple-50 text-purple-700 border-purple-200",
   em_separacao:  "bg-blue-50 text-blue-700 border-blue-200",
   pronto:        "bg-orange-50 text-orange-700 border-orange-200",
-  pago:          "bg-green-50 text-green-700 border-green-200",
   concluido:     "bg-[#0F1E3C]/5 text-[#0F1E3C]/40 border-[#0F1E3C]/10",
   cancelado:     "bg-red-50 text-red-600 border-red-200",
 }
@@ -36,20 +32,22 @@ function timeAgo(dateStr: string) {
 type Props = {
   order: Order
   onClick: () => void
-  onTogglePay?: (orderId: number, currentlyPaid: boolean) => void
+  onSetPaidLabel?: (orderId: number, value: boolean) => void
 }
 
-export default function OrderCard({ order, onClick, onTogglePay }: Props) {
+export default function OrderCard({ order, onClick, onSetPaidLabel }: Props) {
   const totalQty  = order.items.reduce((s, i) => s + i.qty, 0)
   const isPronto  = order.status === "pronto"
+  const isTriagem = order.status === "triagem"
+  const isSeparacao = order.status === "em_separacao"
+  const aguardandoConfirmacao = isTriagem && !!order.confirmationRequestedAt
+  const hasStockAlert = isSeparacao && !!order.stockAlert?.length
+  const isAlterado = isSeparacao && order.alterationSent
 
-  function handlePayToggle(e: React.MouseEvent) {
+  function handleSetPaid(e: React.MouseEvent, value: boolean) {
     e.stopPropagation()
-    onTogglePay?.(order.id, false)
+    onSetPaidLabel?.(order.id, value)
   }
-
-  const hasStockAlert = order.status === "em_separacao" && !!order.stockAlert?.length
-  const isTriagem     = order.status === "triagem"
 
   const card = (
     <button
@@ -57,17 +55,25 @@ export default function OrderCard({ order, onClick, onTogglePay }: Props) {
       className={`relative w-full text-left bg-white rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all ${
         order.needsAttention
           ? "border-amber-300 hover:border-amber-400"
-          : hasStockAlert
+          : hasStockAlert || isAlterado
           ? "border-red-300 hover:border-red-400"
           : "border-[#0F1E3C]/8 hover:border-[#4361EE]/30"
       }`}
     >
-      {/* Stock alert banner */}
+      {/* Alterado — item mudou manualmente em Separação */}
+      {isAlterado && (
+        <div className="flex items-center gap-1.5 mb-3 px-2 py-1.5 bg-red-50 border border-red-200 rounded-xl">
+          <AlertTriangle size={11} className="text-red-500 flex-shrink-0" />
+          <p className="text-[10px] font-bold text-red-700">🔁 Alterado — precisa reconfirmar</p>
+        </div>
+      )}
+
+      {/* Stock alert banner — só informativo, não muda o pedido sozinho */}
       {hasStockAlert && (
-        <div className="mb-3 px-2 py-1.5 bg-red-50 border border-red-200 rounded-xl">
-          <p className="text-[10px] font-bold text-red-700 mb-0.5">⚠ Estoque insuficiente</p>
+        <div className="mb-3 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-xl">
+          <p className="text-[10px] font-bold text-amber-700 mb-0.5">⚠ Estoque insuficiente</p>
           {order.stockAlert!.map((a, i) => (
-            <p key={i} className="text-[10px] text-red-600">
+            <p key={i} className="text-[10px] text-amber-700">
               {[a.productName, a.color, a.size].filter(Boolean).join(" ")} — pediu {a.requested}, disponível {a.available}
             </p>
           ))}
@@ -104,6 +110,14 @@ export default function OrderCard({ order, onClick, onTogglePay }: Props) {
           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_COLOR[order.status] ?? "bg-gray-100 text-gray-500 border-gray-200"}`}>
             {STATUS_LABEL[order.status] ?? order.status}
           </span>
+          {/* Sub-estado da Triagem — confirmação ainda não é uma coluna própria */}
+          {isTriagem && (
+            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+              aguardandoConfirmacao ? "bg-purple-50 text-purple-600 border border-purple-200" : "bg-[#4361EE]/10 text-[#4361EE]"
+            }`}>
+              {aguardandoConfirmacao ? "⏳ Aguard. confirmação" : "Novo"}
+            </span>
+          )}
           <div className="flex items-center gap-1 text-[10px] text-[#0F1E3C]/30">
             <Clock size={9} />
             {timeAgo(order.createdAt)}
@@ -131,23 +145,38 @@ export default function OrderCard({ order, onClick, onTogglePay }: Props) {
       {/* Footer */}
       <div className="mt-3 pt-3 border-t border-[#0F1E3C]/6 flex justify-between items-center text-xs text-[#0F1E3C]/40">
         <span>{order.items.length} iten{order.items.length !== 1 ? "s" : ""}</span>
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
-          {/* Botão PAGO — aparece em Pronto p/ Retirada */}
-          {isPronto && (
-            <button
-              onClick={handlePayToggle}
-              className="text-[9px] font-black px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 transition-colors"
-            >
-              ✓ PAGO
-            </button>
-          )}
-        </div>
+        <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
       </div>
+
+      {/* Selo Pagou/Não pagou — só informativo, Pronto p/ Retirada */}
+      {isPronto && (
+        <div className="mt-2 flex gap-1.5">
+          <button
+            onClick={e => handleSetPaid(e, true)}
+            className={`flex-1 text-[9px] font-black px-2 py-1 rounded-lg border transition-colors ${
+              order.paidLabel === true
+                ? "bg-emerald-500 text-white border-emerald-500"
+                : "bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+            }`}
+          >
+            Pagou
+          </button>
+          <button
+            onClick={e => handleSetPaid(e, false)}
+            className={`flex-1 text-[9px] font-black px-2 py-1 rounded-lg border transition-colors ${
+              order.paidLabel === false
+                ? "bg-[#0F1E3C] text-white border-[#0F1E3C]"
+                : "bg-white text-[#0F1E3C]/50 border-[#0F1E3C]/12 hover:bg-[#0F1E3C]/4"
+            }`}
+          >
+            Não pagou
+          </button>
+        </div>
+      )}
     </button>
   )
 
-  if (!isTriagem) return card
+  if (!isTriagem || aguardandoConfirmacao) return card
 
   return (
     <div className="led-wrap">

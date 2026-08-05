@@ -6,8 +6,8 @@ import TwoViaPrintSheet from "./TwoViaPrintSheet"
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
 
-export default function PrintSheet({ order, items, format, onDone }: {
-  order: Order; items: OrderItem[]; format: "a4" | "thermal"; onDone: () => void
+export default function PrintSheet({ order, items, format, title = "Ficha de Separação", onDone }: {
+  order: Order; items: OrderItem[]; format: "a4" | "thermal"; title?: string; onDone: () => void
 }) {
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
   const tz = "America/Sao_Paulo"
@@ -50,7 +50,7 @@ export default function PrintSheet({ order, items, format, onDone }: {
             padding: "3px 7px", display: "flex", justifyContent: "space-between",
             alignItems: "center", marginBottom: "3mm",
           }}>
-            <span style={{ fontWeight: "800", fontSize: "9px", letterSpacing: "0.8px" }}>FICHA DE SEPARAÇÃO</span>
+            <span style={{ fontWeight: "800", fontSize: "9px", letterSpacing: "0.8px" }}>{title.toUpperCase()}</span>
             <span style={{ fontSize: "7px", opacity: 0.75 }}>{printDate} {printTime}</span>
           </div>
 
@@ -160,7 +160,7 @@ export default function PrintSheet({ order, items, format, onDone }: {
           alignItems: "center", marginBottom: "7px",
         }}>
           <span style={{ fontWeight: "800", fontSize: "10px", letterSpacing: "1.2px", textTransform: "uppercase" }}>
-            Ficha de Separação
+            {title}
           </span>
           <span style={{ fontSize: "8px", opacity: 0.75 }}>Impressão: {printDate} {printTime}</span>
         </div>

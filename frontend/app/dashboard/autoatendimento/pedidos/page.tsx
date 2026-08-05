@@ -71,6 +71,8 @@ export type Order = {
   isPartial: boolean
   stockAlert: { productName: string; color: string; size: string; requested: number; available: number }[] | null
   alterationSent: boolean
+  confirmationRequestedAt: string | null
+  paidLabel: boolean | null
   items: OrderItem[]
 }
 
@@ -178,10 +180,8 @@ function getHistDates(key: HistPeriod, rs: string, re: string): [string, string]
 
 const PROD_COLS = [
   { key: "triagem",      label: "Triagem",             hdr: "bg-amber-50 border-amber-200",       badge: "bg-amber-100 text-amber-700",      txt: "text-amber-700"      },
-  { key: "confirmando",  label: "Aguard. Confirmação", hdr: "bg-purple-50 border-purple-200",     badge: "bg-purple-100 text-purple-700",    txt: "text-purple-700"     },
   { key: "em_separacao", label: "Em Separação",        hdr: "bg-blue-50 border-blue-200",         badge: "bg-blue-100 text-blue-700",        txt: "text-blue-700"       },
   { key: "pronto",       label: "Pronto p/ Retirada",  hdr: "bg-orange-50 border-orange-200",     badge: "bg-orange-100 text-orange-700",    txt: "text-orange-700"     },
-  { key: "pago",         label: "Pago",                hdr: "bg-green-50 border-green-200",       badge: "bg-green-100 text-green-700",      txt: "text-green-700"      },
 ]
 
 const DTF_COLS = [
@@ -254,8 +254,15 @@ export default function PedidosPage() {
   const [loadingOrders,  setLoadingOrders]  = useState(true)
   const [selected,       setSelected]       = useState<Order | null>(null)
   const selectedIdRef                       = useRef<number | null>(null)
-  const [payConfirmId,   setPayConfirmId]   = useState<number | null>(null)
-  const [confirmingPay,  setConfirmingPay]  = useState(false)
+  // Selo Pagou/Não pagou (Pronto p/ Retirada) — só informativo, grava direto sem confirmação.
+  async function setPaidLabel(id: number, value: boolean) {
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, paidLabel: value } : o))
+    await fetch(`/api/orders/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paidLabel: value }),
+    })
+  }
   const [dtfUnpayId,     setDtfUnpayId]     = useState<number | null>(null)
   const [dtfUnpayDate,   setDtfUnpayDate]   = useState("")
   const [confirmingDtfUnpay, setConfirmingDtfUnpay] = useState(false)
@@ -2185,7 +2192,7 @@ export default function PedidosPage() {
                         ) : colOrders.map(order => (
                           <OrderCard key={order.id} order={order}
                             onClick={() => { selectedIdRef.current = order.id; setSelected(order) }}
-                            onTogglePay={(id) => setPayConfirmId(id)}
+                            onSetPaidLabel={setPaidLabel}
                           />
                         ))}
                         {/* Reservas — seção colapsável na Triagem */}
@@ -2418,28 +2425,6 @@ export default function PedidosPage() {
       )}
       {selectedDtf && (
         <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} numImpressoras={numImpressoras} />
-      )}
-      {payConfirmId !== null && (
-        <ConfirmDialog
-          title="Marcar pedido como pago?"
-          confirming={confirmingPay}
-          onCancel={() => setPayConfirmId(null)}
-          onConfirm={async () => {
-            setConfirmingPay(true)
-            try {
-              const id = payConfirmId
-              await fetch(`/api/orders/${id}/status`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "pago" }),
-              })
-              setOrders(prev => prev.map(o => o.id === id ? { ...o, status: "pago", paidAt: new Date().toISOString() } : o))
-            } finally {
-              setConfirmingPay(false)
-              setPayConfirmId(null)
-            }
-          }}
-        />
       )}
       {dtfUnpayId !== null && (
         <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">

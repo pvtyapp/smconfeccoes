@@ -46,10 +46,13 @@ export async function GET() {
         GROUP BY variant_id
       ) rsvd ON rsvd.variant_id = pv.id
       LEFT JOIN (
+        -- Estoque só é debitado de verdade no Concluir Entrega (status=concluido)
+        -- — até lá (incluindo Pronto p/ Retirada) a peça ainda está fisicamente
+        -- no estoque, só comprometida com esses pedidos.
         SELECT oi.variant_id, SUM(oi.qty) AS locked_qty
         FROM order_items oi
         JOIN orders o ON o.id = oi.order_id
-        WHERE o.status IN ('triagem', 'confirmando', 'em_separacao') AND oi.variant_id IS NOT NULL
+        WHERE o.status IN ('triagem', 'em_separacao', 'pronto') AND oi.variant_id IS NOT NULL
         GROUP BY oi.variant_id
       ) locked ON locked.variant_id = pv.id
       WHERE pv.status = 'active' AND p.status = 'active'

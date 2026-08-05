@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react"
 import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw } from "lucide-react"
 import type { Order, OrderItem } from "./page"
-import { subDaysBR } from "@/lib/tz"
 import PrintSheet from "./PrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
 import Toggle from "@/components/Toggle"
@@ -17,20 +16,16 @@ type Props = {
 
 const STATUS_LABEL: Record<string, string> = {
   triagem:      "Triagem",
-  confirmando:  "Aguard. Confirmação",
   em_separacao: "Em Separação",
   pronto:       "Pronto p/ Retirada",
-  pago:         "Pago",
   concluido:    "Retirado",
   cancelado:    "Cancelado",
 }
 
 const STATUS_COLOR: Record<string, string> = {
   triagem:      "bg-amber-100 text-amber-700",
-  confirmando:  "bg-purple-100 text-purple-700",
   em_separacao: "bg-blue-100 text-blue-700",
   pronto:       "bg-orange-100 text-orange-700",
-  pago:         "bg-green-100 text-green-700",
   concluido:    "bg-[#0F1E3C]/8 text-[#0F1E3C]/50",
   cancelado:    "bg-red-100 text-red-600",
 }
@@ -60,6 +55,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [saving,        setSaving]        = useState(false)
   const [printFormat,   setPrintFormat]   = useState<"a4" | "thermal">("a4")
   const [showPrint,     setShowPrint]     = useState(false)
+  const [orderPrint,    setOrderPrint]    = useState(false) // "Ordem do Pedido" 2 vias, ao concluir separação
   const [hasPrinted,    setHasPrinted]    = useState(false)
   const [printedHash,   setPrintedHash]   = useState("")
 
@@ -84,9 +80,10 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [showCancel,    setShowCancel]    = useState(false)
   const [notifyClient,  setNotifyClient]  = useState(true)
   const [cancelMsg,     setCancelMsg]     = useState(`Seu pedido ${order.number} foi cancelado. Qualquer dúvida é só chamar.`)
-  const [isPaid,        setIsPaid]        = useState(true)
+  const [askingPayment, setAskingPayment] = useState(false)
   const [dueDate,       setDueDate]       = useState("")
   const [error,         setError]         = useState("")
+  const [sendingConfirmation, setSendingConfirmation] = useState(false)
   const [sendingAlteration, setSendingAlteration] = useState(false)
   const [pendingAction, setPendingAction] = useState<{ title: string; run: () => Promise<void> } | null>(null)
   const [confirming,    setConfirming]    = useState(false)
@@ -121,22 +118,17 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     printWhenReady()
   }
 
-  const isTriagem    = order.status === "triagem"
-  const isConfirm    = order.status === "confirmando"
-  const isSeparacao  = order.status === "em_separacao"
-  const isPronte     = order.status === "pronto"
-  const isPago       = order.status === "pago"
-  const isDone       = order.status === "concluido" || order.status === "cancelado"
+  const isTriagem      = order.status === "triagem"
+  const aguardandoConf = isTriagem && !!order.confirmationRequestedAt
+  const isSeparacao    = order.status === "em_separacao"
+  const isPronte       = order.status === "pronto"
+  const isDone         = order.status === "concluido" || order.status === "cancelado"
 
   const groups   = groupItems(items)
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
 
   function setQty(idx: number, val: number) {
     setItems(prev => prev.map((item, i) => i === idx ? { ...item, qty: Math.max(1, val) } : item))
-  }
-
-  function setQtyConfirmed(idx: number, val: number) {
-    setItems(prev => prev.map((item, i) => i === idx ? { ...item, qtyConfirmed: Math.max(0, val) } : item))
   }
 
   function removeItem(idx: number) {
@@ -207,35 +199,26 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     })
   }
 
-  async function handleEnviarConfirmar() {
-    setSaving(true)
+  // TRIAGEM — solicita confirmação ao cliente, fica na mesma coluna (sub-estado)
+  async function handleSolicitarConfirmacao() {
+    setSendingConfirmation(true)
     try {
       await saveItems()
-      await postStatus("confirmando")
+      await fetch(`/api/orders/${order.id}/request-confirmation`, { method: "POST" })
       onRefresh()
-    } finally { setSaving(false) }
+    } finally { setSendingConfirmation(false) }
   }
 
-  async function handleAvancarManual() {
+  // TRIAGEM (aguardando) — operador confirma que o cliente respondeu OK
+  async function handleClienteConfirmou() {
     setSaving(true)
     try {
-      await saveItems()
       await postStatus("em_separacao")
       onRefresh()
     } finally { setSaving(false) }
   }
 
-  async function handleConfirmarAlteracao() {
-    setSendingAlteration(true)
-    try {
-      await fetch(`/api/orders/${order.id}/alert-alteration`, { method: "POST" })
-      onRefresh()
-    } finally { setSendingAlteration(false) }
-  }
-
-  // Operador alterou quantidade manualmente com o pedido já em Em Separação:
-  // salva (o PUT reconcilia o estoque debitado), avisa o cliente e mantém o
-  // pedido no mesmo estágio — o botão volta a ser "Marcar como Pronto" depois.
+  // EM SEPARAÇÃO — operador editou quantidade manualmente: reconfirma com o cliente
   async function handleReconfirmarPedido() {
     setSendingAlteration(true)
     try {
@@ -246,20 +229,26 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     } finally { setSendingAlteration(false) }
   }
 
-  async function handleMarcarPronte() {
+  // EM SEPARAÇÃO — sem alteração pendente: conclui a separação, imprime a Ordem
+  // do Pedido (2 vias) automaticamente e avança pra Pronto p/ Retirada.
+  async function handleConcluirSeparacao() {
     setSaving(true)
     try {
       await saveItems()
       await postStatus("pronto")
       onRefresh()
+      setOrderPrint(true)
+      printWhenReady()
     } finally { setSaving(false) }
   }
 
-  async function handleMarcarPago() {
+  // PRONTO — Concluir Entrega pergunta pagamento antes de fechar o ciclo
+  async function handleConcluirPago() {
     setSaving(true)
     try {
-      await postStatus("pago")
+      await postStatus("concluido", { paid: true })
       onRefresh()
+      onClose()
     } finally { setSaving(false) }
   }
 
@@ -268,16 +257,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     setSaving(true)
     setError("")
     try {
-      await postStatus("concluido", { dueDate })
-      onRefresh()
-      onClose()
-    } finally { setSaving(false) }
-  }
-
-  async function handleConfirmarRetirada() {
-    setSaving(true)
-    try {
-      await postStatus("concluido")
+      await postStatus("concluido", { paid: false, dueDate })
       onRefresh()
       onClose()
     } finally { setSaving(false) }
@@ -323,31 +303,36 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             </div>
           )}
 
-          {/* Confirmando — banner de espera */}
-          {isConfirm && (
+          {/* Triagem — aguardando confirmação do cliente */}
+          {aguardandoConf && (
             <div className="flex items-center gap-3 rounded-xl px-4 py-3 bg-purple-50 border border-purple-200">
               <Clock size={14} className="text-purple-500 flex-shrink-0 animate-pulse" />
               <div>
                 <p className="text-xs font-bold text-purple-700">Aguardando confirmação do cliente</p>
                 <p className="text-[10px] mt-0.5 text-purple-500">
-                  Mensagem enviada via WhatsApp. Avance manualmente quando confirmar com o cliente.
+                  Mensagem enviada via WhatsApp. Marque quando o cliente confirmar.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Em Separação — alerta de estoque insuficiente */}
+          {/* Em Separação — aviso de estoque insuficiente (só informativo) */}
           {isSeparacao && order.stockAlert && order.stockAlert.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 space-y-1">
-              <p className="text-xs font-bold text-red-700">⚠ Estoque insuficiente</p>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1">
+              <p className="text-xs font-bold text-amber-700">⚠ Estoque insuficiente — aviso, o pedido não muda sozinho</p>
               {order.stockAlert.map((a, i) => (
-                <p key={i} className="text-xs text-red-600">
+                <p key={i} className="text-xs text-amber-700">
                   {[a.productName, a.color, a.size].filter(Boolean).join(" ")} — pediu <b>{a.requested}</b>, disponível <b>{a.available}</b>
                 </p>
               ))}
-              {order.alterationSent && (
-                <p className="text-[10px] text-red-500 pt-1">Mensagem já enviada ao cliente — aguardando resposta.</p>
-              )}
+              <p className="text-[10px] text-amber-600 pt-1">Ajuste o item manualmente se quiser refletir isso no pedido.</p>
+            </div>
+          )}
+
+          {/* Em Separação — alteração manual já mandada, aguardando resposta */}
+          {isSeparacao && !hasPendingEdit && order.alterationSent && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <p className="text-xs font-bold text-red-700">🔁 Pedido alterado — cliente já foi avisado do novo total</p>
             </div>
           )}
 
@@ -357,16 +342,6 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               <p className="text-xs font-semibold text-orange-700">Pronto para retirada — aguardando cliente</p>
               {order.totalValue && (
                 <p className="text-base font-black text-orange-700">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</p>
-              )}
-            </div>
-          )}
-
-          {/* Pago — aguardando confirmação de entrega */}
-          {isPago && (
-            <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center justify-between">
-              <p className="text-xs font-semibold text-green-700">Pagamento confirmado — confirme a entrega</p>
-              {order.totalValue && (
-                <p className="text-base font-black text-green-700">R$ {Number(order.totalValue).toFixed(2).replace(".", ",")}</p>
               )}
             </div>
           )}
@@ -394,8 +369,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                         {!item.color && !item.size && <span className="text-xs text-[#0F1E3C]/30 italic">sem variação</span>}
                       </div>
 
-                      {/* Qty stepper — triagem, confirmação e em_separacao */}
-                      {(isTriagem || isConfirm || isSeparacao) && (
+                      {/* Qty stepper — triagem e em_separacao */}
+                      {(isTriagem || isSeparacao) && (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button onClick={() => setQty(item._idx, item.qty - 1)}
                             className="w-7 h-7 rounded-lg bg-white border border-[#0F1E3C]/10 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-sm font-bold flex items-center justify-center">−</button>
@@ -406,14 +381,14 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                       )}
 
                       {/* Qty somente leitura */}
-                      {!isTriagem && !isConfirm && !isSeparacao && (
+                      {!isTriagem && !isSeparacao && (
                         <span className="text-sm font-black text-[#0F1E3C] flex-shrink-0 w-10 text-right">
                           {item.qtyConfirmed ?? item.qty}
                         </span>
                       )}
 
-                      {/* Delete — triagem, confirmação e em_separacao */}
-                      {(isTriagem || isConfirm || isSeparacao) && (
+                      {/* Delete — triagem e em_separacao */}
+                      {(isTriagem || isSeparacao) && (
                         <button onClick={() => removeItem(item._idx)}
                           className="w-7 h-7 rounded-lg text-[#0F1E3C]/20 hover:text-red-400 hover:bg-red-50 flex items-center justify-center flex-shrink-0 transition-colors">
                           <Trash2 size={12} />
@@ -425,7 +400,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </div>
             ))}
 
-            {(isTriagem || isSeparacao || isConfirm) && (
+            {(isTriagem || isSeparacao) && (
               addingItem ? (
                 <div className="rounded-2xl border border-dashed border-purple-300 bg-purple-50/50 p-3 space-y-2.5">
                   <div className="flex items-center justify-between">
@@ -497,8 +472,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             <span className="text-sm font-black text-[#0F1E3C]">{totalQty} unidades</span>
           </div>
 
-          {/* Imprimir — disponível a partir do confirmando */}
-          {(isConfirm || isSeparacao || isPronte || isPago) && (
+          {/* Imprimir Ficha de Separação — disponível a partir de em_separacao */}
+          {(isSeparacao || isPronte) && (
             <div className="space-y-2 pt-1">
               {needsReprint && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
@@ -526,7 +501,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                       : "border-[#0F1E3C]/10 text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/6"
                   }`}>
                   {needsReprint ? <RotateCcw size={14} /> : <Printer size={14} />}
-                  {hasPrinted ? (needsReprint ? "Reimprimir Ficha" : "Reimprimir") : "Imprimir Ficha"}
+                  {hasPrinted ? (needsReprint ? "Reimprimir Ficha" : "Reimprimir") : "Imprimir Ficha de Separação"}
                 </button>
               </div>
             </div>
@@ -536,19 +511,40 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[#0F1E3C]/8 space-y-2.5">
-          {isPronte && !isPaid && (
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
-                Vencimento *
-              </label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={e => { setDueDate(e.target.value); setError("") }}
-                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-              />
+
+          {/* PRONTO — pergunta de pagamento ao concluir a entrega */}
+          {isPronte && askingPayment && (
+            <div className="rounded-xl border border-[#0F1E3C]/10 bg-[#F4F6FB] p-3 space-y-2.5">
+              <p className="text-xs font-bold text-[#0F1E3C]">Pedido já foi pago?</p>
+              <div className="flex gap-2">
+                <button onClick={handleConcluirPago} disabled={saving}
+                  className="flex-1 py-2 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-semibold disabled:opacity-50">
+                  Sim
+                </button>
+                <button onClick={() => setAskingPayment(v => !v)} disabled={saving}
+                  className="flex-1 py-2 rounded-xl bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold disabled:opacity-50">
+                  Não
+                </button>
+              </div>
+              {/* "Não" já revela o campo de prazo abaixo (mesmo painel, sem trocar de tela) */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
+                  Se não pagou — vencimento *
+                </label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={e => { setDueDate(e.target.value); setError("") }}
+                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                />
+                <button onClick={handleConcluirPrazo} disabled={saving}
+                  className="w-full py-2 rounded-xl border border-[#0F1E3C]/15 text-[#0F1E3C] text-sm font-semibold hover:bg-[#0F1E3C]/4 disabled:opacity-50">
+                  Concluir a Prazo
+                </button>
+              </div>
             </div>
           )}
+
           {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <div className="flex gap-2">
 
@@ -560,25 +556,23 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* TRIAGEM: confirmar pedido — manda lista pro cliente confirmar */}
-            {isTriagem && (
-              <button
-                onClick={() => setPendingAction({ title: "Confirmar pedido e avançar para Aguardando Confirmação?", run: handleEnviarConfirmar })}
-                disabled={saving}
+            {/* TRIAGEM (novo): solicitar confirmação ao cliente */}
+            {isTriagem && !aguardandoConf && (
+              <button onClick={handleSolicitarConfirmacao} disabled={sendingConfirmation}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={13} className="animate-spin" /> : null}
-                Confirmar Pedido
+                {sendingConfirmation ? <Loader2 size={13} className="animate-spin" /> : null}
+                Solicitar Confirmação
               </button>
             )}
 
-            {/* CONFIRMANDO: adicionar item + avançar */}
-            {isConfirm && (
+            {/* TRIAGEM (aguardando): operador marca que o cliente confirmou */}
+            {isTriagem && aguardandoConf && (
               <button
-                onClick={() => setPendingAction({ title: "Avançar pedido para Em Separação?", run: handleAvancarManual })}
+                onClick={() => setPendingAction({ title: "Cliente confirmou — avançar pedido para Separação?", run: handleClienteConfirmou })}
                 disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : null}
-                Avançar para Separação <ChevronRight size={14} />
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Cliente confirmou <ChevronRight size={14} />
               </button>
             )}
 
@@ -590,86 +584,35 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </button>
             )}
 
-            {/* EM SEPARAÇÃO — sem alteração: marcar como pronto */}
-            {isSeparacao && !hasPendingEdit && !order.stockAlert?.length && (
+            {/* EM SEPARAÇÃO — sem alteração pendente: conclui e imprime a Ordem (2 vias) */}
+            {isSeparacao && !hasPendingEdit && (
               <button
-                onClick={() => setPendingAction({ title: "Marcar pedido como Pronto para Retirada?", run: handleMarcarPronte })}
+                onClick={() => setPendingAction({ title: "Concluir separação? Vai imprimir a Ordem do Pedido (2 vias) e avançar pra Pronto.", run: handleConcluirSeparacao })}
                 disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Marcar como Pronto <ChevronRight size={14} /></>}
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Concluir Separação <ChevronRight size={14} /></>}
               </button>
             )}
 
-            {/* EM SEPARAÇÃO — alteração automática (estoque insuficiente) ainda não avisada ao cliente */}
-            {isSeparacao && !hasPendingEdit && !!order.stockAlert?.length && !order.alterationSent && (
-              <button onClick={handleConfirmarAlteracao} disabled={sendingAlteration}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {sendingAlteration ? <Loader2 size={14} className="animate-spin" /> : <>🔁 Confirmar Alteração</>}
-              </button>
-            )}
-
-            {/* EM SEPARAÇÃO — alteração já avisada, aguardando resposta do cliente */}
-            {isSeparacao && !hasPendingEdit && !!order.stockAlert?.length && order.alterationSent && (
-              <button
-                onClick={() => setPendingAction({ title: "Marcar pedido como Pronto para Retirada?", run: handleMarcarPronte })}
-                disabled={saving}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Confirmar Alteração</>}
-              </button>
-            )}
-
-            {/* PRONTO: à vista → confirmar pagamento | a prazo → concluir direto */}
-            {isPronte && (
-              <>
-                {order.paymentTermEnabled && (
-                  <div
-                    className="flex items-center gap-2 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
-                    onClick={() => {
-                      const next = !isPaid
-                      setIsPaid(next)
-                      if (!next && !dueDate && order.paymentTermType === "days" && order.paymentTermDays) {
-                        setDueDate(subDaysBR(-order.paymentTermDays))
-                      }
-                      setError("")
-                    }}
-                  >
-                    <Toggle on={isPaid} onChange={() => {}} onColor="bg-emerald-500" />
-                    <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "À vista" : "A prazo"}</p>
-                  </div>
-                )}
-                <button
-                  onClick={() => setPendingAction(
-                    isPaid
-                      ? { title: "Confirmar pagamento e avançar pedido?", run: handleMarcarPago }
-                      : { title: "Concluir pedido a prazo?", run: handleConcluirPrazo }
-                  )}
-                  disabled={saving}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-colors ${
-                    isPaid ? "bg-green-600 hover:bg-green-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"
-                  }`}>
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                  {isPaid ? "Confirmar Pagamento" : "Concluir a Prazo"}
-                </button>
-              </>
-            )}
-
-            {/* PAGO: confirmar entrega */}
-            {isPago && (
-              <button
-                onClick={() => setPendingAction({ title: "Confirmar entrega e concluir pedido?", run: handleConfirmarRetirada })}
-                disabled={saving}
+            {/* PRONTO: abre a pergunta de pagamento */}
+            {isPronte && !askingPayment && (
+              <button onClick={() => setAskingPayment(true)} disabled={saving}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-bold rounded-xl disabled:opacity-50 transition-colors">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                Confirmar Entrega
+                <Check size={14} /> Concluir Entrega
               </button>
             )}
           </div>
         </div>
       </div>
 
-      {/* Print */}
+      {/* Print — ficha de separação (manual) */}
       {showPrint && (
         <PrintSheet order={order} items={items} format={printFormat} onDone={() => setShowPrint(false)} />
+      )}
+
+      {/* Print — Ordem do Pedido, 2 vias, automático ao Concluir Separação */}
+      {orderPrint && (
+        <PrintSheet order={order} items={items} format="a4" title="Ordem do Pedido" onDone={() => setOrderPrint(false)} />
       )}
 
       {/* Confirmação de avanço de estágio */}

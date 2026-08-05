@@ -8,6 +8,8 @@ async function getOrder(id: string) {
       o.number,
       o.status,
       o.notes,
+      o.confirmation_requested_at AS "confirmationRequestedAt",
+      o.paid_label   AS "paidLabel",
       o.created_at   AS "createdAt",
       o.updated_at   AS "updatedAt",
       c.id           AS "contactId",
@@ -64,7 +66,7 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await req.json()
-    const { notes, items } = body
+    const { notes, items, paidLabel } = body
 
     await client.query("BEGIN")
 
@@ -72,27 +74,20 @@ export async function PUT(
       await client.query("UPDATE orders SET notes = $1 WHERE id = $2", [notes, id])
     }
 
+    // Selo Pagou/Não pagou — só informativo (Pronto p/ Retirada), não muda nada
+    // mais no pedido, é lembrete visual pro operador.
+    if (paidLabel !== undefined) {
+      await client.query(`
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_label BOOLEAN
+      `).catch(() => {})
+      await client.query("UPDATE orders SET paid_label = $1 WHERE id = $2", [paidLabel, id])
+    }
+
     if (Array.isArray(items)) {
-      const { rows: orderRows } = await client.query(
-        `SELECT status, number FROM orders WHERE id = $1`, [id]
-      )
-      const orderStatus = orderRows[0]?.status as string | undefined
-      const orderNumber = orderRows[0]?.number as string | undefined
-
-      // Em separação, o estoque já foi debitado com base na quantidade que existia
-      // no momento da entrada no estágio. Se o operador altera a quantidade agora,
-      // precisa reconciliar stock_movements pra refletir a diferença.
-      const oldQtyByVariant: Record<string, number> = {}
-      if (orderStatus === "em_separacao") {
-        const { rows: oldItems } = await client.query(
-          `SELECT variant_id, qty::int AS qty FROM order_items WHERE order_id = $1 AND variant_id IS NOT NULL`,
-          [id]
-        )
-        for (const r of oldItems) {
-          oldQtyByVariant[r.variant_id] = (oldQtyByVariant[r.variant_id] ?? 0) + r.qty
-        }
-      }
-
+      // Kanban 3 estágios: estoque não mexe mais aqui em nenhum estágio — só
+      // sai de verdade no Concluir Entrega (status=concluido). Editar item em
+      // Triagem ou Separação é só dado do pedido, sem efeito colateral no
+      // estoque físico até a entrega ser confirmada.
       await client.query("DELETE FROM order_items WHERE order_id = $1", [id])
       for (const item of items) {
         await client.query(`
@@ -109,37 +104,6 @@ export async function PUT(
          ) WHERE id = $1`,
         [id]
       )
-
-      if (orderStatus === "em_separacao") {
-        const newQtyByVariant: Record<string, number> = {}
-        for (const item of items) {
-          if (item.variantId) newQtyByVariant[item.variantId] = (newQtyByVariant[item.variantId] ?? 0) + Number(item.qty)
-        }
-        const variantIds = new Set([...Object.keys(oldQtyByVariant), ...Object.keys(newQtyByVariant)])
-        for (const variantId of variantIds) {
-          const delta = (newQtyByVariant[variantId] ?? 0) - (oldQtyByVariant[variantId] ?? 0)
-          if (delta === 0) continue
-          if (delta > 0) {
-            const { rows: balRows } = await client.query(
-              `SELECT COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END), 0)::int AS bal
-               FROM stock_movements WHERE variant_id = $1`,
-              [variantId]
-            )
-            const toDeduct = Math.min(delta, Math.max(0, balRows[0].bal))
-            if (toDeduct > 0) {
-              await client.query(`
-                INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-                VALUES ($1, 'out', $2, 'venda', 'dashboard', $3)
-              `, [variantId, toDeduct, `Ajuste Pedido ${orderNumber}`])
-            }
-          } else {
-            await client.query(`
-              INSERT INTO stock_movements (variant_id, type, quantity, reason, channel, notes)
-              VALUES ($1, 'in', $2, 'ajuste_pedido', 'dashboard', $3)
-            `, [variantId, -delta, `Ajuste Pedido ${orderNumber}`])
-          }
-        }
-      }
     }
 
     await client.query("COMMIT")

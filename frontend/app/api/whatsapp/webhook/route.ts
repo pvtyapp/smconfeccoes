@@ -1190,7 +1190,7 @@ async function resolveProductKeyword(text: string): Promise<string> {
 
 async function getMostRecentOrder(contactId: number) {
   const res = await pool.query(`
-    SELECT id, number, status
+    SELECT id, number, status, confirmation_requested_at AS "confirmationRequestedAt"
     FROM orders
     WHERE contact_id = $1
       AND status NOT IN ('cancelado')
@@ -1652,12 +1652,13 @@ async function handleText(
   // ── Já existe pedido em aberto? Avisa 1x por etapa e decide se continua ─────
   const openOrder = await getMostRecentOrder(contactId)
 
-  if (openOrder?.status === "pago") return // silêncio total — ação interna do operador
-
   if (openOrder) {
+    // Kanban 3 estágios: "confirmando" virou sub-estado de triagem
+    // (confirmation_requested_at), não é mais um status próprio.
     const pingByStatus: Record<string, string> = {
-      triagem:      `Seu pedido *${openOrder.number}* está na lista! Nossa equipe já está conferindo. 😊`,
-      confirmando:  `Seu pedido *${openOrder.number}* está sendo verificado pela equipe! Se precisar de alguma alteração, é só responder aqui. 😊`,
+      triagem: openOrder.confirmationRequestedAt
+        ? `Seu pedido *${openOrder.number}* está sendo verificado pela equipe! Se precisar de alguma alteração, é só responder aqui. 😊`
+        : `Seu pedido *${openOrder.number}* está na lista! Nossa equipe já está conferindo. 😊`,
       em_separacao: `Seu pedido *${openOrder.number}* já está em separação! ✂️ Avisamos quando estiver pronto.`,
       pronto:       `Seu pedido *${openOrder.number}* está pronto para retirada! Pode vir buscar quando quiser. 😊`,
     }

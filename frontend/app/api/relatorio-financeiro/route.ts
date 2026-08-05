@@ -153,7 +153,10 @@ export async function GET(req: Request) {
       ? Number(dtfProdutoRows[0].material_cost) : null
 
     // ── Calcular DRE ──────────────────────────────────────────────────────────
-    const concluded = orders.filter(o => o.status === "pago" || o.status === "concluido")
+    // Kanban 3 estágios: "pago" deixou de existir como status — todo pedido que
+    // recebia pagamento e concluía (ou concluía a prazo) já cai direto em
+    // "concluido" agora, sem parar num status intermediário.
+    const concluded = orders.filter(o => o.status === "concluido")
 
     const receitaAvarias  = Number(avariaVendas[0]?.total   ?? 0)
     const perdasDescarte  = Number(avariaDescartes[0]?.total ?? 0)
