@@ -146,7 +146,10 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
       const res = await fetch("/api/products")
       if (res.ok) {
         const all: ProductOption[] = await res.json()
-        setProducts(all.filter(p => p.status === "active"))
+        // sale_price vem NUMERIC do Postgres — chega como string, não number
+        // (mesmo com o tipo TS dizendo number|null). Sem isso, .toFixed() no
+        // bloco de produto quebra a tela inteira ao abrir "Adicionar item".
+        setProducts(all.filter(p => p.status === "active").map(p => ({ ...p, salePrice: p.salePrice != null ? Number(p.salePrice) : null })))
       }
     }
     setAddProd(null); setAddSearch(""); setAddVariants([])
@@ -204,7 +207,9 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   async function selectAddProduct(p: ProductOption) {
     setAddProd(p)
     const res = await fetch(`/api/variants?productId=${p.id}`)
-    const variants: VariantOption[] = res.ok ? await res.json() : []
+    const raw: VariantOption[] = res.ok ? await res.json() : []
+    // Mesma coisa do sale_price de produto — vem NUMERIC (string) do banco.
+    const variants = raw.map(v => ({ ...v, salePrice: v.salePrice != null ? Number(v.salePrice) : null }))
     setAddVariants(variants)
     if (p.colors.length === 0 && p.sizes.length === 0) {
       setItems(prev => [...prev, {
