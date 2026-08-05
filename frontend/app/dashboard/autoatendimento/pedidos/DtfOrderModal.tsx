@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react"
 import { X, Download, Check, ChevronRight, AlertCircle, Loader2, FileImage, Printer, RotateCcw } from "lucide-react"
 import type { DtfOrder } from "./DtfOrderCard"
-import { subDaysBR } from "@/lib/tz"
 import Toggle from "@/components/Toggle"
 import TwoViaPrintSheet from "./TwoViaPrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
@@ -37,7 +36,9 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   const [metrosFinais,   setMetrosFinais]   = useState(order.metrosFinais ? String(order.metrosFinais) : "")
   const [precoPorMetro,  setPrecoPorMetro]  = useState<number | null>(null)
   const [precoCarregado, setPrecoCarregado] = useState(false)
-  const [isPaid,         setIsPaid]         = useState(order.isPaid ?? true)
+  // null = ainda não escolheu — mesmo padrão do Kanban de Produto, não deixa
+  // concluir sem marcar Sim ou Não explicitamente.
+  const [paymentChoice,  setPaymentChoice]  = useState<boolean | null>(null)
   const [dueDate,        setDueDate]        = useState("")
   const [error,          setError]          = useState("")
   const [showCancel,     setShowCancel]     = useState(false)
@@ -185,8 +186,29 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
     }).catch(() => {})
   }
 
-  async function concluir() {
-    if (!isPaid && !dueDate) {
+  // "Sim" já marca e conclui — mesma peça, sem passo extra de confirmação.
+  async function handleConcluirPago() {
+    setSaving(true)
+    setError("")
+    try {
+      const r = await fetch(`/api/dtf/pedidos/${order.id}/conclude`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPaid: true }),
+      })
+      if (!r.ok) {
+        const d = await r.json()
+        setError(d.error ?? "Erro ao concluir")
+        return
+      }
+      onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleConcluirPrazo() {
+    if (!dueDate) {
       setError("Informe a data de vencimento pra concluir a prazo.")
       return
     }
@@ -196,7 +218,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
       const r = await fetch(`/api/dtf/pedidos/${order.id}/conclude`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPaid, dueDate: isPaid ? undefined : dueDate }),
+        body: JSON.stringify({ isPaid: false, dueDate }),
       })
       if (!r.ok) {
         const d = await r.json()
@@ -454,17 +476,42 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[#0F1E3C]/8 space-y-2.5">
-          {isProto && !isPaid && (
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
-                Vencimento *
-              </label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={e => { setDueDate(e.target.value); setError("") }}
-                className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-              />
+          {/* PRONTO — pergunta de pagamento, mesmo padrão do Kanban de Produto.
+              Não conclui sem marcar Sim ou Não primeiro. */}
+          {isProto && (
+            <div className="rounded-xl border border-[#0F1E3C]/10 bg-[#F4F6FB] p-3 space-y-2.5">
+              <p className="text-xs font-bold text-[#0F1E3C]">Pedido já foi pago?</p>
+              <div className="flex gap-2">
+                <button onClick={handleConcluirPago} disabled={saving}
+                  className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">
+                  Sim
+                </button>
+                <button onClick={() => setPaymentChoice(false)} disabled={saving}
+                  className={`flex-1 py-2 rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors ${
+                    paymentChoice === false
+                      ? "bg-[#0F1E3C] text-white"
+                      : "bg-white border border-dashed border-[#0F1E3C]/25 text-[#0F1E3C]/50 hover:border-[#0F1E3C]/40"
+                  }`}>
+                  Não
+                </button>
+              </div>
+              {paymentChoice === false && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wider block">
+                    Vencimento *
+                  </label>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={e => { setDueDate(e.target.value); setError("") }}
+                    className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                  />
+                  <button onClick={handleConcluirPrazo} disabled={saving || !dueDate}
+                    className="w-full py-2 rounded-xl border border-[#0F1E3C]/15 text-[#0F1E3C] text-sm font-semibold hover:bg-[#0F1E3C]/4 disabled:opacity-50">
+                    Concluir a Prazo
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-2 items-center">
@@ -507,39 +554,6 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
               </button>
             )}
 
-            {/* pronto — toggle à vista/prazo + concluir direto */}
-            {isProto && (
-              <>
-                {order.paymentTermEnabled && (
-                  <div
-                    className="flex items-center gap-2 bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-xl px-3 py-2.5 cursor-pointer select-none"
-                    onClick={() => {
-                      const next = !isPaid
-                      setIsPaid(next)
-                      if (!next && !dueDate && order.paymentTermType === "days" && order.paymentTermDays) {
-                        setDueDate(subDaysBR(-order.paymentTermDays))
-                      }
-                      setError("")
-                    }}
-                  >
-                    <Toggle on={isPaid} onChange={() => {}} onColor="bg-emerald-500" />
-                    <p className="text-xs font-semibold text-[#0F1E3C] whitespace-nowrap">{isPaid ? "À vista" : "A prazo"}</p>
-                  </div>
-                )}
-                <button
-                  onClick={concluir}
-                  disabled={saving}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 ${
-                    isPaid ? "bg-emerald-600 hover:bg-emerald-700" : "bg-[#0F1E3C] hover:bg-[#1B2A4A]"
-                  }`}
-                >
-                  {saving
-                    ? <Loader2 size={14} className="animate-spin" />
-                    : <><Check size={14} /> {isPaid ? "Confirmar e Concluir" : "Concluir a Prazo"}</>
-                  }
-                </button>
-              </>
-            )}
           </div>
         </div>
       </div>

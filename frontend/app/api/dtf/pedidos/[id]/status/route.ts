@@ -48,13 +48,16 @@ export async function POST(
     const pedido = rows[0]
 
     if (status === "pronto") {
-      // Save metros, preco and due_date; mark lifecycle active
+      await client.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS is_paid BOOLEAN`).catch(() => {})
+      // Save metros, preco and due_date; mark lifecycle active. Selo Pagou/Não
+      // pagou nasce marcado "Não pagou" — mesmo padrão do Kanban de Produto.
       await client.query(`
         UPDATE dtf_pedidos
         SET status        = 'pronto',
             metros_finais = COALESCE($1::numeric, metros_finais),
             preco_cobrado = COALESCE($2::numeric, preco_cobrado),
-            due_date      = $3
+            due_date      = $3,
+            is_paid       = COALESCE(is_paid, false)
         WHERE id = $4
       `, [metrosFinais ?? null, precoCobrado ?? null, dueDate ?? null, id])
 

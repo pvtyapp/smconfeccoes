@@ -284,6 +284,9 @@ export default function PedidosPage() {
   const [historico,      setHistorico]      = useState<{ produto: HistItem[]; dtf: HistItem[]; total: number } | null>(null)
   const [histLoading,    setHistLoading]    = useState(false)
   const [histOpen,       setHistOpen]       = useState(false)
+  // Minimizar/maximizar os kanbans pra tela ficar clean — expandidos por padrão.
+  const [produtoOpen,    setProdutoOpen]    = useState(true)
+  const [dtfKanbanOpen,  setDtfKanbanOpen]  = useState(true)
 
   // Chat
   const [chatTab,        setChatTab]        = useState<"conversas" | "grupos">("conversas")
@@ -2160,13 +2163,22 @@ export default function PedidosPage() {
 
           {/* ── Produto kanban ── */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
+            <button onClick={() => setProdutoOpen(v => !v)}
+              className="w-full flex items-center gap-2 mb-3 group">
               <ShoppingBag size={13} className="text-[#4361EE]" />
               <p className="text-xs font-bold text-[#4361EE] uppercase tracking-widest">Produto</p>
               {loadingOrders && orders.length === 0 && (
                 <div className="w-3 h-3 border-2 border-[#4361EE] border-t-transparent rounded-full animate-spin" />
               )}
-            </div>
+              {!produtoOpen && orders.length > 0 && (
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">{orders.length}</span>
+              )}
+              <span className="flex-1"/>
+              {produtoOpen
+                ? <ChevronUp size={14} className="text-[#4361EE]/40 group-hover:text-[#4361EE]"/>
+                : <ChevronDown size={14} className="text-[#4361EE]/40 group-hover:text-[#4361EE]"/>}
+            </button>
+            {produtoOpen && (
             <div className="overflow-x-auto">
               <div className="flex gap-3 pb-2" style={{ minWidth: "max-content" }}>
                 {PROD_COLS.map(col => {
@@ -2226,15 +2238,25 @@ export default function PedidosPage() {
                 })}
               </div>
             </div>
+            )}
           </div>
 
           {/* ── DTF kanban ── */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
+            <button onClick={() => setDtfKanbanOpen(v => !v)}
+              className="w-full flex items-center gap-2 mb-3 group">
               <Printer size={13} className="text-[#7C3AED]" />
               <p className="text-xs font-bold text-[#7C3AED] uppercase tracking-widest">DTF</p>
-            </div>
-
+              {!dtfKanbanOpen && dtfOrders.length > 0 && (
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#7C3AED]/10 text-[#7C3AED]">{dtfOrders.length}</span>
+              )}
+              <span className="flex-1"/>
+              {dtfKanbanOpen
+                ? <ChevronUp size={14} className="text-[#7C3AED]/40 group-hover:text-[#7C3AED]"/>
+                : <ChevronDown size={14} className="text-[#7C3AED]/40 group-hover:text-[#7C3AED]"/>}
+            </button>
+            {dtfKanbanOpen && (
+            <>
             {/* ── Film Alert ── */}
             {filmBobinas.filter(b => b.metrosUsados >= filmAlertaM).map(b => {
               const restantes   = Number(b.metrosRestantes)
@@ -2316,6 +2338,8 @@ export default function PedidosPage() {
                 })}
               </div>
             </div>
+            </>
+            )}
           </div>
 
           {/* ── Histórico concluídos ── */}
