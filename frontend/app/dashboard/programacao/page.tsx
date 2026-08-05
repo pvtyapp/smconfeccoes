@@ -98,11 +98,17 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
   const totalProduced = Object.values(produced).reduce((s,v) => s + (Number(v) || 0), 0)
   const allMaterialsAnswered = order.materials.every(m => matStates[m.entryId]?.exhausted !== null)
 
-  // Cost preview when exhausted: bobina_total ÷ (prev_pieces + this_order_pieces)
+  // Peças produzidas só da cor dessa bobina — ordem pode ter 2+ cores/bobinas
+  // e cada uma consome só a peça da SUA cor, nunca o total da ordem inteira.
+  function totalProducedForColor(color: string) {
+    return order.grade.reduce((s, g, i) => g.color === color ? s + (Number(produced[`${i}`]) || 0) : s, 0)
+  }
+
+  // Cost preview when exhausted: bobina_total ÷ (prev_pieces + peças dessa cor nessa ordem)
   function costPreview(mat: typeof order.materials[0]) {
     const st = matStates[mat.entryId]
     if (!st.exhausted) return null
-    const total = mat.piecesFromEntry + totalProduced
+    const total = mat.piecesFromEntry + totalProducedForColor(mat.color)
     return total > 0 ? mat.totalCost / total : null
   }
 
@@ -230,7 +236,7 @@ function ConcluirModal({ order, onClose, onSuccess }: { order: Order; onClose: (
                             {preview !== null && (
                               <div className="mt-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
                                 <p className="text-xs text-emerald-700 font-semibold">
-                                  {fmtR(mat.totalCost)} ÷ {mat.piecesFromEntry + totalProduced} pç = <strong>{fmtR(preview)}/pç</strong>
+                                  {fmtR(mat.totalCost)} ÷ {mat.piecesFromEntry + totalProducedForColor(mat.color)} pç = <strong>{fmtR(preview)}/pç</strong>
                                 </p>
                                 <p className="text-[10px] text-emerald-600/70 mt-0.5">Custo calculado ao concluir</p>
                               </div>
