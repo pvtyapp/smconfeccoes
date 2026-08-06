@@ -42,13 +42,13 @@ export async function GET() {
         c.state                                  AS "chatbotState",
         c.created_at                             AS "createdAt",
         COUNT(o.id)
-          FILTER (WHERE o.status != 'cancelado')           AS "orderCount",
+          FILTER (WHERE o.status = 'concluido')             AS "orderCount",
         COALESCE(
           SUM(o.total_value)
-          FILTER (WHERE o.status != 'cancelado'), 0
+          FILTER (WHERE o.status = 'concluido'), 0
         ) + COALESCE(
           SUM(dp.preco_cobrado)
-          FILTER (WHERE dp.status != 'cancelado'), 0
+          FILTER (WHERE dp.status = 'concluido'), 0
         )                                                  AS "totalSpent"
       FROM wa_contacts c
       LEFT JOIN orders o ON o.contact_id = c.id
