@@ -2185,6 +2185,7 @@ export default function MarketingPage() {
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
   const [scheduleEditIntent, setScheduleEditIntent] = useState(false)
+  const [campaignView, setCampaignView] = useState<"ativas" | "historico">("ativas")
 
   const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollingIdsRef = useRef<Set<number>>(new Set())
@@ -2344,6 +2345,10 @@ export default function MarketingPage() {
     )
   }
 
+  const activeCampaigns  = campaigns.filter(c => c.status === "scheduled" || c.status === "generating" || c.status === "sending")
+  const historyCampaigns = campaigns.filter(c => c.status === "sent" || c.status === "failed" || c.status === "cancelled")
+  const visibleCampaigns = campaignView === "ativas" ? activeCampaigns : historyCampaigns
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2420,18 +2425,40 @@ export default function MarketingPage() {
 
               {/* Coluna 1 — Mensagens Diretas */}
               <div className="space-y-3">
-                <p className="text-[11px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider flex items-center gap-1.5">
-                  <Send size={11} /> Mensagens Diretas
-                </p>
-                {campaigns.length === 0 ? (
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider flex items-center gap-1.5">
+                    <Send size={11} /> Mensagens Diretas
+                  </p>
+                  <div className="flex gap-1 bg-[#F4F6FB] p-0.5 rounded-lg">
+                    {([
+                      { v: "ativas",    l: `Em andamento${activeCampaigns.length ? ` (${activeCampaigns.length})` : ""}` },
+                      { v: "historico", l: `Histórico${historyCampaigns.length ? ` (${historyCampaigns.length})` : ""}` },
+                    ] as const).map(({ v, l }) => (
+                      <button
+                        key={v}
+                        onClick={() => setCampaignView(v)}
+                        className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-colors ${
+                          campaignView === v ? "bg-white text-[#4361EE] shadow-sm" : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
+                        }`}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {visibleCampaigns.length === 0 ? (
                   <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
                     <Megaphone size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
-                    <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhuma campanha</p>
-                    <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Envios únicos aparecem aqui</p>
+                    <p className="text-xs font-bold text-[#0F1E3C]/30">
+                      {campaignView === "ativas" ? "Nenhuma campanha em andamento" : "Nenhuma campanha no histórico"}
+                    </p>
+                    <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">
+                      {campaignView === "ativas" ? "Envios únicos aparecem aqui" : "Campanhas concluídas, canceladas ou com falha aparecem aqui"}
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-2.5">
-                    {campaigns.map(c => <CampaignCard key={c.id} c={c} />)}
+                    {visibleCampaigns.map(c => <CampaignCard key={c.id} c={c} />)}
                   </div>
                 )}
               </div>
