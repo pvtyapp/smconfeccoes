@@ -7,10 +7,13 @@ export async function GET(req: Request) {
     const from = searchParams.get("from")
     const to   = searchParams.get("to")
 
-    // Período conta por data de CONCLUSÃO, não de criação — um pedido só entra
-    // no relatório (e na receita) quando de fato terminou, igual o financeiro.
+    // Só conta pedido concluído (fixa o "sem preço"), mas pela data em que foi
+    // FEITO/IMPRESSO (p.data) — não pela data em que o status virou "concluído".
+    // Pedido tirado às 22h e fechado no sistema só de manhã (depois da meia-
+    // noite) continua contando no dia em que rodou na impressora, que é como
+    // a produção confere na mão todo dia.
     const dateCond = from && to
-      ? `WHERE p.status = 'concluido' AND DATE(p.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2`
+      ? `WHERE p.status = 'concluido' AND p.data BETWEEN $1 AND $2`
       : `WHERE p.status = 'concluido'`
     const params = from && to ? [from, to] : []
 
@@ -23,7 +26,7 @@ export async function GET(req: Request) {
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       ${dateCond}
-      ORDER BY p.concluded_at DESC, p.id DESC
+      ORDER BY p.data DESC, p.id DESC
     `, params)
 
     const totalMetros  = pedidos.reduce((s, p) => s + Number(p.metrosFinais ?? p.metros ?? 0), 0)
@@ -312,7 +315,7 @@ export async function GET(req: Request) {
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.status = 'concluido'
-        ${from && to ? "AND DATE(p.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2" : ""}
+        ${from && to ? "AND p.data BETWEEN $1 AND $2" : ""}
       GROUP BY p.contact_id, COALESCE(c.name, p.cliente, '(sem nome)')
       ORDER BY receita DESC
       LIMIT 10

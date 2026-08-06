@@ -208,7 +208,7 @@ export default function DTFRelatorioPage() {
                   ))}
                 </div>
                 <p className="text-xs text-gray-400">
-                  Conta pedidos concluídos, pela data em que fecharam — não pela data em que foram criados.
+                  Conta pedidos concluídos, pela data em que foram feitos — pedido criado à noite e fechado só de manhã continua no dia em que foi impresso.
                 </p>
 
                 {/* Linha 2: monitor de insumo (informativo) */}
@@ -472,7 +472,7 @@ export default function DTFRelatorioPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
-                        <th className="px-5 py-3 text-left">Concluído em</th>
+                        <th className="px-5 py-3 text-left">Data</th>
                         <th className="px-5 py-3 text-left">Cliente</th>
                         <th className="px-5 py-3 text-right">Metros</th>
                         <th className="px-5 py-3 text-right">Preço cobrado</th>
@@ -487,7 +487,7 @@ export default function DTFRelatorioPage() {
 
                         return (
                           <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="px-5 py-3 text-gray-700">{fmtData(p.concludedAt)}</td>
+                            <td className="px-5 py-3 text-gray-700">{fmtDateOnlyBR(p.data)}</td>
                             <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
                             <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
                             <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>

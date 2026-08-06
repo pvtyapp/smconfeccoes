@@ -31,7 +31,6 @@ type OrderRecord = {
   pixConfirmed: boolean | null
   paymentMethod: string | null
   createdAt: string
-  completedAt: string
   contactName: string | null
   contactPhone: string | null
   items: OrderItem[] | null
@@ -186,11 +185,9 @@ export default function RelatorioVendasPage() {
         list.push({ kind: "avaria", data: a })
     }
 
-    list.sort((a, b) => {
-      const bd = b.kind === "order" ? b.data.completedAt : b.data.createdAt
-      const ad = a.kind === "order" ? a.data.completedAt : a.data.createdAt
-      return new Date(bd).getTime() - new Date(ad).getTime()
-    })
+    list.sort((a, b) =>
+      new Date(b.data.createdAt).getTime() - new Date(a.data.createdAt).getTime()
+    )
     return list
   }, [orders, avarias, sourceFilter])
 
@@ -203,7 +200,7 @@ export default function RelatorioVendasPage() {
       const metrosRow = (o.items ?? []).filter(i => isDtf(i.productName)).reduce((s, i) => s + i.qty, 0)
       const pecas = [pecasRow > 0 ? String(pecasRow) : null, metrosRow > 0 ? `${metrosRow}m` : null].filter(Boolean).join(" + ") || "0"
       return {
-        key: `o-${o.id}`, data: o.completedAt, descricao: o.number,
+        key: `o-${o.id}`, data: o.createdAt, descricao: o.number,
         cliente: o.contactName, canal: badge.label, pecas,
         valor: o.totalValue != null ? Number(o.totalValue) : null,
       }
@@ -348,7 +345,7 @@ export default function RelatorioVendasPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-[#0F1E3C]">Relatório de Vendas</h1>
-          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Manual · Avarias vendidas — só pedidos concluídos, pela data em que fecharam</p>
+          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Manual · Avarias vendidas — só pedidos concluídos, pela data em que foram feitos</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -544,7 +541,7 @@ export default function RelatorioVendasPage() {
                       onClick={() => hasItems && toggle(key)}
                       className={`transition-all ${hasItems ? "cursor-pointer" : ""} ${rowBaseCls}`}
                     >
-                      <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.completedAt)}</td>
+                      <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                       <td className="px-4 py-3.5">
                         <p className="text-xs font-bold text-[#0F1E3C]">{o.number}</p>
                         {(() => { const sb = STATUS_BADGE[o.status]; return sb ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${sb.cls}`}>{sb.label}</span> : null })()}

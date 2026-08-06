@@ -1,13 +1,13 @@
 "use client"
 
 import PrintShell from "@/components/print/PrintShell"
-import { fmtDateBR } from "@/lib/tz"
+import { fmtDateOnlyBR } from "@/lib/tz"
 
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
 
 type Pedido = {
-  id: number; concludedAt: string; cliente: string | null
+  id: number; data: string; cliente: string | null
   metros: number; metrosFinais: number | null; precoCobrado: number | null
 }
 
@@ -131,7 +131,7 @@ export default function DTFRelatorioPrintSheet({
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: NAVY, color: "white" }}>
-                  <th style={{ padding: "4px 8px", textAlign: "left",  fontSize: "8px", fontWeight: "700" }}>CONCLUÍDO EM</th>
+                  <th style={{ padding: "4px 8px", textAlign: "left",  fontSize: "8px", fontWeight: "700" }}>DATA</th>
                   <th style={{ padding: "4px 8px", textAlign: "left",  fontSize: "8px", fontWeight: "700" }}>CLIENTE</th>
                   <th style={{ padding: "4px 8px", textAlign: "right", fontSize: "8px", fontWeight: "700" }}>METROS</th>
                   <th style={{ padding: "4px 8px", textAlign: "right", fontSize: "8px", fontWeight: "700" }}>PREÇO COBRADO</th>
@@ -142,7 +142,7 @@ export default function DTFRelatorioPrintSheet({
                   const metros = Number(p.metrosFinais ?? p.metros ?? 0)
                   return (
                     <tr key={p.id} style={{ background: i % 2 === 0 ? "white" : NAVY_LIGHT, borderBottom: "1px solid #e0e4ec" }}>
-                      <td style={{ padding: "4px 8px", fontSize: "9px" }}>{fmtDateBR(p.concludedAt)}</td>
+                      <td style={{ padding: "4px 8px", fontSize: "9px" }}>{fmtDateOnlyBR(p.data)}</td>
                       <td style={{ padding: "4px 8px", fontSize: "9px", fontWeight: "600" }}>{p.cliente || "—"}</td>
                       <td style={{ padding: "4px 8px", textAlign: "right", fontSize: "9px" }}>{metros.toFixed(2)} m</td>
                       <td style={{ padding: "4px 8px", textAlign: "right", fontSize: "9px", fontWeight: "700" }}>{fmtR(p.precoCobrado)}</td>
