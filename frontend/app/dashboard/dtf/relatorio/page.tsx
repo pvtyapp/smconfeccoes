@@ -69,21 +69,23 @@ type Relatorio = {
   topClientes: TopCliente[]
 }
 
-type PeriodoKey = "hoje" | "7d" | "30d" | "90d" | "tudo"
+type PeriodoKey = "hoje" | "ontem" | "7d" | "30d" | "90d" | "tudo"
 
 const PERIODOS: { key: PeriodoKey; label: string }[] = [
-  { key: "hoje", label: "Hoje"    },
-  { key: "7d",   label: "7 dias"  },
-  { key: "30d",  label: "30 dias" },
-  { key: "90d",  label: "90 dias" },
-  { key: "tudo", label: "Tudo"    },
+  { key: "hoje",  label: "Hoje"    },
+  { key: "ontem", label: "Ontem"   },
+  { key: "7d",    label: "7 dias"  },
+  { key: "30d",   label: "30 dias" },
+  { key: "90d",   label: "90 dias" },
+  { key: "tudo",  label: "Tudo"    },
 ]
 
 const PEDIDOS_PAGE_SIZE = 20
 
 function calcRange(key: PeriodoKey): { from: string; to: string } | null {
-  if (key === "tudo") return null
-  if (key === "hoje") return { from: todayBR(), to: todayBR() }
+  if (key === "tudo")  return null
+  if (key === "hoje")  return { from: todayBR(), to: todayBR() }
+  if (key === "ontem") { const d = subDaysBR(1); return { from: d, to: d } }
   const days = key === "7d" ? 7 : key === "30d" ? 30 : 90
   return { from: subDaysBR(days - 1), to: todayBR() }
 }
