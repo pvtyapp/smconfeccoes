@@ -4,6 +4,7 @@ import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
 import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
 import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
+import { createBobinaForColor } from "@/lib/rawMaterials/createBobinaForColor"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 
@@ -193,17 +194,17 @@ async function startCriarOrdem(jid: string, user: AdminUser): Promise<void> {
 }
 
 async function startCriarInsumo(jid: string, user: AdminUser): Promise<void> {
+  // product_id IS NULL exclui as bobinas que nascem sozinhas no fluxo de Nova
+  // Ordem (Programação) — mesmo filtro que a tela de Matéria Prima usa em
+  // /api/raw-materials, essas bobinas só aparecem no relatório de Insumos.
   const { rows: materials } = await pool.query(`
-    SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
+    SELECT id, name, unit FROM raw_materials WHERE status = 'active' AND product_id IS NULL ORDER BY name
   `)
-  if (materials.length === 0) {
-    await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes." + MENU_FOOTER)
-    return
-  }
   await setState(user.id, "insumo_material", withTimestamp({
     materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
   }))
-  await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
+  const novaOpcao = materials.length + 1
+  await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}${materials.length ? "\n" : ""}${novaOpcao}. Nova categoria...\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
 }
 
 async function startConcluirOrdem(jid: string, user: AdminUser): Promise<void> {
@@ -428,9 +429,17 @@ function commandLabel(key: string): string {
   return CHATBOT_COMMANDS.find(c => c.key === key)?.label ?? key
 }
 
+// Agrupamento visual do menu — mesma lógica de blocos da barra lateral do
+// painel (Produção / Financeiro em lib/navPages.ts), só pra organizar a leitura
+// no WhatsApp. A numeração corre sequencial atravessando os blocos.
+const MENU_GROUPS: { label: string; keys: string[] }[] = [
+  { label: "📦 *Produção*",   keys: ["criar_ordem", "concluir_ordem", "criar_insumo", "estoque"] },
+  { label: "💰 *Financeiro*", keys: ["vendas", "financeiro", "receber", "despesa", "contas_pagar"] },
+]
+
 async function showMenu(jid: string, user: AdminUser): Promise<void> {
-  const items = MENU_ITEMS.filter(m => canUseCommand(user, m.key))
-  if (items.length === 0) {
+  const allowed = MENU_ITEMS.filter(m => canUseCommand(user, m.key))
+  if (allowed.length === 0) {
     await setState(user.id, null, {})
     await reply(jid, `Oi, ${user.name}! Você não tem nenhum comando administrativo liberado ainda.`)
     return
@@ -449,10 +458,31 @@ async function showMenu(jid: string, user: AdminUser): Promise<void> {
     }
   }
 
-  await setState(user.id, "idle", { menuMap: items.map(i => i.key) })
+  const orderedItems: MenuItem[] = []
+  const blocks: string[] = []
+  for (const group of MENU_GROUPS) {
+    const items = allowed.filter(m => group.keys.includes(m.key))
+    if (items.length === 0) continue
+    const lines = items.map(i => {
+      orderedItems.push(i)
+      return `${orderedItems.length}. ${commandLabel(i.key)}`
+    })
+    blocks.push(`${group.label}\n${lines.join("\n")}`)
+  }
+  // Comando liberado que não caiu em nenhum bloco (defensivo — não devia
+  // acontecer, mas não pode sumir do menu se acontecer)
+  const leftover = allowed.filter(m => !orderedItems.includes(m))
+  if (leftover.length > 0) {
+    blocks.push(leftover.map(i => {
+      orderedItems.push(i)
+      return `${orderedItems.length}. ${commandLabel(i.key)}`
+    }).join("\n"))
+  }
+
+  await setState(user.id, "idle", { menuMap: orderedItems.map(i => i.key) })
   await reply(
     jid,
-    `${alerta}Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${numberedList(items.map(i => commandLabel(i.key)))}\n\n_Responda o número ou o nome do comando._`
+    `${alerta}Oi, ${user.name}! 👋 Assistente administrativo da SM Confecções.\n\n${blocks.join("\n\n")}\n\n_Responda o número ou o nome do comando._`
   )
 }
 
@@ -530,69 +560,79 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       return true
     }
     const colorsChosen = nums.map(n => colorsAll[n - 1])
-    const { rows: materials } = await pool.query(`
-      SELECT rme.id, rme.number, rm.name AS "materialName", rmv.name AS "varianteName",
-             rme.total_qty AS "totalQty", rm.unit, rme.status
-      FROM raw_material_entries rme
-      JOIN raw_materials rm ON rm.id = rme.material_id
-      LEFT JOIN raw_material_variants rmv ON rmv.id = rme.variant_id
-      WHERE rme.status IN ('disponivel', 'usada')
-      ORDER BY rme.created_at DESC
-    `)
-    if (materials.length === 0) {
-      await setState(user.id, null, {})
-      await reply(jid, "Não há nenhum lote de matéria-prima disponível no estoque agora. Cadastre um lote antes de criar a ordem." + MENU_FOOTER)
-      return true
-    }
-    const materialLabel = (m: typeof materials[number]) =>
-      `${m.status === "disponivel" ? "📗 Disponível" : "🟡 Em uso"} — ${m.materialName}${m.varianteName ? " - " + m.varianteName : ""} (lote ${m.number}, ${Number(m.totalQty).toFixed(1)} ${m.unit})`
-    await setState(user.id, "op_material", withTimestamp({
-      ...data, colorsChosen, colorIndex: 0,
-      materialsList: materials.map(m => ({ id: m.id, label: materialLabel(m) })),
+    // Bobina nasce na hora, por cor, igual o fluxo de Nova Ordem no painel —
+    // não existe mais estoque de lote pré-cadastrado esperando pra ser escolhido.
+    await setState(user.id, "op_ficha_tecido", withTimestamp({
+      ...data, colorsChosen, colorIndex: 0, bobinas: [],
     }))
-    await reply(jid, `Cores escolhidas: ${colorsChosen.join(", ")}.\n\nQual lote de matéria-prima abastece *${colorsChosen[0]}*?\n\n${numberedList(materials.map(materialLabel))}\n\n_Pode escolher mais de um, separado por vírgula. "cancelar" pra sair._`)
+    await reply(jid, `Cores escolhidas: ${colorsChosen.join(", ")}.\n\nA bobina de tecido de cada cor nasce agora, igual no painel. Qual o *tecido* de *${colorsChosen[0]}*? (ex: Malha Moletom)`)
     return true
   }
 
-  // ── Escolhendo material — um turno por cor ──────────────────────────────
-  if (state === "op_material") {
+  // ── Ficha técnica da bobina — tecido ─────────────────────────────────────
+  if (state === "op_ficha_tecido") {
+    if (!text.trim()) {
+      await reply(jid, "Manda o nome do tecido.")
+      return true
+    }
+    await setState(user.id, "op_ficha_tipo", withTimestamp({ ...data, tecido: text.trim() }))
+    await reply(jid, `*${text.trim()}* é 1. aberto ou 2. tubular?`)
+    return true
+  }
+
+  // ── Ficha técnica da bobina — tipo (aberto/tubular) ──────────────────────
+  if (state === "op_ficha_tipo") {
+    const tipoTecido = lower === "1" || lower === "aberto" ? "aberto" : lower === "2" || lower === "tubular" ? "tubular" : null
+    if (!tipoTecido) {
+      await reply(jid, `Não entendi. Responda 1 (aberto) ou 2 (tubular).`)
+      return true
+    }
+    await setState(user.id, "op_ficha_medidas", withTimestamp({ ...data, tipoTecido }))
+    await reply(jid, `Peso, gramatura, largura e preço/kg — nessa ordem, separados por espaço.\n_Formato: peso(kg) gramatura largura(m) preço/kg — ex: 25.5 180 1.60 32.90_`)
+    return true
+  }
+
+  // ── Ficha técnica da bobina — medidas, cria a bobina e (se última cor) a ordem
+  if (state === "op_ficha_medidas") {
+    const parts = text.trim().split(/\s+/).map(p => parseFloat(p.replace(",", ".")))
+    if (parts.length !== 4 || parts.some(p => isNaN(p) || p <= 0)) {
+      await reply(jid, `Formato não reconhecido. Manda os 4 números separados por espaço (ex: 25.5 180 1.60 32.90).`)
+      return true
+    }
+    const [pesoKg, gramatura, larguraM, precoKg] = parts
     const colorsChosen = (data.colorsChosen as string[]) ?? []
     const colorIndex   = (data.colorIndex as number) ?? 0
-    const materialsList = (data.materialsList as { id: number; label: string }[]) ?? []
-    const nums = parseNumberList(lower, materialsList.length)
-    if (!nums) {
-      await reply(jid, `Não entendi. Responda os números dos lotes separados por vírgula (1 a ${materialsList.length}).`)
-      return true
-    }
-    const materialsByColor = (data.materialsByColor as Record<string, number[]>) ?? {}
-    materialsByColor[colorsChosen[colorIndex]] = nums.map(n => materialsList[n - 1].id)
-
-    const nextIndex = colorIndex + 1
-    if (nextIndex < colorsChosen.length) {
-      await setState(user.id, "op_material", withTimestamp({ ...data, materialsByColor, colorIndex: nextIndex }))
-      await reply(jid, `Anotado. Qual lote abastece *${colorsChosen[nextIndex]}*?\n\n${numberedList(materialsList.map(m => m.label))}`)
-      return true
-    }
-
-    // Todas as cores têm material — cria a ordem de verdade agora. Só cria —
-    // grade cortada e esgotamento de bobina são reportados depois, quando o
-    // corte acontecer de verdade, pelo comando "concluir ordem".
+    const color = colorsChosen[colorIndex]
     try {
-      const entries = Object.entries(materialsByColor).flatMap(([color, ids]) =>
-        (ids as number[]).map(entryId => ({ entryId, color }))
-      )
+      const bobina = await createBobinaForColor({
+        productId: data.productId as string, color,
+        tecido: data.tecido as string, tipoTecido: data.tipoTecido as "aberto" | "tubular",
+        pesoKg, gramatura, larguraM, precoKg,
+      })
+      const bobinas = [...((data.bobinas as { entryId: number; color: string }[]) ?? []), { entryId: bobina.entryId, color }]
+
+      const nextIndex = colorIndex + 1
+      if (nextIndex < colorsChosen.length) {
+        await setState(user.id, "op_ficha_tecido", withTimestamp({ ...data, colorIndex: nextIndex, bobinas }))
+        await reply(jid, `✅ Bobina *${bobina.number}* criada (${bobina.totalQty.toFixed(1)} m, ${fmtMoney(bobina.unitPrice)}/m).\n\nAgora *${colorsChosen[nextIndex]}* — qual o tecido?`)
+        return true
+      }
+
+      // Todas as cores têm bobina — cria a ordem de verdade agora. Só cria —
+      // grade cortada e esgotamento de bobina são reportados depois, quando o
+      // corte acontecer de verdade, pelo comando "concluir ordem".
       const created = await createProdOrder({
-        productId: data.productId as string, selectedColors: colorsChosen, entries,
+        productId: data.productId as string, selectedColors: colorsChosen, entries: bobinas,
       })
       await setState(user.id, null, {})
       await reply(
         jid,
-        `✅ Ordem *${created.number}* criada! Quando o corte acontecer, digite *concluir ordem* pra reportar a grade cortada.` + MENU_FOOTER
+        `✅ Bobina *${bobina.number}* criada. Ordem *${created.number}* criada! Quando o corte acontecer, digite *concluir ordem* pra reportar a grade cortada.` + MENU_FOOTER
       )
     } catch (e) {
-      console.error("[adminBot] criar ordem falhou:", e instanceof Error ? e.message : e)
+      console.error("[adminBot] criar ordem (ficha técnica) falhou:", e instanceof Error ? e.message : e)
       await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar a ordem. Tenta de novo em alguns instantes ou crie pelo painel." + MENU_FOOTER)
+      await reply(jid, "Deu erro ao criar a bobina/ordem. Tenta de novo em alguns instantes ou crie pelo painel." + MENU_FOOTER)
     }
     return true
   }
@@ -738,9 +778,15 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
   // ── Nova entrada de matéria-prima: escolhendo material ──────────────────
   if (state === "insumo_material") {
     const materialsList = (data.materialsList as { id: number; name: string; unit: string }[]) ?? []
+    const novaOpcaoMaterial = materialsList.length + 1
     const n = parseInt(lower, 10)
-    if (isNaN(n) || n < 1 || n > materialsList.length) {
-      await reply(jid, `Não entendi. Responda o número do material (1 a ${materialsList.length}).`)
+    if (isNaN(n) || n < 1 || n > novaOpcaoMaterial) {
+      await reply(jid, `Não entendi. Responda um número de 1 a ${novaOpcaoMaterial}.`)
+      return true
+    }
+    if (n === novaOpcaoMaterial) {
+      await setState(user.id, "insumo_material_nome", withTimestamp({}))
+      await reply(jid, `Qual o nome da nova categoria de material?`)
       return true
     }
     const material = materialsList[n - 1]
@@ -757,6 +803,42 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
       jid,
       `Qual variação/cor de *${material.name}*?\n\n${numberedList(variants.map(v => v.name))}${variants.length ? "\n" : ""}${novaOpcao}. Nova variação...\n\n_"cancelar" pra sair._`
     )
+    return true
+  }
+
+  // ── Nova entrada de matéria-prima: nome da categoria nova ────────────────
+  if (state === "insumo_material_nome") {
+    if (!text.trim()) {
+      await reply(jid, "Manda o nome da categoria.")
+      return true
+    }
+    await setState(user.id, "insumo_material_unidade", withTimestamp({ materialName: text.trim() }))
+    await reply(jid, `Unidade — 1. kg ou 2. m?`)
+    return true
+  }
+
+  // ── Nova entrada de matéria-prima: unidade da categoria nova ────────────
+  if (state === "insumo_material_unidade") {
+    const unit = lower === "1" || lower === "kg" ? "kg" : lower === "2" || lower === "m" ? "m" : null
+    if (!unit) {
+      await reply(jid, `Não entendi. Responda 1 (kg) ou 2 (m).`)
+      return true
+    }
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO raw_materials (name, unit) VALUES ($1, $2) RETURNING id, name, unit`,
+        [data.materialName, unit]
+      )
+      const material = rows[0]
+      await setState(user.id, "insumo_variante", withTimestamp({
+        materialId: material.id, materialName: material.name, unit: material.unit, variantsList: [],
+      }))
+      await reply(jid, `Categoria *${material.name}* criada.\n\nQual variação/cor?\n\n1. Nova variação...\n\n_"cancelar" pra sair._`)
+    } catch (e) {
+      console.error("[adminBot] criar categoria falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao criar a categoria. Tenta de novo ou crie pelo painel." + MENU_FOOTER)
+    }
     return true
   }
 
