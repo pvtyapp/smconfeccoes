@@ -5,7 +5,7 @@ import {
   RefreshCw, Plus, X, Loader2, ChevronLeft, ChevronRight,
   AlertCircle, Clock, CheckCircle, DollarSign, Trash2,
 } from "lucide-react"
-import { todayBR, fmtDateBR } from "@/lib/tz"
+import { todayBR, fmtDateOnlyBR } from "@/lib/tz"
 
 type Payable = {
   id: number
@@ -298,7 +298,7 @@ function DayModal({
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col">
           <div className="flex items-center justify-between px-5 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
             <div>
-              <h2 className="text-sm font-bold text-[#0F1E3C]">{fmtDateBR(date)}</h2>
+              <h2 className="text-sm font-bold text-[#0F1E3C]">{fmtDateOnlyBR(date)}</h2>
               {payables.length > 0 && (
                 <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
                   {payables.length} conta{payables.length !== 1 ? "s" : ""} · {fmtCurrency(total)}

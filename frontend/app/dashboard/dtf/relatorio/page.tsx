@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { BarChart2, TrendingDown, Printer, Users } from "lucide-react"
-import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { todayBR, subDaysBR, fmtDateOnlyBR } from "@/lib/tz"
 import { fmtR, fmtQtd } from "@/lib/format"
 
 type Pedido = {
@@ -94,7 +94,7 @@ function fmtCpm(v: number | null | undefined) {
   if (v == null) return "—"
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`
 }
-function fmtData(s: string) { return fmtDateBR(s) }
+function fmtData(s: string) { return fmtDateOnlyBR(s) }
 function fmtM(v: number | null | undefined) {
   if (v == null) return "—"
   return `${Number(v).toFixed(2)} m`

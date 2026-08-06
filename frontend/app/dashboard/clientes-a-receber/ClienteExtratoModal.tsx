@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { X, Loader2, Printer } from "lucide-react"
-import { fmtDateBR } from "@/lib/tz"
+import { fmtDateOnlyBR } from "@/lib/tz"
 import type { PendingOrder, Payment } from "./page"
 import { fmtCurrency, fmtPhone, fmtDateTimeBR, METHOD_LABEL } from "./page"
 import PrintShell from "@/components/print/PrintShell"
@@ -84,7 +84,7 @@ export default function ClienteExtratoModal({ contactId, contactName, contactPho
                   <div key={o.id} className="flex items-center justify-between bg-[#F4F6FB] rounded-xl px-4 py-2.5">
                     <div>
                       <p className="text-sm font-bold text-[#0F1E3C]">{o.number}</p>
-                      <p className="text-[10px] text-[#0F1E3C]/40">{o.dueDate ? `Vence ${fmtDateBR(o.dueDate)}` : "Sem vencimento"}</p>
+                      <p className="text-[10px] text-[#0F1E3C]/40">{o.dueDate ? `Vence ${fmtDateOnlyBR(o.dueDate)}` : "Sem vencimento"}</p>
                     </div>
                     <p className="text-sm font-black text-[#0F1E3C]">{fmtCurrency(o.remaining ?? o.totalValue)}</p>
                   </div>
@@ -228,7 +228,7 @@ function ExtratoPrintSheet({ contactName, contactPhone, pending, payments, onDon
               {pending.map(o => (
                 <tr key={o.id} style={{ borderBottom: "1px solid #e0e4ec" }}>
                   <td style={tdL}>{o.number}</td>
-                  <td style={tdL}>{o.dueDate ? fmtDateBR(o.dueDate) : "—"}</td>
+                  <td style={tdL}>{o.dueDate ? fmtDateOnlyBR(o.dueDate) : "—"}</td>
                   <td style={tdR}>{fmtCurrency(o.remaining ?? o.totalValue)}</td>
                 </tr>
               ))}

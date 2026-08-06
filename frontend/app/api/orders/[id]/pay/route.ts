@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
-import { fmtDateBR } from "@/lib/tz"
+import { fmtDateOnlyBR } from "@/lib/tz"
 
 export async function POST(
   req: Request,
@@ -87,7 +87,7 @@ export async function POST(
       } else {
         const restante = totalValue != null ? Math.max(0, totalValue - newAmountPaid) : null
         const restanteTxt = restante != null ? `R$ ${restante.toFixed(2).replace(".", ",")}` : "o restante"
-        const vencTxt = rows[0].due_date ? ` — vencimento em *${fmtDateBR(rows[0].due_date)}*` : ""
+        const vencTxt = rows[0].due_date ? ` — vencimento em *${fmtDateOnlyBR(rows[0].due_date)}*` : ""
         msg = `Recebemos *${valorPago}* do pedido *${rows[0].number}*. Ainda falta *${restanteTxt}*${vencTxt}. Qualquer dúvida é só chamar!`
       }
       sendAndSave(rows[0].contactId as number, rows[0].jid, msg).catch(() => {})

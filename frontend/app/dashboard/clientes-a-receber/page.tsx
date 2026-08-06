@@ -7,7 +7,7 @@ import {
   Banknote, CreditCard, Smartphone, ArrowRightLeft, Bell, XCircle,
   History, Receipt, FileDown, Printer, Calendar,
 } from "lucide-react"
-import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { todayBR, subDaysBR, fmtDateOnlyBR } from "@/lib/tz"
 import Toggle from "@/components/Toggle"
 import ClienteExtratoModal from "./ClienteExtratoModal"
 
@@ -478,7 +478,7 @@ export default function ClientesAReceberPage() {
                         ds === "hoje"    ? "text-amber-600" :
                         "text-[#0F1E3C]/60"
                       }`}>
-                        {fmtDateBR(o.dueDate)}
+                        {fmtDateOnlyBR(o.dueDate)}
                       </p>
                     ) : (
                       <p className="text-xs text-[#0F1E3C]/30">—</p>
@@ -774,7 +774,7 @@ function DarBaixaModal({
                       ds === "vencido" ? "text-red-600" : ds === "hoje" ? "text-amber-600" : "text-[#0F1E3C]/50"
                     }`}>
                       {ds === "vencido" ? "⚠ Venceu em " : "Vence em "}
-                      {fmtDateBR(order.dueDate)}
+                      {fmtDateOnlyBR(order.dueDate)}
                     </p>
                   )}
                 </div>
@@ -806,7 +806,7 @@ function DarBaixaModal({
               </div>
               {isParcial && (
                 <p className="text-xs text-amber-600 font-semibold mt-1.5">
-                  Pagamento parcial — vai ficar faltando {fmtCurrency(remaining - valorNum)}, vencimento continua {order.dueDate ? fmtDateBR(order.dueDate) : "o mesmo"}.
+                  Pagamento parcial — vai ficar faltando {fmtCurrency(remaining - valorNum)}, vencimento continua {order.dueDate ? fmtDateOnlyBR(order.dueDate) : "o mesmo"}.
                 </p>
               )}
             </div>

@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
-import { todayBR, fmtDateBR, isWeekendBR } from "@/lib/tz"
+import { todayBR, fmtDateOnlyBR, isWeekendBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
 import { getProvider } from "@/lib/whatsapp/provider"
@@ -395,7 +395,7 @@ export async function GET(req: Request) {
         const remaining = total != null ? Math.max(0, total - paid) : null
         const restanteTxt = remaining != null ? `R$ ${remaining.toFixed(2).replace(".", ",")}` : "o valor combinado"
         const firstName = (row.name as string).split(" ")[0]
-        const vencTxt = row.due_date ? fmtDateBR(row.due_date) : ""
+        const vencTxt = row.due_date ? fmtDateOnlyBR(row.due_date) : ""
         const msg = `⚠️ Oi ${firstName}, o pagamento do pedido *${row.number}* venceu em *${vencTxt}* e continua em aberto — restam *${restanteTxt}*. Qualquer dúvida é só chamar!`
         await sendAndSave(row.contactId as number, row.jid as string, msg)
       } catch { results.errors++ }

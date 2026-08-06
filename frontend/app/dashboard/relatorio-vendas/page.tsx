@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, XCircle, Printer, X, Loader2 } from "lucide-react"
-import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
+import { todayBR, subDaysBR, fmtDateBR, fmtDateOnlyBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import Toggle from "@/components/Toggle"
 import PdvReceiptModal, { type SaleReceipt } from "@/app/dashboard/pdv/PdvReceiptModal"
@@ -476,7 +476,7 @@ export default function RelatorioVendasPage() {
                 let pagLabel = "À vista"
                 let pagCls   = "text-green-700 bg-green-50"
                 if (isPrazo && !isPago) {
-                  pagLabel = `Prazo · ${fmtDate(o.dueDate)}`
+                  pagLabel = `Prazo · ${fmtDateOnlyBR(o.dueDate)}`
                   pagCls   = "text-amber-700 bg-amber-50"
                 } else if (isPrazo && isPago) {
                   pagLabel = "Prazo · Pago"

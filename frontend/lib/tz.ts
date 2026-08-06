@@ -21,10 +21,24 @@ export function isWeekendBR(d: Date = new Date()): boolean {
   return day === "Sat" || day === "Sun"
 }
 
-/** ISO timestamp → "dd/mm/yyyy" in São Paulo timezone */
+/** ISO timestamp (instante real, ex: created_at) → "dd/mm/yyyy" em horário de SP */
 export function fmtDateBR(iso: string | null | undefined): string {
   if (!iso) return "—"
   return new Date(iso).toLocaleDateString("pt-BR", {
     timeZone: TZ, day: "2-digit", month: "2-digit", year: "numeric",
   })
+}
+
+/**
+ * Coluna SQL DATE pura (data.dtf_pedidos, due_date, cost_date — sem hora, sem
+ * instante real) → "dd/mm/yyyy", SEM conversão de fuso. O pg devolve DATE como
+ * meia-noite UTC; rodar isso por fmtDateBR (que converte pra America/Sao_Paulo)
+ * subtrai 3h e joga pro dia anterior. Usar sempre que o valor vier de uma
+ * coluna DATE, nunca de TIMESTAMPTZ.
+ */
+export function fmtDateOnlyBR(d: string | null | undefined): string {
+  if (!d) return "—"
+  const [y, m, day] = d.slice(0, 10).split("-")
+  if (!y || !m || !day) return "—"
+  return `${day}/${m}/${y}`
 }
