@@ -1,12 +1,14 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { BarChart2, TrendingDown, Printer, Users } from "lucide-react"
-import { todayBR, subDaysBR, fmtDateOnlyBR } from "@/lib/tz"
+import { BarChart2, TrendingDown, Printer, Users, FileDown } from "lucide-react"
+import { todayBR, subDaysBR, fmtDateBR, fmtDateOnlyBR } from "@/lib/tz"
 import { fmtR, fmtQtd } from "@/lib/format"
+import { printWhenReady } from "@/components/print/print-utils"
+import DTFRelatorioPrintSheet from "./DTFRelatorioPrintSheet"
 
 type Pedido = {
-  id: number; data: string; cliente: string | null
+  id: number; data: string; concludedAt: string; cliente: string | null
   metros: number; metrosFinais: number | null
   precoCobrado: number | null; observacao: string | null
 }
@@ -94,7 +96,7 @@ function fmtCpm(v: number | null | undefined) {
   if (v == null) return "—"
   return `R$ ${Number(v).toFixed(4).replace(".", ",")}/m`
 }
-function fmtData(s: string) { return fmtDateOnlyBR(s) }
+function fmtData(s: string) { return fmtDateBR(s) }
 function fmtM(v: number | null | undefined) {
   if (v == null) return "—"
   return `${Number(v).toFixed(2)} m`
@@ -117,6 +119,7 @@ export default function DTFRelatorioPage() {
   const [data, setData]       = useState<Relatorio | null>(null)
   const [loading, setLoading] = useState(true)
   const [pedidosPage, setPedidosPage] = useState(1)
+  const [showPrint, setShowPrint] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -130,23 +133,43 @@ export default function DTFRelatorioPage() {
 
   useEffect(() => { load() }, [load])
 
+  function handleExtrairRelatorio() {
+    setShowPrint(true)
+    printWhenReady()
+  }
+
+  const range = calcRange(periodo)
+  const periodoLabel = range
+    ? `${fmtDateOnlyBR(range.from)} → ${fmtDateOnlyBR(range.to)}`
+    : (PERIODOS.find(p => p.key === periodo)?.label ?? "")
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[#0F1E3C]">Relatório DTF</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Consumo de insumos e performance de produção</p>
+          <p className="text-sm text-gray-400 mt-0.5">Consumo de insumos e performance de produção — só pedidos concluídos</p>
         </div>
-        <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-          {PERIODOS.map(p => (
-            <button key={p.key} onClick={() => setPeriodo(p.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                periodo === p.key ? "bg-white text-[#0F1E3C] shadow-sm" : "text-gray-400 hover:text-gray-600"
-              }`}>
-              {p.label}
+        <div className="flex items-center gap-2">
+          <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+            {PERIODOS.map(p => (
+              <button key={p.key} onClick={() => setPeriodo(p.key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  periodo === p.key ? "bg-white text-[#0F1E3C] shadow-sm" : "text-gray-400 hover:text-gray-600"
+                }`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {data && (
+            <button
+              onClick={handleExtrairRelatorio}
+              className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+            >
+              <FileDown size={14} /> Extrair Relatório
             </button>
-          ))}
+          )}
         </div>
       </div>
 
@@ -184,14 +207,9 @@ export default function DTFRelatorioPage() {
                     </div>
                   ))}
                 </div>
-                {(() => {
-                  const semPreco = data.pedidos.filter(p => p.precoCobrado == null).length
-                  return semPreco > 0 ? (
-                    <p className="text-xs text-gray-400">
-                      {semPreco} pedido{semPreco !== 1 ? "s" : ""} ainda em triagem/produção, sem preço calculado — não soma na receita acima.
-                    </p>
-                  ) : null
-                })()}
+                <p className="text-xs text-gray-400">
+                  Conta pedidos concluídos, pela data em que fecharam — não pela data em que foram criados.
+                </p>
 
                 {/* Linha 2: monitor de insumo (informativo) */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -454,7 +472,7 @@ export default function DTFRelatorioPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wider">
-                        <th className="px-5 py-3 text-left">Data</th>
+                        <th className="px-5 py-3 text-left">Concluído em</th>
                         <th className="px-5 py-3 text-left">Cliente</th>
                         <th className="px-5 py-3 text-right">Metros</th>
                         <th className="px-5 py-3 text-right">Preço cobrado</th>
@@ -469,7 +487,7 @@ export default function DTFRelatorioPage() {
 
                         return (
                           <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="px-5 py-3 text-gray-700">{fmtData(p.data)}</td>
+                            <td className="px-5 py-3 text-gray-700">{fmtData(p.concludedAt)}</td>
                             <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
                             <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
                             <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
@@ -504,6 +522,17 @@ export default function DTFRelatorioPage() {
             )
           })()}
         </>
+      )}
+
+      {showPrint && data && (
+        <DTFRelatorioPrintSheet
+          pedidos={data.pedidos}
+          topClientes={data.topClientes ?? []}
+          totalMetros={data.totalMetros}
+          totalReceita={data.totalReceita}
+          periodoLabel={periodoLabel}
+          onDone={() => setShowPrint(false)}
+        />
       )}
     </div>
   )

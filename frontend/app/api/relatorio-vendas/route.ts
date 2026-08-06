@@ -7,8 +7,10 @@ export async function GET(req: Request) {
     const from = searchParams.get("from")
     const to   = searchParams.get("to")
 
+    // Período conta por data de CONCLUSÃO, não de criação — pedido só entra no
+    // relatório (e na receita) quando de fato terminou, igual o financeiro.
     const hasDate = !!(from && to)
-    const orderDateCond  = hasDate ? `AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
+    const orderDateCond  = hasDate ? `AND DATE(o.completed_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
     const avariDateCond  = hasDate ? `AND DATE(COALESCE(ds.resolved_at, ds.created_at) AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
     const params = hasDate ? [from, to] : []
 
@@ -44,6 +46,7 @@ export async function GET(req: Request) {
           o.pix_confirmed AS "pixConfirmed",
           o.payment_method AS "paymentMethod",
           o.created_at   AS "createdAt",
+          o.completed_at AS "completedAt",
           c.name         AS "contactName",
           c.phone        AS "contactPhone",
           json_agg(
@@ -64,12 +67,12 @@ export async function GET(req: Request) {
           WHERE LOWER(name) = LOWER(oi.product_name) AND status = 'active'
           LIMIT 1
         ) p ON true
-        WHERE o.status != 'cancelado'
+        WHERE o.status = 'concluido'
           AND o.source IN ('pdv', 'whatsapp')
           AND o.number NOT LIKE 'COB-%'
           ${orderDateCond}
         GROUP BY o.id, c.name, c.phone
-        ORDER BY o.created_at DESC
+        ORDER BY o.completed_at DESC
       `, params)
       orders = r.rows
     } catch (e) {
@@ -104,7 +107,7 @@ export async function GET(req: Request) {
 
     let dtfPedidos: unknown[] = []
     try {
-      const dtfDateCond = hasDate ? `AND DATE(p.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
+      const dtfDateCond = hasDate ? `AND DATE(p.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2` : ""
       const r = await pool.query(`
         SELECT
           p.id,
@@ -115,6 +118,7 @@ export async function GET(req: Request) {
           p.due_date   AS "dueDate",
           p.concluded_at  AS "paidAt",
           p.created_at AS "createdAt",
+          p.concluded_at AS "completedAt",
           COALESCE(c.name, p.cliente) AS "contactName",
           c.phone      AS "contactPhone",
           json_build_array(
@@ -127,9 +131,9 @@ export async function GET(req: Request) {
           ) AS items
         FROM dtf_pedidos p
         LEFT JOIN wa_contacts c ON c.id = p.contact_id
-        WHERE p.status != 'cancelado'
+        WHERE p.status = 'concluido'
           ${dtfDateCond}
-        ORDER BY p.created_at DESC
+        ORDER BY p.concluded_at DESC
       `, params)
       dtfPedidos = r.rows
     } catch (e) {

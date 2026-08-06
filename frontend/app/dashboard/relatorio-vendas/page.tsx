@@ -1,11 +1,13 @@
 "use client"
 
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, XCircle, Printer, X, Loader2 } from "lucide-react"
+import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, XCircle, Printer, X, Loader2, FileDown } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR, fmtDateOnlyBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import Toggle from "@/components/Toggle"
 import PdvReceiptModal, { type SaleReceipt } from "@/app/dashboard/pdv/PdvReceiptModal"
+import { printWhenReady } from "@/components/print/print-utils"
+import VendasRelatorioPrintSheet from "./VendasRelatorioPrintSheet"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,7 @@ type OrderRecord = {
   pixConfirmed: boolean | null
   paymentMethod: string | null
   createdAt: string
+  completedAt: string
   contactName: string | null
   contactPhone: string | null
   items: OrderItem[] | null
@@ -147,6 +150,7 @@ export default function RelatorioVendasPage() {
   const [expanded,     setExpanded]     = useState<Set<string>>(new Set())
   const [canceling,    setCanceling]    = useState<OrderRecord | null>(null)
   const [reprinting,   setReprinting]   = useState<SaleReceipt | null>(null)
+  const [showPrint,    setShowPrint]    = useState(false)
 
   const load = useCallback(async () => {
     const dates = getPeriodDates(period, rangeStart, rangeEnd)
@@ -182,11 +186,46 @@ export default function RelatorioVendasPage() {
         list.push({ kind: "avaria", data: a })
     }
 
-    list.sort((a, b) =>
-      new Date(b.data.createdAt).getTime() - new Date(a.data.createdAt).getTime()
-    )
+    list.sort((a, b) => {
+      const bd = b.kind === "order" ? b.data.completedAt : b.data.createdAt
+      const ad = a.kind === "order" ? a.data.completedAt : a.data.createdAt
+      return new Date(bd).getTime() - new Date(ad).getTime()
+    })
     return list
   }, [orders, avarias, sourceFilter])
+
+  // Mesma lista formatada pro relatório impresso (sem paginação/expansão)
+  const printEntries = useMemo(() => entries.map(entry => {
+    if (entry.kind === "order") {
+      const o = entry.data
+      const badge = SOURCE_BADGE[o.source] ?? SOURCE_BADGE.manual
+      const pecasRow  = (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((s, i) => s + i.qty, 0)
+      const metrosRow = (o.items ?? []).filter(i => isDtf(i.productName)).reduce((s, i) => s + i.qty, 0)
+      const pecas = [pecasRow > 0 ? String(pecasRow) : null, metrosRow > 0 ? `${metrosRow}m` : null].filter(Boolean).join(" + ") || "0"
+      return {
+        key: `o-${o.id}`, data: o.completedAt, descricao: o.number,
+        cliente: o.contactName, canal: badge.label, pecas,
+        valor: o.totalValue != null ? Number(o.totalValue) : null,
+      }
+    }
+    const a = entry.data
+    return {
+      key: `a-${a.id}`, data: a.createdAt,
+      descricao: [a.productName, a.color, a.size].filter(Boolean).join(" · "),
+      cliente: null, canal: "Avaria", pecas: String(a.qty), valor: a.salePrice,
+    }
+  }), [entries])
+
+  const periodoLabel = (() => {
+    const dates = getPeriodDates(period, rangeStart, rangeEnd)
+    if (!dates) return ""
+    return `${fmtDateOnlyBR(dates[0])} → ${fmtDateOnlyBR(dates[1])}`
+  })()
+
+  function handleExtrairRelatorio() {
+    setShowPrint(true)
+    printWhenReady()
+  }
 
   // Vendas por produto genérico (nome já vem sem cor/tamanho) — soma pedidos
   // concluídos + avarias vendidas, DTF fica de fora (tem relatório próprio)
@@ -309,11 +348,19 @@ export default function RelatorioVendasPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-[#0F1E3C]">Relatório de Vendas</h1>
-          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Manual · Avarias vendidas</p>
+          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Manual · Avarias vendidas — só pedidos concluídos, pela data em que fecharam</p>
         </div>
-        <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors">
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExtrairRelatorio}
+            className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
+          >
+            <FileDown size={14} /> Extrair Relatório
+          </button>
+          <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors">
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -374,8 +421,8 @@ export default function RelatorioVendasPage() {
             icon={DollarSign}  color="bg-green-100 text-green-700"
           />
           <StatCard
-            label="Pedidos no Período" value={String(stats.pedidos)}
-            sub={`${stats.concludedCount} concluídos · ${stats.pedidos - stats.concludedCount} em andamento`}
+            label="Pedidos Concluídos" value={String(stats.concludedCount)}
+            sub="no período selecionado"
             icon={ShoppingBag} color="bg-blue-100 text-blue-700"
           />
           <StatCard
@@ -497,7 +544,7 @@ export default function RelatorioVendasPage() {
                       onClick={() => hasItems && toggle(key)}
                       className={`transition-all ${hasItems ? "cursor-pointer" : ""} ${rowBaseCls}`}
                     >
-                      <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                      <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.completedAt)}</td>
                       <td className="px-4 py-3.5">
                         <p className="text-xs font-bold text-[#0F1E3C]">{o.number}</p>
                         {(() => { const sb = STATUS_BADGE[o.status]; return sb ? <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${sb.cls}`}>{sb.label}</span> : null })()}
@@ -661,6 +708,17 @@ export default function RelatorioVendasPage() {
           order={canceling}
           onClose={() => setCanceling(null)}
           onConfirm={notify => handleCancelConfirm(canceling, notify)}
+        />
+      )}
+
+      {showPrint && (
+        <VendasRelatorioPrintSheet
+          entries={printEntries}
+          totalReceita={stats.totalR}
+          pedidosCount={stats.concludedCount}
+          ticketMedio={stats.ticket}
+          periodoLabel={periodoLabel}
+          onDone={() => setShowPrint(false)}
         />
       )}
     </div>

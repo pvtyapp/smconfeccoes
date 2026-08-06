@@ -7,21 +7,23 @@ export async function GET(req: Request) {
     const from = searchParams.get("from")
     const to   = searchParams.get("to")
 
+    // Período conta por data de CONCLUSÃO, não de criação — um pedido só entra
+    // no relatório (e na receita) quando de fato terminou, igual o financeiro.
     const dateCond = from && to
-      ? `WHERE p.status != 'cancelado' AND p.data BETWEEN $1 AND $2`
-      : `WHERE p.status != 'cancelado'`
+      ? `WHERE p.status = 'concluido' AND DATE(p.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2`
+      : `WHERE p.status = 'concluido'`
     const params = from && to ? [from, to] : []
 
     // Pedidos no período — cliente via contact_id (mesmo fallback do Top Clientes,
     // o campo de texto p.cliente não é mais preenchido por pedido nenhum)
     const { rows: pedidos } = await pool.query(`
-      SELECT p.id, p.data, COALESCE(c.name, p.cliente) AS cliente,
+      SELECT p.id, p.data, p.concluded_at AS "concludedAt", COALESCE(c.name, p.cliente) AS cliente,
              p.metros, p.metros_finais AS "metrosFinais",
              p.preco_cobrado AS "precoCobrado", p.observacao, p.status
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       ${dateCond}
-      ORDER BY p.data DESC, p.id DESC
+      ORDER BY p.concluded_at DESC, p.id DESC
     `, params)
 
     const totalMetros  = pedidos.reduce((s, p) => s + Number(p.metrosFinais ?? p.metros ?? 0), 0)
@@ -309,8 +311,8 @@ export async function GET(req: Request) {
              COALESCE(SUM(p.preco_cobrado), 0)::float AS receita
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
-      WHERE p.status != 'cancelado'
-        ${from && to ? "AND p.data BETWEEN $1 AND $2" : ""}
+      WHERE p.status = 'concluido'
+        ${from && to ? "AND DATE(p.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2" : ""}
       GROUP BY p.contact_id, COALESCE(c.name, p.cliente, '(sem nome)')
       ORDER BY receita DESC
       LIMIT 10
