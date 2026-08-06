@@ -5,7 +5,7 @@ import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const randDelayGroup  = () => sleep(3000 + Math.random() * 5000)   // 3-8s, grupo — risco baixo
-const randDelayClient = () => sleep(8000 + Math.random() * 12000)  // 8-20s, cliente individual — mais devagar
+const randDelayClient = () => sleep(30000 + Math.random() * 30000) // 30-60s, cliente individual — bem mais devagar
 
 // Sem isso, a Vercel mata a função no tempo padrão (bem menor que o
 // necessário) -- medido na prática: 10 destinatários com a pausa anti-ban
@@ -95,13 +95,14 @@ export async function GET(req: Request) {
           q += ` ORDER BY last_marketing_sent_at ASC NULLS FIRST`
           const { rows } = await pool.query(q, qp)
           // Teto explícito por orçamento de tempo: maxDuration=280s, delay
-          // anti-ban de 3-8s por destinatário (grupos deste disparo entram no
-          // mesmo laço, mesmo orçamento) — 20 dá folga segura mesmo somado aos
-          // grupos configurados hoje. Sem teto nenhum, uma programação pra
-          // "todos os clientes" com base grande estouraria o timeout. Combinado
-          // com o ORDER BY acima, cada execução avança pra próxima fatia —
-          // gira por toda a base em vários dias em vez de travar nos mesmos 20.
-          contactRcpts = rows.slice(0, 20)
+          // anti-ban de cliente é 30-60s (grupos deste disparo entram no mesmo
+          // laço, mesmo orçamento) — no pior caso (60s) 4 destinatários = 240s,
+          // deixa folga pro resto. Sem teto nenhum, uma programação pra "todos
+          // os clientes" com base grande estouraria o timeout e a função seria
+          // morta no meio do envio. Combinado com o ORDER BY acima, cada
+          // execução avança pra próxima fatia — gira por toda a base em vários
+          // dias em vez de travar nos mesmos contatos.
+          contactRcpts = rows.slice(0, 4)
         }
         const groupRcpts: Rcpt[] = (sched.audience_type === "groups" || sched.audience_type === "mixed")
           ? ((sched.audience_group_jids ?? []) as string[]).map(jid => ({ jid, name: jid.split("@")[0], isGroup: true }))

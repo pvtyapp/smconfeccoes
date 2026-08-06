@@ -5,6 +5,10 @@
       "schedule": "0 12 * * *"
     },
     {
+      "path": "/api/whatsapp/lifecycle-cron",
+      "schedule": "0 11-23 * * *"
+    },
+    {
       "path": "/api/marketing/cron",
       "schedule": "*/5 * * * *"
     }

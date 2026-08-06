@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
-import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { todayBR, fmtDateOnlyBR, isWeekendBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
@@ -9,7 +8,6 @@ import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
 import { getProvider } from "@/lib/whatsapp/provider"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
 const randDelayClient = () => sleep(8000 + Math.random() * 12000) // 8-20s, cliente individual — mais devagar
 
 // Vercel Cron: 0 12 * * * (09h Brasília = 12h UTC)
@@ -19,7 +17,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { novo: number; ausente: number; frio: number; cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evoRestarted?: boolean; payablesDue?: number } = { novo: 0, ausente: 0, frio: 0, cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0 }
+  const results: { cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evoRestarted?: boolean; payablesDue?: number } = { cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -69,241 +67,15 @@ export async function GET(req: Request) {
   const s: Record<string, string> = {}
   for (const row of settingsRes.rows) s[row.key] = row.value
 
-  const chatbotAtivo  = s.chatbot_ativo !== "false"
-  const lifecycleActive = s.lifecycle_ativo !== "false"
-
-  function t(template: string, name: string) {
-    return (template || "").replace(/\{nome\}/gi, name.split(" ")[0])
-  }
-
   const today = todayBR()
   // Cobrança de cliente (seções 7, 8, 8b) só dispara em dia útil (seg-sex).
   // Pedido vencido no fim de semana não fica sem aviso: cai pra seção 8b
   // (due_date < hoje) assim que o cron rodar na segunda-feira seguinte.
   const cobrancaHabilitada = !isWeekendBR()
 
-  if (chatbotAtivo && lifecycleActive) {
-  // ── 1. Novo D2 — lead que não converteu em 48h ────────────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
-      WHERE lifecycle_state = 'new'
-      AND linked_user_id IS NULL
-        AND COALESCE(novo_seq, 0) = 0
-        AND state = 'idle'
-        AND created_at < NOW() - INTERVAL '2 days'
-        AND NOT COALESCE(marketing_optout, false)
-        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-      LIMIT 3
-    `)
-    for (const c of rows.rows) {
-      const cli = await pool.connect()
-      try {
-        await cli.query("BEGIN")
-        await cli.query(`
-          UPDATE wa_contacts
-          SET novo_seq = 1, novo_last_sent_at = NOW(), last_marketing_sent_at = NOW(), updated_at = NOW()
-          WHERE id = $1
-        `, [c.id])
-        {
-          const msg = t(
-            s.novo_d2_msg || "Oi {nome}! Quando quiser fazer um pedido é só me chamar — produto, cor e tamanho que eu registro na hora.",
-            c.name
-          )
-          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
-          await cli.query(
-            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-             VALUES ($1, $2, 'out', $3, NOW())
-             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-            [c.id, result?.key?.id ?? null, msg]
-          )
-        }
-        await cli.query("COMMIT")
-        await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D2')`, [c.id]).catch(() => {})
-        results.novo++
-      } catch {
-        await cli.query("ROLLBACK").catch(() => {})
-        results.errors++
-      } finally {
-        cli.release()
-      }
-      await randDelay()
-    }
-  } catch { results.errors++ }
-
-  // ── 2. Novo → Frio (sem resposta por 7 dias após D2) ─────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT id FROM wa_contacts
-      WHERE lifecycle_state = 'new'
-      AND linked_user_id IS NULL
-        AND COALESCE(novo_seq, 0) = 1
-        AND state = 'idle'
-        AND novo_last_sent_at < NOW() - INTERVAL '7 days'
-    `)
-    for (const c of rows.rows) {
-      try {
-        await pool.query(`UPDATE wa_contacts SET lifecycle_state = 'frio', lifecycle_updated_at = NOW() WHERE id = $1`, [c.id])
-        results.frio++
-      } catch { results.errors++ }
-    }
-  } catch { results.errors++ }
-
-  // ── 3. Ativo → Ausente D15 ────────────────────────────────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
-      WHERE lifecycle_state = 'active'
-      AND linked_user_id IS NULL
-        AND last_order_at IS NOT NULL
-        AND last_order_at < NOW() - INTERVAL '15 days'
-        AND state NOT IN ('coletando','aguardando_menu','aguardando_cliente_1',
-                          'dtf_verificando','dtf_coletando','cross_sell_dtf','cross_sell_produto')
-        AND NOT COALESCE(marketing_optout, false)
-        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-      LIMIT 3
-    `)
-    for (const c of rows.rows) {
-      const cli = await pool.connect()
-      try {
-        await cli.query("BEGIN")
-        await cli.query(`
-          UPDATE wa_contacts
-          SET lifecycle_state = 'ausente', lifecycle_updated_at = NOW(),
-              ausente_seq = 1, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW()
-          WHERE id = $1
-        `, [c.id])
-        {
-          const msg = t(
-            s.ausente_d15_msg || "Oi {nome}, faz um tempo! Estoque renovado aqui. Quando quiser pedir é só chamar.",
-            c.name
-          )
-          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
-          await cli.query(
-            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-             VALUES ($1, $2, 'out', $3, NOW())
-             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-            [c.id, result?.key?.id ?? null, msg]
-          )
-        }
-        await cli.query("COMMIT")
-        await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D15')`, [c.id]).catch(() => {})
-        results.ausente++
-      } catch {
-        await cli.query("ROLLBACK").catch(() => {})
-        results.errors++
-      } finally {
-        cli.release()
-      }
-      await randDelay()
-    }
-  } catch { results.errors++ }
-
-  // ── 4. Ausente D30 ────────────────────────────────────────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
-      WHERE lifecycle_state = 'ausente'
-      AND linked_user_id IS NULL
-        AND ausente_seq = 1
-        AND last_order_at IS NOT NULL
-        AND last_order_at < NOW() - INTERVAL '30 days'
-        AND NOT COALESCE(marketing_optout, false)
-        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-      LIMIT 3
-    `)
-    for (const c of rows.rows) {
-      const cli = await pool.connect()
-      try {
-        await cli.query("BEGIN")
-        await cli.query(`UPDATE wa_contacts SET ausente_seq = 2, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW() WHERE id = $1`, [c.id])
-        {
-          const msg = t(
-            s.ausente_d30_msg || "{nome}, chegaram peças novas esse mês. Me chama quando precisar.",
-            c.name
-          )
-          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
-          await cli.query(
-            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-             VALUES ($1, $2, 'out', $3, NOW())
-             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-            [c.id, result?.key?.id ?? null, msg]
-          )
-        }
-        await cli.query("COMMIT")
-        await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D30')`, [c.id]).catch(() => {})
-        results.ausente++
-      } catch {
-        await cli.query("ROLLBACK").catch(() => {})
-        results.errors++
-      } finally {
-        cli.release()
-      }
-      await randDelay()
-    }
-  } catch { results.errors++ }
-
-  // ── 5. Ausente D45 (última mensagem) ─────────────────────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT id, jid, name, jid AS send_jid FROM wa_contacts
-      WHERE lifecycle_state = 'ausente'
-      AND linked_user_id IS NULL
-        AND ausente_seq = 2
-        AND last_order_at IS NOT NULL
-        AND last_order_at < NOW() - INTERVAL '45 days'
-        AND NOT COALESCE(marketing_optout, false)
-        AND (last_marketing_sent_at IS NULL OR last_marketing_sent_at < NOW() - INTERVAL '20 hours')
-      LIMIT 3
-    `)
-    for (const c of rows.rows) {
-      const cli = await pool.connect()
-      try {
-        await cli.query("BEGIN")
-        await cli.query(`UPDATE wa_contacts SET ausente_seq = 3, ausente_last_sent_at = NOW(), last_marketing_sent_at = NOW() WHERE id = $1`, [c.id])
-        {
-          const msg = t(
-            s.ausente_d45_msg || "Oi {nome}! Uma última mensagem — quando precisar de estoque, pode contar comigo.",
-            c.name
-          )
-          const result = await sendWhatsApp(c.send_jid as string, msg) as { key?: { id?: string } }
-          await cli.query(
-            `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-             VALUES ($1, $2, 'out', $3, NOW())
-             ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-            [c.id, result?.key?.id ?? null, msg]
-          )
-        }
-        await cli.query("COMMIT")
-        await pool.query(`INSERT INTO lifecycle_executions (contact_id, stage) VALUES ($1, 'D45')`, [c.id]).catch(() => {})
-        results.ausente++
-      } catch {
-        await cli.query("ROLLBACK").catch(() => {})
-        results.errors++
-      } finally {
-        cli.release()
-      }
-      await randDelay()
-    }
-  } catch { results.errors++ }
-
-  // ── 6. Ausente → Frio (30 dias após D45 sem resposta) ────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT id FROM wa_contacts
-      WHERE lifecycle_state = 'ausente'
-      AND linked_user_id IS NULL
-        AND ausente_seq = 3
-        AND ausente_last_sent_at < NOW() - INTERVAL '30 days'
-    `)
-    for (const c of rows.rows) {
-      try {
-        await pool.query(`UPDATE wa_contacts SET lifecycle_state = 'frio', lifecycle_updated_at = NOW() WHERE id = $1`, [c.id])
-        results.frio++
-      } catch { results.errors++ }
-    }
-  } catch { results.errors++ }
-  } // lifecycleActive
+  // Nota: lifecycle (novo D2, ausente D15/30/45 + transições pra frio)
+  // migrou pro /api/whatsapp/lifecycle-cron (roda de hora em hora, 08h-20h)
+  // — antes tudo saía junto às 9h aqui, em menos de 1 minuto.
 
   if (cobrancaHabilitada) {
   // ── 7. Cobrança dias corridos ─────────────────────────────────────────────────
