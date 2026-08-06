@@ -64,6 +64,17 @@ export async function GET(req: Request) {
       WHERE cost_date BETWEEN $1 AND $2
     `, [from, to])
 
+    // 3b. Contas a pagar quitadas no período — antes não entrava na DRE de
+    // jeito nenhum (só Custo Operacional/Variável). Conta pelo dia em que foi
+    // PAGA (regime de caixa, igual o resto do financeiro), não pelo vencimento.
+    const { rows: payablesRows } = await pool.query(`
+      SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0)::float AS total,
+             COUNT(*)::int AS count
+      FROM payables
+      WHERE paid_at IS NOT NULL
+        AND DATE(paid_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+
     // 4. Diagnóstico: produtos cadastrados nos pedidos mas sem custo preenchido
     const { rows: semCustoRows } = await pool.query(`
       SELECT DISTINCT oi.product_name
@@ -216,10 +227,11 @@ export async function GET(req: Request) {
       else custoFixo += val
     }
 
-    const custoVariavel = Number(varCosts[0]?.total ?? 0)
-    const lucroBruto    = custoInsumosKnown ? receitaBruta - custoInsumos : null
-    const resultadoOp   = lucroBruto !== null
-      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte
+    const custoVariavel  = Number(varCosts[0]?.total ?? 0)
+    const despesasPagas  = Number(payablesRows[0]?.total ?? 0)
+    const lucroBruto     = custoInsumosKnown ? receitaBruta - custoInsumos : null
+    const resultadoOp    = lucroBruto !== null
+      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte - despesasPagas
       : null
 
     const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
@@ -257,6 +269,8 @@ export async function GET(req: Request) {
         custoFixo,
         custoVariavel,
         perdasDescarte,
+        despesasPagas,
+        despesasPagasCount: Number(payablesRows[0]?.count ?? 0),
         resultadoOp,
       },
       summary: {

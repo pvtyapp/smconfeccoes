@@ -16,6 +16,7 @@ import DtfOrderModal from "./DtfOrderModal"
 import NewManualOrderForm from "./NewManualOrderForm"
 import Toggle from "@/components/Toggle"
 import ConfirmDialog from "@/components/ConfirmDialog"
+import { todayBR, subDaysBR } from "@/lib/tz"
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
 
@@ -164,14 +165,15 @@ const HIST_OPTIONS: { key: HistPeriod; label: string }[] = [
 ]
 
 function getHistDates(key: HistPeriod, rs: string, re: string): [string, string] {
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
-  const sub = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d }
+  // Data em São Paulo, não em UTC — perto da meia-noite, toISOString().slice(0,10)
+  // pega o dia de UTC e mostra "hoje" como amanhã ou "ontem" como hoje.
+  const t = todayBR()
   switch (key) {
-    case "1d":    return [fmt(new Date()), fmt(new Date())]
-    case "ontem": return [fmt(sub(1)), fmt(sub(1))]
-    case "7d":    return [fmt(sub(6)), fmt(new Date())]
-    case "15d":   return [fmt(sub(14)), fmt(new Date())]
-    case "30d":   return [fmt(sub(29)), fmt(new Date())]
+    case "1d":    return [t, t]
+    case "ontem": { const d = subDaysBR(1); return [d, d] }
+    case "7d":    return [subDaysBR(6), t]
+    case "15d":   return [subDaysBR(14), t]
+    case "30d":   return [subDaysBR(29), t]
     case "range": return [rs, re]
   }
 }

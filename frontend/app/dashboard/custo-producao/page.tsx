@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react"
 import { Calendar, Scissors, Clock } from "lucide-react"
-import { todayBR, subDaysBR } from "@/lib/tz"
+import { todayBR, subDaysBR, dateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import { sortSizes } from "@/lib/sizeOrder"
 
@@ -147,10 +147,12 @@ export default function CustoProducaoPage() {
     return Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1)
   })()
 
-  // Filter orders to period
+  // Filter orders to period — concludedAt vem em UTC do banco, tem que converter
+  // pra data de São Paulo antes de comparar (cortar os 10 primeiros caracteres
+  // do ISO em UTC jogava produção feita à noite pro dia seguinte).
   const filteredOrders = orders.filter(o => {
     if (!o.concludedAt) return false
-    const d = o.concludedAt.slice(0, 10)
+    const d = dateBR(new Date(o.concludedAt))
     return d >= startDate && d <= endDate
   })
 

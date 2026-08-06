@@ -20,6 +20,8 @@ export type DRE = {
   custoFixo:      number
   custoVariavel:  number
   perdasDescarte: number
+  despesasPagas:      number
+  despesasPagasCount: number
   resultadoOp:    number | null
 }
 
@@ -683,6 +685,10 @@ export default function RelatorioFinanceiroPage() {
                 {(dre?.perdasDescarte ?? 0) > 0 && (
                   <DRERow label="(-) Perdas por Descarte" value={-(dre?.perdasDescarte ?? 0)} indent negative
                     sub="qty × custo médio · avarias descartadas no período" />
+                )}
+                {(dre?.despesasPagas ?? 0) > 0 && (
+                  <DRERow label="(-) Contas a Pagar quitadas" value={-(dre?.despesasPagas ?? 0)} indent negative
+                    sub={`${dre?.despesasPagasCount ?? 0} conta${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} paga${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} no período`} />
                 )}
                 <DRERow separator />
                 <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}

@@ -65,7 +65,8 @@ export async function GET(req: Request) {
         LEFT JOIN order_items oi ON oi.order_id = o.id
         LEFT JOIN LATERAL (
           SELECT material_cost FROM products
-          WHERE LOWER(name) = LOWER(oi.product_name) AND status = 'active'
+          WHERE TRIM(LOWER(name)) = TRIM(LOWER(oi.product_name))
+          ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END
           LIMIT 1
         ) p ON true
         WHERE o.status = 'concluido'

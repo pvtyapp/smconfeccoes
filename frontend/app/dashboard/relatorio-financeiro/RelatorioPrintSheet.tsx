@@ -129,6 +129,10 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
             {dre.perdasDescarte > 0 && (
               <DreLine label="(-) Perdas por Descarte" value={-dre.perdasDescarte} indent sub="avarias descartadas no período" />
             )}
+            {dre.despesasPagas > 0 && (
+              <DreLine label="(-) Contas a Pagar quitadas" value={-dre.despesasPagas} indent
+                sub={`${dre.despesasPagasCount} conta${dre.despesasPagasCount !== 1 ? "s" : ""} paga${dre.despesasPagasCount !== 1 ? "s" : ""} no período`} />
+            )}
             <DreLine bold label="Resultado Operacional" value={dre.resultadoOp}
               sub={dre.resultadoOp != null ? `margem op. ${pct(summary.margemOp)}` : undefined} />
           </div>

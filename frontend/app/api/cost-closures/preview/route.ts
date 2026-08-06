@@ -21,13 +21,13 @@ export async function GET(req: Request) {
         po.number,
         po.product_name AS "productName",
         po.status,
-        po.concluded_at::date::text AS "concludedAt",
+        DATE(po.concluded_at AT TIME ZONE 'America/Sao_Paulo')::text AS "concludedAt",
         COALESCE(SUM(poi.qty_produced), 0)::int AS "totalPieces"
       FROM prod_orders po
       LEFT JOIN prod_order_items poi ON poi.order_id = po.id
       WHERE po.status IN ('concluida', 'encerrada')
         AND po.cost_closure_id IS NULL
-        AND (po.concluded_at::date BETWEEN $1 AND $2)
+        AND (DATE(po.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2)
       GROUP BY po.id
       ORDER BY po.concluded_at ASC
     `, [start, end])

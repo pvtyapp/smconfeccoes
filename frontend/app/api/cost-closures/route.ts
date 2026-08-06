@@ -46,7 +46,7 @@ export async function POST(req: Request) {
         FROM prod_orders po
         WHERE po.status IN ('concluida', 'encerrada')
           AND po.cost_closure_id IS NULL
-          AND (po.concluded_at::date BETWEEN $1 AND $2)
+          AND (DATE(po.concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2)
       `, [periodStart, periodEnd])
 
       if (!orders.length) {
