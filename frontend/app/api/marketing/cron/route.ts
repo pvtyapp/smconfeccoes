@@ -4,7 +4,8 @@ import { campaignSend } from "@/lib/whatsapp/campaignSend"
 import { processCampaignBatch } from "@/lib/whatsapp/processCampaign"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
+const randDelayGroup  = () => sleep(3000 + Math.random() * 5000)   // 3-8s, grupo — risco baixo
+const randDelayClient = () => sleep(8000 + Math.random() * 12000)  // 8-20s, cliente individual — mais devagar
 
 // Sem isso, a Vercel mata a função no tempo padrão (bem menor que o
 // necessário) -- medido na prática: 10 destinatários com a pausa anti-ban
@@ -78,7 +79,7 @@ export async function GET(req: Request) {
         // os dois. Antes disso, qualquer audiência (inclusive "groups" puro)
         // caía sempre na busca de contatos individuais, porque nada aqui lia
         // audience_group_jids — mandava pra gente aleatória em vez do grupo.
-        type Rcpt = { id?: number; jid: string; name: string }
+        type Rcpt = { id?: number; jid: string; name: string; isGroup?: boolean }
         let contactRcpts: Rcpt[] = []
         if (sched.audience_type !== "groups") {
           let q = `SELECT id, jid, name FROM wa_contacts
@@ -103,7 +104,7 @@ export async function GET(req: Request) {
           contactRcpts = rows.slice(0, 20)
         }
         const groupRcpts: Rcpt[] = (sched.audience_type === "groups" || sched.audience_type === "mixed")
-          ? ((sched.audience_group_jids ?? []) as string[]).map(jid => ({ jid, name: jid.split("@")[0] }))
+          ? ((sched.audience_group_jids ?? []) as string[]).map(jid => ({ jid, name: jid.split("@")[0], isGroup: true }))
           : []
         const rcpts: Rcpt[] = [...contactRcpts, ...groupRcpts]
         let sentCount = 0
@@ -126,7 +127,7 @@ export async function GET(req: Request) {
             errorCount++; results.errors++
             console.error("[marketing/cron] falha ao enviar pro destinatário", r.jid, "—", e instanceof Error ? e.message : e)
           }
-          await randDelay()
+          await (r.isGroup ? randDelayGroup() : randDelayClient())
         }
         await pool.query(`INSERT INTO marketing_schedule_executions (schedule_id, item_id, content, media_url, sent_count, error_count) VALUES ($1,$2,$3,$4,$5,$6)`,
           [sched.id, item.id, item.content, item.mediaUrl ?? null, sentCount, errorCount]).catch(() => {})

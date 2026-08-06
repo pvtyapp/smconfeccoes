@@ -34,8 +34,14 @@ export async function processCampaignBatch(
   await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS paused_until TIMESTAMPTZ`).catch(() => {})
   await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS pause_reason TEXT`).catch(() => {})
   await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS instance_name TEXT`).catch(() => {})
+  await pool.query(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS last_ticked_at TIMESTAMPTZ`).catch(() => {})
 
   for (let i = 0; i < maxMessages; i++) {
+    // Chamada com campaignId (tela aberta, poll de 30s) sempre pode pegar a
+    // própria campanha. Chamada sem campaignId (cron da Vercel, a cada 5min)
+    // pula qualquer campanha "tickada" pela tela nos últimos 90s — evita os
+    // dois motores mandarem pra mesma campanha ao mesmo tempo e furarem o
+    // intervalo anti-ban (cron só assume quando a tela para de cutucar).
     const { rows } = campaignId
       ? await pool.query(`
           SELECT id, content, media_url, recipients_json, sent_count, total_count,
@@ -47,6 +53,7 @@ export async function processCampaignBatch(
                  content_variants, paused_until, pause_reason, instance_name
           FROM marketing_campaigns
           WHERE status = 'sending'
+            AND (last_ticked_at IS NULL OR last_ticked_at < NOW() - INTERVAL '90 seconds')
           ORDER BY created_at ASC
           LIMIT 1
         `)
@@ -76,12 +83,20 @@ export async function processCampaignBatch(
       break
     }
 
-    // Trava atômica — se duas chamadas pegarem o mesmo sent_count ao mesmo tempo, só uma consegue
-    const { rowCount } = await pool.query(
-      `UPDATE marketing_campaigns SET sent_count = sent_count + 1
-       WHERE id = $1 AND sent_count = $2 AND status = 'sending'`,
-      [camp.id, idx]
-    )
+    // Trava atômica — se duas chamadas pegarem o mesmo sent_count ao mesmo tempo, só uma consegue.
+    // Só marca last_ticked_at quando vem da tela (campaignId presente) — é esse carimbo que faz
+    // o cron da Vercel dar um passo pra trás enquanto a tela tá ativa.
+    const { rowCount } = campaignId
+      ? await pool.query(
+          `UPDATE marketing_campaigns SET sent_count = sent_count + 1, last_ticked_at = NOW()
+           WHERE id = $1 AND sent_count = $2 AND status = 'sending'`,
+          [camp.id, idx]
+        )
+      : await pool.query(
+          `UPDATE marketing_campaigns SET sent_count = sent_count + 1
+           WHERE id = $1 AND sent_count = $2 AND status = 'sending'`,
+          [camp.id, idx]
+        )
     if ((rowCount ?? 0) === 0) continue
 
     const recipient = recipients[idx]

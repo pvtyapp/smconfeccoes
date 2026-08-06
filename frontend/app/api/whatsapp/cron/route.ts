@@ -10,6 +10,7 @@ import { getProvider } from "@/lib/whatsapp/provider"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const randDelay = () => sleep(3000 + Math.random() * 5000) // 3–8s anti-ban
+const randDelayClient = () => sleep(8000 + Math.random() * 12000) // 8-20s, cliente individual — mais devagar
 
 // Vercel Cron: 0 12 * * * (09h Brasília = 12h UTC)
 export async function GET(req: Request) {
@@ -324,6 +325,7 @@ export async function GET(req: Request) {
         await sendAndSave(row.contactId as number, row.send_jid as string, `Oi ${firstName}, o pagamento do pedido *${row.number}* vence hoje — *${total}*. Qualquer dúvida é só chamar!`)
         results.cobranca++
       } catch { results.errors++ }
+      await randDelayClient()
     }
   } catch { results.errors++ }
 
@@ -350,6 +352,7 @@ export async function GET(req: Request) {
         await sendAndSave(row.contactId as number, row.send_jid as string, `Oi ${firstName}! Os pedidos *${nums}* vencem hoje — total: *${total}*. Pode efetuar o pagamento quando puder!`)
         results.cobranca++
       } catch { results.errors++ }
+      await randDelayClient()
     }
   } catch { results.errors++ }
 
@@ -399,6 +402,7 @@ export async function GET(req: Request) {
         const msg = `⚠️ Oi ${firstName}, o pagamento do pedido *${row.number}* venceu em *${vencTxt}* e continua em aberto — restam *${restanteTxt}*. Qualquer dúvida é só chamar!`
         await sendAndSave(row.contactId as number, row.jid as string, msg)
       } catch { results.errors++ }
+      await randDelayClient()
     }
 
     if (overdueOrders.length > 0) {
