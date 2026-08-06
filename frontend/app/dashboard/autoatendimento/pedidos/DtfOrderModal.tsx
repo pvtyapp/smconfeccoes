@@ -6,6 +6,7 @@ import type { DtfOrder } from "./DtfOrderCard"
 import Toggle from "@/components/Toggle"
 import TwoViaPrintSheet from "./TwoViaPrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
+import DocLetterhead from "@/components/print/DocLetterhead"
 
 type Props = {
   order: DtfOrder
@@ -725,18 +726,7 @@ function DtfPrintSheet({ order, nomeCliente, format, onDone }: {
               fontFamily: "'Arial', 'Helvetica', sans-serif",
               padding: "14mm 16mm", color: NAVY,
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "5px" }}>
-                <img src="/smsemfundo.png" alt="SM Confecções" style={{ height: "46px", width: "auto", flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: "16px", fontWeight: "900", letterSpacing: "-0.5px", lineHeight: 1, color: NAVY }}>SM CONFECÇÕES</div>
-                  <div style={{ fontSize: "8px", color: "#666", marginTop: "3px" }}>Av. Santa Cruz, 3088 — Franca / SP</div>
-                </div>
-                <div style={{
-                  background: "#7C3AED", color: "white",
-                  borderRadius: "4px", padding: "3px 10px",
-                  fontSize: "9px", fontWeight: "700", letterSpacing: "0.5px",
-                }}>VIA {via}</div>
-              </div>
+              <DocLetterhead via={via} logoSize={46} />
 
               <div style={{
                 background: NAVY, color: "white", borderRadius: "5px",

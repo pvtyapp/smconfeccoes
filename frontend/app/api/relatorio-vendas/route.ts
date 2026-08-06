@@ -106,46 +106,10 @@ export async function GET(req: Request) {
       throw new Error(`avarias: ${e instanceof Error ? e.message : String(e)}`)
     }
 
-    let dtfPedidos: unknown[] = []
-    try {
-      const dtfDateCond = hasDate ? `AND p.data BETWEEN $1 AND $2` : ""
-      const r = await pool.query(`
-        SELECT
-          p.id,
-          p.number,
-          'dtf'        AS source,
-          p.status,
-          p.preco_cobrado AS "totalValue",
-          p.due_date   AS "dueDate",
-          p.paid_at    AS "paidAt",
-          NULL         AS "pixConfirmed",
-          NULL         AS "paymentMethod",
-          p.created_at AS "createdAt",
-          COALESCE(c.name, p.cliente) AS "contactName",
-          c.phone      AS "contactPhone",
-          json_build_array(
-            json_build_object(
-              'productName', 'Impressão DTF',
-              'qty',         COALESCE(p.metros_finais, p.metros, 0),
-              'unitPrice',   CASE WHEN COALESCE(p.metros_finais, p.metros, 0) > 0
-                                   THEN p.preco_cobrado / COALESCE(p.metros_finais, p.metros, 0)
-                                   ELSE p.preco_cobrado END,
-              'costPrice',   NULL
-            )
-          ) AS items
-        FROM dtf_pedidos p
-        LEFT JOIN wa_contacts c ON c.id = p.contact_id
-        WHERE p.status = 'concluido'
-          ${dtfDateCond}
-        ORDER BY p.data DESC
-      `, params)
-      dtfPedidos = r.rows
-    } catch (e) {
-      console.error("[relatorio-vendas:dtf]", e instanceof Error ? e.message : e)
-      throw new Error(`dtf: ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    return NextResponse.json({ orders, avarias, dtfPedidos })
+    // DTF fica de fora daqui de propósito — esse relatório é exclusivo de
+    // Produto. DTF tem o Relatório DTF próprio; o conjunto dos dois (Produto +
+    // DTF + avarias) só existe no Dashboard Financeiro.
+    return NextResponse.json({ orders, avarias })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("[relatorio-vendas]", msg)

@@ -3,6 +3,7 @@
 import type { Order, OrderItem } from "./page"
 import TwoViaPrintSheet from "./TwoViaPrintSheet"
 import PrintShell from "@/components/print/PrintShell"
+import DocLetterhead from "@/components/print/DocLetterhead"
 
 const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
@@ -137,25 +138,7 @@ export default function PrintSheet({ order, items, format, title = "Ficha de Sep
     return (
       <div style={{ fontFamily: "'Arial', 'Helvetica', sans-serif", padding: "14mm 16mm", color: NAVY }}>
 
-        {/* ── Cabeçalho ── */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "5px" }}>
-          <img src="/smsemfundo.png" alt="SM Confecções" style={{ height: "58px", width: "auto", flexShrink: 0 }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: "20px", fontWeight: "900", letterSpacing: "-0.5px", lineHeight: 1, color: NAVY }}>
-              SM CONFECÇÕES
-            </div>
-            <div style={{ fontSize: "8px", color: "#666", marginTop: "3px" }}>
-              Av. Santa Cruz, 3088 — Franca / SP
-            </div>
-          </div>
-          <div style={{
-            border: `1.5px solid ${NAVY}`, borderRadius: "4px",
-            padding: "3px 10px", textAlign: "center", flexShrink: 0,
-          }}>
-            <div style={{ fontSize: "6.5px", letterSpacing: "1.5px", color: NAVY, opacity: 0.6, textTransform: "uppercase" }}>via</div>
-            <div style={{ fontSize: "9px", fontWeight: "800", letterSpacing: "1px", color: NAVY, textTransform: "uppercase" }}>{via}</div>
-          </div>
-        </div>
+        <DocLetterhead via={via} />
 
         {/* ── Barra título ── */}
         <div style={{

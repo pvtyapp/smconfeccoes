@@ -71,7 +71,6 @@ const SOURCE_FILTERS = [
   { value: "pdv",      label: "PDV"      },
   { value: "whatsapp", label: "WhatsApp" },
   { value: "manual",   label: "Manual"   },
-  { value: "dtf",      label: "DTF"      },
   { value: "avarias",  label: "Avarias"  },
 ]
 
@@ -79,7 +78,6 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   pdv:      { label: "PDV",      cls: "bg-blue-100 text-blue-700"   },
   whatsapp: { label: "WhatsApp", cls: "bg-green-100 text-green-700" },
   manual:   { label: "Manual",   cls: "bg-gray-100 text-gray-600"   },
-  dtf:      { label: "DTF",      cls: "bg-purple-100 text-purple-700" },
   avaria:   { label: "Avaria",   cls: "bg-amber-100 text-amber-700" },
 }
 
@@ -171,10 +169,7 @@ export default function RelatorioVendasPage() {
       const params = new URLSearchParams({ from: dates[0], to: dates[1] })
       const res = await fetch(`/api/relatorio-vendas?${params}`)
       const data = await res.json()
-      setOrders([
-        ...(Array.isArray(data.orders) ? data.orders : []),
-        ...(Array.isArray(data.dtfPedidos) ? data.dtfPedidos : []),
-      ])
+      setOrders(Array.isArray(data.orders) ? data.orders : [])
       setAvarias(Array.isArray(data.avarias) ? data.avarias : [])
     } finally {
       setLoading(false)
@@ -337,10 +332,7 @@ export default function RelatorioVendasPage() {
   }
 
   async function handleCancelConfirm(order: OrderRecord, notify: boolean) {
-    const url = order.source === "dtf"
-      ? `/api/dtf/pedidos/${order.id}/status`
-      : `/api/orders/${order.id}/status`
-    await fetch(url, {
+    await fetch(`/api/orders/${order.id}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "cancelado", actor: "dashboard", notifyClient: notify }),
