@@ -182,6 +182,14 @@ export default function DTFRelatorioPage() {
                     </div>
                   ))}
                 </div>
+                {(() => {
+                  const semPreco = data.pedidos.filter(p => p.precoCobrado == null).length
+                  return semPreco > 0 ? (
+                    <p className="text-xs text-gray-400">
+                      {semPreco} pedido{semPreco !== 1 ? "s" : ""} ainda em triagem/produção, sem preço calculado — não soma na receita acima.
+                    </p>
+                  ) : null
+                })()}
 
                 {/* Linha 2: monitor de insumo (informativo) */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

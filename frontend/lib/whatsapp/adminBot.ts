@@ -4,7 +4,7 @@ import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
 import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
 import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
-import { todayBR } from "@/lib/tz"
+import { todayBR, subDaysBR } from "@/lib/tz"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 
 // ─── Bot administrativo — operadores cadastrados em Usuários conversando com o
@@ -285,13 +285,16 @@ async function startClientesReceber(jid: string, user: AdminUser): Promise<void>
   await reply(jid, msg + MENU_FOOTER)
 }
 
+// Corta o período em horário de Brasília, não no fuso do servidor (Vercel roda
+// em UTC — sem isso, vendas feitas entre 21h e meia-noite (SP) contavam pro dia
+// seguinte no relatório do bot, deslocado ~3h do que o dashboard mostra).
 function periodoRange(kind: "hoje" | "mes" | number): Date {
-  const now = new Date()
-  if (kind === "hoje") return new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  if (kind === "mes")  return new Date(now.getFullYear(), now.getMonth(), 1)
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  d.setDate(d.getDate() - (kind - 1)) // "últimos N dias" inclui hoje
-  return d
+  if (kind === "hoje") return new Date(`${todayBR()}T00:00:00-03:00`)
+  if (kind === "mes") {
+    const [ano, mes] = todayBR().split("-")
+    return new Date(`${ano}-${mes}-01T00:00:00-03:00`)
+  }
+  return new Date(`${subDaysBR(kind - 1)}T00:00:00-03:00`) // "últimos N dias" inclui hoje
 }
 
 // Monta a mensagem de vendas (total + por produto genérico, sem cor/tamanho) —

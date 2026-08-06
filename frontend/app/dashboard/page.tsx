@@ -231,6 +231,9 @@ export default function DashboardPage() {
             Relatório completo →
           </Link>
         </div>
+        <p className="text-[10px] text-[#0F1E3C]/30 -mt-2">
+          Considera só pedidos concluídos — diferente do Relatório de Vendas, que mostra todo pedido ativo.
+        </p>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {financeiroLoading
@@ -344,6 +347,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-[#0F1E3C]/35 mt-1.5">
                   {financeiro?.dtf.count ?? 0} pedido{(financeiro?.dtf.count ?? 0) !== 1 ? "s" : ""} · {(financeiro?.dtf.metros ?? 0).toFixed(1)} m
                 </p>
+                <p className="text-[10px] text-[#0F1E3C]/30 mt-1">só pedidos concluídos</p>
               </div>
             </Link>
           )}
