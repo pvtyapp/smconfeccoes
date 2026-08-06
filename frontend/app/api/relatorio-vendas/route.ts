@@ -117,15 +117,19 @@ export async function GET(req: Request) {
           p.status,
           p.preco_cobrado AS "totalValue",
           p.due_date   AS "dueDate",
-          p.concluded_at  AS "paidAt",
+          p.paid_at    AS "paidAt",
+          NULL         AS "pixConfirmed",
+          NULL         AS "paymentMethod",
           p.created_at AS "createdAt",
           COALESCE(c.name, p.cliente) AS "contactName",
           c.phone      AS "contactPhone",
           json_build_array(
             json_build_object(
               'productName', 'Impressão DTF',
-              'qty',         1,
-              'unitPrice',   p.preco_cobrado,
+              'qty',         COALESCE(p.metros_finais, p.metros, 0),
+              'unitPrice',   CASE WHEN COALESCE(p.metros_finais, p.metros, 0) > 0
+                                   THEN p.preco_cobrado / COALESCE(p.metros_finais, p.metros, 0)
+                                   ELSE p.preco_cobrado END,
               'costPrice',   NULL
             )
           ) AS items

@@ -22,7 +22,8 @@ export async function GET(req: Request) {
     const { rows: pedidos } = await pool.query(`
       SELECT p.id, p.data, p.concluded_at AS "concludedAt", COALESCE(c.name, p.cliente) AS cliente,
              p.metros, p.metros_finais AS "metrosFinais",
-             p.preco_cobrado AS "precoCobrado", p.observacao, p.status
+             p.preco_cobrado AS "precoCobrado", p.observacao, p.status,
+             p.due_date AS "dueDate", p.paid_at AS "paidAt"
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       ${dateCond}

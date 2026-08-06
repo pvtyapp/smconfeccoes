@@ -71,6 +71,7 @@ const SOURCE_FILTERS = [
   { value: "pdv",      label: "PDV"      },
   { value: "whatsapp", label: "WhatsApp" },
   { value: "manual",   label: "Manual"   },
+  { value: "dtf",      label: "DTF"      },
   { value: "avarias",  label: "Avarias"  },
 ]
 
@@ -78,7 +79,18 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   pdv:      { label: "PDV",      cls: "bg-blue-100 text-blue-700"   },
   whatsapp: { label: "WhatsApp", cls: "bg-green-100 text-green-700" },
   manual:   { label: "Manual",   cls: "bg-gray-100 text-gray-600"   },
+  dtf:      { label: "DTF",      cls: "bg-purple-100 text-purple-700" },
   avaria:   { label: "Avaria",   cls: "bg-amber-100 text-amber-700" },
+}
+
+// À vista/prazo — mesma regra pra pedido de produto e pedido de DTF.
+function pagamento(o: { dueDate: string | null; paidAt: string | null; status: string }): { label: string; cls: string } {
+  const isPrazo = !!o.dueDate
+  const isPago  = !!o.paidAt
+  if (o.status !== "concluido" && !isPrazo) return { label: "—", cls: "" }
+  if (isPrazo && !isPago) return { label: `Prazo · ${fmtDateOnlyBR(o.dueDate)}`, cls: "text-amber-700 bg-amber-50" }
+  if (isPrazo && isPago)  return { label: "Prazo · Pago",                        cls: "text-blue-700 bg-blue-50"  }
+  return { label: "À vista", cls: "text-green-700 bg-green-50" }
 }
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -159,7 +171,10 @@ export default function RelatorioVendasPage() {
       const params = new URLSearchParams({ from: dates[0], to: dates[1] })
       const res = await fetch(`/api/relatorio-vendas?${params}`)
       const data = await res.json()
-      setOrders(Array.isArray(data.orders)  ? data.orders  : [])
+      setOrders([
+        ...(Array.isArray(data.orders) ? data.orders : []),
+        ...(Array.isArray(data.dtfPedidos) ? data.dtfPedidos : []),
+      ])
       setAvarias(Array.isArray(data.avarias) ? data.avarias : [])
     } finally {
       setLoading(false)
@@ -202,6 +217,7 @@ export default function RelatorioVendasPage() {
       return {
         key: `o-${o.id}`, data: o.createdAt, descricao: o.number,
         cliente: o.contactName, canal: badge.label, pecas,
+        pagamento: pagamento(o).label,
         valor: o.totalValue != null ? Number(o.totalValue) : null,
       }
     }
@@ -209,7 +225,7 @@ export default function RelatorioVendasPage() {
     return {
       key: `a-${a.id}`, data: a.createdAt,
       descricao: [a.productName, a.color, a.size].filter(Boolean).join(" · "),
-      cliente: null, canal: "Avaria", pecas: String(a.qty), valor: a.salePrice,
+      cliente: null, canal: "Avaria", pecas: String(a.qty), pagamento: "À vista", valor: a.salePrice,
     }
   }), [entries])
 
@@ -321,7 +337,10 @@ export default function RelatorioVendasPage() {
   }
 
   async function handleCancelConfirm(order: OrderRecord, notify: boolean) {
-    await fetch(`/api/orders/${order.id}/status`, {
+    const url = order.source === "dtf"
+      ? `/api/dtf/pedidos/${order.id}/status`
+      : `/api/orders/${order.id}/status`
+    await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "cancelado", actor: "dashboard", notifyClient: notify }),
@@ -515,20 +534,7 @@ export default function RelatorioVendasPage() {
                 const pecasLabel = [pecasRow > 0 ? String(pecasRow) : null, metrosRow > 0 ? `${metrosRow}m` : null].filter(Boolean).join(" + ") || "0"
                 const hasItems = (o.items ?? []).length > 0
 
-                const isPrazo = !!o.dueDate
-                const isPago  = !!o.paidAt
-                let pagLabel = "À vista"
-                let pagCls   = "text-green-700 bg-green-50"
-                if (isPrazo && !isPago) {
-                  pagLabel = `Prazo · ${fmtDateOnlyBR(o.dueDate)}`
-                  pagCls   = "text-amber-700 bg-amber-50"
-                } else if (isPrazo && isPago) {
-                  pagLabel = "Prazo · Pago"
-                  pagCls   = "text-blue-700 bg-blue-50"
-                } else if (o.status !== "concluido") {
-                  pagLabel = "—"
-                  pagCls   = ""
-                }
+                const { label: pagLabel, cls: pagCls } = pagamento(o)
 
                 const isConcluido  = o.status === "concluido"
                 const rowBaseCls   = isConcluido

@@ -11,6 +11,16 @@ type Pedido = {
   id: number; data: string; concludedAt: string; cliente: string | null
   metros: number; metrosFinais: number | null
   precoCobrado: number | null; observacao: string | null
+  dueDate: string | null; paidAt: string | null
+}
+
+// À vista/prazo — mesma regra usada no Relatório de Vendas.
+function pagamento(p: { dueDate: string | null; paidAt: string | null }): { label: string; cls: string } {
+  const isPrazo = !!p.dueDate
+  const isPago  = !!p.paidAt
+  if (isPrazo && !isPago) return { label: `Prazo · ${fmtDateOnlyBR(p.dueDate)}`, cls: "text-amber-700 bg-amber-50" }
+  if (isPrazo && isPago)  return { label: "Prazo · Pago",                        cls: "text-blue-700 bg-blue-50"  }
+  return { label: "À vista", cls: "text-green-700 bg-green-50" }
 }
 
 type CicloFechado = {
@@ -475,6 +485,7 @@ export default function DTFRelatorioPage() {
                         <th className="px-5 py-3 text-left">Data</th>
                         <th className="px-5 py-3 text-left">Cliente</th>
                         <th className="px-5 py-3 text-right">Metros</th>
+                        <th className="px-5 py-3 text-center">Pagamento</th>
                         <th className="px-5 py-3 text-right">Preço cobrado</th>
                         <th className="px-5 py-3 text-right">Preço/m</th>
                       </tr>
@@ -484,12 +495,16 @@ export default function DTFRelatorioPage() {
                         const metros = Number(p.metrosFinais ?? p.metros ?? 0)
                         const preco  = p.precoCobrado != null ? Number(p.precoCobrado) : null
                         const precoM = preco != null && metros > 0 ? preco / metros : null
+                        const pag    = pagamento(p)
 
                         return (
                           <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
                             <td className="px-5 py-3 text-gray-700">{fmtDateOnlyBR(p.data)}</td>
                             <td className="px-5 py-3 text-gray-700">{p.cliente || <span className="text-gray-300">—</span>}</td>
                             <td className="px-5 py-3 text-right font-mono font-semibold text-[#0F1E3C]">{metros.toFixed(2)} m</td>
+                            <td className="px-5 py-3 text-center">
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${pag.cls}`}>{pag.label}</span>
+                            </td>
                             <td className="px-5 py-3 text-right text-gray-700">{fmtR(preco)}</td>
                             <td className="px-5 py-3 text-right text-xs font-mono text-gray-500">{fmtCpm(precoM)}</td>
                           </tr>
