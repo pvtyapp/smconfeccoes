@@ -120,7 +120,7 @@ export async function processCampaignBatch(
           : (camp.content as string)
         const msg = recipient.isGroup
           ? baseContent
-          : baseContent.replace(/\{nome\}/g, firstName)
+          : baseContent.replace(/\{nome\}/gi, firstName)
 
         let msgId: string | null = null
         try {

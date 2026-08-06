@@ -110,7 +110,7 @@ export async function GET(req: Request) {
         let errorCount = 0
         for (const r of rcpts) {
           try {
-            const msg = (item.content as string).replace(/\{nome\}/g, ((r.name ?? "").split(" ")[0]))
+            const msg = (item.content as string).replace(/\{nome\}/gi, ((r.name ?? "").split(" ")[0]))
             const msgId = await campaignSend(r.jid as string, msg, item.mediaUrl as string | null)
             if (r.id) {
               await pool.query(`UPDATE wa_contacts SET last_marketing_sent_at = NOW() WHERE id = $1`, [r.id]).catch(() => {})

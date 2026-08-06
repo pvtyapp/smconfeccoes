@@ -72,7 +72,7 @@ export async function GET(req: Request) {
   const lifecycleActive = s.lifecycle_ativo !== "false"
 
   function t(template: string, name: string) {
-    return (template || "").replace(/\{nome\}/g, name.split(" ")[0])
+    return (template || "").replace(/\{nome\}/gi, name.split(" ")[0])
   }
 
   const today = todayBR()
