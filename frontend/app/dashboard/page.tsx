@@ -232,7 +232,7 @@ export default function DashboardPage() {
           </Link>
         </div>
         <p className="text-[10px] text-[#0F1E3C]/30 -mt-2">
-          Considera só pedidos concluídos — diferente do Relatório de Vendas, que mostra todo pedido ativo.
+          Considera só pedidos concluídos, pela data em que foram feitos.
         </p>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

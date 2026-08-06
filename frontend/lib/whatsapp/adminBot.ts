@@ -301,14 +301,18 @@ function periodoRange(kind: "hoje" | "mes" | number): Date {
 // soma pedidos concluídos + avarias vendidas, DTF fica só na linha resumo
 // separada (tem relatório próprio, não entra misturado no "por produto").
 async function buildVendasMsg(desde: Date, label: string): Promise<string> {
+  // Só conta pedido concluído (senão pedido ainda em andamento entra com
+  // receita fantasma). DTF entra pela data em que foi FEITO (p.data), não
+  // pela data em que fechou no sistema — pedido tirado à noite e concluído
+  // só de manhã continua contando no dia em que foi impresso de verdade.
   const { rows: ordRows } = await pool.query(`
     SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp')
+    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp')
       AND number NOT LIKE 'COB-%' AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
     SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(preco_cobrado), 0)::float AS receita
-    FROM dtf_pedidos WHERE status != 'cancelado' AND created_at >= $1
+    FROM dtf_pedidos WHERE status = 'concluido' AND data >= ($1 AT TIME ZONE 'America/Sao_Paulo')::date
   `, [desde])
   const { rows: avariaAgg } = await pool.query(`
     SELECT COUNT(*)::int AS vendas, COALESCE(SUM(sale_price), 0)::float AS receita
@@ -319,7 +323,7 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
            SUM(oi.qty)::int AS pecas, SUM(oi.qty * COALESCE(oi.unit_price, 0))::float AS receita
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
-    WHERE o.status != 'cancelado' AND o.source IN ('pdv','whatsapp')
+    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp')
       AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
     GROUP BY oi.product_name
   `, [desde])
@@ -358,21 +362,22 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
 }
 
 async function buildFinanceiroMsg(desde: Date, label: string): Promise<string> {
+  // Mesmo critério do buildVendasMsg — só concluído, DTF pela data do pedido.
   const { rows } = await pool.query(`
     SELECT COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status != 'cancelado' AND source IN ('pdv','whatsapp')
+    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp')
       AND number NOT LIKE 'COB-%' AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
     SELECT COALESCE(SUM(preco_cobrado), 0)::float AS receita
-    FROM dtf_pedidos WHERE status != 'cancelado' AND created_at >= $1
+    FROM dtf_pedidos WHERE status = 'concluido' AND data >= ($1 AT TIME ZONE 'America/Sao_Paulo')::date
   `, [desde])
   const { rows: custoRows } = await pool.query(`
     SELECT COALESCE(SUM(oi.qty * COALESCE(p.material_cost, 0)), 0)::float AS custo
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
     LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name) AND p.status = 'active'
-    WHERE o.status != 'cancelado' AND o.source IN ('pdv','whatsapp')
+    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp')
       AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
   `, [desde])
   const { rows: despesaRows } = await pool.query(`

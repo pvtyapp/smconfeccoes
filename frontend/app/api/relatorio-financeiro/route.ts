@@ -124,14 +124,17 @@ export async function GET(req: Request) {
         AND DATE(exhausted_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
     `, [from, to])
 
-    // DTF pedidos concluídos no período
+    // DTF pedidos concluídos no período — pela data em que o pedido foi FEITO
+    // (p.data), não pela data em que fechou no sistema (mesmo critério do
+    // Relatório DTF/Vendas — pedido tirado à noite e concluído só de manhã
+    // continua contando no dia em que foi impresso de verdade).
     const { rows: dtfRows } = await pool.query(`
       SELECT COALESCE(SUM(preco_cobrado), 0)::float AS total,
              COUNT(*)::int AS count,
              COALESCE(SUM(COALESCE(metros_finais, metros, 0)), 0)::float AS metros
       FROM dtf_pedidos
       WHERE status = 'concluido'
-        AND DATE(concluded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+        AND data BETWEEN $1 AND $2
     `, [from, to])
     const receitaDtf = Number(dtfRows[0]?.total ?? 0)
     const dtfCount   = Number(dtfRows[0]?.count ?? 0)
