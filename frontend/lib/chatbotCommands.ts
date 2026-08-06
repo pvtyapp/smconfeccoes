@@ -8,7 +8,6 @@ export type ChatbotCommand = { key: string; label: string }
 export const CHATBOT_COMMANDS: ChatbotCommand[] = [
   { key: "criar_ordem",    label: "Criar ordem de produção" },
   { key: "concluir_ordem", label: "Concluir ordem de produção" },
-  { key: "criar_insumo",   label: "Criar insumo (matéria-prima)" },
   { key: "vendas",         label: "Relatório de vendas" },
   { key: "financeiro",     label: "Relatório financeiro" },
   { key: "estoque",        label: "Relatório de estoque" },

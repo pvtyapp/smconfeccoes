@@ -2,9 +2,8 @@ import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
-import { createRawMaterialEntry } from "@/lib/rawMaterials/createEntry"
-import { createRawMaterialVariant } from "@/lib/rawMaterials/createVariant"
 import { createBobinaForColor } from "@/lib/rawMaterials/createBobinaForColor"
+import { payOrder, payDtfPedido } from "@/lib/receivables/payReceivable"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 
@@ -193,20 +192,6 @@ async function startCriarOrdem(jid: string, user: AdminUser): Promise<void> {
   await reply(jid, `📦 *Criar Ordem de Produção*\n\nQual produto?\n\n${numberedList(products.map(p => p.name))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
 }
 
-async function startCriarInsumo(jid: string, user: AdminUser): Promise<void> {
-  // product_id IS NULL exclui as bobinas que nascem sozinhas no fluxo de Nova
-  // Ordem (Programação) — mesmo filtro que a tela de Matéria Prima usa em
-  // /api/raw-materials, essas bobinas só aparecem no relatório de Insumos.
-  const { rows: materials } = await pool.query(`
-    SELECT id, name, unit FROM raw_materials WHERE status = 'active' AND product_id IS NULL ORDER BY name
-  `)
-  await setState(user.id, "insumo_material", withTimestamp({
-    materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })),
-  }))
-  const novaOpcao = materials.length + 1
-  await reply(jid, `📦 *Nova Entrada de Matéria-Prima*\n\nQual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}${materials.length ? "\n" : ""}${novaOpcao}. Nova categoria...\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
-}
-
 async function startConcluirOrdem(jid: string, user: AdminUser): Promise<void> {
   const { rows: orders } = await pool.query(`
     SELECT id, number, product_name AS "productName"
@@ -258,14 +243,24 @@ async function startContaPagar(jid: string, user: AdminUser): Promise<void> {
   await reply(jid, `📅 *Lançar Conta a Pagar*\n\nQual a descrição?\n\n_"cancelar" ou "menu" pra sair._`)
 }
 
+type ReceberItem = {
+  id: number; kind: "produto" | "dtf"; number: string
+  totalValue: number; remaining: number
+  contactName: string | null; dueDate: string | null
+}
+
 async function startClientesReceber(jid: string, user: AdminUser): Promise<void> {
   void user
   const { rows } = await pool.query(`
-    SELECT o.number, o.total_value::float AS "totalValue", o.due_date::text AS "dueDate", c.name AS "contactName"
+    SELECT o.id, 'produto' AS kind, o.number, o.total_value::float AS "totalValue",
+           (o.total_value - o.amount_paid)::float AS "remaining",
+           o.due_date::text AS "dueDate", c.name AS "contactName"
     FROM orders o JOIN wa_contacts c ON c.id = o.contact_id
     WHERE o.paid_at IS NULL AND o.status != 'cancelado' AND o.due_date IS NOT NULL
     UNION ALL
-    SELECT p.number, p.preco_cobrado::float AS "totalValue", p.due_date::text AS "dueDate", COALESCE(c.name, p.cliente) AS "contactName"
+    SELECT p.id, 'dtf' AS kind, p.number, p.preco_cobrado::float AS "totalValue",
+           (p.preco_cobrado - p.amount_paid)::float AS "remaining",
+           p.due_date::text AS "dueDate", COALESCE(c.name, p.cliente) AS "contactName"
     FROM dtf_pedidos p LEFT JOIN wa_contacts c ON c.id = p.contact_id
     WHERE p.paid_at IS NULL AND p.status != 'cancelado' AND p.due_date IS NOT NULL
     ORDER BY "dueDate" ASC NULLS LAST
@@ -277,13 +272,24 @@ async function startClientesReceber(jid: string, user: AdminUser): Promise<void>
   const hoje = todayBR()
   const total = rows.reduce((s, r) => s + Number(r.totalValue), 0)
   const atrasados = rows.filter(r => r.dueDate && r.dueDate < hoje)
+  const itemsList: ReceberItem[] = rows.slice(0, 20).map(r => ({
+    id: r.id, kind: r.kind, number: r.number,
+    totalValue: Number(r.totalValue), remaining: Number(r.remaining),
+    contactName: r.contactName, dueDate: r.dueDate,
+  }))
+
   let msg = `💰 *Clientes a Receber*\n\nTotal pendente: *${fmtMoney(total)}* (${rows.length} cobranças)`
   if (atrasados.length > 0) {
     msg += `\n\n🔴 Atrasados (${atrasados.length}):\n` + atrasados.slice(0, 15).map(r =>
       `${r.contactName ?? "?"} — ${fmtMoney(Number(r.totalValue))} (venceu ${r.dueDate})`
     ).join("\n")
   }
-  await reply(jid, msg + MENU_FOOTER)
+  msg += `\n\n*Dar baixa em qual?*\n\n${numberedList(itemsList.map(i =>
+    `${i.contactName ?? "?"} — ${i.number} — ${fmtMoney(i.remaining)} restante`
+  ))}${rows.length > itemsList.length ? `\n_+ ${rows.length - itemsList.length} outra(s), mais distante(s) do vencimento_` : ""}\n\n_Responda o número pra dar baixa, ou "menu" pra sair._`
+
+  await setState(user.id, "receber_escolha", withTimestamp({ itemsList }))
+  await reply(jid, msg)
 }
 
 // Corta o período em horário de Brasília, não no fuso do servidor (Vercel roda
@@ -416,7 +422,6 @@ async function startFinanceiro(jid: string, user: AdminUser): Promise<void> {
 const MENU_ITEMS: MenuItem[] = [
   { key: "criar_ordem",    triggers: ["criar ordem"],    start: startCriarOrdem },
   { key: "concluir_ordem", triggers: ["concluir ordem"], start: startConcluirOrdem },
-  { key: "criar_insumo",   triggers: ["criar insumo"],   start: startCriarInsumo },
   { key: "vendas",         triggers: ["relatorio de vendas", "relatório de vendas", "vendas"], start: startVendas },
   { key: "financeiro",     triggers: ["relatorio financeiro", "relatório financeiro", "financeiro"], start: startFinanceiro },
   { key: "estoque",        triggers: ["relatorio de estoque", "relatório de estoque", "estoque"], start: startEstoque },
@@ -433,7 +438,7 @@ function commandLabel(key: string): string {
 // painel (Produção / Financeiro em lib/navPages.ts), só pra organizar a leitura
 // no WhatsApp. A numeração corre sequencial atravessando os blocos.
 const MENU_GROUPS: { label: string; keys: string[] }[] = [
-  { label: "📦 *Produção*",   keys: ["criar_ordem", "concluir_ordem", "criar_insumo", "estoque"] },
+  { label: "📦 *Produção*",   keys: ["criar_ordem", "concluir_ordem", "estoque"] },
   { label: "💰 *Financeiro*", keys: ["vendas", "financeiro", "receber", "despesa", "contas_pagar"] },
 ]
 
@@ -775,174 +780,83 @@ export async function handleAdminMessage(jid: string, text: string, userIn: Admi
     return true
   }
 
-  // ── Nova entrada de matéria-prima: escolhendo material ──────────────────
-  if (state === "insumo_material") {
-    const materialsList = (data.materialsList as { id: number; name: string; unit: string }[]) ?? []
-    const novaOpcaoMaterial = materialsList.length + 1
+  // ── Clientes a receber: escolhendo qual cobrança dar baixa ───────────────
+  if (state === "receber_escolha") {
+    const itemsList = (data.itemsList as ReceberItem[]) ?? []
     const n = parseInt(lower, 10)
-    if (isNaN(n) || n < 1 || n > novaOpcaoMaterial) {
-      await reply(jid, `Não entendi. Responda um número de 1 a ${novaOpcaoMaterial}.`)
+    if (isNaN(n) || n < 1 || n > itemsList.length) {
+      await reply(jid, `Não entendi. Responda o número da cobrança (1 a ${itemsList.length}), ou "menu" pra sair.`)
       return true
     }
-    if (n === novaOpcaoMaterial) {
-      await setState(user.id, "insumo_material_nome", withTimestamp({}))
-      await reply(jid, `Qual o nome da nova categoria de material?`)
-      return true
-    }
-    const material = materialsList[n - 1]
-    const { rows: variants } = await pool.query(
-      `SELECT id, name FROM raw_material_variants WHERE material_id = $1 ORDER BY name`,
-      [material.id]
-    )
-    await setState(user.id, "insumo_variante", withTimestamp({
-      materialId: material.id, materialName: material.name, unit: material.unit,
-      variantsList: variants.map(v => ({ id: v.id, name: v.name })),
-    }))
-    const novaOpcao = variants.length + 1
-    await reply(
-      jid,
-      `Qual variação/cor de *${material.name}*?\n\n${numberedList(variants.map(v => v.name))}${variants.length ? "\n" : ""}${novaOpcao}. Nova variação...\n\n_"cancelar" pra sair._`
-    )
+    const item = itemsList[n - 1]
+    await setState(user.id, "receber_tipo_baixa", withTimestamp({ item }))
+    await reply(jid, `*${item.contactName ?? "?"}* — ${item.number} — restam ${fmtMoney(item.remaining)}.\n\n1. Baixa total\n2. Baixa parcial\n\n_"cancelar" pra sair._`)
     return true
   }
 
-  // ── Nova entrada de matéria-prima: nome da categoria nova ────────────────
-  if (state === "insumo_material_nome") {
-    if (!text.trim()) {
-      await reply(jid, "Manda o nome da categoria.")
+  // ── Clientes a receber: total ou parcial ──────────────────────────────────
+  if (state === "receber_tipo_baixa") {
+    const item = data.item as ReceberItem
+    if (lower === "1") {
+      await setState(user.id, "receber_notificar", withTimestamp({ item, amount: null }))
+      await reply(jid, `Confirma baixa total de *${fmtMoney(item.remaining)}*. Avisar o cliente pelo WhatsApp? (sim/não)`)
       return true
     }
-    await setState(user.id, "insumo_material_unidade", withTimestamp({ materialName: text.trim() }))
-    await reply(jid, `Unidade — 1. kg ou 2. m?`)
+    if (lower === "2") {
+      await setState(user.id, "receber_valor", withTimestamp({ item }))
+      await reply(jid, `Quanto foi pago? (máx ${fmtMoney(item.remaining)})`)
+      return true
+    }
+    await reply(jid, `Não entendi. Responda 1 (total) ou 2 (parcial).`)
     return true
   }
 
-  // ── Nova entrada de matéria-prima: unidade da categoria nova ────────────
-  if (state === "insumo_material_unidade") {
-    const unit = lower === "1" || lower === "kg" ? "kg" : lower === "2" || lower === "m" ? "m" : null
-    if (!unit) {
-      await reply(jid, `Não entendi. Responda 1 (kg) ou 2 (m).`)
+  // ── Clientes a receber: valor da baixa parcial ────────────────────────────
+  if (state === "receber_valor") {
+    const item = data.item as ReceberItem
+    const amount = parseFloat(text.trim().replace(",", "."))
+    if (isNaN(amount) || amount <= 0) {
+      await reply(jid, `Valor não reconhecido. Manda só o número (ex: 50.00).`)
+      return true
+    }
+    if (amount > item.remaining + 0.01) {
+      await reply(jid, `Valor maior que o restante (${fmtMoney(item.remaining)}). Manda um valor menor ou igual.`)
+      return true
+    }
+    await setState(user.id, "receber_notificar", withTimestamp({ item, amount }))
+    await reply(jid, `Avisar o cliente pelo WhatsApp sobre esse pagamento de ${fmtMoney(amount)}? (sim/não)`)
+    return true
+  }
+
+  // ── Clientes a receber: notificar cliente e efetivar a baixa ──────────────
+  if (state === "receber_notificar") {
+    const item = data.item as ReceberItem
+    const amount = (data.amount as number | null) ?? undefined
+    const notifyClient = lower === "sim" || lower === "s"
+    const naoNotifica  = lower === "não" || lower === "nao" || lower === "n"
+    if (!notifyClient && !naoNotifica) {
+      await reply(jid, `Responde "sim" ou "não". Avisar o cliente pelo WhatsApp?`)
       return true
     }
     try {
-      const { rows } = await pool.query(
-        `INSERT INTO raw_materials (name, unit) VALUES ($1, $2) RETURNING id, name, unit`,
-        [data.materialName, unit]
-      )
-      const material = rows[0]
-      await setState(user.id, "insumo_variante", withTimestamp({
-        materialId: material.id, materialName: material.name, unit: material.unit, variantsList: [],
-      }))
-      await reply(jid, `Categoria *${material.name}* criada.\n\nQual variação/cor?\n\n1. Nova variação...\n\n_"cancelar" pra sair._`)
-    } catch (e) {
-      console.error("[adminBot] criar categoria falhou:", e instanceof Error ? e.message : e)
+      const pay = item.kind === "produto" ? payOrder : payDtfPedido
+      const result = await pay(item.id, amount, { notifyClient, actor: "operator" })
       await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar a categoria. Tenta de novo ou crie pelo painel." + MENU_FOOTER)
-    }
-    return true
-  }
-
-  // ── Nova entrada de matéria-prima: escolhendo ou criando variação ───────
-  if (state === "insumo_variante") {
-    const variantsList = (data.variantsList as { id: number; name: string }[]) ?? []
-    const n = parseInt(lower, 10)
-    const novaOpcao = variantsList.length + 1
-    if (isNaN(n) || n < 1 || n > novaOpcao) {
-      await reply(jid, `Não entendi. Responda um número de 1 a ${novaOpcao}.`)
-      return true
-    }
-    if (n === novaOpcao) {
-      await setState(user.id, "insumo_variante_nome", withTimestamp({ ...data }))
-      await reply(jid, `Qual o nome da nova variação/cor?`)
-      return true
-    }
-    const variant = variantsList[n - 1]
-    await setState(user.id, "insumo_quantidade", withTimestamp({
-      ...data, variantId: variant.id, varianteName: variant.name,
-    }))
-    await reply(jid, `Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
-    return true
-  }
-
-  // ── Nova entrada de matéria-prima: nome da variação nova ────────────────
-  if (state === "insumo_variante_nome") {
-    if (!text.trim()) {
-      await reply(jid, "Manda o nome da variação.")
-      return true
-    }
-    try {
-      const variant = await createRawMaterialVariant(data.materialId as number, text.trim())
-      await setState(user.id, "insumo_quantidade", withTimestamp({
-        ...data, variantId: variant.id, varianteName: variant.name,
-      }))
-      await reply(jid, `Variação *${variant.name}* criada. Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
-    } catch (e) {
-      console.error("[adminBot] criar variação falhou:", e instanceof Error ? e.message : e)
-      await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar a variação. Tenta de novo ou crie pelo painel." + MENU_FOOTER)
-    }
-    return true
-  }
-
-  // ── Nova entrada de matéria-prima: quantidade e preço ───────────────────
-  if (state === "insumo_quantidade") {
-    const parts = text.trim().split(/\s+/)
-    const qty = parseFloat((parts[0] ?? "").replace(",", "."))
-    const price = parseFloat((parts[1] ?? "").replace(",", "."))
-    if (isNaN(qty) || qty <= 0 || isNaN(price) || price < 0) {
-      await reply(jid, `Formato não reconhecido. Manda quantidade e preço separados por espaço (ex: 50 12.90).`)
-      return true
-    }
-    try {
-      const entry = await createRawMaterialEntry(
-        data.materialId as number, data.variantId as number, qty, price
-      )
-      const lotesCriados = [...(data.lotesCriados as string[] ?? []), entry.number]
-      await setState(user.id, "insumo_mais", withTimestamp({ ...data, lotesCriados }))
-      await reply(
-        jid,
-        `✅ Lote *${entry.number}* criado! ${entry.materialName} - ${entry.varianteName}: ${qty} ${entry.unit} a ${price}/${entry.unit}.\n\nMais uma bobina de *${entry.varianteName}*? (sim/não/novo material)`
-      )
-    } catch (e) {
-      console.error("[adminBot] criar lote falhou:", e instanceof Error ? e.message : e)
-      await setState(user.id, null, {})
-      await reply(jid, "Deu erro ao criar o lote. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
-    }
-    return true
-  }
-
-  // ── Nova entrada de matéria-prima: mais uma bobina, ou encerra ─────────
-  if (state === "insumo_mais") {
-    const lotesCriados = (data.lotesCriados as string[]) ?? []
-    if (lower === "sim" || lower === "s") {
-      await setState(user.id, "insumo_quantidade", withTimestamp({ ...data }))
-      await reply(jid, `Quantidade e preço por ${data.unit}? Formato: qtd preço (ex: 50 12.90)`)
-      return true
-    }
-    if (lower === "não" || lower === "nao" || lower === "n") {
-      await setState(user.id, null, {})
-      await reply(
-        jid,
-        `${lotesCriados.length} lote${lotesCriados.length !== 1 ? "s" : ""} criado${lotesCriados.length !== 1 ? "s" : ""}: ${lotesCriados.join(", ")}.` + MENU_FOOTER
-      )
-      return true
-    }
-    if (lower.includes("novo material")) {
-      const { rows: materials } = await pool.query(`
-        SELECT id, name, unit FROM raw_materials WHERE status = 'active' ORDER BY name
-      `)
-      if (materials.length === 0) {
-        await setState(user.id, null, {})
-        await reply(jid, "Nenhum material cadastrado. Cadastre uma categoria pelo painel antes." + MENU_FOOTER)
+      if (result.skipped) {
+        await reply(jid, "Essa cobrança já estava paga." + MENU_FOOTER)
         return true
       }
-      await setState(user.id, "insumo_material", withTimestamp({
-        materialsList: materials.map(m => ({ id: m.id, name: m.name, unit: m.unit })), lotesCriados,
-      }))
-      await reply(jid, `Qual material?\n\n${numberedList(materials.map(m => `${m.name} (${m.unit})`))}\n\n_Responda só o número. "cancelar" ou "menu" pra sair._`)
-      return true
+      await reply(
+        jid,
+        `✅ Baixa de *${fmtMoney(result.received)}* registrada em *${result.number}*.\n` +
+        (result.isFull ? "Cobrança quitada." : `Restam *${fmtMoney(result.remaining ?? 0)}*.`) +
+        MENU_FOOTER
+      )
+    } catch (e) {
+      console.error("[adminBot] dar baixa falhou:", e instanceof Error ? e.message : e)
+      await setState(user.id, null, {})
+      await reply(jid, "Deu erro ao dar baixa. Tenta de novo ou lance pelo painel." + MENU_FOOTER)
     }
-    await reply(jid, `Não entendi. Responda "sim" (mais uma bobina), "não" (encerrar) ou "novo material".`)
     return true
   }
 

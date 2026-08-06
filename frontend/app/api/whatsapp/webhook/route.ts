@@ -890,7 +890,7 @@ export async function POST(req: Request) {
 
       // Operador cadastrado mandando do próprio número? Verifica comando
       // administrativo primeiro. Se estiver no meio de um fluxo (op_produto,
-      // insumo_material...) a mensagem é sempre a resposta daquele fluxo. Se
+      // receber_escolha...) a mensagem é sempre a resposta daquele fluxo. Se
       // estiver neutro e a mensagem não bater com nenhum comando reconhecido
       // (ex: "boa noite"), cai no chatbot de cliente normal — híbrido, não
       // exclusivo — em vez de ficar mudo.
