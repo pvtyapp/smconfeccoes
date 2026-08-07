@@ -820,9 +820,12 @@ export default function PedidosPage() {
     latestMsgAt.current = null
     lastSeenId.current  = 0
     isFirstLoad.current = true
-    // Carrega mensagens imediatamente; sync em paralelo (não bloqueia exibição)
-    loadMessages(chatContact.id)
-    syncOutgoing(chatContact.id, chatContact.jid)
+    // Espera o sync terminar (backfill de mensagens mandadas do celular) ANTES de
+    // carregar — antes rodava em paralelo e a mensagem que faltava só aparecia via
+    // poll uns segundos depois, reordenando a conversa já renderizada na cara do
+    // operador ("pulando"). sync-outgoing tem timeout próprio (~5s) na Evolution,
+    // então isso no máximo atrasa a abertura, nunca trava.
+    syncOutgoing(chatContact.id, chatContact.jid).finally(() => loadMessages(chatContact.id))
     loadContactDtfOrders(chatContact.id)
     // Mark as read in DB + send read receipt to WA (bidirectional)
     fetch("/api/chat/mark-read", {
