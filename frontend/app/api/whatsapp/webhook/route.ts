@@ -665,6 +665,32 @@ export async function POST(req: Request) {
       [JSON.stringify({ event, ts: new Date().toISOString(), preview: JSON.stringify(body).slice(0, 2000) })]
     ).catch(() => {})
 
+    // connection.update — só log durável (nunca sobrescrito, diferente do debug_last_webhook
+    // acima) do motivo real de queda de instância. Investigando desconexão de número de
+    // marketing antes do primeiro envio de campanha (2x); sem isso não tinha como saber se é
+    // banimento (401/loggedOut), conflito de sessão (440/replaced) ou outra causa da Evolution.
+    if (event === "connection.update") {
+      const d = (body?.data ?? {}) as Record<string, unknown>
+      const lastDisconnect = d.lastDisconnect as Record<string, unknown> | undefined
+      const errOutput = (lastDisconnect?.error as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined
+      pool.query(`
+        CREATE TABLE IF NOT EXISTS wa_connection_events (
+          id SERIAL PRIMARY KEY,
+          instance TEXT,
+          state TEXT,
+          status_code INTEGER,
+          raw JSONB,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `).then(() =>
+        pool.query(
+          `INSERT INTO wa_connection_events (instance, state, status_code, raw) VALUES ($1,$2,$3,$4)`,
+          [body?.instance ?? null, d.state ?? null, (errOutput?.statusCode as number) ?? null, JSON.stringify(body).slice(0, 4000)]
+        )
+      ).catch(() => {})
+      return NextResponse.json({ ok: true })
+    }
+
     // contacts.upsert fires the entire phonebook on connection.
     // Use it to populate missing names and phone_jid for existing contacts only.
     if (event === "contacts.upsert") {
