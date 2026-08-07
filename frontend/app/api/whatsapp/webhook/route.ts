@@ -826,8 +826,16 @@ export async function POST(req: Request) {
 
           let matchedRows = 0
           if (fromMe) {
+            // A Evolution manda os acks fora de ordem — um SERVER_ACK ("sent") atrasado
+            // chega DEPOIS do DELIVERY_ACK/READ com frequência (confirmado em teste real:
+            // 5/5 mensagens do dashboard chat regrediram de "delivered" pra "sent" uns 9s
+            // depois). Status só pode andar pra frente (sent < delivered < read), nunca
+            // regredir — é essa regressão que fazia o ✓✓ azul "sumir".
             const r = await pool.query(
-              `UPDATE wa_messages SET status = $1, updated_at = NOW() WHERE message_id = $2 AND direction = 'out'`,
+              `UPDATE wa_messages SET status = $1, updated_at = NOW()
+               WHERE message_id = $2 AND direction = 'out'
+                 AND CASE status WHEN 'read' THEN 3 WHEN 'delivered' THEN 2 WHEN 'sent' THEN 1 WHEN 'failed' THEN 0 ELSE -1 END
+                   < CASE $1 WHEN 'read' THEN 3 WHEN 'delivered' THEN 2 WHEN 'sent' THEN 1 WHEN 'failed' THEN 0 ELSE -1 END`,
               [mapped, msgId]
             ).catch(() => null)
             matchedRows = r?.rowCount ?? 0
