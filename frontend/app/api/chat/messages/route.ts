@@ -7,6 +7,8 @@ const PAGE_SIZE = 50
 
 export async function GET(req: Request) {
   try {
+    await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`).catch(() => {})
+
     const { searchParams } = new URL(req.url)
     const contactId = searchParams.get("contactId")
     if (!contactId) return NextResponse.json({ error: "contactId obrigatório" }, { status: 400 })
@@ -31,6 +33,7 @@ export async function GET(req: Request) {
           quoted_text            AS "quotedText",
           read_at                AS "readAt",
           created_at             AS "createdAt",
+          deleted_at              AS "deletedAt",
           COALESCE(media_failed, FALSE) AS "mediaFailed"
         FROM wa_messages`
 
@@ -64,11 +67,12 @@ export async function GET(req: Request) {
         quoted_text       AS "quotedText",
         read_at           AS "readAt",
         created_at        AS "createdAt",
+        deleted_at        AS "deletedAt",
         COALESCE(media_failed, FALSE) AS "mediaFailed"
       FROM (
         SELECT id, message_id, direction, content, media_type, media_url, media_thumb,
                media_category, file_name, caption, status, quoted_id, quoted_text,
-               read_at, created_at, media_failed
+               read_at, created_at, deleted_at, media_failed
         FROM wa_messages
         WHERE contact_id = $1
         ORDER BY created_at DESC, id DESC

@@ -445,6 +445,21 @@ async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<Save
 // Mesmo mapeamento usado no handler de messages.update (status real que o
 // WhatsApp confirmou pra mensagem) — extraído aqui pra ser reaproveitado pelo
 // reconcile também, ver comentário em reconcileRecentMessages.
+// "Apagar para todos" — mantém a linha (histórico/pedido continuam íntegros),
+// mas limpa o conteúdo e marca deleted_at. Front mostra "🚫 Mensagem apagada"
+// no lugar, igual o WhatsApp de verdade — antes era DELETE puro, a msg sumia
+// da tela sem aviso até reabrir a conversa.
+async function softDeleteMessage(messageId: string): Promise<void> {
+  await pool.query(`ALTER TABLE wa_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`).catch(() => {})
+  await pool.query(`
+    UPDATE wa_messages
+    SET deleted_at = NOW(), content = NULL, media_type = NULL, media_url = NULL,
+        media_thumb = NULL, media_data = NULL, media_category = NULL,
+        file_name = NULL, caption = NULL, updated_at = NOW()
+    WHERE message_id = $1
+  `, [messageId]).catch(() => {})
+}
+
 function mapEvoStatus(raw: string | undefined): "sent" | "delivered" | "read" | "failed" | null {
   if (!raw) return null
   return raw === "READ" || raw === "PLAYED"        ? "read"
@@ -808,9 +823,10 @@ export async function POST(req: Request) {
           const statusStrRaw = u.status as string | undefined
 
           // Delete pra todos chega como status "DELETED" dentro do próprio messages.update
-          // nessa versão — não como evento separado. Espelha a exclusão aqui direto.
+          // nessa versão — não como evento separado. Soft-delete: fica um "apagada" no
+          // lugar (como o WhatsApp real mostra), não some sem deixar rastro.
           if (statusStrRaw === "DELETED") {
-            await pool.query(`DELETE FROM wa_messages WHERE message_id = $1`, [msgId]).catch(() => {})
+            await softDeleteMessage(msgId)
             return
           }
 
@@ -872,8 +888,8 @@ export async function POST(req: Request) {
     }
 
     // Mensagem apagada no WhatsApp ("apagar para todos", só funciona ~60h após o
-    // envio — "apagar só pra mim" é local no aparelho e nunca chega aqui). Espelha
-    // a exclusão em wa_messages. Mesmo formato flat de data que messages.update.
+    // envio — "apagar só pra mim" é local no aparelho e nunca chega aqui). Soft-delete:
+    // fica um "apagada" no lugar. Mesmo formato flat de data que messages.update.
     if (event === "messages.delete") {
       const raw = body?.data
       const items: Record<string, unknown>[] = Array.isArray(raw)
@@ -886,7 +902,7 @@ export async function POST(req: Request) {
           const msgId =
             (it.keyId as string | undefined) ?? (k?.id as string | undefined) ?? (it.id as string | undefined)
           if (!msgId) return
-          await pool.query(`DELETE FROM wa_messages WHERE message_id = $1`, [msgId]).catch(() => {})
+          await softDeleteMessage(msgId)
         }))
       )
       return NextResponse.json({ ok: true })

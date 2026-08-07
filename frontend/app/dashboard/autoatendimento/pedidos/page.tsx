@@ -114,6 +114,7 @@ type Message = {
   quotedId: string | null
   quotedText: string | null
   createdAt: string
+  deletedAt?: string | null
   mediaFailed?: boolean
 }
 
@@ -854,8 +855,9 @@ export default function PedidosPage() {
     return () => document.removeEventListener("visibilitychange", onVisible)
   }, [loadMessages])
 
-  // Atualiza status dos ticks (sent/delivered/read) nas mensagens existentes a cada 30s
-  // sem fazer sync com Evolution — só lê do DB local
+  // Atualiza ticks (sent/delivered/read) e apagadas (deletedAt) nas mensagens já
+  // carregadas a cada 30s — só lê do DB local. deletedAt entrou aqui porque apagar
+  // pra todos é um UPDATE, não some por id; o poll de 2s (afterId) nunca pegaria isso.
   useEffect(() => {
     if (!chatContact) return
     const contactId = chatContact.id
@@ -870,7 +872,10 @@ export default function PedidosPage() {
         let changed = false
         const updated = prev.map(m => {
           const f = byId.get(m.id)
-          if (f && (f.status !== m.status)) { changed = true; return { ...m, status: f.status } }
+          if (f && (f.status !== m.status || f.deletedAt !== m.deletedAt)) {
+            changed = true
+            return { ...m, status: f.status, deletedAt: f.deletedAt, content: f.deletedAt ? null : m.content, mediaType: f.deletedAt ? null : m.mediaType }
+          }
           return m
         })
         return changed ? updated : prev
@@ -967,6 +972,7 @@ export default function PedidosPage() {
   async function deleteMessage(m: Message) {
     if (!chatContact) return
     setDeletingMsg(m.id)
+    const onlyLocally = m.direction === "in" // in = delete local only; out = delete for everyone
     await fetch("/api/chat/delete-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -975,10 +981,14 @@ export default function PedidosPage() {
         messageId: null,
         jid: chatContact.jid,
         fromMe: m.direction === "out",
-        onlyLocally: m.direction === "in", // in = delete local only; out = delete for everyone
+        onlyLocally,
       }),
     }).catch(() => {})
-    setMessages(prev => prev.filter(x => x.id !== m.id))
+    // "apagar para todos" vira tombstone (mesmo padrão do que o outro lado apaga);
+    // "só pra mim" some da nossa tela mesmo, nada mudou pro cliente
+    setMessages(prev => onlyLocally
+      ? prev.filter(x => x.id !== m.id)
+      : prev.map(x => x.id === m.id ? { ...x, deletedAt: new Date().toISOString(), content: null, mediaType: null } : x))
     setDeletingMsg(null)
   }
 
@@ -1534,6 +1544,17 @@ export default function PedidosPage() {
                                     )}
                                   </span>
                                 )
+
+                                if (m.deletedAt) {
+                                  return (
+                                    <div className="flex items-end gap-2 px-3 py-2">
+                                      <span className="text-[13px] italic flex items-center gap-1.5" style={{ color: "#667781" }}>
+                                        🚫 Mensagem apagada
+                                      </span>
+                                      {timeEl()}
+                                    </div>
+                                  )
+                                }
 
                                 if (m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "sticker") {
                                   const displaySrc = msgMediaData || m.mediaThumb
