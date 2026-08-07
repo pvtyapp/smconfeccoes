@@ -32,14 +32,15 @@ export async function GET(req: Request) {
   const s: Record<string, string> = {}
   for (const row of settingsRes.rows) s[row.key] = row.value
 
-  const chatbotAtivo    = s.chatbot_ativo !== "false"
   const lifecycleActive = s.lifecycle_ativo !== "false"
 
   function t(template: string, name: string) {
     return (template || "").replace(/\{nome\}/gi, name.split(" ")[0])
   }
 
-  if (chatbotAtivo && lifecycleActive) {
+  // Lifecycle é campanha de reengajamento (outbound), não depende do chatbot de
+  // atendimento (reativo) estar ligado — só do próprio lifecycle_ativo.
+  if (lifecycleActive) {
     // No máximo 1 mensagem de lifecycle por chamada (= por hora) — tenta cada
     // etapa em ordem de prioridade, para na primeira que encontrar candidato.
     let sent = false
