@@ -815,6 +815,18 @@ export async function POST(req: Request) {
 
       waitUntil(
         Promise.all(updates.map(async (u) => {
+          // Alguns relatos dizem que a edição vem embutida aqui dentro (campo
+          // editedMessage), não como evento separado — loga se aparecer.
+          if (u.editedMessage || u.editMessage) {
+            pool.query(`
+              CREATE TABLE IF NOT EXISTS wa_edit_events (
+                id SERIAL PRIMARY KEY, event TEXT, raw JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+              )
+            `).then(() =>
+              pool.query(`INSERT INTO wa_edit_events (event, raw) VALUES ($1, $2)`,
+                ["messages.update(editedMessage)", JSON.stringify(u).slice(0, 4000)])
+            ).catch(() => {})
+          }
           const k = u.key as Record<string, unknown> | undefined
           const msgId = (u.keyId as string | undefined) ?? (k?.id as string | undefined)
           if (!msgId) return
@@ -927,6 +939,28 @@ export async function POST(req: Request) {
           ).catch(() => {})
         }))
       )
+      return NextResponse.json({ ok: true })
+    }
+
+    // Mensagem editada — ainda não sabemos com certeza o formato que a NOSSA versão
+    // da Evolution manda (a doc/comunidade deles diverge: às vezes vem embutido no
+    // messages.update como campo editedMessage, às vezes é um evento próprio tipo
+    // MESSAGES_EDITED/messages.edited, e há relatos de nem disparar dependendo da
+    // versão). Só loga cru pra capturar um exemplo real antes de decidir como tratar.
+    if (event.toLowerCase().includes("edit")) {
+      pool.query(`
+        CREATE TABLE IF NOT EXISTS wa_edit_events (
+          id SERIAL PRIMARY KEY,
+          event TEXT,
+          raw JSONB,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `).then(() =>
+        pool.query(
+          `INSERT INTO wa_edit_events (event, raw) VALUES ($1, $2)`,
+          [event, JSON.stringify(body).slice(0, 4000)]
+        )
+      ).catch(() => {})
       return NextResponse.json({ ok: true })
     }
 
