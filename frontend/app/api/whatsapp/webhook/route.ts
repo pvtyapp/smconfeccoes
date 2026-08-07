@@ -824,17 +824,40 @@ export async function POST(req: Request) {
           }
           if (!mapped) return
 
+          let matchedRows = 0
           if (fromMe) {
-            await pool.query(
+            const r = await pool.query(
               `UPDATE wa_messages SET status = $1, updated_at = NOW() WHERE message_id = $2 AND direction = 'out'`,
               [mapped, msgId]
-            ).catch(() => {})
+            ).catch(() => null)
+            matchedRows = r?.rowCount ?? 0
           } else if (mapped === "read") {
-            await pool.query(
+            const r = await pool.query(
               `UPDATE wa_messages SET read_at = NOW(), updated_at = NOW() WHERE message_id = $1 AND direction = 'in' AND read_at IS NULL`,
               [msgId]
-            ).catch(() => {})
+            ).catch(() => null)
+            matchedRows = r?.rowCount ?? 0
           }
+
+          // Log durável (não sobrescrito) — investigando por que o read-receipt (✓✓ azul)
+          // só parece atualizar em mensagem mandada do celular, nunca das que saem pelo
+          // nosso chat. Guarda todo evento de ack pra comparar os dois casos depois.
+          pool.query(`
+            CREATE TABLE IF NOT EXISTS wa_ack_events (
+              id SERIAL PRIMARY KEY,
+              message_id TEXT,
+              from_me BOOLEAN,
+              status_raw TEXT,
+              mapped_status TEXT,
+              matched_rows INTEGER,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+          `).then(() =>
+            pool.query(
+              `INSERT INTO wa_ack_events (message_id, from_me, status_raw, mapped_status, matched_rows) VALUES ($1,$2,$3,$4,$5)`,
+              [msgId, fromMe, statusStrRaw ?? null, mapped, matchedRows]
+            )
+          ).catch(() => {})
         }))
       )
       return NextResponse.json({ ok: true })
