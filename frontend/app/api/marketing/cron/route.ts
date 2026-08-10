@@ -39,10 +39,14 @@ export async function GET(req: Request) {
     results.scheduledCampaignsDue = rowCount ?? 0
   } catch { results.errors++ }
 
-  // ── 2. Processa até 8 mensagens da campanha "sending" mais antiga em fila ──
+  // ── 2. Processa até 4 mensagens da campanha "sending" mais antiga em fila ──
   // Cobre tanto "enviar agora" quanto as que acabaram de virar "sending" acima.
+  // Era 8 até 2026-08-10 — com o delay de cliente subindo pra 40-60s, 8 no
+  // pior caso (480s) estourava maxDuration=280s e a Vercel matava a função no
+  // meio do envio sem erro nenhum registrado. 4 no pior caso (240s) deixa a
+  // mesma folga que o motor de schedule recorrente já usa (ver seção 3 abaixo).
   try {
-    const { processed, errors } = await processCampaignBatch(8)
+    const { processed, errors } = await processCampaignBatch(4)
     results.campaignSent = processed
     results.errors += errors
   } catch { results.errors++ }

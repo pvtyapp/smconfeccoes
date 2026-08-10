@@ -2,13 +2,14 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 
-// Vercel Cron: 0 11-23 * * * (08h–20h Brasília, de hora em hora)
+// Vercel Cron: */20 11-23 * * * (08h–20h Brasília, a cada 20min — era de hora
+// em hora até 2026-08-10, teste de cadência mais rápida em andamento)
 //
 // Separado do /api/whatsapp/cron (roda 1x/dia, cobrança/limpeza/watchdog) de
 // propósito: antes o lifecycle mandava até 12 mensagens (3 por etapa x 4
 // etapas) tudo junto às 9h, em menos de 1 minuto — padrão óbvio de bot. Agora
-// manda no máximo 1 mensagem por hora, entre 08h e 20h — a própria grade do
-// cron já impõe o espaçamento, sem precisar de trava por timestamp.
+// manda no máximo 1 mensagem por chamada, entre 08h e 20h — a própria grade
+// do cron já impõe o espaçamento, sem precisar de trava por timestamp.
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization")
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {

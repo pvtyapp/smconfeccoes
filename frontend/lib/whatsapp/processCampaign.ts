@@ -5,7 +5,7 @@ type Recipient = { jid: string; id?: number; name: string; isGroup?: boolean }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const randDelayGroup  = () => sleep(3000 + Math.random() * 5000)   // 3-8s, grupo — risco baixo, ritmo de sempre
-const randDelayClient = () => sleep(8000 + Math.random() * 12000)  // 8-20s, cliente individual — mais devagar
+const randDelayClient = () => sleep(40000 + Math.random() * 20000) // 40-60s, cliente individual — mais devagar ainda (era 8-20s até 2026-08-10)
 
 const BATCH_SIZE     = 30
 const BATCH_COOLDOWN_MS = 5 * 60 * 1000

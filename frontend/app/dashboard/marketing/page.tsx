@@ -2206,7 +2206,7 @@ export default function MarketingPage() {
   }, [])
 
   function stopPolling() {
-    if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null }
+    if (tickRef.current) { clearTimeout(tickRef.current); tickRef.current = null }
     pollingIdsRef.current = new Set()
   }
 
@@ -2230,16 +2230,30 @@ export default function MarketingPage() {
 
   // Cada número (instância) roda sua campanha independente — várias podem
   // estar "sending" ao mesmo tempo quando o envio pra clientes é dividido
-  // entre N números. Um intervalo só cutuca todas as que estão ativas.
-  function pollAll() {
-    for (const id of pollingIdsRef.current) tickCampaign(id)
+  // entre N números. Uma rodada só cutuca todas as que estão ativas.
+  async function pollAll() {
+    await Promise.all([...pollingIdsRef.current].map(tickCampaign))
+  }
+
+  // setTimeout recursivo (não setInterval fixo) com o mesmo jitter 40-60s do
+  // motor server-side (processCampaign.ts randDelayClient) — antes era
+  // setInterval fixo de 30s, cadência exata demais (parece bot) e mais rápida
+  // que o delay configurado no cron de fallback (tela fechada). Reagenda só
+  // depois que a rodada anterior termina, então o intervalo real entre envios
+  // nunca fica menor que o mínimo mesmo com latência de rede.
+  function scheduleNextPoll() {
+    const delay = 40_000 + Math.random() * 20_000
+    tickRef.current = setTimeout(async () => {
+      await pollAll()
+      if (pollingIdsRef.current.size > 0) scheduleNextPoll()
+    }, delay)
   }
 
   function startPolling(campaignIds: number[]) {
     for (const id of campaignIds) pollingIdsRef.current.add(id)
     if (!tickRef.current) {
       pollAll()
-      tickRef.current = setInterval(pollAll, 30_000)
+      scheduleNextPoll()
     }
   }
 
