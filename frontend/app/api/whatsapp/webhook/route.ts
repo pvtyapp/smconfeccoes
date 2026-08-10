@@ -181,7 +181,13 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
     const remoteJidAlt = (key?.remoteJidAlt as string) || ""
     const phoneJid: string | null = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net") ? remoteJidAlt : null
     const outMsgId: string | null = (key?.id as string) ?? null
-    const ts = key?.timestamp ? new Date(Number(key.timestamp) * 1000) : null
+    // key.timestamp não existe na resposta do Evolution (nem no webhook live nem no
+    // findMessages) — sempre undefined, caía no fallback NOW() e mensagens antigas
+    // recuperadas pelo reconcile entravam com a data de hoje. O campo real é
+    // messageTimestamp, no nível raiz do objeto (mesmo campo que saveInboundMessage
+    // já usa corretamente pra mensagens recebidas).
+    const rawTs = msg.messageTimestamp as number | string | undefined
+    const ts = rawTs ? new Date(Number(rawTs) * 1000) : null
     const outPhone = phoneJid
       ? phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")
       : jid.endsWith("@lid")
