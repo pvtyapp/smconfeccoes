@@ -89,6 +89,14 @@ export const evolutionProvider: WhatsAppProvider = {
     }
   },
 
+  async deleteInstance(instanceName: string): Promise<void> {
+    await fetch(`${EVO_URL}/instance/delete/${instanceName}`, {
+      method: "DELETE",
+      headers: { apikey: EVO_KEY },
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => {})
+  },
+
   async sendText(number: string, text: string, opts?: SendTextOpts): Promise<SendResult> {
     const instance = opts?.instanceName || EVO_INSTANCE
     const timeoutMs = opts?.timeoutMs ?? 9_000

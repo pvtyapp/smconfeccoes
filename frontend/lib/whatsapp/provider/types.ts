@@ -65,6 +65,7 @@ export interface WhatsAppProvider {
   restartInstance(instanceName?: string): Promise<void>
   getQrCode(instanceName?: string): Promise<QrCodeResult>
   createInstance(instanceName: string, ownerNumber?: string): Promise<CreateInstanceResult>
+  deleteInstance(instanceName: string): Promise<void>
 
   sendText(number: string, text: string, opts?: SendTextOpts): Promise<SendResult>
   sendMedia(number: string, opts: SendMediaOpts): Promise<SendResult>
