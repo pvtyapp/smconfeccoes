@@ -6,6 +6,7 @@ export type MatchedItem = ParsedItem & {
   unitPrice: number | null
   sku: string | null
   matched: boolean
+  productRecognized: boolean
   alternatives: string[]
   currentStock: number
   stockOk: boolean
@@ -115,29 +116,41 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
   `)
 
   return items.map(item => {
+    const candidates = variants.filter(v => nameScore(item.productName, v.productName) > 0.5)
+
+    // Se o cliente não disse cor (ou tamanho) e o produto tem mais de uma
+    // opção real de cor (ou tamanho) no catálogo, não dá pra saber qual ele
+    // quer — casar com a primeira que aparecer já causou baixa de estoque
+    // errada sem ninguém perceber (pedido do Rafael, moletom sem variação
+    // virou "Preto P" sozinho e foi até concluído). Nesse caso o item fica
+    // sem vínculo de propósito, pro operador escolher no Gerenciador.
+    const distinctColors = new Set(candidates.map(v => norm(v.color)).filter(Boolean))
+    const distinctSizes  = new Set(candidates.map(v => norm(v.size)).filter(Boolean))
+    const colorAmbiguous = !item.color && distinctColors.size > 1
+    const sizeAmbiguous  = !item.size && distinctSizes.size > 1
+
     let best: Variant | null = null
     let bestScore = 0
 
-    for (const v of variants) {
-      const nScore = nameScore(item.productName, v.productName)
-      if (nScore <= 0.5) continue // produto claramente diferente, nem olha cor/tamanho
+    if (!colorAmbiguous && !sizeAmbiguous) {
+      for (const v of candidates) {
+        // Cor e tamanho não têm mais nota — ou batem de verdade com o cadastro
+        // real dessa variante, ou o item fica sem vínculo (melhor não vincular
+        // do que vincular na cor/tamanho errado sem ninguém perceber).
+        if (item.color && !colorMatch(item.color, v.color)) continue
+        if (item.size && !sizeExact(item.size, v.size)) continue
 
-      // Cor e tamanho não têm mais nota — ou batem de verdade com o cadastro
-      // real dessa variante, ou o item fica sem vínculo (melhor não vincular
-      // do que vincular na cor/tamanho errado sem ninguém perceber).
-      if (item.color && !colorMatch(item.color, v.color)) continue
-      if (item.size && !sizeExact(item.size, v.size)) continue
-
-      if (nScore > bestScore) {
-        bestScore = nScore
-        best = v
+        const nScore = nameScore(item.productName, v.productName)
+        if (nScore > bestScore) {
+          bestScore = nScore
+          best = v
+        }
       }
     }
 
     const alternatives = best
       ? []
-      : variants
-          .filter(v => nameScore(item.productName, v.productName) > 0.5)
+      : candidates
           .map(v => [v.color, v.size].filter(Boolean).join(" "))
           .filter(Boolean)
           .slice(0, 5)
@@ -145,11 +158,12 @@ export async function matchVariants(items: ParsedItem[]): Promise<MatchedItem[]>
     const currentStock = best?.currentStock ?? 0
     return {
       ...item,
-      productName:  best?.productName ?? item.productName,
+      productName:  best?.productName ?? candidates[0]?.productName ?? item.productName,
       variantId:    best?.id ?? null,
       unitPrice:    best ? Number(best.salePrice) : null,
       sku:          best?.sku ?? null,
       matched:      best !== null,
+      productRecognized: candidates.length > 0,
       alternatives: [...new Set(alternatives)],
       currentStock,
       stockOk:      best !== null && currentStock >= item.qty,

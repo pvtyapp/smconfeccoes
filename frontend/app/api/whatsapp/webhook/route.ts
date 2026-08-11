@@ -1893,7 +1893,10 @@ async function createOrderDirect(
   // Reconheceu que é pedido mas não bateu nenhum produto do catálogo — cria triagem
   // virgem (sem itens) como alerta, igual o pedido DTF. Operador monta manualmente
   // vendo a mensagem original (salva em notes) e a conversa aberta.
-  if (!matched.some(m => m.matched)) {
+  // Usa productRecognized (não matched): item pode ter o produto identificado
+  // mas cor/tamanho ambíguos (ex: "moletom" sem dizer qual) — nesse caso o
+  // item ainda deve entrar na triagem sem variante, não virar texto cru.
+  if (!matched.some(m => m.productRecognized)) {
     await createTriagemVirgem(jid, contactId, fullText, parentOrderId)
     return
   }
