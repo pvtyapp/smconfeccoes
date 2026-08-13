@@ -15,6 +15,7 @@ type ReviewRow = {
   id: string
   raw: string
   title: string
+  variacao: string
   marketplaceSku: string
   variantId: string | null
   productName: string | null; color: string | null; size: string | null; sku: string | null
@@ -114,7 +115,7 @@ export default function MarketplacePage() {
       if (!res.ok) { setUploadError(data.error ?? "Erro ao analisar"); return }
 
       const rows: ReviewRow[] = data.rows.map((r: {
-        raw: string; title: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
+        raw: string; title: string; variacao: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
         size: string | null; sku: string | null; stock: number | null; qty: number
         source: "regra" | "ia" | null; unresolved: boolean
       }) => ({ id: newRowId(), ...r, remember: r.source === "ia" || r.unresolved }))
@@ -158,7 +159,7 @@ export default function MarketplacePage() {
     const variant = catalog.find(c => c.productName === effName && c.color === effColor && c.size === effSize)
     if (!variant) return
     setReviewRows(prev => [...prev, {
-      id: newRowId(), raw: `${variant.productName} ${variant.color} ${variant.size}`, title: "", marketplaceSku: "",
+      id: newRowId(), raw: `${variant.productName} ${variant.color} ${variant.size}`, title: "", variacao: "", marketplaceSku: "",
       variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size,
       sku: variant.sku, stock: variant.availableStock, qty: Math.max(1, manualQty),
       source: "manual", unresolved: false, remember: false,
@@ -465,8 +466,11 @@ export default function MarketplacePage() {
                         <tr key={r.id} className="border-t border-[#0F1E3C]/5 align-top">
                           <td className="px-2 py-2.5 max-w-[220px]">
                             <p className="font-mono text-xs text-[#0F1E3C] bg-[#F4F6FB] rounded px-1.5 py-0.5 w-fit truncate max-w-full">{r.marketplaceSku || "—"}</p>
+                            {r.variacao && (
+                              <p className="text-[11px] font-semibold text-[#0F1E3C]/70 mt-1 leading-snug" title={r.variacao}>{r.variacao}</p>
+                            )}
                             {r.title && (
-                              <p className="text-[11px] text-[#0F1E3C]/55 mt-1 leading-snug" title={r.title}>{r.title}</p>
+                              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5 leading-snug truncate" title={r.title}>{r.title}</p>
                             )}
                           </td>
                           <td className="px-2 py-2.5 min-w-[200px]">
