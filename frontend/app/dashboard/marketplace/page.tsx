@@ -27,7 +27,7 @@ type ReviewRow = {
 
 type AssociationItem = { variantId: string; qty: number; productName: string; color: string; size: string }
 type Association = {
-  id: number; prefix: string; kind: "single" | "kit"; color: string | null; origin: string; createdAt: string
+  id: number; prefix: string; kind: "single" | "kit"; origin: string; createdAt: string
   productId: string | null; productName: string | null
   items?: AssociationItem[]
 }
@@ -73,7 +73,6 @@ export default function MarketplacePage() {
   const [newAssocKind, setNewAssocKind] = useState<"single" | "kit">("single")
   const [newPrefix, setNewPrefix] = useState("")
   const [newAssocProduct, setNewAssocProduct] = useState("")
-  const [newAssocColor, setNewAssocColor] = useState("")
   // Kit: peças acumuladas antes de salvar a associação
   const [kitPieces, setKitPieces] = useState<{ variantId: string; productName: string; color: string; size: string; qty: number }[]>([])
   const [kitName, setKitName] = useState("")
@@ -211,11 +210,12 @@ export default function MarketplacePage() {
           const variant = catalog.find(c => c.variantId === r.variantId)
           if (!variant) return null
           // Tira o pedaço final do SKU do marketplace (normalmente o tamanho) —
-          // o que sobra é o prefixo que identifica produto+cor pra próxima vez.
+          // o que sobra vira o prefixo aprendido pra esse produto. Fica mais
+          // estreito que um prefixo digitado na mão (ex: "cami_"), mas nunca errado.
           const prefix = r.marketplaceSku.trim().toUpperCase().replace(/[-_ ]?[A-Z0-9]{1,3}$/i, "")
-          return prefix ? { prefix, productId: variant.productId, color: variant.color } : null
+          return prefix ? { prefix, productId: variant.productId } : null
         })
-        .filter((a): a is { prefix: string; productId: string; color: string } => !!a)
+        .filter((a): a is { prefix: string; productId: string } => !!a)
 
       const res = await fetch("/api/marketplace/confirm", {
         method: "POST",
@@ -260,10 +260,10 @@ export default function MarketplacePage() {
       if (kitPieces.length === 0) return
       body = { prefix: newPrefix, kind: "kit", items: kitPieces.map(p => ({ variantId: p.variantId, qty: p.qty })), origin: "manual" }
     } else {
-      if (!newAssocProduct || !newAssocColor) return
-      const variant = catalog.find(c => c.productName === newAssocProduct && c.color === newAssocColor)
+      if (!newAssocProduct) return
+      const variant = catalog.find(c => c.productName === newAssocProduct)
       if (!variant) return
-      body = { prefix: newPrefix, kind: "single", productId: variant.productId, color: newAssocColor, origin: "manual" }
+      body = { prefix: newPrefix, kind: "single", productId: variant.productId, origin: "manual" }
     }
     const res = await fetch("/api/marketplace/associations", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -636,7 +636,7 @@ export default function MarketplacePage() {
                               ))}
                             </ul>
                           ) : (
-                            <p className="text-xs text-[#0F1E3C]">{a.productName} · {a.color}</p>
+                            <p className="text-xs text-[#0F1E3C]">{a.productName} <span className="text-[#0F1E3C]/35">— cor/tamanho pela variação</span></p>
                           )}
                         </td>
                         <td className="py-2 text-right"><button onClick={() => deleteAssociation(a.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={13} /></button></td>
@@ -653,17 +653,16 @@ export default function MarketplacePage() {
                 </div>
 
                 {newAssocKind === "single" ? (
-                  <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr auto" }}>
-                    <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: BERMUDA-CINZA" className={inputCls} />
-                    <select value={newAssocProduct} onChange={e => { setNewAssocProduct(e.target.value); setNewAssocColor("") }} className={inputCls}>
-                      <option value="">Produto...</option>
-                      {productNames.map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    <select value={newAssocColor} onChange={e => setNewAssocColor(e.target.value)} className={inputCls}>
-                      <option value="">Cor...</option>
-                      {[...new Set(catalog.filter(c => c.productName === newAssocProduct).map(c => c.color))].map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <button onClick={addAssociation} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
+                  <div>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr auto" }}>
+                      <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: CAMI_ ou MOL_" className={inputCls} />
+                      <select value={newAssocProduct} onChange={e => setNewAssocProduct(e.target.value)} className={inputCls}>
+                        <option value="">Produto...</option>
+                        {productNames.map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                      <button onClick={addAssociation} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
+                    </div>
+                    <p className="text-[10.5px] text-[#0F1E3C]/35 mt-1.5">Cor e tamanho não entram aqui — são lidos direto da variação de cada item no picklist.</p>
                   </div>
                 ) : (
                   <div className="space-y-2.5">

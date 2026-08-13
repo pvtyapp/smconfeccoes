@@ -12,8 +12,16 @@ type CatalogVariant = {
 type AssociationItem = { variantId: string; qty: number }
 type Association = {
   prefix: string; kind: "single" | "kit"
-  productId: string | null; color: string | null
+  productId: string | null // 'single': o SKU só marca o produto — cor e tamanho vêm da variação (texto)
   items: AssociationItem[]
+}
+
+// Acha um "token" (cor, tamanho) dentro de um texto livre, ignorando maiúsculas
+// e escapando caracteres de regex — usado pra casar a variação do picklist.
+function textHasToken(text: string, token: string): boolean {
+  if (!token) return false
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text)
 }
 
 type ExtractedRow = { raw: string; sku: string; title: string; qty: number }
@@ -122,13 +130,20 @@ function matchByPrefix(row: ExtractedRow, associations: Association[], catalog: 
     return rows.length > 0 ? rows : null
   }
 
-  const variantsOfProduct = catalog.filter(c => c.productId === hit.productId && c.color === hit.color)
+  // Prefixo só garante o produto (ex: "cami_" = qualquer camiseta, de qualquer
+  // cor) — cor e tamanho têm que bater com o texto da variação. Remainder do
+  // SKU (depois do prefixo) entra como pista extra de tamanho, caso o texto
+  // não seja claro o bastante sozinho.
   const remainder = skuUpper.replace(hit.prefix, "").replace(/^[-_ ]+/, "")
-  const bySkuSuffix = variantsOfProduct.find(v => remainder && remainder.startsWith(v.size.toUpperCase()))
-  const byTitle = variantsOfProduct.find(v => new RegExp(`\\b${v.size}\\b`, "i").test(row.title))
-  const variant = bySkuSuffix ?? byTitle
+  const variantsOfProduct = catalog.filter(c => c.productId === hit.productId)
+  const scored = variantsOfProduct.map(v => {
+    const colorHit = textHasToken(row.title, v.color)
+    const sizeHit = textHasToken(row.title, v.size) || (!!remainder && remainder.startsWith(v.size.toUpperCase()))
+    return { v, score: (colorHit ? 2 : 0) + (sizeHit ? 1 : 0) }
+  }).sort((a, b) => b.score - a.score)
+  const variant = scored[0]?.score === 3 ? scored[0].v : null // precisa bater cor E tamanho, nunca só um
 
-  if (!variant) return null // produto/cor reconhecido mas tamanho não bateu — cai pra revisão manual
+  if (!variant) return null // produto reconhecido mas cor/tamanho não bateram com a variação — cai pra revisão manual
   return [{
     raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
     color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
@@ -274,7 +289,7 @@ export async function POST(req: Request) {
         WHERE pv.status = 'active' AND p.status = 'active'
       `),
       pool.query(`
-        SELECT a.id, a.prefix, a.kind, a.product_id AS "productId", a.color
+        SELECT a.id, a.prefix, a.kind, a.product_id AS "productId"
         FROM marketplace_sku_associations a
       `),
       pool.query(`
@@ -288,8 +303,8 @@ export async function POST(req: Request) {
       if (!itemsByAssoc.has(it.associationId)) itemsByAssoc.set(it.associationId, [])
       itemsByAssoc.get(it.associationId)!.push({ variantId: it.variantId, qty: it.qty })
     }
-    const associations: Association[] = (assocRaw as { id: number; prefix: string; kind: "single" | "kit"; productId: string | null; color: string | null }[])
-      .map(a => ({ prefix: a.prefix, kind: a.kind, productId: a.productId, color: a.color, items: itemsByAssoc.get(a.id) ?? [] }))
+    const associations: Association[] = (assocRaw as { id: number; prefix: string; kind: "single" | "kit"; productId: string | null }[])
+      .map(a => ({ prefix: a.prefix, kind: a.kind, productId: a.productId, items: itemsByAssoc.get(a.id) ?? [] }))
 
     const byRule: (ReviewRow[] | null)[] = extracted.map(r => matchByPrefix(r, associations, catalog))
     const needAI = extracted.filter((_, i) => byRule[i] === null)
