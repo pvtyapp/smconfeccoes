@@ -53,9 +53,46 @@ export async function GET(req: Request) {
       JOIN products p ON p.id = pv.product_id
       WHERE DATE(sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')
           = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
+        AND sm.reason != 'marketplace_separacao'
       ORDER BY sm.created_at DESC
       LIMIT 500
     `, [offset])
+
+    // ── Marketplace: separações confirmadas do dia — mesma lógica de agrupamento
+    // do Estoque (1 confirmação = N linhas em stock_movements com o mesmo
+    // created_at = 1 balão só), só que filtrado pelo reason próprio pra não se
+    // misturar com a bolha genérica de Estoque acima. ────────────────────────
+    const { rows: marketplaceRaw } = await pool.query(`
+      SELECT sm.id, sm.type, sm.quantity, sm.reason, sm.notes, sm.created_at AS "createdAt",
+             p.name AS "productName", pv.color, pv.size
+      FROM stock_movements sm
+      JOIN product_variants pv ON pv.id = sm.variant_id
+      JOIN products p ON p.id = pv.product_id
+      WHERE DATE(sm.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')
+          = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
+        AND sm.reason = 'marketplace_separacao'
+      ORDER BY sm.created_at DESC
+      LIMIT 200
+    `, [offset])
+    type MktRow = typeof marketplaceRaw[number]
+    const marketplaceGroupsMap = new Map<string, { createdAt: string; ref: string | null; items: MktRow[] }>()
+    for (const r of marketplaceRaw) {
+      const key = String(r.createdAt)
+      const ref = (r.notes as string | null)?.match(/Separação\s+\S+/i)?.[0] ?? null
+      if (!marketplaceGroupsMap.has(key)) marketplaceGroupsMap.set(key, { createdAt: r.createdAt, ref, items: [] })
+      marketplaceGroupsMap.get(key)!.items.push(r)
+    }
+    const marketplace = [...marketplaceGroupsMap.values()]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 30)
+      .map((g, i) => ({
+        id: `mkt-${i}-${g.createdAt}`,
+        type: "out" as const,
+        createdAt: g.createdAt,
+        ref: g.ref,
+        totalQuantity: g.items.reduce((s, it) => s + Number(it.quantity), 0),
+        items: g.items.map(it => ({ productName: it.productName, color: it.color, size: it.size, quantity: it.quantity })),
+      }))
 
     type EstoqueRow = typeof estoqueRaw[number]
     const estoqueGroups = new Map<string, { type: string; createdAt: string; ref: string | null; items: EstoqueRow[] }>()
@@ -118,7 +155,7 @@ export async function GET(req: Request) {
       LIMIT 60
     `, [offset])
 
-    return NextResponse.json({ dia, corte, revisao, estoque, dtf, whatsapp, balcao })
+    return NextResponse.json({ dia, corte, revisao, estoque, dtf, whatsapp, balcao, marketplace })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

@@ -19,6 +19,7 @@ type MapaData = {
   dtf: VendaItem[]
   whatsapp: VendaItem[]
   balcao: VendaItem[]
+  marketplace: EstoqueGroup[]
 }
 
 // Zonas do mapa — mesmas coordenadas ajustadas no mockup, em % da imagem/vídeo
@@ -32,9 +33,9 @@ const ZONES = {
   corte2:   { left: 43, top: 80 },
   // sala de vendas (canto inferior direito) — impressora, celular e
   // computador agrupados dentro da mesma salinha
-  dtf:       { left: 79, top: 73 },
-  whatsapp:  { left: 92, top: 72 },
-  ecommerce: { left: 86, top: 68 },
+  dtf:         { left: 79, top: 73 },
+  whatsapp:    { left: 92, top: 72 },
+  marketplace: { left: 86, top: 68 },
 }
 
 // Cores reais — nada de var(--money)/var(--danger): essas variáveis CSS nunca
@@ -107,7 +108,7 @@ export default function MapaOperacaoPage() {
     if (!data) return
     const counts: Record<string, number> = {
       dtf: data.dtf.length, whatsapp: data.whatsapp.length, balcao: data.balcao.length,
-      estoque: data.estoque.length, corte: data.corte.length,
+      estoque: data.estoque.length, corte: data.corte.length, marketplace: data.marketplace.length,
     }
     const prev = prevCountsRef.current
     const spawn = (emoji: string, zone: { left: number; top: number }) => {
@@ -119,6 +120,7 @@ export default function MapaOperacaoPage() {
     if (prev.whatsapp !== undefined && counts.whatsapp > prev.whatsapp) spawn("📱", ZONES.whatsapp)
     if (prev.balcao !== undefined && counts.balcao > prev.balcao) spawn("💲", ZONES.balcao)
     if (prev.corte !== undefined && counts.corte > prev.corte) spawn("✂️", ZONES.corte1)
+    if (prev.marketplace !== undefined && counts.marketplace > prev.marketplace) spawn("🛒", ZONES.marketplace)
     prevCountsRef.current = counts
   }, [data])
 
@@ -141,6 +143,19 @@ export default function MapaOperacaoPage() {
         { label: "Produto", value: item.productName },
         { label: "Cortada em", value: new Date(item.concludedAt).toLocaleString("pt-BR") },
       ],
+    })
+  }
+  function openMarketplacePanel(groups: EstoqueGroup[]) {
+    const totalQty = groups.reduce((s, g) => s + g.totalQuantity, 0)
+    setPanel({
+      eyebrow: "Marketplace — separação",
+      title: `${totalQty} peça${totalQty !== 1 ? "s" : ""}${groups.length > 1 ? ` · ${groups.length} listas` : ""}`,
+      rows: groups.flatMap(g =>
+        g.items.map(m => ({
+          label: `${g.ref ? g.ref + " · " : ""}${m.productName} ${m.color}/${m.size}`,
+          value: `${m.quantity} un`,
+        }))
+      ),
     })
   }
   function openEstoquePanel(groups: EstoqueGroup[], type: "in" | "out") {
@@ -177,9 +192,11 @@ export default function MapaOperacaoPage() {
   const estoqueOutEvents = data.estoque.filter(e => e.type === "out")
   const estoqueInChunks  = chunk(estoqueInEvents, 5)
   const estoqueOutChunks = chunk(estoqueOutEvents, 5)
-  const dtfChunks      = chunk(data.dtf, 5)
-  const whatsappChunks = chunk(data.whatsapp, 5)
-  const balcaoChunks   = chunk(data.balcao, 5)
+  const dtfChunks         = chunk(data.dtf, 5)
+  const whatsappChunks    = chunk(data.whatsapp, 5)
+  const balcaoChunks      = chunk(data.balcao, 5)
+  const marketplaceChunks = chunk(data.marketplace, 5)
+  const marketplacePieces = data.marketplace.reduce((s, g) => s + g.totalQuantity, 0)
 
   return (
     <div className="space-y-5">
@@ -295,8 +312,18 @@ export default function MapaOperacaoPage() {
           })}
           {whatsappChunks.length === 0 && <MapBubble left={ZONES.whatsapp.left} top={ZONES.whatsapp.top} emoji="📱" faded />}
 
-          {/* E-commerce — esqueleto, aba ainda não existe */}
-          <MapBubble left={ZONES.ecommerce.left} top={ZONES.ecommerce.top} emoji="💻" faded />
+          {/* Marketplace — separação de picklist (Shopee/ML) */}
+          {marketplaceChunks.map((grp, i) => {
+            const pos = scatter(ZONES.marketplace, i, marketplaceChunks.length)
+            return (
+              <MapBubble key={`mkt-${i}`} left={pos.left} top={pos.top} emoji="🛒" tone={TONE_DANGER}
+                count={grp.length > 1 ? grp.length : undefined}
+                onClick={() => openMarketplacePanel(grp)} />
+            )
+          })}
+          {marketplaceChunks.length === 0 && (
+            <MapBubble left={ZONES.marketplace.left} top={ZONES.marketplace.top} emoji="🛒" faded />
+          )}
 
           {/* eventos individuais voando (novo item detectado desde a última atualização) */}
           {events.map(e => (
@@ -326,7 +353,7 @@ export default function MapaOperacaoPage() {
             <SummaryCard emoji="💲" label="Balcão" value={fmtR(data.balcao.reduce((s, v) => s + Number(v.valor), 0))} />
             <SummaryCard emoji="🖨️" label="DTF" value={fmtR(data.dtf.reduce((s, v) => s + Number(v.valor), 0))} />
             <SummaryCard emoji="📱" label="WhatsApp" value={fmtR(data.whatsapp.reduce((s, v) => s + Number(v.valor), 0))} />
-            <SummaryCard emoji="💻" label="E-commerce" value="Em breve" />
+            <SummaryCard emoji="🛒" label="Marketplace" value={`${marketplacePieces} pç`} />
             <SummaryCard emoji="💰" label={`Total ${dia}`} value={fmtR(
               [...data.balcao, ...data.dtf, ...data.whatsapp].reduce((s, v) => s + Number(v.valor), 0)
             )} highlight wide />
