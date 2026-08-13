@@ -172,7 +172,10 @@ export default function MarketplacePage() {
   function toggleRemember(id: string, val: boolean) {
     setReviewRows(prev => prev.map(r => r.id === id ? { ...r, remember: val } : r))
   }
-  function resolveRow(id: string, variantId: string) {
+  // Remapear é sempre possível — não só nas linhas "não encontrada". Trocar o
+  // mapeamento na mão sempre vira source "manual" (é uma decisão explícita do
+  // operador, some do controle automático dali em diante).
+  function remapRow(id: string, variantId: string) {
     const variant = catalog.find(c => c.variantId === variantId)
     if (!variant) return
     setReviewRows(prev => prev.map(r => r.id === id ? {
@@ -409,51 +412,55 @@ export default function MarketplacePage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30">
-                      <th className="text-left px-2 pb-2">Produto</th>
+                      <th className="text-left px-2 pb-2">SKU original</th>
+                      <th className="text-left px-2 pb-2">Mapeado para</th>
+                      <th className="text-left px-2 pb-2">Qtd</th>
                       <th className="text-left px-2 pb-2">Estoque</th>
-                      <th className="text-left px-2 pb-2">Pedido</th>
-                      <th className="text-left px-2 pb-2">Após separar</th>
-                      <th className="text-left px-2 pb-2">Status</th>
                       <th className="px-2 pb-2"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {reviewRows.map(r => {
-                      if (r.unresolved) {
-                        return (
-                          <tr key={r.id} className="border-t border-[#0F1E3C]/5">
-                            <td className="px-2 py-2.5" colSpan={3}>
-                              <p className="font-semibold text-red-600 text-xs truncate max-w-[260px]">&quot;{r.raw}&quot;{r.sku ? ` · SKU ${r.sku}` : ""}</p>
-                              <select onChange={e => resolveRow(r.id, e.target.value)} defaultValue="" className={`${inputCls} !w-auto text-xs mt-1.5`}>
-                                <option value="" disabled>Vincular a uma variante...</option>
-                                {catalog.map(c => <option key={c.variantId} value={c.variantId}>{c.productName} · {c.color} · {c.size}</option>)}
-                              </select>
-                              <label className="flex items-center gap-1.5 text-[11px] text-[#0F1E3C]/50 mt-1.5">
-                                <input type="checkbox" checked={r.remember} onChange={e => toggleRemember(r.id, e.target.checked)} />
-                                Lembrar esse prefixo pra próxima vez
-                              </label>
-                            </td>
-                            <td className="px-2 py-2.5"><input type="number" min={1} value={r.qty} onChange={e => updateQty(r.id, parseInt(e.target.value))} className="w-16 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs" /></td>
-                            <td className="px-2 py-2.5"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">Não encontrado</span></td>
-                            <td className="px-2 py-2.5"><button onClick={() => removeRow(r.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={14} /></button></td>
-                          </tr>
-                        )
-                      }
-                      const after = (r.stock ?? 0) - r.qty
-                      const low = after < 0
-                      const originLabel = r.source === "regra" ? "via regra salva" : r.source === "ia" ? "via IA (título)" : "resolvido na mão"
+                      const after = r.variantId ? (r.stock ?? 0) - r.qty : null
+                      const low = after !== null && after < 0
+                      const originLabel = r.source === "regra" ? "via regra salva" : r.source === "ia" ? "via IA (título)" : r.source === "manual" ? "resolvido na mão" : null
                       return (
-                        <tr key={r.id} className="border-t border-[#0F1E3C]/5">
-                          <td className="px-2 py-2.5">
-                            <p className="font-semibold text-[#0F1E3C]">{r.productName}</p>
-                            <p className="text-[11px] text-[#0F1E3C]/40">{r.color} · {r.size}</p>
-                            <p className="text-[10px] text-[#0F1E3C]/25 mt-0.5">{originLabel}</p>
+                        <tr key={r.id} className="border-t border-[#0F1E3C]/5 align-top">
+                          <td className="px-2 py-2.5 max-w-[180px]">
+                            <p className="font-mono text-xs text-[#0F1E3C] bg-[#F4F6FB] rounded px-1.5 py-0.5 w-fit truncate max-w-full">{r.marketplaceSku || "—"}</p>
+                            {r.raw && r.raw !== r.marketplaceSku && (
+                              <p className="text-[10px] text-[#0F1E3C]/35 mt-1 truncate max-w-[180px]" title={r.raw}>{r.raw}</p>
+                            )}
                           </td>
-                          <td className="px-2 py-2.5 tabular-nums">{r.stock} pç</td>
-                          <td className="px-2 py-2.5"><input type="number" min={1} value={r.qty} onChange={e => updateQty(r.id, parseInt(e.target.value))} className="w-16 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" /></td>
-                          <td className={`px-2 py-2.5 font-bold tabular-nums ${low ? "text-red-600" : "text-[#0F1E3C]"}`}>{after} pç</td>
+                          <td className="px-2 py-2.5 min-w-[200px]">
+                            <select
+                              value={r.variantId ?? ""}
+                              onChange={e => remapRow(r.id, e.target.value)}
+                              className={`w-full text-xs border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 ${
+                                r.unresolved ? "border-red-300 text-red-600 bg-red-50" : "border-[#0F1E3C]/12 text-[#0F1E3C]"
+                              }`}
+                            >
+                              <option value="" disabled>{r.unresolved ? "Não encontrado — escolher..." : "Selecionar..."}</option>
+                              {catalog.map(c => <option key={c.variantId} value={c.variantId}>{c.productName} · {c.color} · {c.size}</option>)}
+                            </select>
+                            {originLabel && <p className="text-[10px] text-[#0F1E3C]/30 mt-1">{originLabel}</p>}
+                            {r.variantId && r.source !== "regra" && (
+                              <label className="flex items-center gap-1.5 text-[10px] text-[#0F1E3C]/50 mt-1">
+                                <input type="checkbox" checked={r.remember} onChange={e => toggleRemember(r.id, e.target.checked)} />
+                                Lembrar pra próxima vez
+                              </label>
+                            )}
+                          </td>
                           <td className="px-2 py-2.5">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${low ? "bg-orange-100 text-orange-600" : "bg-emerald-100 text-emerald-700"}`}>{low ? "Estoque insuficiente" : "OK"}</span>
+                            <input type="number" min={1} value={r.qty} onChange={e => updateQty(r.id, parseInt(e.target.value))}
+                              className="w-16 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
+                          </td>
+                          <td className="px-2 py-2.5 tabular-nums whitespace-nowrap">
+                            {after === null ? (
+                              <span className="text-[#0F1E3C]/25 text-xs">—</span>
+                            ) : (
+                              <span className={`font-bold ${low ? "text-red-600" : "text-[#0F1E3C]"}`}>{r.stock} → {after} pç</span>
+                            )}
                           </td>
                           <td className="px-2 py-2.5"><button onClick={() => removeRow(r.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={14} /></button></td>
                         </tr>
