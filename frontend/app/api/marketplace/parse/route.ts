@@ -16,12 +16,32 @@ type Association = {
   items: AssociationItem[] // 'kit': mesma ideia, um produto por peça — nunca cor/tamanho fixos aqui também
 }
 
-// Acha um "token" (cor, tamanho) dentro de um texto livre, ignorando maiúsculas
-// e escapando caracteres de regex — usado pra casar a variação do picklist.
+// Tira acento e qualquer coisa entre parênteses (ex: "GG (unico)" → "gg"),
+// deixa minúsculo — usado dos dois lados da comparação (catálogo e texto do
+// picklist) pra não depender de grafia idêntica.
+function normalizeText(s: string): string {
+  return s
+    .normalize("NFD").replace(/[̀-ͯ]/g, "") // remove acentos (marcas de combinacao apos NFD)
+    .replace(/\([^)]*\)/g, " ") // remove "(unico)" e afins
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+// Acha um "token" (cor, tamanho) dentro de um texto livre. Cor composta tipo
+// "Begê/Nude" vira duas alternativas — basta uma delas aparecer no texto,
+// não precisa da frase inteira igual.
 function textHasToken(text: string, token: string): boolean {
   if (!token) return false
-  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  return new RegExp(`\\b${escaped}\\b`, "i").test(text)
+  const normText = normalizeText(text)
+  const alternatives = token
+    .split(/\s*[/,]\s*|\s+e\s+|\s+ou\s+/i)
+    .map(t => normalizeText(t))
+    .filter(Boolean)
+  return alternatives.some(alt => {
+    const escaped = alt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    return new RegExp(`\\b${escaped}\\b`).test(normText)
+  })
 }
 
 // Dado um produto (já sabido pelo prefixo) e o texto da variação, acha a
@@ -29,9 +49,11 @@ function textHasToken(text: string, token: string): boolean {
 // é o que sobra do SKU depois do prefixo, usado como pista extra de tamanho.
 function matchVariantByTitle(productId: string, title: string, skuRemainder: string, catalog: CatalogVariant[]): CatalogVariant | null {
   const variantsOfProduct = catalog.filter(c => c.productId === productId)
+  const normRemainder = normalizeText(skuRemainder).replace(/\s/g, "").toUpperCase()
   const scored = variantsOfProduct.map(v => {
     const colorHit = textHasToken(title, v.color)
-    const sizeHit = textHasToken(title, v.size) || (!!skuRemainder && skuRemainder.startsWith(v.size.toUpperCase()))
+    const normSize = normalizeText(v.size).replace(/\s/g, "").toUpperCase()
+    const sizeHit = textHasToken(title, v.size) || (!!normRemainder && normRemainder.startsWith(normSize))
     return { v, score: (colorHit ? 2 : 0) + (sizeHit ? 1 : 0) }
   }).sort((a, b) => b.score - a.score)
   return scored[0]?.score === 3 ? scored[0].v : null
