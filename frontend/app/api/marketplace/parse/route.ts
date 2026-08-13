@@ -9,54 +9,11 @@ type CatalogVariant = {
   variantId: string; productId: string; productName: string
   color: string; size: string; sku: string; availableStock: number
 }
-type AssociationItem = { productId: string; qty: number }
+type AssociationItem = { productId: string; productName: string; qty: number }
 type Association = {
   prefix: string; kind: "single" | "kit"
-  productId: string | null // 'single': o SKU só marca o produto — cor e tamanho vêm da variação (texto)
-  items: AssociationItem[] // 'kit': mesma ideia, um produto por peça — nunca cor/tamanho fixos aqui também
-}
-
-// Tira acento e qualquer coisa entre parênteses (ex: "GG (unico)" → "gg"),
-// deixa minúsculo — usado dos dois lados da comparação (catálogo e texto do
-// picklist) pra não depender de grafia idêntica.
-function normalizeText(s: string): string {
-  return s
-    .normalize("NFD").replace(/[̀-ͯ]/g, "") // remove acentos (marcas de combinacao apos NFD)
-    .replace(/\([^)]*\)/g, " ") // remove "(unico)" e afins
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim()
-}
-
-// Acha um "token" (cor, tamanho) dentro de um texto livre. Cor composta tipo
-// "Begê/Nude" vira duas alternativas — basta uma delas aparecer no texto,
-// não precisa da frase inteira igual.
-function textHasToken(text: string, token: string): boolean {
-  if (!token) return false
-  const normText = normalizeText(text)
-  const alternatives = token
-    .split(/\s*[/,]\s*|\s+e\s+|\s+ou\s+/i)
-    .map(t => normalizeText(t))
-    .filter(Boolean)
-  return alternatives.some(alt => {
-    const escaped = alt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    return new RegExp(`\\b${escaped}\\b`).test(normText)
-  })
-}
-
-// Dado um produto (já sabido pelo prefixo) e o texto da variação, acha a
-// variante certa — só aceita se cor E tamanho baterem, nunca só um. `skuRemainder`
-// é o que sobra do SKU depois do prefixo, usado como pista extra de tamanho.
-function matchVariantByTitle(productId: string, title: string, skuRemainder: string, catalog: CatalogVariant[]): CatalogVariant | null {
-  const variantsOfProduct = catalog.filter(c => c.productId === productId)
-  const normRemainder = normalizeText(skuRemainder).replace(/\s/g, "").toUpperCase()
-  const scored = variantsOfProduct.map(v => {
-    const colorHit = textHasToken(title, v.color)
-    const normSize = normalizeText(v.size).replace(/\s/g, "").toUpperCase()
-    const sizeHit = textHasToken(title, v.size) || (!!normRemainder && normRemainder.startsWith(normSize))
-    return { v, score: (colorHit ? 2 : 0) + (sizeHit ? 1 : 0) }
-  }).sort((a, b) => b.score - a.score)
-  return scored[0]?.score === 3 ? scored[0].v : null
+  productId: string | null; productName: string | null // 'single'
+  items: AssociationItem[] // 'kit'
 }
 
 type ExtractedRow = { raw: string; sku: string; title: string; qty: number }
@@ -142,98 +99,128 @@ function extractRows(text: string): ExtractedRow[] {
     })
 }
 
-// ── Fase 2: casamento por prefixo já conhecido (regra salva). Kit expande 1
-// linha do picklist em N linhas de conferência — uma por peça do combo, com
-// a quantidade já multiplicada (qty do picklist × qty daquela peça no kit). ──
-function matchByPrefix(row: ExtractedRow, associations: Association[], catalog: CatalogVariant[]): ReviewRow[] | null {
+// ── Pista pelo prefixo do SKU — não decide mais nada sozinha, só cochicha
+// pra IA qual produto (ou quais peças de kit) o código costuma indicar.
+// Quem sempre lê cor/tamanho de verdade é a IA, olhando o título. ──────────
+type RowHint =
+  | { kind: "single"; productId: string; productName: string }
+  | { kind: "kit"; items: AssociationItem[] }
+  | null
+
+function findHint(row: ExtractedRow, associations: Association[]): RowHint {
   if (!row.sku) return null
   const skuUpper = row.sku.toUpperCase()
   const hit = associations
     .filter(a => skuUpper.startsWith(a.prefix))
     .sort((a, b) => b.prefix.length - a.prefix.length)[0] // prefixo mais específico primeiro
   if (!hit) return null
-
-  const remainder = skuUpper.replace(hit.prefix, "").replace(/^[-_ ]+/, "")
-
-  if (hit.kind === "kit") {
-    // Cada peça do kit é só um produto (ex: kit = 1 camiseta + 1 calça) — cor e
-    // tamanho de CADA peça saem do mesmo texto de variação, casados contra o
-    // catálogo daquele produto especificamente. Uma peça que não bate não
-    // derruba as outras — vira 1 linha "não encontrada" só dela na conferência.
-    const rows: ReviewRow[] = hit.items.flatMap((comp): ReviewRow[] => {
-      const product = catalog.find(c => c.productId === comp.productId)
-      const variant = matchVariantByTitle(comp.productId, row.title, remainder, catalog)
-      const qty = row.qty * comp.qty
-      if (variant) {
-        return [{
-          raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId,
-          productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku,
-          stock: variant.availableStock, qty, source: "regra", unresolved: false,
-        }]
-      }
-      return [{
-        raw: row.raw, title: `${row.title} — peça do kit: ${product?.productName ?? "produto"} (cor/tamanho não identificados)`,
-        marketplaceSku: row.sku, variantId: null, productName: null, color: null, size: null, sku: row.sku || null,
-        stock: null, qty, source: null, unresolved: true,
-      }]
-    })
-    return rows.length > 0 ? rows : null
-  }
-
-  // Prefixo só garante o produto (ex: "cami_" = qualquer camiseta, de qualquer
-  // cor) — cor e tamanho têm que bater com o texto da variação.
-  const variant = hit.productId ? matchVariantByTitle(hit.productId, row.title, remainder, catalog) : null
-
-  if (!variant) return null // produto reconhecido mas cor/tamanho não bateram com a variação — cai pra revisão manual
-  return [{
-    raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
-    color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
-    qty: row.qty, source: "regra", unresolved: false,
-  }]
+  if (hit.kind === "kit") return hit.items.length > 0 ? { kind: "kit", items: hit.items } : null
+  return hit.productId && hit.productName ? { kind: "single", productId: hit.productId, productName: hit.productName } : null
 }
 
-// ── Fase 3: linhas que sobraram vão pra IA analisar o título, numa chamada só ──
-async function matchByAI(rows: ExtractedRow[], catalog: CatalogVariant[]): Promise<ReviewRow[]> {
-  if (rows.length === 0) return []
+// ── Casamento — tudo passa pela IA numa chamada só pro arquivo inteiro. A
+// pista do SKU (quando existe) entra como contexto forte no prompt, não como
+// portão que decide sozinho — é a IA que sempre lê o título de verdade.
+// Pra linha de kit, a IA devolve 1 pick por peça, na mesma ordem da pista. ──
+async function matchAllRows(extracted: ExtractedRow[], hints: RowHint[], catalog: CatalogVariant[]): Promise<ReviewRow[]> {
+  // Catálogo de referência agrupado por produto (não uma lista corrida) — mais
+  // fácil da IA escanear sem trocar tamanho/cor de produto parecido.
+  const byProduct = new Map<string, CatalogVariant[]>()
+  for (const c of catalog) {
+    if (!byProduct.has(c.productName)) byProduct.set(c.productName, [])
+    byProduct.get(c.productName)!.push(c)
+  }
+  const candidateLines = (productId: string) =>
+    catalog.filter(c => c.productId === productId).map(c => `${c.variantId}|${c.color}|${c.size}`).join("\n")
 
-  const catalogCompact = catalog.map(c => `${c.variantId}|${c.productName}|${c.color}|${c.size}`).join("\n")
-  const rowsCompact = rows.map((r, i) => `${i}) SKU:"${r.sku}" TÍTULO:"${r.title}"`).join("\n")
+  const catalogCompact = [...byProduct.entries()]
+    .map(([name, vs]) => `## ${name}\n${vs.map(v => `${v.variantId}|${v.color}|${v.size}`).join("\n")}`)
+    .join("\n\n")
 
-  const system = `Você casa itens de um picklist de marketplace (Shopee/Mercado Livre) com o catálogo interno de uma confecção.
+  // Pra linha com pista, já entrega a lista de candidatos daquele produto
+  // logo depois do título — reduz o catálogo a escanear de 150+ linhas pra
+  // só as variantes daquele produto específico, bem menos chance de trocar.
+  const rowsCompact = extracted.map((r, i) => {
+    const hint = hints[i]
+    const header = `${i}) SKU:"${r.sku}" TÍTULO:"${r.title}"`
+    if (!hint) return `${header}\nPISTA_DO_CÓDIGO: (nenhuma — procure no catálogo completo acima)`
+    if (hint.kind === "single") {
+      return `${header}\nPISTA_DO_CÓDIGO: ${hint.productName}\nCandidatos (variantId|cor|tamanho) desse produto:\n${candidateLines(hint.productId)}`
+    }
+    const kitBlocks = hint.items.map((it, j) =>
+      `  Peça ${j} — ${it.productName} (${it.qty}x):\n${candidateLines(it.productId).split("\n").map(l => "  " + l).join("\n")}`
+    ).join("\n")
+    return `${header}\nPISTA_DO_CÓDIGO: KIT com ${hint.items.length} peça(s)\n${kitBlocks}`
+  }).join("\n\n")
 
-Catálogo (variantId|produto|cor|tamanho), um por linha:
+  const system = `Você lê um picklist de marketplace (Shopee/Mercado Livre) de uma confecção e acha, pra cada item, a variante certa no catálogo interno — baseado no TÍTULO/variação (cor, tamanho), que é a informação mais confiável. O SKU sozinho quase nunca basta.
+
+Catálogo completo, agrupado por produto (variantId|cor|tamanho):
 ${catalogCompact}
 
-Pra cada linha do picklist abaixo, ache a variante do catálogo que melhor bate com o SKU e/ou título (nome do produto, cor, tamanho). Se não tiver certeza razoável, retorne variantId null — não é permitido chutar.
+Cada item do picklist abaixo tem uma PISTA_DO_CÓDIGO (palpite pelo prefixo do SKU — pode estar errada ou não existir). Quando ela aponta um produto, junto vem a lista de "Candidatos" — as variantes REAIS daquele produto, já filtradas pra facilitar. Use como ajuda, nunca como verdade absoluta.
 
-Responda APENAS um JSON: {"matches":[{"index":0,"variantId":"<uuid ou null>"}]}`
+Regras:
+- Leia o título com atenção — cor e tamanho têm que bater EXATAMENTE com um dos candidatos (ou do catálogo completo, se não tem pista). Preste atenção redobrada no tamanho: "8" é diferente de "6", "10" é diferente de "12" — não troque por um próximo.
+- Se o título claramente indicar outro produto (diferente da pista), ignore a pista e procure no catálogo completo.
+- Kit: cada peça é julgada separada. Se o título só dá informação suficiente pra ALGUMAS peças do kit (ex: só menciona 1 cor/tamanho pra um kit de 2 produtos diferentes), resolva as que der e devolva null pras que não tiverem informação própria no título — NÃO reaproveite a cor/tamanho de uma peça pra outra sem o título confirmar isso explicitamente pra cada uma.
+- Só devolva um variantId quando tiver certeza (cor E tamanho reconhecidos de verdade no título). Sem certeza, devolva null. Não é permitido chutar.
+
+Responda APENAS um JSON:
+{"matches":[{"index":0,"picks":[{"variantId":"<uuid ou null>"}]}]}
+(picks tem 1 item pra item normal, N itens pra kit — 1 por peça, na ordem da pista)`
 
   const res = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 2048,
+    max_tokens: 8192,
     system,
     messages: [{ role: "user", content: rowsCompact }],
   })
   const raw = res.content[0].type === "text" ? res.content[0].text : ""
   const jsonMatch = raw.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return rows.map(r => unresolvedRow(r))
+  if (!jsonMatch) return extracted.map((r, i) => buildUnresolved(r, hints[i]))
 
-  let matches: { index: number; variantId: string | null }[] = []
+  let matches: { index: number; picks: { variantId: string | null }[] }[] = []
   try {
     matches = (JSON.parse(jsonMatch[0]) as { matches: typeof matches }).matches ?? []
   } catch {
-    return rows.map(r => unresolvedRow(r))
+    return extracted.map((r, i) => buildUnresolved(r, hints[i]))
   }
 
-  return rows.map((r, i) => {
+  return extracted.flatMap((row, i): ReviewRow[] => {
+    const hint = hints[i]
     const m = matches.find(x => x.index === i)
-    const variant = m?.variantId ? catalog.find(c => c.variantId === m.variantId) : null
-    if (!variant) return unresolvedRow(r)
-    return {
-      raw: r.raw, title: r.title, marketplaceSku: r.sku, variantId: variant.variantId, productName: variant.productName,
-      color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
-      qty: r.qty, source: "ia", unresolved: false,
+    const picks = m?.picks ?? []
+
+    if (hint?.kind === "kit") {
+      // 1 pick por peça — o que faltar ou não bater vira 1 linha de atenção só daquela peça
+      return hint.items.map((comp, j): ReviewRow => {
+        const pickedId = picks[j]?.variantId
+        const variant = pickedId ? catalog.find(c => c.variantId === pickedId && c.productId === comp.productId) : null
+        const qty = row.qty * comp.qty
+        if (variant) {
+          return {
+            raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId,
+            productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku,
+            stock: variant.availableStock, qty, source: "regra", unresolved: false,
+          }
+        }
+        return {
+          raw: row.raw, title: `${row.title} — peça do kit: ${comp.productName} (cor/tamanho não identificados)`,
+          marketplaceSku: row.sku, variantId: null, productName: null, color: null, size: null, sku: row.sku || null,
+          stock: null, qty, source: null, unresolved: true,
+        }
+      })
     }
+
+    const pickedId = picks[0]?.variantId
+    const variant = pickedId ? catalog.find(c => c.variantId === pickedId) : null
+    if (!variant) return [buildUnresolved(row, hint)]
+    return [{
+      raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
+      color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
+      qty: row.qty, source: hint ? "regra" : "ia", unresolved: false,
+    }]
   })
 }
 
@@ -270,9 +257,10 @@ Responda APENAS um JSON: {"rows":[{"sku":"<sku ou \\"\\">","title":"<título/des
   }
 }
 
-function unresolvedRow(r: ExtractedRow): ReviewRow {
+function buildUnresolved(r: ExtractedRow, hint: RowHint): ReviewRow {
+  const suffix = hint?.kind === "single" ? ` (pista: ${hint.productName})` : ""
   return {
-    raw: r.raw, title: r.title, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
+    raw: r.raw, title: r.title + suffix, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
     sku: r.sku || null, stock: null, qty: r.qty, source: null, unresolved: true,
   }
 }
@@ -330,29 +318,28 @@ export async function POST(req: Request) {
         WHERE pv.status = 'active' AND p.status = 'active'
       `),
       pool.query(`
-        SELECT a.id, a.prefix, a.kind, a.product_id AS "productId"
+        SELECT a.id, a.prefix, a.kind, a.product_id AS "productId", p.name AS "productName"
         FROM marketplace_sku_associations a
+        LEFT JOIN products p ON p.id = a.product_id
       `),
       pool.query(`
-        SELECT association_id AS "associationId", product_id AS "productId", qty
-        FROM marketplace_sku_association_items
+        SELECT i.association_id AS "associationId", i.product_id AS "productId", i.qty, p.name AS "productName"
+        FROM marketplace_sku_association_items i
+        JOIN products p ON p.id = i.product_id
       `),
     ])
     const catalog = catalogRaw as CatalogVariant[]
     const itemsByAssoc = new Map<number, AssociationItem[]>()
-    for (const it of assocItemsRaw as { associationId: number; productId: string; qty: number }[]) {
+    for (const it of assocItemsRaw as { associationId: number; productId: string; productName: string; qty: number }[]) {
       if (!itemsByAssoc.has(it.associationId)) itemsByAssoc.set(it.associationId, [])
-      itemsByAssoc.get(it.associationId)!.push({ productId: it.productId, qty: it.qty })
+      itemsByAssoc.get(it.associationId)!.push({ productId: it.productId, productName: it.productName, qty: it.qty })
     }
-    const associations: Association[] = (assocRaw as { id: number; prefix: string; kind: "single" | "kit"; productId: string | null }[])
-      .map(a => ({ prefix: a.prefix, kind: a.kind, productId: a.productId, items: itemsByAssoc.get(a.id) ?? [] }))
+    const associations: Association[] = (assocRaw as { id: number; prefix: string; kind: "single" | "kit"; productId: string | null; productName: string | null }[])
+      .map(a => ({ prefix: a.prefix, kind: a.kind, productId: a.productId, productName: a.productName, items: itemsByAssoc.get(a.id) ?? [] }))
 
-    const byRule: (ReviewRow[] | null)[] = extracted.map(r => matchByPrefix(r, associations, catalog))
-    const needAI = extracted.filter((_, i) => byRule[i] === null)
-    const aiResults = await matchByAI(needAI, catalog).catch(() => needAI.map(unresolvedRow))
-
-    let aiCursor = 0
-    const finalRows: ReviewRow[] = byRule.flatMap(r => r ?? [aiResults[aiCursor++]])
+    const hints = extracted.map(r => findHint(r, associations))
+    const finalRows = await matchAllRows(extracted, hints, catalog)
+      .catch(() => extracted.map((r, i) => buildUnresolved(r, hints[i])))
 
     return NextResponse.json({
       filename,

@@ -107,12 +107,11 @@ export default function MarketplacePage() {
 
   // ── Upload / IA ──
   async function runParse(payload: FormData) {
-    setProcessing(true); setUploadError(""); setProcessMsg("Lendo o arquivo…")
+    setProcessing(true); setUploadError(""); setProcessMsg("Lendo o arquivo e conferindo com o catálogo…")
     try {
       const res = await fetch("/api/marketplace/parse", { method: "POST", body: payload })
       const data = await res.json()
       if (!res.ok) { setUploadError(data.error ?? "Erro ao analisar"); return }
-      setProcessMsg(`${data.matchedByRule} de ${data.totalRows} reconhecidos por regra salva — analisando o resto…`)
 
       const rows: ReviewRow[] = data.rows.map((r: {
         raw: string; title: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
@@ -461,7 +460,7 @@ export default function MarketplacePage() {
                     {reviewRows.map(r => {
                       const after = r.variantId ? (r.stock ?? 0) - r.qty : null
                       const low = after !== null && after < 0
-                      const originLabel = r.source === "regra" ? "via regra salva" : r.source === "ia" ? "via IA (título)" : r.source === "manual" ? "resolvido na mão" : null
+                      const originLabel = r.source === "regra" ? "IA + regra salva" : r.source === "ia" ? "só IA (sem regra)" : r.source === "manual" ? "resolvido na mão" : null
                       return (
                         <tr key={r.id} className="border-t border-[#0F1E3C]/5 align-top">
                           <td className="px-2 py-2.5 max-w-[220px]">
