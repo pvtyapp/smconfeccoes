@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 
-// Regras aprendidas: prefixo do SKU do marketplace → produto (kind='single' —
-// o SKU só marca o produto, cor e tamanho vêm sempre do texto da variação no
-// picklist) ou uma lista fixa de peças (kind='kit', pra anúncio que já vende
-// um combo — ex: kit com 2 camisetas de tamanhos diferentes). Consultada
-// primeiro em /api/marketplace/parse — só cai pra IA quando o prefixo é novo.
+// Regras aprendidas: prefixo do SKU do marketplace → produto (kind='single')
+// ou lista de produtos que compõem um combo (kind='kit', ex: kit com camiseta
+// + calça). Em ambos os casos a associação só marca QUAL PRODUTO — cor e
+// tamanho nunca ficam fixos aqui, sempre vêm do texto da variação no picklist,
+// casados contra as variantes reais de cada produto no momento do match.
+// Consultada primeiro em /api/marketplace/parse — só cai pra IA quando o
+// prefixo é novo.
 export async function GET() {
   try {
     const [{ rows: assoc }, { rows: items }] = await Promise.all([
@@ -17,11 +19,10 @@ export async function GET() {
         ORDER BY a.created_at DESC
       `),
       pool.query(`
-        SELECT i.association_id AS "associationId", i.variant_id AS "variantId", i.qty,
-               p.name AS "productName", pv.color, pv.size
+        SELECT i.association_id AS "associationId", i.product_id AS "productId", i.qty,
+               p.name AS "productName"
         FROM marketplace_sku_association_items i
-        JOIN product_variants pv ON pv.id = i.variant_id
-        JOIN products p ON p.id = pv.product_id
+        JOIN products p ON p.id = i.product_id
       `),
     ])
     const itemsByAssoc = new Map<number, typeof items>()
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
   try {
     const { prefix, kind, productId, items, origin } = await req.json() as {
       prefix?: string; kind?: "single" | "kit"; productId?: string
-      items?: { variantId: string; qty: number }[]; origin?: string
+      items?: { productId: string; qty: number }[]; origin?: string
     }
     if (!prefix?.trim()) {
       return NextResponse.json({ error: "prefix é obrigatório" }, { status: 400 })
@@ -71,11 +72,11 @@ export async function POST(req: Request) {
 
     if (isKit) {
       for (const it of items!) {
-        if (!it.variantId || !it.qty || it.qty <= 0) continue
+        if (!it.productId || !it.qty || it.qty <= 0) continue
         await client.query(`
-          INSERT INTO marketplace_sku_association_items (association_id, variant_id, qty)
+          INSERT INTO marketplace_sku_association_items (association_id, product_id, qty)
           VALUES ($1, $2, $3)
-        `, [assocId, it.variantId, it.qty])
+        `, [assocId, it.productId, it.qty])
       }
     }
 

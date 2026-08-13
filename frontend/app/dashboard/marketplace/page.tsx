@@ -25,7 +25,7 @@ type ReviewRow = {
   remember: boolean
 }
 
-type AssociationItem = { variantId: string; qty: number; productName: string; color: string; size: string }
+type AssociationItem = { productId: string; qty: number; productName: string }
 type Association = {
   id: number; prefix: string; kind: "single" | "kit"; origin: string; createdAt: string
   productId: string | null; productName: string | null
@@ -74,10 +74,8 @@ export default function MarketplacePage() {
   const [newPrefix, setNewPrefix] = useState("")
   const [newAssocProduct, setNewAssocProduct] = useState("")
   // Kit: peças acumuladas antes de salvar a associação
-  const [kitPieces, setKitPieces] = useState<{ variantId: string; productName: string; color: string; size: string; qty: number }[]>([])
+  const [kitPieces, setKitPieces] = useState<{ productId: string; productName: string; qty: number }[]>([])
   const [kitName, setKitName] = useState("")
-  const [kitColor, setKitColor] = useState("")
-  const [kitSize, setKitSize] = useState("")
   const [kitQty, setKitQty] = useState(1)
 
   const loadCatalog = useCallback(async () => {
@@ -258,7 +256,7 @@ export default function MarketplacePage() {
     let body: Record<string, unknown>
     if (newAssocKind === "kit") {
       if (kitPieces.length === 0) return
-      body = { prefix: newPrefix, kind: "kit", items: kitPieces.map(p => ({ variantId: p.variantId, qty: p.qty })), origin: "manual" }
+      body = { prefix: newPrefix, kind: "kit", items: kitPieces.map(p => ({ productId: p.productId, qty: p.qty })), origin: "manual" }
     } else {
       if (!newAssocProduct) return
       const variant = catalog.find(c => c.productName === newAssocProduct)
@@ -272,17 +270,12 @@ export default function MarketplacePage() {
     if (res.ok) { setNewPrefix(""); setKitPieces([]); loadAssociations() }
   }
 
-  // Cascata produto→cor→tamanho do formulário de peça do kit (mesmo padrão do modo manual)
   const kitEffName = productNames.includes(kitName) ? kitName : (productNames[0] ?? "")
-  const kitColors = useMemo(() => [...new Set(catalog.filter(c => c.productName === kitEffName).map(c => c.color))], [catalog, kitEffName])
-  const kitEffColor = kitColors.includes(kitColor) ? kitColor : (kitColors[0] ?? "")
-  const kitSizes = useMemo(() => catalog.filter(c => c.productName === kitEffName && c.color === kitEffColor), [catalog, kitEffName, kitEffColor])
-  const kitEffSize = kitSizes.some(v => v.size === kitSize) ? kitSize : (kitSizes[0]?.size ?? "")
 
   function addKitPiece() {
-    const variant = catalog.find(c => c.productName === kitEffName && c.color === kitEffColor && c.size === kitEffSize)
+    const variant = catalog.find(c => c.productName === kitEffName)
     if (!variant) return
-    setKitPieces(prev => [...prev, { variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size, qty: Math.max(1, kitQty) }])
+    setKitPieces(prev => [...prev, { productId: variant.productId, productName: variant.productName, qty: Math.max(1, kitQty) }])
   }
   function removeKitPiece(i: number) {
     setKitPieces(prev => prev.filter((_, idx) => idx !== i))
@@ -632,7 +625,7 @@ export default function MarketplacePage() {
                           {a.kind === "kit" ? (
                             <ul className="space-y-0.5">
                               {(a.items ?? []).map((it, i) => (
-                                <li key={i} className="text-xs text-[#0F1E3C]">{it.qty}× {it.productName} · {it.color} · {it.size}</li>
+                                <li key={i} className="text-xs text-[#0F1E3C]">{it.qty}× {it.productName} <span className="text-[#0F1E3C]/35">— cor/tamanho pela variação</span></li>
                               ))}
                             </ul>
                           ) : (
@@ -666,28 +659,23 @@ export default function MarketplacePage() {
                   </div>
                 ) : (
                   <div className="space-y-2.5">
-                    <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Prefixo do SKU do kit — ex: KIT2-CAMISETA" className={inputCls} />
+                    <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Prefixo do SKU do kit — ex: KIT_INF_" className={inputCls} />
+                    <p className="text-[10.5px] text-[#0F1E3C]/35">Lista só os produtos que compõem o kit — cor e tamanho de cada peça vêm da variação do picklist, igual no simples.</p>
 
                     {kitPieces.length > 0 && (
                       <div className="space-y-1">
                         {kitPieces.map((p, i) => (
                           <div key={i} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-1.5 text-xs">
-                            <span className="font-semibold text-[#0F1E3C]">{p.qty}× {p.productName} · {p.color} · {p.size}</span>
+                            <span className="font-semibold text-[#0F1E3C]">{p.qty}× {p.productName}</span>
                             <button onClick={() => removeKitPiece(i)} className="text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
                           </div>
                         ))}
                       </div>
                     )}
 
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr 60px auto" }}>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 70px auto" }}>
                       <select value={kitEffName} onChange={e => setKitName(e.target.value)} className={inputCls}>
                         {productNames.map(n => <option key={n} value={n}>{n}</option>)}
-                      </select>
-                      <select value={kitEffColor} onChange={e => setKitColor(e.target.value)} className={inputCls}>
-                        {kitColors.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                      <select value={kitEffSize} onChange={e => setKitSize(e.target.value)} className={inputCls}>
-                        {kitSizes.map(v => <option key={v.size} value={v.size}>{v.size}</option>)}
                       </select>
                       <input type="number" min={1} value={kitQty} onChange={e => setKitQty(parseInt(e.target.value) || 1)} className={inputCls} />
                       <button onClick={addKitPiece} className="flex items-center justify-center gap-1 border border-[#0F1E3C]/12 text-[#0F1E3C] rounded-xl px-2 text-xs font-bold">
