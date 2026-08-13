@@ -144,29 +144,35 @@ export async function GET() {
         ? (growing ? daysCurrent * 0.8 : declining ? daysCurrent * 1.25 : daysCurrent)
         : null
 
-      // Priority matrix: stock urgency × trend direction
-      let priority: string
+      // Internal urgency matrix: stock urgency × trend direction. Kept as its
+      // own 5-way read so suggestedProduction below can still tell "attention"
+      // from a merely-healthy "ok" — only the value returned to the client
+      // collapses to 3 stages (urgent/monitor/parado) right before the return.
+      let priorityInternal: string
       if (v.sales30d === 0 && velocityCurrent === 0) {
-        priority = "stopped"
+        priorityInternal = "stopped"
       } else if (effectiveDays !== null && effectiveDays <= BUFFER) {
         // Critically low regardless of trend
-        priority = "urgent"
+        priorityInternal = "urgent"
       } else if (effectiveDays !== null && effectiveDays <= 5 && growing) {
         // Not yet critical but growing fast — will hit zero before you can produce
-        priority = "urgent"
+        priorityInternal = "urgent"
       } else if (effectiveDays !== null && effectiveDays <= 9) {
-        priority = "attention"
+        priorityInternal = "attention"
       } else if (effectiveDays !== null && effectiveDays <= 14 && growing) {
         // Moderate stock but accelerating — plan ahead
-        priority = "attention"
+        priorityInternal = "attention"
       } else if (effectiveDays !== null && effectiveDays > 30 && declining) {
         // Lots of stock AND losing traction → redirect capacity
-        priority = "excess"
+        priorityInternal = "excess"
       } else if (v.targetStock > 0 && v.currentStock > v.targetStock * 2 && effectiveDays !== null && effectiveDays > 60) {
-        priority = "excess"
+        priorityInternal = "excess"
       } else {
-        priority = "ok"
+        priorityInternal = "ok"
       }
+      const priority = priorityInternal === "urgent" ? "urgent"
+        : priorityInternal === "attention" ? "monitor"
+        : "parado" // ok | excess | stopped — same action either way: don't produce now
 
       // Production suggestion: smarter based on trend
       // Planning velocity = next period's expected rate (or current as fallback)
@@ -176,7 +182,7 @@ export async function GET() {
       const toTarget    = Math.max(0, v.targetStock - v.currentStock)
 
       let suggestedProduction = 0
-      if (priority === "urgent" || priority === "attention") {
+      if (priority === "urgent" || priority === "monitor") {
         if (declining) {
           // Only refill to 3-day buffer — don't waste capacity filling to target
           suggestedProduction = toMin
