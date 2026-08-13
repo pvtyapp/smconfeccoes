@@ -77,6 +77,8 @@ export default function MarketplacePage() {
   const [kitPieces, setKitPieces] = useState<{ productId: string; productName: string; qty: number }[]>([])
   const [kitName, setKitName] = useState("")
   const [kitQty, setKitQty] = useState(1)
+  const [kitPieceFlash, setKitPieceFlash] = useState<string | null>(null)
+  const kitFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true)
@@ -245,7 +247,7 @@ export default function MarketplacePage() {
   // ── Associations modal ──
   function openAssocModal() {
     setAssocOpen(true); loadAssociations()
-    setNewAssocKind("single"); setNewPrefix(""); setKitPieces([])
+    setNewAssocKind("single"); setNewPrefix(""); setKitPieces([]); setKitPieceFlash(null)
   }
   async function deleteAssociation(id: number) {
     setAssociations(prev => prev.filter(a => a.id !== id))
@@ -275,7 +277,13 @@ export default function MarketplacePage() {
   function addKitPiece() {
     const variant = catalog.find(c => c.productName === kitEffName)
     if (!variant) return
-    setKitPieces(prev => [...prev, { productId: variant.productId, productName: variant.productName, qty: Math.max(1, kitQty) }])
+    const qty = Math.max(1, kitQty)
+    setKitPieces(prev => [...prev, { productId: variant.productId, productName: variant.productName, qty }])
+    setKitQty(1) // reseta pra próxima peça — deixa claro que essa já entrou na lista
+
+    if (kitFlashTimer.current) clearTimeout(kitFlashTimer.current)
+    setKitPieceFlash(`${qty}× ${variant.productName} adicionado à lista`)
+    kitFlashTimer.current = setTimeout(() => setKitPieceFlash(null), 1800)
   }
   function removeKitPiece(i: number) {
     setKitPieces(prev => prev.filter((_, idx) => idx !== i))
@@ -666,7 +674,10 @@ export default function MarketplacePage() {
                       <div className="space-y-1">
                         {kitPieces.map((p, i) => (
                           <div key={i} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-1.5 text-xs">
-                            <span className="font-semibold text-[#0F1E3C]">{p.qty}× {p.productName}</span>
+                            <span className="font-semibold text-[#0F1E3C] flex items-center gap-1.5">
+                              <CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />
+                              {p.qty}× {p.productName}
+                            </span>
                             <button onClick={() => removeKitPiece(i)} className="text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
                           </div>
                         ))}
@@ -682,6 +693,11 @@ export default function MarketplacePage() {
                         <Plus size={13} /> Peça
                       </button>
                     </div>
+                    {kitPieceFlash && (
+                      <p className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1.5">
+                        <CheckCircle2 size={12} /> {kitPieceFlash} — clica em mais peças ou em &quot;Salvar kit&quot; pra fechar
+                      </p>
+                    )}
 
                     <button onClick={addAssociation} disabled={kitPieces.length === 0 || !newPrefix.trim()}
                       className="w-full bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold rounded-xl px-3 py-2">
