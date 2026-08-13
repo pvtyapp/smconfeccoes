@@ -14,6 +14,7 @@ type CatalogVariant = {
 type ReviewRow = {
   id: string
   raw: string
+  title: string
   marketplaceSku: string
   variantId: string | null
   productName: string | null; color: string | null; size: string | null; sku: string | null
@@ -24,9 +25,11 @@ type ReviewRow = {
   remember: boolean
 }
 
+type AssociationItem = { variantId: string; qty: number; productName: string; color: string; size: string }
 type Association = {
-  id: number; prefix: string; color: string; origin: string; createdAt: string
-  productId: string; productName: string
+  id: number; prefix: string; kind: "single" | "kit"; color: string | null; origin: string; createdAt: string
+  productId: string | null; productName: string | null
+  items?: AssociationItem[]
 }
 
 type HistoryRow = {
@@ -67,9 +70,16 @@ export default function MarketplacePage() {
   const [assocOpen, setAssocOpen] = useState(false)
   const [associations, setAssociations] = useState<Association[]>([])
   const [assocLoading, setAssocLoading] = useState(false)
+  const [newAssocKind, setNewAssocKind] = useState<"single" | "kit">("single")
   const [newPrefix, setNewPrefix] = useState("")
   const [newAssocProduct, setNewAssocProduct] = useState("")
   const [newAssocColor, setNewAssocColor] = useState("")
+  // Kit: peças acumuladas antes de salvar a associação
+  const [kitPieces, setKitPieces] = useState<{ variantId: string; productName: string; color: string; size: string; qty: number }[]>([])
+  const [kitName, setKitName] = useState("")
+  const [kitColor, setKitColor] = useState("")
+  const [kitSize, setKitSize] = useState("")
+  const [kitQty, setKitQty] = useState(1)
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true)
@@ -106,7 +116,7 @@ export default function MarketplacePage() {
       setProcessMsg(`${data.matchedByRule} de ${data.totalRows} reconhecidos por regra salva — analisando o resto…`)
 
       const rows: ReviewRow[] = data.rows.map((r: {
-        raw: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
+        raw: string; title: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
         size: string | null; sku: string | null; stock: number | null; qty: number
         source: "regra" | "ia" | null; unresolved: boolean
       }) => ({ id: newRowId(), ...r, remember: r.source === "ia" || r.unresolved }))
@@ -150,7 +160,7 @@ export default function MarketplacePage() {
     const variant = catalog.find(c => c.productName === effName && c.color === effColor && c.size === effSize)
     if (!variant) return
     setReviewRows(prev => [...prev, {
-      id: newRowId(), raw: `${variant.productName} ${variant.color} ${variant.size}`, marketplaceSku: "",
+      id: newRowId(), raw: `${variant.productName} ${variant.color} ${variant.size}`, title: "", marketplaceSku: "",
       variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size,
       sku: variant.sku, stock: variant.availableStock, qty: Math.max(1, manualQty),
       source: "manual", unresolved: false, remember: false,
@@ -235,20 +245,47 @@ export default function MarketplacePage() {
   }
 
   // ── Associations modal ──
-  function openAssocModal() { setAssocOpen(true); loadAssociations() }
+  function openAssocModal() {
+    setAssocOpen(true); loadAssociations()
+    setNewAssocKind("single"); setNewPrefix(""); setKitPieces([])
+  }
   async function deleteAssociation(id: number) {
     setAssociations(prev => prev.filter(a => a.id !== id))
     await fetch(`/api/marketplace/associations/${id}`, { method: "DELETE" })
   }
   async function addAssociation() {
-    if (!newPrefix.trim() || !newAssocProduct || !newAssocColor) return
-    const variant = catalog.find(c => c.productName === newAssocProduct && c.color === newAssocColor)
-    if (!variant) return
+    if (!newPrefix.trim()) return
+    let body: Record<string, unknown>
+    if (newAssocKind === "kit") {
+      if (kitPieces.length === 0) return
+      body = { prefix: newPrefix, kind: "kit", items: kitPieces.map(p => ({ variantId: p.variantId, qty: p.qty })), origin: "manual" }
+    } else {
+      if (!newAssocProduct || !newAssocColor) return
+      const variant = catalog.find(c => c.productName === newAssocProduct && c.color === newAssocColor)
+      if (!variant) return
+      body = { prefix: newPrefix, kind: "single", productId: variant.productId, color: newAssocColor, origin: "manual" }
+    }
     const res = await fetch("/api/marketplace/associations", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prefix: newPrefix, productId: variant.productId, color: newAssocColor, origin: "manual" }),
+      body: JSON.stringify(body),
     })
-    if (res.ok) { setNewPrefix(""); loadAssociations() }
+    if (res.ok) { setNewPrefix(""); setKitPieces([]); loadAssociations() }
+  }
+
+  // Cascata produto→cor→tamanho do formulário de peça do kit (mesmo padrão do modo manual)
+  const kitEffName = productNames.includes(kitName) ? kitName : (productNames[0] ?? "")
+  const kitColors = useMemo(() => [...new Set(catalog.filter(c => c.productName === kitEffName).map(c => c.color))], [catalog, kitEffName])
+  const kitEffColor = kitColors.includes(kitColor) ? kitColor : (kitColors[0] ?? "")
+  const kitSizes = useMemo(() => catalog.filter(c => c.productName === kitEffName && c.color === kitEffColor), [catalog, kitEffName, kitEffColor])
+  const kitEffSize = kitSizes.some(v => v.size === kitSize) ? kitSize : (kitSizes[0]?.size ?? "")
+
+  function addKitPiece() {
+    const variant = catalog.find(c => c.productName === kitEffName && c.color === kitEffColor && c.size === kitEffSize)
+    if (!variant) return
+    setKitPieces(prev => [...prev, { variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size, qty: Math.max(1, kitQty) }])
+  }
+  function removeKitPiece(i: number) {
+    setKitPieces(prev => prev.filter((_, idx) => idx !== i))
   }
 
   const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
@@ -426,10 +463,10 @@ export default function MarketplacePage() {
                       const originLabel = r.source === "regra" ? "via regra salva" : r.source === "ia" ? "via IA (título)" : r.source === "manual" ? "resolvido na mão" : null
                       return (
                         <tr key={r.id} className="border-t border-[#0F1E3C]/5 align-top">
-                          <td className="px-2 py-2.5 max-w-[180px]">
+                          <td className="px-2 py-2.5 max-w-[220px]">
                             <p className="font-mono text-xs text-[#0F1E3C] bg-[#F4F6FB] rounded px-1.5 py-0.5 w-fit truncate max-w-full">{r.marketplaceSku || "—"}</p>
-                            {r.raw && r.raw !== r.marketplaceSku && (
-                              <p className="text-[10px] text-[#0F1E3C]/35 mt-1 truncate max-w-[180px]" title={r.raw}>{r.raw}</p>
+                            {r.title && (
+                              <p className="text-[11px] text-[#0F1E3C]/55 mt-1 leading-snug" title={r.title}>{r.title}</p>
                             )}
                           </td>
                           <td className="px-2 py-2.5 min-w-[200px]">
@@ -568,7 +605,7 @@ export default function MarketplacePage() {
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
               <div>
                 <h2 className="font-bold text-[#0F1E3C]">Associações de SKU</h2>
-                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[42ch]">Prefixo do SKU do marketplace → produto/cor. Criadas quando você resolve um item novo na conferência.</p>
+                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[42ch]">Prefixo do SKU do marketplace → produto/cor (ou um kit de várias peças). Criadas quando você resolve um item novo na conferência.</p>
               </div>
               <button onClick={() => setAssocOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
             </div>
@@ -581,15 +618,27 @@ export default function MarketplacePage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30">
-                      <th className="text-left pb-2">Prefixo</th><th className="text-left pb-2">Produto</th><th className="text-left pb-2">Cor</th><th></th>
+                      <th className="text-left pb-2">Prefixo</th><th className="text-left pb-2">Mapeado para</th><th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {associations.map(a => (
-                      <tr key={a.id} className="border-t border-[#0F1E3C]/5">
-                        <td className="py-2 font-mono text-xs bg-[#F4F6FB] rounded px-1.5 w-fit">{a.prefix}</td>
-                        <td className="py-2">{a.productName}</td>
-                        <td className="py-2">{a.color}</td>
+                      <tr key={a.id} className="border-t border-[#0F1E3C]/5 align-top">
+                        <td className="py-2 pr-2">
+                          <p className="font-mono text-xs bg-[#F4F6FB] rounded px-1.5 py-0.5 w-fit">{a.prefix}</p>
+                          {a.kind === "kit" && <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">KIT</span>}
+                        </td>
+                        <td className="py-2">
+                          {a.kind === "kit" ? (
+                            <ul className="space-y-0.5">
+                              {(a.items ?? []).map((it, i) => (
+                                <li key={i} className="text-xs text-[#0F1E3C]">{it.qty}× {it.productName} · {it.color} · {it.size}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-[#0F1E3C]">{a.productName} · {a.color}</p>
+                          )}
+                        </td>
                         <td className="py-2 text-right"><button onClick={() => deleteAssociation(a.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={13} /></button></td>
                       </tr>
                     ))}
@@ -597,17 +646,62 @@ export default function MarketplacePage() {
                 </table>
               )}
 
-              <div className="grid gap-2 mt-4 pt-4 border-t border-dashed border-[#0F1E3C]/10" style={{ gridTemplateColumns: "1fr 1fr 1fr auto" }}>
-                <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: BERMUDA-CINZA" className={inputCls} />
-                <select value={newAssocProduct} onChange={e => { setNewAssocProduct(e.target.value); setNewAssocColor("") }} className={inputCls}>
-                  <option value="">Produto...</option>
-                  {productNames.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <select value={newAssocColor} onChange={e => setNewAssocColor(e.target.value)} className={inputCls}>
-                  <option value="">Cor...</option>
-                  {[...new Set(catalog.filter(c => c.productName === newAssocProduct).map(c => c.color))].map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <button onClick={addAssociation} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
+              <div className="mt-4 pt-4 border-t border-dashed border-[#0F1E3C]/10">
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/6 w-fit mb-3">
+                  <button onClick={() => setNewAssocKind("single")} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${newAssocKind === "single" ? "bg-white text-[#0F1E3C] shadow-sm" : "text-[#0F1E3C]/45"}`}>Simples</button>
+                  <button onClick={() => setNewAssocKind("kit")} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${newAssocKind === "kit" ? "bg-white text-[#0F1E3C] shadow-sm" : "text-[#0F1E3C]/45"}`}>Kit (várias peças)</button>
+                </div>
+
+                {newAssocKind === "single" ? (
+                  <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr auto" }}>
+                    <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: BERMUDA-CINZA" className={inputCls} />
+                    <select value={newAssocProduct} onChange={e => { setNewAssocProduct(e.target.value); setNewAssocColor("") }} className={inputCls}>
+                      <option value="">Produto...</option>
+                      {productNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <select value={newAssocColor} onChange={e => setNewAssocColor(e.target.value)} className={inputCls}>
+                      <option value="">Cor...</option>
+                      {[...new Set(catalog.filter(c => c.productName === newAssocProduct).map(c => c.color))].map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <button onClick={addAssociation} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Prefixo do SKU do kit — ex: KIT2-CAMISETA" className={inputCls} />
+
+                    {kitPieces.length > 0 && (
+                      <div className="space-y-1">
+                        {kitPieces.map((p, i) => (
+                          <div key={i} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-1.5 text-xs">
+                            <span className="font-semibold text-[#0F1E3C]">{p.qty}× {p.productName} · {p.color} · {p.size}</span>
+                            <button onClick={() => removeKitPiece(i)} className="text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr 60px auto" }}>
+                      <select value={kitEffName} onChange={e => setKitName(e.target.value)} className={inputCls}>
+                        {productNames.map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                      <select value={kitEffColor} onChange={e => setKitColor(e.target.value)} className={inputCls}>
+                        {kitColors.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <select value={kitEffSize} onChange={e => setKitSize(e.target.value)} className={inputCls}>
+                        {kitSizes.map(v => <option key={v.size} value={v.size}>{v.size}</option>)}
+                      </select>
+                      <input type="number" min={1} value={kitQty} onChange={e => setKitQty(parseInt(e.target.value) || 1)} className={inputCls} />
+                      <button onClick={addKitPiece} className="flex items-center justify-center gap-1 border border-[#0F1E3C]/12 text-[#0F1E3C] rounded-xl px-2 text-xs font-bold">
+                        <Plus size={13} /> Peça
+                      </button>
+                    </div>
+
+                    <button onClick={addAssociation} disabled={kitPieces.length === 0 || !newPrefix.trim()}
+                      className="w-full bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold rounded-xl px-3 py-2">
+                      Salvar kit ({kitPieces.length} {kitPieces.length === 1 ? "peça" : "peças"})
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>

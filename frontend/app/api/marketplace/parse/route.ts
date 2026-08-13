@@ -9,11 +9,17 @@ type CatalogVariant = {
   variantId: string; productId: string; productName: string
   color: string; size: string; sku: string; availableStock: number
 }
-type Association = { prefix: string; productId: string; productName: string; color: string }
+type AssociationItem = { variantId: string; qty: number }
+type Association = {
+  prefix: string; kind: "single" | "kit"
+  productId: string | null; color: string | null
+  items: AssociationItem[]
+}
 
 type ExtractedRow = { raw: string; sku: string; title: string; qty: number }
 type ReviewRow = {
   raw: string
+  title: string // texto do anúncio/variação no picklist — mostrado junto do SKU pra facilitar conferência
   marketplaceSku: string // SKU original do picklist — sempre preservado, é ele que vira prefixo de associação
   variantId: string | null
   productName: string | null; color: string | null; size: string | null; sku: string | null
@@ -93,14 +99,28 @@ function extractRows(text: string): ExtractedRow[] {
     })
 }
 
-// ── Fase 2: casamento por prefixo já conhecido (regra salva) ──────────────
-function matchByPrefix(row: ExtractedRow, associations: Association[], catalog: CatalogVariant[]): ReviewRow | null {
+// ── Fase 2: casamento por prefixo já conhecido (regra salva). Kit expande 1
+// linha do picklist em N linhas de conferência — uma por peça do combo, com
+// a quantidade já multiplicada (qty do picklist × qty daquela peça no kit). ──
+function matchByPrefix(row: ExtractedRow, associations: Association[], catalog: CatalogVariant[]): ReviewRow[] | null {
   if (!row.sku) return null
   const skuUpper = row.sku.toUpperCase()
   const hit = associations
     .filter(a => skuUpper.startsWith(a.prefix))
     .sort((a, b) => b.prefix.length - a.prefix.length)[0] // prefixo mais específico primeiro
   if (!hit) return null
+
+  if (hit.kind === "kit") {
+    const rows = hit.items
+      .map(it => catalog.find(c => c.variantId === it.variantId) ? { comp: it, variant: catalog.find(c => c.variantId === it.variantId)! } : null)
+      .filter((x): x is { comp: AssociationItem; variant: CatalogVariant } => !!x)
+      .map(({ comp, variant }) => ({
+        raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId,
+        productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku,
+        stock: variant.availableStock, qty: row.qty * comp.qty, source: "regra" as const, unresolved: false,
+      }))
+    return rows.length > 0 ? rows : null
+  }
 
   const variantsOfProduct = catalog.filter(c => c.productId === hit.productId && c.color === hit.color)
   const remainder = skuUpper.replace(hit.prefix, "").replace(/^[-_ ]+/, "")
@@ -109,11 +129,11 @@ function matchByPrefix(row: ExtractedRow, associations: Association[], catalog: 
   const variant = bySkuSuffix ?? byTitle
 
   if (!variant) return null // produto/cor reconhecido mas tamanho não bateu — cai pra revisão manual
-  return {
-    raw: row.raw, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
+  return [{
+    raw: row.raw, title: row.title, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
     color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
     qty: row.qty, source: "regra", unresolved: false,
-  }
+  }]
 }
 
 // ── Fase 3: linhas que sobraram vão pra IA analisar o título, numa chamada só ──
@@ -154,7 +174,7 @@ Responda APENAS um JSON: {"matches":[{"index":0,"variantId":"<uuid ou null>"}]}`
     const variant = m?.variantId ? catalog.find(c => c.variantId === m.variantId) : null
     if (!variant) return unresolvedRow(r)
     return {
-      raw: r.raw, marketplaceSku: r.sku, variantId: variant.variantId, productName: variant.productName,
+      raw: r.raw, title: r.title, marketplaceSku: r.sku, variantId: variant.variantId, productName: variant.productName,
       color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
       qty: r.qty, source: "ia", unresolved: false,
     }
@@ -196,7 +216,7 @@ Responda APENAS um JSON: {"rows":[{"sku":"<sku ou \\"\\">","title":"<título/des
 
 function unresolvedRow(r: ExtractedRow): ReviewRow {
   return {
-    raw: r.title || r.raw, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
+    raw: r.raw, title: r.title, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
     sku: r.sku || null, stock: null, qty: r.qty, source: null, unresolved: true,
   }
 }
@@ -234,7 +254,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Não consegui identificar linhas nesse arquivo" }, { status: 400 })
     }
 
-    const [{ rows: catalogRaw }, { rows: assocRaw }] = await Promise.all([
+    const [{ rows: catalogRaw }, { rows: assocRaw }, { rows: assocItemsRaw }] = await Promise.all([
       pool.query(`
         SELECT pv.id AS "variantId", pv.product_id AS "productId", p.name AS "productName",
                pv.color, pv.size, pv.sku,
@@ -254,20 +274,29 @@ export async function POST(req: Request) {
         WHERE pv.status = 'active' AND p.status = 'active'
       `),
       pool.query(`
-        SELECT a.prefix, a.product_id AS "productId", p.name AS "productName", a.color
+        SELECT a.id, a.prefix, a.kind, a.product_id AS "productId", a.color
         FROM marketplace_sku_associations a
-        JOIN products p ON p.id = a.product_id
+      `),
+      pool.query(`
+        SELECT association_id AS "associationId", variant_id AS "variantId", qty
+        FROM marketplace_sku_association_items
       `),
     ])
     const catalog = catalogRaw as CatalogVariant[]
-    const associations = assocRaw as Association[]
+    const itemsByAssoc = new Map<number, AssociationItem[]>()
+    for (const it of assocItemsRaw as { associationId: number; variantId: string; qty: number }[]) {
+      if (!itemsByAssoc.has(it.associationId)) itemsByAssoc.set(it.associationId, [])
+      itemsByAssoc.get(it.associationId)!.push({ variantId: it.variantId, qty: it.qty })
+    }
+    const associations: Association[] = (assocRaw as { id: number; prefix: string; kind: "single" | "kit"; productId: string | null; color: string | null }[])
+      .map(a => ({ prefix: a.prefix, kind: a.kind, productId: a.productId, color: a.color, items: itemsByAssoc.get(a.id) ?? [] }))
 
-    const byRule: (ReviewRow | null)[] = extracted.map(r => matchByPrefix(r, associations, catalog))
+    const byRule: (ReviewRow[] | null)[] = extracted.map(r => matchByPrefix(r, associations, catalog))
     const needAI = extracted.filter((_, i) => byRule[i] === null)
     const aiResults = await matchByAI(needAI, catalog).catch(() => needAI.map(unresolvedRow))
 
     let aiCursor = 0
-    const finalRows: ReviewRow[] = byRule.map(r => r ?? aiResults[aiCursor++])
+    const finalRows: ReviewRow[] = byRule.flatMap(r => r ?? [aiResults[aiCursor++]])
 
     return NextResponse.json({
       filename,
