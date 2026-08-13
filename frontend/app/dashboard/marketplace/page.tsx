@@ -257,7 +257,7 @@ export default function MarketplacePage() {
       <div>
         <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Separação · Marketplace</h1>
         <p className="text-sm text-[#0F1E3C]/45 mt-0.5 max-w-2xl">
-          Sobe o picklist do Shopee/ML (CSV) — a IA casa com o estoque, ou monta a lista na mão. Só desconta estoque, não gera pedido nem entra no faturamento.
+          Sobe o picklist do Shopee/ML (CSV, TXT ou PDF) — a IA casa com o estoque, ou monta a lista na mão. Só desconta estoque, não gera pedido nem entra no faturamento.
         </p>
       </div>
 
@@ -313,9 +313,9 @@ export default function MarketplacePage() {
                         </div>
                         <p className="font-bold text-sm text-[#0F1E3C]">Arraste o picklist aqui</p>
                         <p className="text-xs text-[#0F1E3C]/40 mt-0.5">ou clique pra escolher o arquivo</p>
-                        <p className="text-[11px] text-[#0F1E3C]/30 mt-2.5">CSV ou TXT exportado do Shopee/Mercado Livre</p>
+                        <p className="text-[11px] text-[#0F1E3C]/30 mt-2.5">CSV, TXT ou PDF exportado do Shopee/Mercado Livre</p>
                       </div>
-                      <input ref={fileInputRef} type="file" accept=".csv,.txt" hidden onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+                      <input ref={fileInputRef} type="file" accept=".csv,.txt,.pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
 
                       <div className="text-center mt-3">
                         <button onClick={() => setShowPaste(v => !v)} className="text-xs font-bold text-[#4361EE] underline">

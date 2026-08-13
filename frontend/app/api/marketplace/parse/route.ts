@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
+import { getDocumentProxy, extractText } from "unpdf"
 import { pool } from "@/lib/db"
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -160,6 +161,39 @@ Responda APENAS um JSON: {"matches":[{"index":0,"variantId":"<uuid ou null>"}]}`
   })
 }
 
+// ── PDF: pdf.js (via unpdf, sem dependência nativa) só extrai o texto corrido
+// — sem colunas/delimitador confiável — então a extração de linhas em si vira
+// mais uma pergunta pra IA em vez da heurística de CSV. ────────────────────
+async function extractRowsFromPdf(buffer: ArrayBuffer): Promise<ExtractedRow[]> {
+  const pdf = await getDocumentProxy(new Uint8Array(buffer))
+  const { text } = await extractText(pdf, { mergePages: true })
+  if (!text.trim()) return []
+
+  const system = `Você extrai itens de um picklist de marketplace (Shopee/Mercado Livre) a partir do texto cru de um PDF exportado — sem colunas confiáveis, o layout pode ter quebrado.
+
+Pra cada item de picklist que aparecer (produto + SKU e/ou quantidade), extraia uma linha. Ignore cabeçalho, rodapé, números de página e texto que não seja item de pedido.
+
+Responda APENAS um JSON: {"rows":[{"sku":"<sku ou \\"\\">","title":"<título/descrição>","qty":<inteiro>}]}`
+
+  const res = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 4096,
+    system,
+    messages: [{ role: "user", content: text.slice(0, 12_000) }],
+  })
+  const raw = res.content[0].type === "text" ? res.content[0].text : ""
+  const jsonMatch = raw.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) return []
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as { rows: { sku: string; title: string; qty: number }[] }
+    return (parsed.rows ?? [])
+      .filter(r => r.title || r.sku)
+      .map(r => ({ raw: `${r.sku ? r.sku + " — " : ""}${r.title}`, sku: r.sku ?? "", title: r.title ?? "", qty: Math.max(1, r.qty || 1) }))
+  } catch {
+    return []
+  }
+}
+
 function unresolvedRow(r: ExtractedRow): ReviewRow {
   return {
     raw: r.title || r.raw, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
@@ -170,32 +204,32 @@ function unresolvedRow(r: ExtractedRow): ReviewRow {
 export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") ?? ""
-    let text = ""
     let filename = "lista colada"
+    let extracted: ExtractedRow[] = []
 
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData()
       const file = form.get("file") as File | null
       const pasted = form.get("text") as string | null
+
       if (file) {
-        if (!/\.(csv|txt)$/i.test(file.name)) {
-          return NextResponse.json({ error: "Por enquanto só CSV ou TXT — exporta o picklist como CSV no marketplace." }, { status: 400 })
-        }
-        text = await file.text()
         filename = file.name
-      } else if (pasted) {
-        text = pasted
+        if (/\.pdf$/i.test(file.name)) {
+          extracted = await extractRowsFromPdf(await file.arrayBuffer())
+        } else if (/\.(csv|txt)$/i.test(file.name)) {
+          extracted = extractRows(await file.text())
+        } else {
+          return NextResponse.json({ error: "Formato não suportado — envia CSV, TXT ou PDF." }, { status: 400 })
+        }
+      } else if (pasted?.trim()) {
+        extracted = extractRows(pasted)
       }
     } else {
       const body = await req.json().catch(() => ({}))
-      text = (body?.text as string) ?? ""
+      const text = (body?.text as string) ?? ""
+      if (text.trim()) extracted = extractRows(text)
     }
 
-    if (!text.trim()) {
-      return NextResponse.json({ error: "Nenhum conteúdo pra analisar" }, { status: 400 })
-    }
-
-    const extracted = extractRows(text)
     if (extracted.length === 0) {
       return NextResponse.json({ error: "Não consegui identificar linhas nesse arquivo" }, { status: 400 })
     }
