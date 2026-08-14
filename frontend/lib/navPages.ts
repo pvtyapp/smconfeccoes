@@ -17,6 +17,7 @@ export const navTop: NavItem[] = [
   { href: "/dashboard",                         label: "Dashboard",       icon: LayoutDashboard },
   { href: "/dashboard/pdv",                     label: "PDV de Vendas",   icon: Store           },
   { href: "/dashboard/autoatendimento/pedidos", label: "Autoatendimento", icon: ShoppingBag     },
+  { href: "/dashboard/marketplace",             label: "Marketplace",    icon: ShoppingCart    },
   { href: "/dashboard/marketing",               label: "Marketing",       icon: Megaphone       },
   { href: "/dashboard/mapa-operacao",           label: "Mapa da Operação", icon: Signal         },
 ]
@@ -26,7 +27,6 @@ export const navGestao: NavItem[] = [
   { href: "/dashboard/produtos",        label: "Produtos",           icon: Package       },
   { href: "/dashboard/estoque",         label: "Estoque",            icon: Boxes         },
   { href: "/dashboard/estoque-avarias", label: "Estoque de Avarias", icon: AlertTriangle },
-  { href: "/dashboard/marketplace",     label: "Marketplace",        icon: ShoppingCart  },
 ]
 
 export const navFinanceiro: NavItem[] = [

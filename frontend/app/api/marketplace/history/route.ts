@@ -5,10 +5,10 @@ export async function GET() {
   try {
     const { rows } = await pool.query(`
       SELECT id, number, origin, total_items AS "totalItems", total_pieces AS "totalPieces",
-             created_at AS "createdAt"
+             created_at AS "createdAt", canceled_at AS "canceledAt"
       FROM marketplace_separations
       ORDER BY created_at DESC
-      LIMIT 30
+      LIMIT 50
     `)
     return NextResponse.json(rows)
   } catch (err) {
