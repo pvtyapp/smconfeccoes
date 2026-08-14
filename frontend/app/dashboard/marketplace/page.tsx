@@ -103,7 +103,7 @@ export default function MarketplacePage() {
   const [memoryLoading, setMemoryLoading] = useState(false)
 
   // Modal de vínculo — produto → cor → tamanho, igual o "adicionar ao carrinho" do PDV
-  const [linkTargetId, setLinkTargetId] = useState<string | null>(null)
+  const [linkTargetIds, setLinkTargetIds] = useState<string[]>([])
   const [linkProductName, setLinkProductName] = useState("")
 
   const loadCatalog = useCallback(async () => {
@@ -204,6 +204,9 @@ export default function MarketplacePage() {
   function removeRow(id: string) {
     setReviewRows(prev => prev.filter(r => r.id !== id))
   }
+  function removeRows(ids: string[]) {
+    setReviewRows(prev => prev.filter(r => !ids.includes(r.id)))
+  }
   function toggleRemember(id: string, val: boolean) {
     setReviewRows(prev => prev.map(r => r.id === id ? { ...r, remember: val } : r))
   }
@@ -221,14 +224,18 @@ export default function MarketplacePage() {
   }
 
   // ── Modal de vínculo (produto → cor → tamanho) ──
-  const linkRow = useMemo(() => reviewRows.find(r => r.id === linkTargetId) ?? null, [reviewRows, linkTargetId])
-  function openLinkModal(r: ReviewRow) {
-    setLinkTargetId(r.id)
-    setLinkProductName(r.productName ?? r.expectedProductName ?? productNames[0] ?? "")
+  // Aceita várias linhas de uma vez (card com itens iguais juntados) — vincular
+  // um produto novo reaplica em todas elas, já que representam a mesma decisão.
+  const linkRows = useMemo(() => reviewRows.filter(r => linkTargetIds.includes(r.id)), [reviewRows, linkTargetIds])
+  const linkRow = linkRows[0] ?? null
+  function openLinkModal(rows: ReviewRow[]) {
+    if (rows.length === 0) return
+    setLinkTargetIds(rows.map(r => r.id))
+    setLinkProductName(rows[0].productName ?? rows[0].expectedProductName ?? productNames[0] ?? "")
   }
-  function closeLinkModal() { setLinkTargetId(null) }
+  function closeLinkModal() { setLinkTargetIds([]) }
   function pickVariant(variantId: string) {
-    if (linkTargetId) remapRow(linkTargetId, variantId)
+    for (const id of linkTargetIds) remapRow(id, variantId)
     closeLinkModal()
   }
   const linkColorGroups = useMemo(() => {
@@ -435,7 +442,7 @@ export default function MarketplacePage() {
   function renderSelect(r: ReviewRow) {
     const label = r.variantId ? `${r.productName} · ${r.color} · ${r.size}` : (r.unresolved ? "Vincular a..." : "Selecionar...")
     return (
-      <button type="button" onClick={() => openLinkModal(r)} className={itemSelectCls(r.unresolved)} title={label}>
+      <button type="button" onClick={() => openLinkModal([r])} className={itemSelectCls(r.unresolved)} title={label}>
         {label}
       </button>
     )
@@ -506,6 +513,46 @@ export default function MarketplacePage() {
         <div className="space-y-1">
           {group.pieces.map(p => renderItemRow(p, true))}
         </div>
+      </div>
+    )
+  }
+
+  // Junta linhas já resolvidas que caíram na mesma variante exata (mesmo
+  // produto+cor+tamanho) — comum quando o mesmo item aparece em várias linhas
+  // do picklist. Só afeta a exibição: cada linha original continua existindo
+  // por baixo (pra confirmar/gravar memória do jeito de sempre), só a tela
+  // mostra 1 card com a soma. Grupo de 1 linha só renderiza igual antes.
+  type MergedItem = { variantId: string; productName: string; color: string; size: string; qty: number; stock: number | null; rows: ReviewRow[] }
+  function mergeByVariant(rows: ReviewRow[]): MergedItem[] {
+    const map = new Map<string, MergedItem>()
+    for (const r of rows) {
+      const key = r.variantId!
+      if (!map.has(key)) map.set(key, { variantId: key, productName: r.productName!, color: r.color!, size: r.size!, qty: 0, stock: r.stock, rows: [] })
+      const m = map.get(key)!
+      m.qty += r.qty
+      m.rows.push(r)
+    }
+    return [...map.values()]
+  }
+
+  function renderMergedItem(m: MergedItem) {
+    if (m.rows.length === 1) return renderItemRow(m.rows[0])
+    const after = (m.stock ?? 0) - m.qty
+    const low = after < 0
+    const ids = m.rows.map(r => r.id)
+    return (
+      <div key={m.variantId} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#F9FAFB]">
+        <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`}
+          title={low ? "Estoque baixo — vai ficar negativo" : "Tem estoque"} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold text-[#0F1E3C] leading-tight truncate">{m.productName} · {m.color} · {m.size}</p>
+          <p className="text-[9px] text-[#0F1E3C]/30 mt-0.5">{m.rows.length} linhas iguais do picklist juntas</p>
+        </div>
+        <button type="button" onClick={() => openLinkModal(m.rows)} className={itemSelectCls(false)} title={`${m.productName} · ${m.color} · ${m.size}`}>
+          {m.productName} · {m.color} · {m.size}
+        </button>
+        <span className="w-12 text-center text-[11px] font-bold text-[#0F1E3C] tabular-nums flex-shrink-0">{m.qty} pç</span>
+        <button onClick={() => removeRows(ids)} className="text-[#0F1E3C]/25 hover:text-red-500 flex-shrink-0"><Trash2 size={12} /></button>
       </div>
     )
   }
@@ -716,7 +763,7 @@ export default function MarketplacePage() {
                 )}
                 {blocks.categoryBlocks.map(b => renderBlockShell(
                   b.id, b.label, b.items.length, "cat",
-                  <>{b.items.map(r => renderItemRow(r))}</>
+                  <>{mergeByVariant(b.items).map(m => renderMergedItem(m))}</>
                 ))}
               </div>
               {confirmError && <p className="text-xs text-red-600 mt-3">{confirmError}</p>}
@@ -988,6 +1035,9 @@ export default function MarketplacePage() {
                 <p className="font-mono text-[11px] text-[#0F1E3C]/45 truncate" title={linkRow.marketplaceSku}>{linkRow.marketplaceSku || "sem SKU"}</p>
                 {linkRow.variacao && <p className="text-base font-black text-[#0F1E3C] leading-tight mt-0.5">{linkRow.variacao}</p>}
                 {linkRow.title && <p className="text-xs text-[#0F1E3C]/40 mt-0.5 truncate max-w-[36ch]" title={linkRow.title}>{linkRow.title}</p>}
+                {linkRows.length > 1 && (
+                  <p className="text-[10px] font-semibold text-[#4361EE] mt-1">+ {linkRows.length - 1} linha{linkRows.length - 1 > 1 ? "s" : ""} igual{linkRows.length - 1 > 1 ? "is" : ""} do picklist junto com essa</p>
+                )}
               </div>
               <button onClick={closeLinkModal} className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 flex items-center justify-center flex-shrink-0"><X size={15}/></button>
             </div>
