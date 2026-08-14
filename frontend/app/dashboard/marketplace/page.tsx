@@ -239,13 +239,6 @@ export default function MarketplacePage() {
     return groups
   }, [catalog, linkProductName])
 
-  const totals = useMemo(() => {
-    const items = reviewRows.length
-    const pieces = reviewRows.reduce((s, r) => s + r.qty, 0)
-    const pending = reviewRows.filter(r => r.unresolved).length
-    return { items, pieces, pending }
-  }, [reviewRows])
-
   // ── Conferência em blocos: Não mapeados sempre primeiro, Kits em seguida,
   // depois um bloco por categoria de produto presente na lista — nasce sozinho
   // do que tiver no arquivo, sem lista fixa pra manter conforme o catálogo cresce.
@@ -280,6 +273,17 @@ export default function MarketplacePage() {
     return { missSimple, missKits, okKits, categoryBlocks }
   }, [reviewRows])
 
+  // "Itens" conta linhas do pedido (kit conta 1x, não 1x por peça) — é o que
+  // bate com o que a pessoa vê no picklist original. "Peças" continua sendo o
+  // total físico a separar (kit de 2 peças em qty 1 já soma 2 peças aqui).
+  const totals = useMemo(() => {
+    const items = blocks.missSimple.length + blocks.missKits.length + blocks.okKits.length
+      + blocks.categoryBlocks.reduce((s, b) => s + b.items.length, 0)
+    const pieces = reviewRows.reduce((s, r) => s + r.qty, 0)
+    const pending = blocks.missSimple.length + blocks.missKits.length
+    return { items, pieces, pending }
+  }, [blocks, reviewRows])
+
   const [collapsedBlocks, setCollapsedBlocks] = useState<Set<string>>(new Set())
   function toggleBlock(id: string) {
     setCollapsedBlocks(prev => {
@@ -288,6 +292,14 @@ export default function MarketplacePage() {
       return next
     })
   }
+  // Kits/categoria abrem fechados por padrão numa lista grande — atalho pra
+  // quando você quer ver tudo de uma vez (ou fechar tudo de novo depois).
+  const nonMissBlockIds = useMemo(() => [
+    ...(blocks.okKits.length > 0 ? ["kits"] : []),
+    ...blocks.categoryBlocks.map(b => b.id),
+  ], [blocks])
+  function expandAllBlocks() { setCollapsedBlocks(new Set(nonMissBlockIds)) }
+  function collapseAllBlocks() { setCollapsedBlocks(new Set(["miss"])) }
 
   async function confirmSeparation() {
     if (totals.pending > 0 || reviewRows.length === 0) return
@@ -494,17 +506,23 @@ export default function MarketplacePage() {
     )
   }
 
+  // "Não mapeados" começa aberto (precisa de atenção); Kits e categorias
+  // começam fechados (já revisados, só o resumo importa até você querer
+  // conferir de novo) — numa lista grande isso evita a tela ficar gigante só
+  // com coisa que já tá certa. `collapsedBlocks` guarda quem foi alternado
+  // manualmente pra fora do estado padrão, não "quem tá fechado".
   function renderBlockShell(id: string, label: string, count: number, tone: "miss" | "kit" | "cat", children: ReactNode) {
-    const isCollapsed = collapsedBlocks.has(id)
+    const defaultOpen = tone === "miss"
+    const isOpen = collapsedBlocks.has(id) ? !defaultOpen : defaultOpen
     const toneCls = tone === "miss" ? "border-red-200 bg-red-50/50" : tone === "kit" ? "border-[#4361EE]/15 bg-[#4361EE]/[0.03]" : "border-[#0F1E3C]/8 bg-[#F9FAFB]"
     const labelCls = tone === "miss" ? "text-red-700" : tone === "kit" ? "text-[#4361EE]" : "text-[#0F1E3C]"
     return (
       <div key={id} className={`rounded-xl border overflow-hidden ${toneCls}`}>
         <button onClick={() => toggleBlock(id)} className="w-full flex items-center justify-between px-3.5 py-2.5">
           <span className={`text-xs font-bold ${labelCls}`}>{label} <span className="font-semibold opacity-50">· {count}</span></span>
-          <span className={`text-[10px] font-semibold ${labelCls} opacity-50`}>{isCollapsed ? "mostrar" : "esconder"}</span>
+          <span className={`text-[10px] font-semibold ${labelCls} opacity-50`}>{isOpen ? "esconder" : "mostrar"}</span>
         </button>
-        {!isCollapsed && <div className="px-3 pb-3 space-y-1.5">{children}</div>}
+        {isOpen && <div className="px-3 pb-3 space-y-1.5">{children}</div>}
       </div>
     )
   }
@@ -663,6 +681,14 @@ export default function MarketplacePage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  {nonMissBlockIds.length > 0 && (
+                    <>
+                      <button onClick={expandAllBlocks} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#4361EE]">Abrir tudo</button>
+                      <span className="text-[#0F1E3C]/15">·</span>
+                      <button onClick={collapseAllBlocks} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#4361EE]">Fechar tudo</button>
+                      <span className="w-px h-4 bg-[#0F1E3C]/10 mx-1" />
+                    </>
+                  )}
                   <button onClick={openAssocModal} className="flex items-center gap-1.5 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] border border-[#0F1E3C]/10 rounded-xl px-3 py-2">
                     <Link2 size={13} /> Associações salvas
                   </button>
