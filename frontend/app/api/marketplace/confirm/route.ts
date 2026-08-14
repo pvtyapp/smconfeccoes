@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { buildMatchKey } from "@/lib/marketplaceMatchKey"
 
-type ConfirmRow = { variantId: string; qty: number; source: "regra" | "ia" | "manual" }
+type ConfirmRow = {
+  variantId: string; qty: number; source: "regra" | "ia" | "memoria" | "manual"
+  sku: string; variacao: string; isKit: boolean; qtyPerKit: number
+}
 type NewAssociation = { prefix: string; productId: string; color: string }
 
 // Confirma a separação: grava o registro (marketplace_separations + items) e
@@ -57,6 +61,69 @@ export async function POST(req: Request) {
           VALUES ($1, $2, $3, 'manual')
           ON CONFLICT (prefix) DO NOTHING
         `, [a.prefix.trim().toUpperCase(), a.productId, a.color.trim()])
+      }
+    }
+
+    // Memória de SKU exato — grava/atualiza só aqui (nunca no momento do match
+    // da IA), porque até confirmar a linha ainda passou pela revisão humana.
+    //
+    // Chave = SKU + Variação, não SKU sozinho: testado com picklist real, o
+    // mesmo SKU do anúncio apareceu repetido apontando pra cor/tamanho
+    // diferentes em cada linha (vendedor reaproveita 1 SKU pra todas as
+    // variações do produto) — SKU sozinho memorizaria a variante errada pras
+    // outras ocorrências. Ver lib/marketplaceMatchKey.
+    //
+    // Agrupa por chave: kit grava as N peças juntas, sobrescrevendo o que tinha
+    // antes (autocorrige se o vendedor reaproveitar a mesma combinação depois).
+    const byKeyGroup = new Map<string, { sku: string; rows: ConfirmRow[] }>()
+    for (const r of rows) {
+      if (!r.sku?.trim()) continue
+      const key = buildMatchKey(r.sku, r.variacao ?? "")
+      if (!byKeyGroup.has(key)) byKeyGroup.set(key, { sku: r.sku.trim(), rows: [] })
+      byKeyGroup.get(key)!.rows.push(r)
+    }
+
+    if (byKeyGroup.size > 0) {
+      const allVariantIds = [...new Set(rows.map(r => r.variantId))]
+      const { rows: variantProductRows } = await client.query(`
+        SELECT id AS "variantId", product_id AS "productId" FROM product_variants WHERE id = ANY($1::uuid[])
+      `, [allVariantIds])
+      const productIdByVariant = new Map<string, string>(
+        (variantProductRows as { variantId: string; productId: string }[]).map(v => [v.variantId, v.productId])
+      )
+
+      for (const [matchKey, { sku, rows: group }] of byKeyGroup) {
+        const isKit = group.some(r => r.isKit)
+        const confirmedBy = group.some(r => r.source === "manual") ? "user_edit" : "ai_auto"
+
+        // A mesma combinação SKU+Variação pode aparecer em mais de uma linha
+        // do picklist (ex: o mesmo anúncio pedido 2x, listado em linhas
+        // separadas) — sem isso, cada ocorrência somaria peças duplicadas na
+        // memória e dobraria a dedução (ou o kit) na próxima leitura.
+        // Composição é um SET de variantes, não uma lista por ocorrência: 1
+        // item por variantId distinto.
+        const uniqueItems = new Map<string, ConfirmRow>()
+        for (const r of group) if (!uniqueItems.has(r.variantId)) uniqueItems.set(r.variantId, r)
+
+        const { rows: matchRows } = await client.query(`
+          INSERT INTO marketplace_sku_matches (sku, match_key, is_kit, confirmed_by, times_used, updated_at, last_used_at)
+          VALUES ($1, $2, $3, $4, 1, now(), now())
+          ON CONFLICT (match_key) DO UPDATE SET
+            sku = EXCLUDED.sku, is_kit = EXCLUDED.is_kit, confirmed_by = EXCLUDED.confirmed_by,
+            times_used = marketplace_sku_matches.times_used + 1, updated_at = now(), last_used_at = now()
+          RETURNING id
+        `, [sku, matchKey, isKit, confirmedBy])
+        const matchId = matchRows[0].id
+
+        await client.query(`DELETE FROM marketplace_sku_match_items WHERE match_id = $1`, [matchId])
+        for (const r of uniqueItems.values()) {
+          const productId = productIdByVariant.get(r.variantId)
+          if (!productId) continue
+          await client.query(`
+            INSERT INTO marketplace_sku_match_items (match_id, product_id, variant_id, qty_per_kit)
+            VALUES ($1, $2, $3, $4)
+          `, [matchId, productId, r.variantId, r.qtyPerKit || 1])
+        }
       }
     }
 

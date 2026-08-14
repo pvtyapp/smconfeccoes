@@ -9,6 +9,7 @@ export async function GET() {
         pv.id            AS "variantId",
         pv.product_id    AS "productId",
         p.name           AS "productName",
+        COALESCE(cat.name, 'Outros') AS "categoryName",
         pv.color,
         pv.size,
         pv.sku,
@@ -24,6 +25,7 @@ export async function GET() {
         GREATEST(0, COALESCE(bal.qty, 0) - COALESCE(locked.locked_qty, 0))::int          AS "availableStock"
       FROM product_variants pv
       JOIN products p ON p.id = pv.product_id
+      LEFT JOIN categories cat ON cat.id = p.category_id
       LEFT JOIN (
         SELECT variant_id,
                SUM(CASE WHEN type = 'in' THEN quantity ELSE -quantity END) AS qty

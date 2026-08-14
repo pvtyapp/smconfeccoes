@@ -1,13 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Printer, Link2, Plus, Trash2, X, Loader2, CheckCircle2, PackageSearch } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type CatalogVariant = {
-  variantId: string; productId: string; productName: string
+  variantId: string; productId: string; productName: string; categoryName: string
   color: string; size: string; sku: string; availableStock: number
 }
 
@@ -19,11 +19,15 @@ type ReviewRow = {
   marketplaceSku: string
   variantId: string | null
   productName: string | null; color: string | null; size: string | null; sku: string | null
+  categoryName: string | null
   stock: number | null
   qty: number
-  source: "regra" | "ia" | "manual" | null
+  source: "regra" | "ia" | "memoria" | "manual" | null
   unresolved: boolean
   remember: boolean
+  isKit: boolean
+  qtyPerKit: number
+  timesUsed: number | null
 }
 
 type AssociationItem = { productId: string; qty: number; productName: string }
@@ -35,6 +39,12 @@ type Association = {
 
 type HistoryRow = {
   id: number; number: string; origin: string; totalItems: number; totalPieces: number; createdAt: string
+}
+
+type MemoryItem = { matchId: number; productName: string; color: string | null; size: string | null; qtyPerKit: number; pieceLabel: string | null }
+type MemoryMatch = {
+  id: number; sku: string; isKit: boolean; confirmedBy: "ai_auto" | "user_edit"; timesUsed: number
+  createdAt: string; lastUsedAt: string; items: MemoryItem[]
 }
 
 type Origin = "shopee" | "mercado_livre" | "manual"
@@ -81,6 +91,10 @@ export default function MarketplacePage() {
   const [kitPieceFlash, setKitPieceFlash] = useState<string | null>(null)
   const kitFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const [memoryOpen, setMemoryOpen] = useState(false)
+  const [memoryEntries, setMemoryEntries] = useState<MemoryMatch[]>([])
+  const [memoryLoading, setMemoryLoading] = useState(false)
+
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true)
     try {
@@ -116,8 +130,8 @@ export default function MarketplacePage() {
 
       const rows: ReviewRow[] = data.rows.map((r: {
         raw: string; title: string; variacao: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
-        size: string | null; sku: string | null; stock: number | null; qty: number
-        source: "regra" | "ia" | null; unresolved: boolean
+        size: string | null; sku: string | null; categoryName: string | null; stock: number | null; qty: number
+        source: "regra" | "ia" | "memoria" | null; unresolved: boolean; isKit: boolean; qtyPerKit: number; timesUsed: number | null
       }) => ({ id: newRowId(), ...r, remember: r.source === "ia" || r.unresolved }))
       setReviewRows(rows)
       setStep(2)
@@ -160,9 +174,9 @@ export default function MarketplacePage() {
     if (!variant) return
     setReviewRows(prev => [...prev, {
       id: newRowId(), raw: `${variant.productName} ${variant.color} ${variant.size}`, title: "", variacao: "", marketplaceSku: "",
-      variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size,
+      variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size, categoryName: variant.categoryName,
       sku: variant.sku, stock: variant.availableStock, qty: Math.max(1, manualQty),
-      source: "manual", unresolved: false, remember: false,
+      source: "manual", unresolved: false, remember: false, isKit: false, qtyPerKit: 1, timesUsed: null,
     }])
   }
 
@@ -189,7 +203,8 @@ export default function MarketplacePage() {
     if (!variant) return
     setReviewRows(prev => prev.map(r => r.id === id ? {
       ...r, unresolved: false, variantId: variant.variantId, productName: variant.productName,
-      color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, source: "manual",
+      color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName,
+      stock: variant.availableStock, source: "manual",
     } : r))
   }
 
@@ -199,6 +214,49 @@ export default function MarketplacePage() {
     const pending = reviewRows.filter(r => r.unresolved).length
     return { items, pieces, pending }
   }, [reviewRows])
+
+  // ── Conferência em blocos: Não mapeados sempre primeiro, Kits em seguida,
+  // depois um bloco por categoria de produto presente na lista — nasce sozinho
+  // do que tiver no arquivo, sem lista fixa pra manter conforme o catálogo cresce.
+  // Kit com QUALQUER peça pendente cai inteiro em "Não mapeados" (precisa de
+  // atenção); só entra em "Kits" quando todas as peças já estão resolvidas. ──
+  type KitGroup = { key: string; pieces: ReviewRow[]; anyMiss: boolean }
+  const blocks = useMemo(() => {
+    const missSimple: ReviewRow[] = []
+    const kitGroupsMap = new Map<string, ReviewRow[]>()
+    const byCategory = new Map<string, ReviewRow[]>()
+
+    for (const r of reviewRows) {
+      if (r.isKit) {
+        const key = r.marketplaceSku || r.id
+        if (!kitGroupsMap.has(key)) kitGroupsMap.set(key, [])
+        kitGroupsMap.get(key)!.push(r)
+        continue
+      }
+      if (r.unresolved) { missSimple.push(r); continue }
+      const cat = r.categoryName ?? "Outros"
+      if (!byCategory.has(cat)) byCategory.set(cat, [])
+      byCategory.get(cat)!.push(r)
+    }
+
+    const kitGroups: KitGroup[] = [...kitGroupsMap.entries()].map(([key, pieces]) => ({ key, pieces, anyMiss: pieces.some(p => p.unresolved) }))
+    const missKits = kitGroups.filter(k => k.anyMiss)
+    const okKits = kitGroups.filter(k => !k.anyMiss)
+    const categoryBlocks = [...byCategory.entries()]
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([name, items]) => ({ id: name, label: name, items }))
+
+    return { missSimple, missKits, okKits, categoryBlocks }
+  }, [reviewRows])
+
+  const [collapsedBlocks, setCollapsedBlocks] = useState<Set<string>>(new Set())
+  function toggleBlock(id: string) {
+    setCollapsedBlocks(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   async function confirmSeparation() {
     if (totals.pending > 0 || reviewRows.length === 0) return
@@ -222,7 +280,10 @@ export default function MarketplacePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           origin,
-          rows: reviewRows.map(r => ({ variantId: r.variantId, qty: r.qty, source: r.source ?? "manual" })),
+          rows: reviewRows.map(r => ({
+            variantId: r.variantId, qty: r.qty, source: r.source ?? "manual",
+            sku: r.marketplaceSku, variacao: r.variacao, isKit: r.isKit, qtyPerKit: r.qtyPerKit,
+          })),
           newAssociations,
         }),
       })
@@ -242,6 +303,19 @@ export default function MarketplacePage() {
     setReviewRows([]); setResult(null); setConfirmError(""); setUploadError("")
     setPastedText(""); setShowPaste(false); setMode("upload"); setStep(1)
     if (fileInputRef.current) fileInputRef.current.value = ""
+  }
+
+  // ── Memória de SKU (admin) ──
+  async function openMemoryModal() {
+    setMemoryOpen(true); setMemoryLoading(true)
+    try {
+      const res = await fetch("/api/marketplace/memory")
+      if (res.ok) setMemoryEntries(await res.json())
+    } finally { setMemoryLoading(false) }
+  }
+  async function deleteMemoryEntry(id: number) {
+    setMemoryEntries(prev => prev.filter(m => m.id !== id))
+    await fetch(`/api/marketplace/memory/${id}`, { method: "DELETE" })
   }
 
   // ── Associations modal ──
@@ -291,6 +365,102 @@ export default function MarketplacePage() {
 
   const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
 
+  // ── Conferência em blocos — helpers de render ──
+  function sourceLabel(r: ReviewRow): string | null {
+    if (r.source === "regra") return "IA + regra salva"
+    if (r.source === "ia") return "só IA"
+    if (r.source === "memoria") return `já usado antes${r.timesUsed ? ` · ${r.timesUsed}×` : ""}`
+    if (r.source === "manual") return "resolvido na mão"
+    return null
+  }
+
+  function itemSelectCls(unresolved: boolean) {
+    return `text-xs rounded-md px-1.5 py-1 w-[168px] flex-shrink-0 transition-colors focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 ${
+      unresolved
+        ? "border border-red-300 text-red-600 bg-red-50"
+        : "border border-transparent bg-transparent text-[#0F1E3C]/70 font-semibold hover:border-[#0F1E3C]/15 hover:bg-white focus:border-[#4361EE] focus:bg-white"
+    }`
+  }
+
+  function renderSelect(r: ReviewRow) {
+    return (
+      <select value={r.variantId ?? ""} onChange={e => remapRow(r.id, e.target.value)} className={itemSelectCls(r.unresolved)}>
+        <option value="" disabled>{r.unresolved ? "Vincular a..." : "Selecionar..."}</option>
+        {catalog.map(c => <option key={c.variantId} value={c.variantId}>{c.productName} · {c.color} · {c.size}</option>)}
+      </select>
+    )
+  }
+
+  // `indent`=true renderiza como peça de kit (linha fina, sem SKU/variação
+  // repetidos — já aparecem 1x no cabeçalho do card do kit).
+  function renderItemRow(r: ReviewRow, indent = false) {
+    const after = r.variantId ? (r.stock ?? 0) - r.qty : null
+    const low = after !== null && after < 0
+    const label = sourceLabel(r)
+    return (
+      <div key={r.id} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg ${indent ? "border-l-2 border-[#0F1E3C]/10 ml-1" : ""} ${r.unresolved ? "bg-red-50/60" : "bg-[#F9FAFB]"}`}>
+        <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${!r.variantId ? "bg-red-300" : low ? "bg-red-500" : "bg-emerald-500"}`}
+          title={!r.variantId ? "Sem variante escolhida" : low ? "Estoque baixo — vai ficar negativo" : "Tem estoque"} />
+        <div className="min-w-0 flex-1">
+          {!indent && (
+            <>
+              <p className="font-mono text-[10px] text-[#0F1E3C]/45 truncate" title={r.marketplaceSku}>{r.marketplaceSku || "—"}</p>
+              {r.variacao && <p className="text-xs font-bold text-[#0F1E3C] leading-tight truncate" title={r.variacao}>{r.variacao}</p>}
+            </>
+          )}
+          {indent && <p className="text-[11px] font-semibold text-[#0F1E3C]/70 truncate">{r.productName ?? "peça do kit"}</p>}
+          {label && <p className="text-[9px] text-[#0F1E3C]/30 mt-0.5">{label}</p>}
+        </div>
+        {renderSelect(r)}
+        <input type="number" min={1} value={r.qty} onChange={e => updateQty(r.id, parseInt(e.target.value))}
+          className="w-12 text-center border border-[#0F1E3C]/12 rounded-md py-1 text-[11px] tabular-nums flex-shrink-0" />
+        {r.variantId && r.source !== "regra" && r.source !== "memoria" && (
+          <label className="flex items-center gap-1 text-[9px] text-[#0F1E3C]/40 flex-shrink-0 whitespace-nowrap">
+            <input type="checkbox" checked={r.remember} onChange={e => toggleRemember(r.id, e.target.checked)} className="w-2.5 h-2.5" />
+            lembrar
+          </label>
+        )}
+        <button onClick={() => removeRow(r.id)} className="text-[#0F1E3C]/25 hover:text-red-500 flex-shrink-0"><Trash2 size={12} /></button>
+      </div>
+    )
+  }
+
+  function renderKitCard(group: { key: string; pieces: ReviewRow[]; anyMiss: boolean }) {
+    const first = group.pieces[0]
+    const kitCount = first ? Math.max(1, Math.round(first.qty / (first.qtyPerKit || 1))) : 1
+    return (
+      <div key={group.key} className={`rounded-lg border p-2.5 ${group.anyMiss ? "border-red-200 bg-red-50/30" : "border-[#0F1E3C]/8 bg-white"}`}>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className="min-w-0">
+            <p className="font-mono text-[10px] text-[#0F1E3C]/45 truncate" title={first?.marketplaceSku}>{first?.marketplaceSku || "—"}</p>
+            {first?.variacao && <p className="text-xs font-bold text-[#0F1E3C] truncate" title={first.variacao}>{first.variacao}</p>}
+          </div>
+          <span className="text-[9px] font-bold text-[#0F1E3C]/35 flex-shrink-0 whitespace-nowrap">
+            {kitCount} kit{kitCount > 1 ? "s" : ""} · {group.pieces.length} peça{group.pieces.length > 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="space-y-1">
+          {group.pieces.map(p => renderItemRow(p, true))}
+        </div>
+      </div>
+    )
+  }
+
+  function renderBlockShell(id: string, label: string, count: number, tone: "miss" | "kit" | "cat", children: ReactNode) {
+    const isCollapsed = collapsedBlocks.has(id)
+    const toneCls = tone === "miss" ? "border-red-200 bg-red-50/50" : tone === "kit" ? "border-[#4361EE]/15 bg-[#4361EE]/[0.03]" : "border-[#0F1E3C]/8 bg-[#F9FAFB]"
+    const labelCls = tone === "miss" ? "text-red-700" : tone === "kit" ? "text-[#4361EE]" : "text-[#0F1E3C]"
+    return (
+      <div key={id} className={`rounded-xl border overflow-hidden ${toneCls}`}>
+        <button onClick={() => toggleBlock(id)} className="w-full flex items-center justify-between px-3.5 py-2.5">
+          <span className={`text-xs font-bold ${labelCls}`}>{label} <span className="font-semibold opacity-50">· {count}</span></span>
+          <span className={`text-[10px] font-semibold ${labelCls} opacity-50`}>{isCollapsed ? "mostrar" : "esconder"}</span>
+        </button>
+        {!isCollapsed && <div className="px-3 pb-3 space-y-1.5">{children}</div>}
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-4xl space-y-5">
 
@@ -334,6 +504,9 @@ export default function MarketplacePage() {
                   </select>
                   <button onClick={openAssocModal} className="flex items-center gap-1.5 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] border border-[#0F1E3C]/10 rounded-xl px-3 py-2">
                     <Link2 size={13} /> Associações salvas
+                  </button>
+                  <button onClick={openMemoryModal} className="flex items-center gap-1.5 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] border border-[#0F1E3C]/10 rounded-xl px-3 py-2">
+                    <PackageSearch size={13} /> Memória de SKU
                   </button>
                 </div>
               </div>
@@ -441,74 +614,32 @@ export default function MarketplacePage() {
                     {totals.items} itens na lista{totals.pending > 0 ? ` — ${totals.pending} precisa${totals.pending > 1 ? "m" : ""} de atenção antes de confirmar` : " — tudo casado com o estoque"}
                   </p>
                 </div>
-                <button onClick={openAssocModal} className="flex items-center gap-1.5 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] border border-[#0F1E3C]/10 rounded-xl px-3 py-2">
-                  <Link2 size={13} /> Associações salvas
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={openAssocModal} className="flex items-center gap-1.5 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] border border-[#0F1E3C]/10 rounded-xl px-3 py-2">
+                    <Link2 size={13} /> Associações salvas
+                  </button>
+                  <button onClick={openMemoryModal} className="flex items-center gap-1.5 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C] border border-[#0F1E3C]/10 rounded-xl px-3 py-2">
+                    <PackageSearch size={13} /> Memória de SKU
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-x-auto -mx-2">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30">
-                      <th className="text-left px-2 pb-2">SKU original</th>
-                      <th className="text-left px-2 pb-2">Mapeado para</th>
-                      <th className="text-left px-2 pb-2">Qtd</th>
-                      <th className="text-left px-2 pb-2">Estoque</th>
-                      <th className="px-2 pb-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reviewRows.map(r => {
-                      const after = r.variantId ? (r.stock ?? 0) - r.qty : null
-                      const low = after !== null && after < 0
-                      const originLabel = r.source === "regra" ? "IA + regra salva" : r.source === "ia" ? "só IA (sem regra)" : r.source === "manual" ? "resolvido na mão" : null
-                      return (
-                        <tr key={r.id} className="border-t border-[#0F1E3C]/5 align-top">
-                          <td className="px-2 py-2.5 max-w-[220px]">
-                            <p className="font-mono text-xs text-[#0F1E3C] bg-[#F4F6FB] rounded px-1.5 py-0.5 w-fit truncate max-w-full">{r.marketplaceSku || "—"}</p>
-                            {r.variacao && (
-                              <p className="text-[11px] font-semibold text-[#0F1E3C]/70 mt-1 leading-snug" title={r.variacao}>{r.variacao}</p>
-                            )}
-                            {r.title && (
-                              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5 leading-snug truncate" title={r.title}>{r.title}</p>
-                            )}
-                          </td>
-                          <td className="px-2 py-2.5 min-w-[200px]">
-                            <select
-                              value={r.variantId ?? ""}
-                              onChange={e => remapRow(r.id, e.target.value)}
-                              className={`w-full text-xs border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 ${
-                                r.unresolved ? "border-red-300 text-red-600 bg-red-50" : "border-[#0F1E3C]/12 text-[#0F1E3C]"
-                              }`}
-                            >
-                              <option value="" disabled>{r.unresolved ? "Não encontrado — escolher..." : "Selecionar..."}</option>
-                              {catalog.map(c => <option key={c.variantId} value={c.variantId}>{c.productName} · {c.color} · {c.size}</option>)}
-                            </select>
-                            {originLabel && <p className="text-[10px] text-[#0F1E3C]/30 mt-1">{originLabel}</p>}
-                            {r.variantId && r.source !== "regra" && (
-                              <label className="flex items-center gap-1.5 text-[10px] text-[#0F1E3C]/50 mt-1">
-                                <input type="checkbox" checked={r.remember} onChange={e => toggleRemember(r.id, e.target.checked)} />
-                                Lembrar pra próxima vez
-                              </label>
-                            )}
-                          </td>
-                          <td className="px-2 py-2.5">
-                            <input type="number" min={1} value={r.qty} onChange={e => updateQty(r.id, parseInt(e.target.value))}
-                              className="w-16 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
-                          </td>
-                          <td className="px-2 py-2.5 tabular-nums whitespace-nowrap">
-                            {after === null ? (
-                              <span className="text-[#0F1E3C]/25 text-xs">—</span>
-                            ) : (
-                              <span className={`font-bold ${low ? "text-red-600" : "text-[#0F1E3C]"}`}>{r.stock} → {after} pç</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2.5"><button onClick={() => removeRow(r.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={14} /></button></td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+              <div className="space-y-2.5">
+                {blocks.missSimple.length + blocks.missKits.length > 0 && renderBlockShell(
+                  "miss", "Não mapeados", blocks.missSimple.length + blocks.missKits.length, "miss",
+                  <>
+                    {blocks.missSimple.map(r => renderItemRow(r))}
+                    {blocks.missKits.map(g => renderKitCard(g))}
+                  </>
+                )}
+                {blocks.okKits.length > 0 && renderBlockShell(
+                  "kits", "Kits", blocks.okKits.length, "kit",
+                  <>{blocks.okKits.map(g => renderKitCard(g))}</>
+                )}
+                {blocks.categoryBlocks.map(b => renderBlockShell(
+                  b.id, b.label, b.items.length, "cat",
+                  <>{b.items.map(r => renderItemRow(r))}</>
+                ))}
               </div>
               {confirmError && <p className="text-xs text-red-600 mt-3">{confirmError}</p>}
             </div>
@@ -709,6 +840,61 @@ export default function MarketplacePage() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal memória de SKU */}
+      {memoryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setMemoryOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[84vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
+              <div>
+                <h2 className="font-bold text-[#0F1E3C]">Memória de SKU</h2>
+                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[46ch]">SKU exato do anúncio → variante (ou peças do kit) já confirmados antes. Aprendida sozinha a cada separação confirmada — pula a IA na próxima vez que o mesmo SKU aparecer.</p>
+              </div>
+              <button onClick={() => setMemoryOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto">
+              {memoryLoading ? (
+                <p className="text-xs text-[#0F1E3C]/40">Carregando…</p>
+              ) : memoryEntries.length === 0 ? (
+                <p className="text-xs text-[#0F1E3C]/40 text-center py-6">Nenhum SKU memorizado ainda — aparece aqui depois da primeira separação confirmada.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30">
+                      <th className="text-left pb-2">SKU</th><th className="text-left pb-2">Resolve para</th>
+                      <th className="text-left pb-2">Usado</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {memoryEntries.map(m => (
+                      <tr key={m.id} className="border-t border-[#0F1E3C]/5 align-top">
+                        <td className="py-2 pr-2">
+                          <p className="font-mono text-xs bg-[#F4F6FB] rounded px-1.5 py-0.5 w-fit truncate max-w-[140px]" title={m.sku}>{m.sku}</p>
+                          <div className="flex items-center gap-1 mt-1">
+                            {m.isKit && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">KIT</span>}
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#0F1E3C]/6 text-[#0F1E3C]/40">
+                              {m.confirmedBy === "user_edit" ? "editado na mão" : "IA"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <ul className="space-y-0.5">
+                            {m.items.map((it, i) => (
+                              <li key={i} className="text-xs text-[#0F1E3C]">{it.productName} {it.color ? `· ${it.color}` : ""} {it.size ? `· ${it.size}` : ""}</li>
+                            ))}
+                          </ul>
+                        </td>
+                        <td className="py-2 pr-2 text-xs text-[#0F1E3C]/50 tabular-nums whitespace-nowrap">{m.timesUsed}×</td>
+                        <td className="py-2 text-right"><button onClick={() => deleteMemoryEntry(m.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={13} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>

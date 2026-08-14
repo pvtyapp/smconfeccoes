@@ -2,11 +2,12 @@ import { NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { getDocumentProxy, extractText } from "unpdf"
 import { pool } from "@/lib/db"
+import { buildMatchKey } from "@/lib/marketplaceMatchKey"
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 type CatalogVariant = {
-  variantId: string; productId: string; productName: string
+  variantId: string; productId: string; productName: string; categoryName: string
   color: string; size: string; sku: string; availableStock: number
 }
 type AssociationItem = { productId: string; productName: string; qty: number }
@@ -28,10 +29,44 @@ type ReviewRow = {
   marketplaceSku: string // SKU original do picklist — sempre preservado, é ele que vira prefixo de associação
   variantId: string | null
   productName: string | null; color: string | null; size: string | null; sku: string | null
+  categoryName: string | null // pra agrupar a tela de conferência em blocos
   stock: number | null
   qty: number
-  source: "regra" | "ia" | null
+  source: "regra" | "ia" | "memoria" | null
   unresolved: boolean
+  isKit: boolean // true pra cada peça de uma linha de kit (marketplaceSku repetido entre as peças)
+  qtyPerKit: number // proporção da peça dentro de 1 kit (não a qty final da linha) — usada pra gravar a memória certa
+  timesUsed: number | null // só quando source === "memoria": quantas vezes esse SKU já foi confirmado antes
+}
+
+// ── Memória de SKU exato — aprendida em /api/marketplace/confirm toda vez que
+// uma separação é confirmada. Item idêntico (mesmo SKU + mesma Variação) a um
+// upload anterior pula a IA inteiramente (lookup determinístico).
+//
+// A chave NÃO é o SKU sozinho: testado com picklist real de produção, achamos
+// o mesmo "SKU do Anúncio" repetido em 6 linhas apontando pra 6 combinações de
+// cor/tamanho diferentes (o vendedor reaproveita 1 SKU pra todas as variações
+// do produto) — exatamente o padrão que já fazia a IA desconfiar do SKU
+// sozinho. A chave real é SKU+Variação (ver lib/marketplaceMatchKey).
+//
+// Só confia se TODAS as peças daquele item (kit ou não) ainda apontarem pra
+// variante/produto ativos — se uma peça sumiu do catálogo, invalida a entrada
+// inteira e deixa cair no fluxo normal. ──────────────────────────────────────
+type MemoryRaw = { matchId: number; matchKey: string; isKit: boolean; timesUsed: number; variantId: string; productId: string; qtyPerKit: number }
+type MemoryMatch = { isKit: boolean; timesUsed: number; items: { variantId: string; productId: string; qtyPerKit: number }[] }
+
+function buildMemoryMap(raw: MemoryRaw[], catalog: CatalogVariant[]): Map<string, MemoryMatch> {
+  const byId = new Map<number, MemoryMatch & { matchKey: string }>()
+  for (const r of raw) {
+    if (!byId.has(r.matchId)) byId.set(r.matchId, { matchKey: r.matchKey, isKit: r.isKit, timesUsed: r.timesUsed, items: [] })
+    byId.get(r.matchId)!.items.push({ variantId: r.variantId, productId: r.productId, qtyPerKit: r.qtyPerKit })
+  }
+  const validIds = new Set(catalog.map(c => c.variantId))
+  const byKey = new Map<string, MemoryMatch>()
+  for (const m of byId.values()) {
+    if (m.items.length > 0 && m.items.every(it => validIds.has(it.variantId))) byKey.set(m.matchKey, m)
+  }
+  return byKey
 }
 
 // ── Extração de linhas — heurística de CSV, sem lib externa (a lib xlsx
@@ -218,14 +253,14 @@ Responda APENAS um JSON:
         if (variant) {
           return {
             raw: row.raw, title: row.title, variacao: row.variacao, marketplaceSku: row.sku, variantId: variant.variantId,
-            productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku,
-            stock: variant.availableStock, qty, source: "regra", unresolved: false,
+            productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName,
+            stock: variant.availableStock, qty, source: "regra", unresolved: false, isKit: true, qtyPerKit: comp.qty, timesUsed: null,
           }
         }
         return {
           raw: row.raw, title: `${row.title} — peça do kit: ${comp.productName} (cor/tamanho não identificados)`, variacao: row.variacao,
-          marketplaceSku: row.sku, variantId: null, productName: null, color: null, size: null, sku: row.sku || null,
-          stock: null, qty, source: null, unresolved: true,
+          marketplaceSku: row.sku, variantId: null, productName: null, color: null, size: null, sku: row.sku || null, categoryName: null,
+          stock: null, qty, source: null, unresolved: true, isKit: true, qtyPerKit: comp.qty, timesUsed: null,
         }
       })
     }
@@ -235,8 +270,8 @@ Responda APENAS um JSON:
     if (!variant) return [buildUnresolved(row, hint)]
     return [{
       raw: row.raw, title: row.title, variacao: row.variacao, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
-      color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock,
-      qty: row.qty, source: hint ? "regra" : "ia", unresolved: false,
+      color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName, stock: variant.availableStock,
+      qty: row.qty, source: hint ? "regra" : "ia", unresolved: false, isKit: false, qtyPerKit: 1, timesUsed: null,
     }]
   })
 }
@@ -289,7 +324,7 @@ function buildUnresolved(r: ExtractedRow, hint: RowHint): ReviewRow {
   const suffix = hint?.kind === "single" ? ` (pista: ${hint.productName})` : ""
   return {
     raw: r.raw, title: r.title + suffix, variacao: r.variacao, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
-    sku: r.sku || null, stock: null, qty: r.qty, source: null, unresolved: true,
+    categoryName: null, sku: r.sku || null, stock: null, qty: r.qty, source: null, unresolved: true, isKit: false, qtyPerKit: 1, timesUsed: null,
   }
 }
 
@@ -326,13 +361,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Não consegui identificar linhas nesse arquivo" }, { status: 400 })
     }
 
-    const [{ rows: catalogRaw }, { rows: assocRaw }, { rows: assocItemsRaw }] = await Promise.all([
+    const [{ rows: catalogRaw }, { rows: assocRaw }, { rows: assocItemsRaw }, { rows: memoryRaw }] = await Promise.all([
       pool.query(`
         SELECT pv.id AS "variantId", pv.product_id AS "productId", p.name AS "productName",
+               COALESCE(c.name, 'Outros') AS "categoryName",
                pv.color, pv.size, pv.sku,
                GREATEST(0, COALESCE(bal.qty,0) - COALESCE(locked.locked_qty,0))::int AS "availableStock"
         FROM product_variants pv
         JOIN products p ON p.id = pv.product_id
+        LEFT JOIN categories c ON c.id = p.category_id
         LEFT JOIN (
           SELECT variant_id, SUM(CASE WHEN type='in' THEN quantity ELSE -quantity END) qty
           FROM stock_movements GROUP BY variant_id
@@ -355,6 +392,12 @@ export async function POST(req: Request) {
         FROM marketplace_sku_association_items i
         JOIN products p ON p.id = i.product_id
       `),
+      pool.query(`
+        SELECT m.id AS "matchId", m.match_key AS "matchKey", m.is_kit AS "isKit", m.times_used AS "timesUsed",
+               mi.variant_id AS "variantId", mi.product_id AS "productId", mi.qty_per_kit AS "qtyPerKit"
+        FROM marketplace_sku_matches m
+        JOIN marketplace_sku_match_items mi ON mi.match_id = m.id
+      `),
     ])
     const catalog = catalogRaw as CatalogVariant[]
     const itemsByAssoc = new Map<number, AssociationItem[]>()
@@ -365,13 +408,36 @@ export async function POST(req: Request) {
     const associations: Association[] = (assocRaw as { id: number; prefix: string; kind: "single" | "kit"; productId: string | null; productName: string | null }[])
       .map(a => ({ prefix: a.prefix, kind: a.kind, productId: a.productId, productName: a.productName, items: itemsByAssoc.get(a.id) ?? [] }))
 
-    const hints = extracted.map(r => findHint(r, associations))
-    const finalRows = await matchAllRows(extracted, hints, catalog)
-      .catch(() => extracted.map((r, i) => buildUnresolved(r, hints[i])))
+    // Memória de SKU exato primeiro — só cai pra IA o que nunca foi visto (ou
+    // cuja memória foi invalidada por variante/produto que saiu do catálogo).
+    const memoryByKey = buildMemoryMap(memoryRaw as MemoryRaw[], catalog)
+    const memoryRows: ReviewRow[] = []
+    const aiExtracted: ExtractedRow[] = []
+    for (const r of extracted) {
+      const mem = r.sku.trim() ? memoryByKey.get(buildMatchKey(r.sku, r.variacao)) : undefined
+      if (!mem) { aiExtracted.push(r); continue }
+      for (const it of mem.items) {
+        const variant = catalog.find(c => c.variantId === it.variantId)
+        if (!variant) continue // segurança extra — buildMemoryMap já valida, não deveria cair aqui
+        memoryRows.push({
+          raw: r.raw, title: r.title, variacao: r.variacao, marketplaceSku: r.sku, variantId: variant.variantId,
+          productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName,
+          stock: variant.availableStock, qty: r.qty * it.qtyPerKit, source: "memoria", unresolved: false,
+          isKit: mem.isKit, qtyPerKit: it.qtyPerKit, timesUsed: mem.timesUsed,
+        })
+      }
+    }
+
+    const aiHints = aiExtracted.map(r => findHint(r, associations))
+    const aiRows = await matchAllRows(aiExtracted, aiHints, catalog)
+      .catch(() => aiExtracted.map((r, i) => buildUnresolved(r, aiHints[i])))
+
+    const finalRows = [...memoryRows, ...aiRows]
 
     return NextResponse.json({
       filename,
       totalRows: finalRows.length,
+      matchedByMemory: memoryRows.length,
       matchedByRule: finalRows.filter(r => r.source === "regra").length,
       matchedByAI: finalRows.filter(r => r.source === "ia").length,
       unresolved: finalRows.filter(r => r.unresolved).length,
