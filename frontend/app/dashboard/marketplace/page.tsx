@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Printer, Link2, Plus, Trash2, X, Loader2, CheckCircle2, PackageSearch } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
+import { colorSwatch } from "@/lib/colorSwatch"
+import { sizeCompare } from "@/lib/sizeOrder"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +30,7 @@ type ReviewRow = {
   isKit: boolean
   qtyPerKit: number
   timesUsed: number | null
+  expectedProductName: string | null
 }
 
 type AssociationItem = { productId: string; qty: number; productName: string }
@@ -95,6 +98,10 @@ export default function MarketplacePage() {
   const [memoryEntries, setMemoryEntries] = useState<MemoryMatch[]>([])
   const [memoryLoading, setMemoryLoading] = useState(false)
 
+  // Modal de vínculo — produto → cor → tamanho, igual o "adicionar ao carrinho" do PDV
+  const [linkTargetId, setLinkTargetId] = useState<string | null>(null)
+  const [linkProductName, setLinkProductName] = useState("")
+
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true)
     try {
@@ -132,6 +139,7 @@ export default function MarketplacePage() {
         raw: string; title: string; variacao: string; marketplaceSku: string; variantId: string | null; productName: string | null; color: string | null
         size: string | null; sku: string | null; categoryName: string | null; stock: number | null; qty: number
         source: "regra" | "ia" | "memoria" | null; unresolved: boolean; isKit: boolean; qtyPerKit: number; timesUsed: number | null
+        expectedProductName: string | null
       }) => ({ id: newRowId(), ...r, remember: r.source === "ia" || r.unresolved }))
       setReviewRows(rows)
       setStep(2)
@@ -176,7 +184,7 @@ export default function MarketplacePage() {
       id: newRowId(), raw: `${variant.productName} ${variant.color} ${variant.size}`, title: "", variacao: "", marketplaceSku: "",
       variantId: variant.variantId, productName: variant.productName, color: variant.color, size: variant.size, categoryName: variant.categoryName,
       sku: variant.sku, stock: variant.availableStock, qty: Math.max(1, manualQty),
-      source: "manual", unresolved: false, remember: false, isKit: false, qtyPerKit: 1, timesUsed: null,
+      source: "manual", unresolved: false, remember: false, isKit: false, qtyPerKit: 1, timesUsed: null, expectedProductName: null,
     }])
   }
 
@@ -207,6 +215,29 @@ export default function MarketplacePage() {
       stock: variant.availableStock, source: "manual",
     } : r))
   }
+
+  // ── Modal de vínculo (produto → cor → tamanho) ──
+  const linkRow = useMemo(() => reviewRows.find(r => r.id === linkTargetId) ?? null, [reviewRows, linkTargetId])
+  function openLinkModal(r: ReviewRow) {
+    setLinkTargetId(r.id)
+    setLinkProductName(r.productName ?? r.expectedProductName ?? productNames[0] ?? "")
+  }
+  function closeLinkModal() { setLinkTargetId(null) }
+  function pickVariant(variantId: string) {
+    if (linkTargetId) remapRow(linkTargetId, variantId)
+    closeLinkModal()
+  }
+  const linkColorGroups = useMemo(() => {
+    const variants = catalog.filter(c => c.productName === linkProductName)
+    const byColor = new Map<string, CatalogVariant[]>()
+    for (const v of variants) {
+      if (!byColor.has(v.color)) byColor.set(v.color, [])
+      byColor.get(v.color)!.push(v)
+    }
+    const groups = [...byColor.entries()].sort(([a], [b]) => a.localeCompare(b))
+    groups.forEach(([, vs]) => vs.sort((a, b) => sizeCompare(a.size, b.size)))
+    return groups
+  }, [catalog, linkProductName])
 
   const totals = useMemo(() => {
     const items = reviewRows.length
@@ -375,20 +406,37 @@ export default function MarketplacePage() {
   }
 
   function itemSelectCls(unresolved: boolean) {
-    return `text-xs rounded-md px-1.5 py-1 w-[168px] flex-shrink-0 transition-colors focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 ${
+    return `text-xs rounded-md px-1.5 py-1 w-[168px] flex-shrink-0 text-left truncate transition-colors focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 ${
       unresolved
         ? "border border-red-300 text-red-600 bg-red-50"
         : "border border-transparent bg-transparent text-[#0F1E3C]/70 font-semibold hover:border-[#0F1E3C]/15 hover:bg-white focus:border-[#4361EE] focus:bg-white"
     }`
   }
 
+  // Botão que abre o modal produto→cor→tamanho — mesma cara de antes (texto
+  // discreto quando já vinculado, caixa vermelha quando pendente), só que
+  // clicar abre o modal em vez do <select> nativo.
   function renderSelect(r: ReviewRow) {
+    const label = r.variantId ? `${r.productName} · ${r.color} · ${r.size}` : (r.unresolved ? "Vincular a..." : "Selecionar...")
     return (
-      <select value={r.variantId ?? ""} onChange={e => remapRow(r.id, e.target.value)} className={itemSelectCls(r.unresolved)}>
-        <option value="" disabled>{r.unresolved ? "Vincular a..." : "Selecionar..."}</option>
-        {catalog.map(c => <option key={c.variantId} value={c.variantId}>{c.productName} · {c.color} · {c.size}</option>)}
-      </select>
+      <button type="button" onClick={() => openLinkModal(r)} className={itemSelectCls(r.unresolved)} title={label}>
+        {label}
+      </button>
     )
+  }
+
+  function variantPickBtnClass(v: CatalogVariant, isCurrent: boolean): string {
+    const base = "relative flex flex-col items-center px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all min-w-[48px]"
+    if (v.availableStock < 0) return `${base} border-red-300 bg-red-50 text-red-500`
+    if (v.availableStock === 0) return `${base} border-orange-300 bg-orange-50 text-orange-500`
+    if (isCurrent) return `${base} border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]`
+    return `${base} border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#4361EE]/6`
+  }
+  function variantPickStockClass(v: CatalogVariant, isCurrent: boolean): string {
+    if (v.availableStock < 0) return "text-red-400"
+    if (v.availableStock === 0) return "text-orange-400"
+    if (isCurrent) return "text-[#4361EE]/70"
+    return "text-[#0F1E3C]/30"
   }
 
   // `indent`=true renderiza como peça de kit (linha fina, sem SKU/variação
@@ -895,6 +943,74 @@ export default function MarketplacePage() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de vínculo — produto → cor → tamanho, igual o PDV */}
+      {linkRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={closeLinkModal}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-5 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
+              <div className="min-w-0">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30 mb-1">O que o picklist diz</p>
+                <p className="font-mono text-[11px] text-[#0F1E3C]/45 truncate" title={linkRow.marketplaceSku}>{linkRow.marketplaceSku || "sem SKU"}</p>
+                {linkRow.variacao && <p className="text-base font-black text-[#0F1E3C] leading-tight mt-0.5">{linkRow.variacao}</p>}
+                {linkRow.title && <p className="text-xs text-[#0F1E3C]/40 mt-0.5 truncate max-w-[36ch]" title={linkRow.title}>{linkRow.title}</p>}
+              </div>
+              <button onClick={closeLinkModal} className="w-8 h-8 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 flex items-center justify-center flex-shrink-0"><X size={15}/></button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-[#0F1E3C]/8 flex-shrink-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produto</p>
+                {linkRow.expectedProductName && linkRow.expectedProductName !== linkProductName && (
+                  <p className="text-[10px] font-semibold text-[#4361EE]">esperado: {linkRow.expectedProductName}</p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {productNames.map(n => (
+                  <button key={n} type="button" onClick={() => setLinkProductName(n)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                      n === linkProductName ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                    }`}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {linkColorGroups.length === 0 ? (
+                <p className="text-xs text-[#0F1E3C]/40 text-center py-6">Esse produto não tem variantes ativas.</p>
+              ) : linkColorGroups.map(([color, variants]) => (
+                <div key={color}>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="w-3 h-3 rounded-[4px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                    <span className="text-xs font-bold text-[#0F1E3C]">{color}</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {variants.map(v => {
+                      const isCurrent = v.variantId === linkRow.variantId
+                      return (
+                        <button
+                          key={v.variantId}
+                          type="button"
+                          onClick={() => pickVariant(v.variantId)}
+                          title={v.availableStock < 0 ? `Estoque negativo: ${v.availableStock}` : v.availableStock === 0 ? "Sem estoque" : `${v.availableStock} em estoque`}
+                          className={variantPickBtnClass(v, isCurrent)}
+                        >
+                          <span>{v.size || "U"}</span>
+                          <span className={`text-[9px] font-semibold leading-none mt-0.5 ${variantPickStockClass(v, isCurrent)}`}>
+                            {v.availableStock}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

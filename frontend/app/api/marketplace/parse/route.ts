@@ -36,6 +36,7 @@ type ReviewRow = {
   isKit: boolean // true pra cada peça de uma linha de kit (marketplaceSku repetido entre as peças)
   qtyPerKit: number // proporção da peça dentro de 1 kit (não a qty final da linha) — usada pra gravar a memória certa
   timesUsed: number | null // só quando source === "memoria": quantas vezes esse SKU já foi confirmado antes
+  expectedProductName: string | null // produto que essa peça/linha deveria ser (pista de kit ou de associação) — mostrado no modal de vínculo mesmo quando ainda não resolveu, pra não depender de catar isso de dentro do título
 }
 
 // ── Memória de SKU exato — aprendida em /api/marketplace/confirm toda vez que
@@ -265,12 +266,14 @@ Responda APENAS um JSON:
             raw: row.raw, title: row.title, variacao: row.variacao, marketplaceSku: row.sku, variantId: variant.variantId,
             productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName,
             stock: variant.availableStock, qty, source: "regra", unresolved: false, isKit: true, qtyPerKit: comp.qty, timesUsed: null,
+            expectedProductName: null,
           }
         }
         return {
           raw: row.raw, title: `${row.title} — peça do kit: ${comp.productName} (cor/tamanho não identificados)`, variacao: row.variacao,
           marketplaceSku: row.sku, variantId: null, productName: null, color: null, size: null, sku: row.sku || null, categoryName: null,
           stock: null, qty, source: null, unresolved: true, isKit: true, qtyPerKit: comp.qty, timesUsed: null,
+          expectedProductName: comp.productName,
         }
       })
     }
@@ -281,7 +284,7 @@ Responda APENAS um JSON:
     return [{
       raw: row.raw, title: row.title, variacao: row.variacao, marketplaceSku: row.sku, variantId: variant.variantId, productName: variant.productName,
       color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName, stock: variant.availableStock,
-      qty: row.qty, source: hint ? "regra" : "ia", unresolved: false, isKit: false, qtyPerKit: 1, timesUsed: null,
+      qty: row.qty, source: hint ? "regra" : "ia", unresolved: false, isKit: false, qtyPerKit: 1, timesUsed: null, expectedProductName: null,
     }]
   })
 }
@@ -346,6 +349,7 @@ function buildUnresolved(r: ExtractedRow, hint: RowHint): ReviewRow {
   return {
     raw: r.raw, title: r.title + suffix, variacao: r.variacao, marketplaceSku: r.sku, variantId: null, productName: null, color: null, size: null,
     categoryName: null, sku: r.sku || null, stock: null, qty: r.qty, source: null, unresolved: true, isKit: false, qtyPerKit: 1, timesUsed: null,
+    expectedProductName: hint?.kind === "single" ? hint.productName : null,
   }
 }
 
@@ -444,7 +448,7 @@ export async function POST(req: Request) {
           raw: r.raw, title: r.title, variacao: r.variacao, marketplaceSku: r.sku, variantId: variant.variantId,
           productName: variant.productName, color: variant.color, size: variant.size, sku: variant.sku, categoryName: variant.categoryName,
           stock: variant.availableStock, qty: r.qty * it.qtyPerKit, source: "memoria", unresolved: false,
-          isKit: mem.isKit, qtyPerKit: it.qtyPerKit, timesUsed: mem.timesUsed,
+          isKit: mem.isKit, qtyPerKit: it.qtyPerKit, timesUsed: mem.timesUsed, expectedProductName: null,
         })
       }
     }
