@@ -189,7 +189,18 @@ async function matchAllRows(extracted: ExtractedRow[], hints: RowHint[], catalog
     if (hint.kind === "single") {
       return `${header}\nPISTA_DO_CÓDIGO: ${hint.productName} (ver seção "## ${hint.productName}" no catálogo acima)`
     }
-    const kitLine = hint.items.map((it, j) => `Peça ${j}: ${it.productName} (${it.qty}x)`).join(", ")
+    // Quando a peça do kit é de um produto com 1 cor só no catálogo (ex:
+    // bermuda que só existe em Preto), avisa isso explicitamente — testado com
+    // dado real de produção: a Variação do picklist só cita a cor da peça
+    // "principal" (ex: "KIT Bordo,TAM.6" é a cor da camiseta), e sem esse
+    // aviso a IA (corretamente cautelosa) devolvia null pra peça sem cor
+    // própria mencionada, mesmo quando não existe ambiguidade nenhuma —
+    // maioria dos kits ficava com metade das peças sem resolver.
+    const kitLine = hint.items.map((it, j) => {
+      const colors = [...new Set(catalog.filter(c => c.productId === it.productId).map(c => c.color))]
+      const colorNote = colors.length === 1 ? ` [só existe na cor "${colors[0]}" — pode assumir mesmo se a Variação não citar essa cor pra essa peça]` : ""
+      return `Peça ${j}: ${it.productName} (${it.qty}x)${colorNote}`
+    }).join(", ")
     return `${header}\nPISTA_DO_CÓDIGO: KIT com ${hint.items.length} peça(s) — ${kitLine} (ver as seções correspondentes no catálogo acima)`
   }).join("\n\n")
 
@@ -208,7 +219,7 @@ PISTA_DO_CÓDIGO (quando existe) é um palpite de produto pelo prefixo do SKU �
 Regras:
 - Cor e tamanho da Variação/SKU podem não bater letra por letra com o catálogo (ex: "Rosa" no picklist vs "Rosa Bebe" no catálogo, ou "Bege" vs "Begê") — use bom senso pra reconhecer que é a mesma cor quando não houver outra opção parecida, mas nunca invente uma cor/tamanho que não tem nenhuma relação com o texto.
 - Preste atenção redobrada no tamanho: "8" é diferente de "6", "10" é diferente de "12" — não troque por um vizinho.
-- Kit: cada peça é julgada separada. Se só tem informação (Variação/título) suficiente pra ALGUMAS peças do kit, resolva as que der e devolva null pras que não tiverem informação própria — NÃO reaproveite cor/tamanho de uma peça pra outra sem confirmação explícita pra cada uma.
+- Kit: cada peça é julgada separada. O tamanho do kit (da Variação) vale pra todas as peças. A cor só se aplica à peça que ela descreve — NÃO reaproveite a cor de uma peça pra outra sem confirmação explícita, EXCETO quando a PISTA_DO_CÓDIGO já avisa que aquela peça só existe numa cor só (aí pode assumir essa cor direto, mesmo sem menção própria na Variação — não é chute, é a única opção que existe). Sem cor própria nem aviso de cor única, devolva null pra peça.
 - Só devolva um variantId quando tiver certeza razoável. Sem certeza, devolva null. Não é permitido chutar.
 
 Responda APENAS um JSON:
