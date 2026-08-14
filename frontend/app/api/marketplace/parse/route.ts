@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
-import { getDocumentProxy, extractText } from "unpdf"
 import { pool } from "@/lib/db"
 import { buildMatchKey } from "@/lib/marketplaceMatchKey"
 
@@ -276,33 +275,44 @@ Responda APENAS um JSON:
   })
 }
 
-// ── PDF: pdf.js (via unpdf, sem dependência nativa) só extrai o texto corrido
-// — sem colunas/delimitador confiável — então a extração de linhas em si vira
-// mais uma pergunta pra IA em vez da heurística de CSV. ────────────────────
+// ── PDF: manda o arquivo direto pro Claude como documento (não extrai texto
+// antes) — testado com picklist real de produção: um export do UpSeller veio
+// como PDF baseado em imagem (0 itens de texto selecionável nas 3 páginas,
+// só desenho vetorial — provavelmente "imprimir" via um caminho diferente do
+// normal), e a extração de texto crua (pdf.js/unpdf) não lê nada nesse caso,
+// devolvendo "Não consegui identificar linhas". Documento direto pro Claude
+// lê visualmente a tabela nos dois casos (com ou sem texto real embutido),
+// então cobre ambos sem precisar detectar qual é qual. ─────────────────────
 async function extractRowsFromPdf(buffer: ArrayBuffer): Promise<ExtractedRow[]> {
-  const pdf = await getDocumentProxy(new Uint8Array(buffer))
-  const { text } = await extractText(pdf, { mergePages: true })
-  if (!text.trim()) return []
+  const base64 = Buffer.from(buffer).toString("base64")
 
-  const system = `Você extrai itens de um picklist de marketplace (Shopee/Mercado Livre/UpSeller) a partir do texto cru de um PDF exportado, com várias páginas concatenadas — sem colunas confiáveis, o layout pode ter quebrado.
+  const system = `Você extrai itens de um picklist de marketplace (Shopee/Mercado Livre/UpSeller) a partir de um PDF exportado, possivelmente com várias páginas. O PDF pode não ter texto selecionável (é uma imagem da tabela) — leia visualmente o conteúdo.
 
 Formato comum (ex: relatório "Lista de Resumo" do UpSeller): tabela com colunas Anúncios (nome do produto) | Variação (cor/tamanho, ex: "Camiseta Rosa,TAM. 4" ou "KIT Bordo,TAM.12" ou só "Preto,G") | SKU do Anúncio | Qtd.
 
 Cuidados:
 - Cada página repete o cabeçalho da tabela ("Anúncios Variação SKU do Anúncio Qtd." ou parecido) e um rodapé (data, URL, número de página tipo "1/3") — ignore essas repetições, não são itens.
 - Ignore também qualquer bloco de resumo do topo (ex: "Qtd. de pedidos", "Total de itens").
-- Uma linha da tabela pode quebrar entre o fim de uma página e o início da próxima — o SKU ou outro campo pode terminar cortado numa página e sobrar um pedaço solto logo depois do cabeçalho repetido da próxima. Quando isso acontecer, junte o pedaço solto na linha anterior (mesmo item) em vez de tratar como linha nova ou perder informação.
+- Uma linha da tabela pode aparecer dividida entre o fim de uma página e o início da próxima — junte como o mesmo item em vez de tratar como linha nova ou perder informação.
 - O nome do anúncio às vezes vem cortado com "…" no meio — tudo bem, extraia o que tiver, não é o campo mais importante.
 
 Pra cada item de picklist que aparecer, extraia: sku, título (nome do anúncio), variacao (cor/tamanho como aparece no picklist — pode ser vazio se não existir campo separado), qty.
 
 Responda APENAS um JSON: {"rows":[{"sku":"<sku ou \\"\\">","title":"<nome do anúncio ou \\"\\">","variacao":"<cor/tamanho como veio, ou \\"\\">","qty":<inteiro>}]}`
 
+  // Sonnet aqui também (não Haiku) — ler tabela em imagem é mais exigente que
+  // resumir texto corrido, e essa etapa decide o que entra na conferência.
   const res = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 6144,
+    model: "claude-sonnet-5",
+    max_tokens: 8192,
     system,
-    messages: [{ role: "user", content: text.slice(0, 20_000) }],
+    messages: [{
+      role: "user",
+      content: [
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+        { type: "text", text: "Extraia os itens desse picklist conforme as instruções." },
+      ],
+    }],
   })
   const raw = res.content.find((b): b is Anthropic.TextBlock => b.type === "text")?.text ?? ""
   const jsonMatch = raw.match(/\{[\s\S]*\}/)
