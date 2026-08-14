@@ -77,6 +77,7 @@ export default function MarketplacePage() {
   const [dragOver, setDragOver] = useState(false)
 
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([])
+  const [sourceSummary, setSourceSummary] = useState<{ pedidos: number | null; totalItens: number | null } | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState("")
   const [result, setResult] = useState<{ number: string; totalItems: number; totalPieces: number; items: { productName: string; color: string; size: string; sku: string; qty: number }[] } | null>(null)
@@ -146,6 +147,7 @@ export default function MarketplacePage() {
         expectedProductName: string | null
       }) => ({ id: newRowId(), ...r, remember: r.source === "ia" || r.unresolved }))
       setReviewRows(rows)
+      setSourceSummary(data.sourceSummary ?? null)
       setStep(2)
     } catch {
       setUploadError("Falha de rede ao enviar o arquivo")
@@ -354,7 +356,7 @@ export default function MarketplacePage() {
   }
 
   function resetFlow() {
-    setReviewRows([]); setResult(null); setConfirmError(""); setUploadError("")
+    setReviewRows([]); setResult(null); setConfirmError(""); setUploadError(""); setSourceSummary(null)
     setPastedText(""); setShowPaste(false); setMode("upload"); setStep(1)
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
@@ -727,8 +729,13 @@ export default function MarketplacePage() {
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
                   <h2 className="text-sm font-bold text-[#0F1E3C]">Conferência</h2>
+                  {sourceSummary && (sourceSummary.pedidos != null || sourceSummary.totalItens != null) && (
+                    <p className="text-[11px] text-[#0F1E3C]/35 mt-0.5">
+                      O arquivo diz:{sourceSummary.pedidos != null ? ` ${sourceSummary.pedidos} pedidos` : ""}{sourceSummary.totalItens != null ? `, ${sourceSummary.totalItens} itens no total` : ""}
+                    </p>
+                  )}
                   <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-                    {totals.items} itens na lista{totals.pending > 0 ? ` — ${totals.pending} precisa${totals.pending > 1 ? "m" : ""} de atenção antes de confirmar` : " — tudo casado com o estoque"}
+                    Nessa lista: {totals.items} produto{totals.items === 1 ? "" : "s"} diferente{totals.items === 1 ? "" : "s"} pra localizar, {totals.pieces} peça{totals.pieces === 1 ? "" : "s"} pra separar (kit conta cada peça){totals.pending > 0 ? ` — ${totals.pending} precisa${totals.pending > 1 ? "m" : ""} de atenção antes de confirmar` : " — tudo casado com o estoque"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -778,7 +785,7 @@ export default function MarketplacePage() {
                   <CheckCircle2 size={26} />
                 </div>
                 <h2 className="text-lg font-bold text-[#0F1E3C]">Separação confirmada</h2>
-                <p className="text-sm text-[#0F1E3C]/45 mt-0.5">{result.number} · Estoque descontado · {result.totalItems} itens · {result.totalPieces} peças</p>
+                <p className="text-sm text-[#0F1E3C]/45 mt-0.5">{result.number} · Estoque descontado · {result.totalItems} produtos · {result.totalPieces} peças</p>
               </div>
 
               <div id="print-sheet" className="bg-white border border-[#0F1E3C]/8 rounded-2xl p-7 mx-4">
@@ -810,7 +817,7 @@ export default function MarketplacePage() {
         {step === 2 && (
           <div className="flex items-center justify-between gap-4 flex-wrap px-6 py-4 bg-[#F4F6FB] border-t border-[#0F1E3C]/8">
             <div className="flex gap-6">
-              <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Itens</p><p className="text-lg font-black text-[#0F1E3C] tabular-nums">{totals.items}</p></div>
+              <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-lg font-black text-[#0F1E3C] tabular-nums">{totals.items}</p></div>
               <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-lg font-black text-[#0F1E3C] tabular-nums">{totals.pieces} pç</p></div>
               <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Pendências</p><p className="text-lg font-black text-red-600 tabular-nums">{totals.pending}</p></div>
             </div>

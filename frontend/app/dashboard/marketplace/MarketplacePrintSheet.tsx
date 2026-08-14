@@ -87,7 +87,7 @@ export default function MarketplacePrintSheet({ result, origin, onDone }: { resu
           <tfoot>
             <tr style={{ background: NAVY, color: "white" }}>
               <td colSpan={4} style={{ padding: "5px 6px", fontSize: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>
-                TOTAL · {result.totalItems} itens
+                TOTAL · {result.totalItems} produtos
               </td>
               <td style={{ padding: "5px 6px", textAlign: "center", fontSize: "13px", fontWeight: "900" }}>{result.totalPieces}</td>
               <td />

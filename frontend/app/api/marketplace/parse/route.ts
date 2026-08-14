@@ -91,6 +91,24 @@ function detectDelimiter(line: string): string {
   return candidates.reduce((best, d) => (line.split(d).length > line.split(best).length ? d : best), ",")
 }
 
+// ── Resumo que o próprio arquivo já traz no topo (ex: "Qtd. de pedidos: 28",
+// "Total de itens: 38" no export do UpSeller) — mostrado direto na tela como
+// referência, lado a lado com o que o sistema processa. O usuário compara
+// com o que já vê no arquivo em vez de ter que confiar/perguntar por que os
+// números "batem diferente" (pedido consolida várias linhas; kit expande em
+// mais de 1 peça — cada um mede uma coisa, mas nenhum precisa ser adivinhado
+// às cegas). ─────────────────────────────────────────────────────────────
+type SourceSummary = { pedidos: number | null; totalItens: number | null } | null
+
+function extractSourceSummary(text: string): SourceSummary {
+  const pedidosMatch = text.match(/pedidos?\s*[:\-]?\s*(\d+)/i)
+  const itensMatch = text.match(/total\s+de\s+itens\s*[:\-]?\s*(\d+)/i)
+  const pedidos = pedidosMatch ? parseInt(pedidosMatch[1], 10) : null
+  const totalItens = itensMatch ? parseInt(itensMatch[1], 10) : null
+  if (pedidos === null && totalItens === null) return null
+  return { pedidos, totalItens }
+}
+
 const HEADER_HINTS = {
   sku: ["sku", "código", "codigo", "seller sku", "código do produto", "id do anúncio", "id do produto"],
   title: ["título", "titulo", "produto", "nome", "descrição", "descricao", "item", "anúncio", "anuncio"],
@@ -297,22 +315,21 @@ Responda APENAS um JSON:
 // devolvendo "Não consegui identificar linhas". Documento direto pro Claude
 // lê visualmente a tabela nos dois casos (com ou sem texto real embutido),
 // então cobre ambos sem precisar detectar qual é qual. ─────────────────────
-async function extractRowsFromPdf(buffer: ArrayBuffer): Promise<ExtractedRow[]> {
+async function extractRowsFromPdf(buffer: ArrayBuffer): Promise<{ rows: ExtractedRow[]; sourceSummary: SourceSummary }> {
   const base64 = Buffer.from(buffer).toString("base64")
 
   const system = `Você extrai itens de um picklist de marketplace (Shopee/Mercado Livre/UpSeller) a partir de um PDF exportado, possivelmente com várias páginas. O PDF pode não ter texto selecionável (é uma imagem da tabela) — leia visualmente o conteúdo.
 
-Formato comum (ex: relatório "Lista de Resumo" do UpSeller): tabela com colunas Anúncios (nome do produto) | Variação (cor/tamanho, ex: "Camiseta Rosa,TAM. 4" ou "KIT Bordo,TAM.12" ou só "Preto,G") | SKU do Anúncio | Qtd.
+Formato comum (ex: relatório "Lista de Resumo" do UpSeller): tabela com colunas Anúncios (nome do produto) | Variação (cor/tamanho, ex: "Camiseta Rosa,TAM. 4" ou "KIT Bordo,TAM.12" ou só "Preto,G") | SKU do Anúncio | Qtd. O topo do relatório às vezes tem um resumo tipo "Qtd. de pedidos: N" e "Total de itens: N" — não são itens da tabela, mas ANOTE esses 2 números se existirem (campo resumoTopo).
 
 Cuidados:
 - Cada página repete o cabeçalho da tabela ("Anúncios Variação SKU do Anúncio Qtd." ou parecido) e um rodapé (data, URL, número de página tipo "1/3") — ignore essas repetições, não são itens.
-- Ignore também qualquer bloco de resumo do topo (ex: "Qtd. de pedidos", "Total de itens").
 - Uma linha da tabela pode aparecer dividida entre o fim de uma página e o início da próxima — junte como o mesmo item em vez de tratar como linha nova ou perder informação.
 - O nome do anúncio às vezes vem cortado com "…" no meio — tudo bem, extraia o que tiver, não é o campo mais importante.
 
 Pra cada item de picklist que aparecer, extraia: sku, título (nome do anúncio), variacao (cor/tamanho como aparece no picklist — pode ser vazio se não existir campo separado), qty.
 
-Responda APENAS um JSON: {"rows":[{"sku":"<sku ou \\"\\">","title":"<nome do anúncio ou \\"\\">","variacao":"<cor/tamanho como veio, ou \\"\\">","qty":<inteiro>}]}`
+Responda APENAS um JSON: {"resumoTopo":{"pedidos":<inteiro ou null>,"totalItens":<inteiro ou null>},"rows":[{"sku":"<sku ou \\"\\">","title":"<nome do anúncio ou \\"\\">","variacao":"<cor/tamanho como veio, ou \\"\\">","qty":<inteiro>}]}`
 
   // Sonnet aqui também (não Haiku) — ler tabela em imagem é mais exigente que
   // resumir texto corrido, e essa etapa decide o que entra na conferência.
@@ -330,17 +347,25 @@ Responda APENAS um JSON: {"rows":[{"sku":"<sku ou \\"\\">","title":"<nome do an�
   })
   const raw = res.content.find((b): b is Anthropic.TextBlock => b.type === "text")?.text ?? ""
   const jsonMatch = raw.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return []
+  if (!jsonMatch) return { rows: [], sourceSummary: null }
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as { rows: { sku: string; title: string; variacao: string; qty: number }[] }
-    return (parsed.rows ?? [])
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      resumoTopo?: { pedidos: number | null; totalItens: number | null }
+      rows: { sku: string; title: string; variacao: string; qty: number }[]
+    }
+    const rows = (parsed.rows ?? [])
       .filter(r => r.title || r.sku || r.variacao)
       .map(r => ({
         raw: `${r.sku ? r.sku + " — " : ""}${r.variacao || r.title}`,
         sku: r.sku ?? "", title: r.title ?? "", variacao: r.variacao ?? "", qty: Math.max(1, r.qty || 1),
       }))
+    const rt = parsed.resumoTopo
+    const sourceSummary: SourceSummary = rt && (rt.pedidos != null || rt.totalItens != null)
+      ? { pedidos: rt.pedidos ?? null, totalItens: rt.totalItens ?? null }
+      : null
+    return { rows, sourceSummary }
   } catch {
-    return []
+    return { rows: [], sourceSummary: null }
   }
 }
 
@@ -358,6 +383,7 @@ export async function POST(req: Request) {
     const contentType = req.headers.get("content-type") ?? ""
     let filename = "lista colada"
     let extracted: ExtractedRow[] = []
+    let sourceSummary: SourceSummary = null
 
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData()
@@ -367,19 +393,27 @@ export async function POST(req: Request) {
       if (file) {
         filename = file.name
         if (/\.pdf$/i.test(file.name)) {
-          extracted = await extractRowsFromPdf(await file.arrayBuffer())
+          const pdfResult = await extractRowsFromPdf(await file.arrayBuffer())
+          extracted = pdfResult.rows
+          sourceSummary = pdfResult.sourceSummary
         } else if (/\.(csv|txt)$/i.test(file.name)) {
-          extracted = extractRows(await file.text())
+          const text = await file.text()
+          extracted = extractRows(text)
+          sourceSummary = extractSourceSummary(text)
         } else {
           return NextResponse.json({ error: "Formato não suportado — envia CSV, TXT ou PDF." }, { status: 400 })
         }
       } else if (pasted?.trim()) {
         extracted = extractRows(pasted)
+        sourceSummary = extractSourceSummary(pasted)
       }
     } else {
       const body = await req.json().catch(() => ({}))
       const text = (body?.text as string) ?? ""
-      if (text.trim()) extracted = extractRows(text)
+      if (text.trim()) {
+        extracted = extractRows(text)
+        sourceSummary = extractSourceSummary(text)
+      }
     }
 
     if (extracted.length === 0) {
@@ -461,6 +495,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       filename,
+      sourceSummary, // resumo que o próprio arquivo já trazia (pedidos/total de itens), pra exibir de referência
       totalRows: finalRows.length,
       matchedByMemory: memoryRows.length,
       matchedByRule: finalRows.filter(r => r.source === "regra").length,
