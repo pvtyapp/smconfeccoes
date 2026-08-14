@@ -5,6 +5,8 @@ import { Printer, Link2, Plus, Trash2, X, Loader2, CheckCircle2, PackageSearch }
 import { fmtDateBR } from "@/lib/tz"
 import { colorSwatch } from "@/lib/colorSwatch"
 import { sizeCompare } from "@/lib/sizeOrder"
+import { printWhenReady } from "@/components/print/print-utils"
+import MarketplacePrintSheet from "./MarketplacePrintSheet"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,8 @@ export default function MarketplacePage() {
   const [kitQty, setKitQty] = useState(1)
   const [kitPieceFlash, setKitPieceFlash] = useState<string | null>(null)
   const kitFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [showPrint, setShowPrint] = useState(false)
 
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memoryEntries, setMemoryEntries] = useState<MemoryMatch[]>([])
@@ -747,7 +751,7 @@ export default function MarketplacePage() {
               </div>
 
               <div className="flex justify-center gap-2 py-6">
-                <button onClick={() => window.print()} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-sm font-bold px-4 py-2.5 rounded-xl">
+                <button onClick={() => { setShowPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-sm font-bold px-4 py-2.5 rounded-xl">
                   <Printer size={14} /> Imprimir lista
                 </button>
                 <button onClick={resetFlow} className="bg-[#4361EE] text-white text-sm font-bold px-4 py-2.5 rounded-xl">Nova separação</button>
@@ -1040,6 +1044,10 @@ export default function MarketplacePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showPrint && result && (
+        <MarketplacePrintSheet result={result} origin={origin} onDone={() => setShowPrint(false)} />
       )}
 
     </div>
