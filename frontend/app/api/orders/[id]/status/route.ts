@@ -208,10 +208,10 @@ export async function POST(
       const pix = cfg.pix_key_pedidos ? `\n💳 Pix: \`${cfg.pix_key_pedidos}\`` : ""
       const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
 
-      await sendAndSave(
+      sendAndSave(
         order.contact_id, order.jid,
         `Seu pedido *${order.number}* está separado para retirada!${valor}${pix}${end}`
-      )
+      ).catch(() => {})
     }
 
     if (status === "concluido" && order.jid) {
@@ -222,7 +222,7 @@ export async function POST(
             return `Obrigado${nome}! Seu pedido *${order.number}* foi retirado com pagamento até *${d}/${m}/${y}*. Qualquer dúvida é só chamar 😊`
           })()
         : `✅ Pedido *${order.number}* entregue! Obrigado${nome} pela preferência 🙏 Até a próxima!`
-      await sendAndSave(order.contact_id, order.jid, msg)
+      sendAndSave(order.contact_id, order.jid, msg).catch(() => {})
       // Tags por produto (fire-and-forget)
       pool.query(`
         INSERT INTO wa_contact_tags (contact_id, tag, value)
@@ -235,7 +235,7 @@ export async function POST(
     if (status === "cancelado" && notifyClient && order.jid) {
       const msg = (cancelMessage as string)?.trim()
         || `Seu pedido *${order.number}* foi cancelado. Qualquer dúvida é só chamar.`
-      await sendAndSave(order.contact_id, order.jid, msg)
+      sendAndSave(order.contact_id, order.jid, msg).catch(() => {})
     }
 
     return NextResponse.json({ success: true, status })

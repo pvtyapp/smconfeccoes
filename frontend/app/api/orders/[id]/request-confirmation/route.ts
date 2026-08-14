@@ -39,7 +39,7 @@ export async function POST(
     })
 
     const msg = `Confirma por gentileza, será esses produtos mesmo?\n\n${lines.join("\n")}\n\nConfirmando já separo para você!`
-    await sendAndSave(order.contact_id, order.jid, msg)
+    sendAndSave(order.contact_id, order.jid, msg).catch(() => {})
 
     await pool.query(`UPDATE orders SET confirmation_requested_at = NOW() WHERE id = $1`, [id])
     await pool.query(`

@@ -62,7 +62,7 @@ export async function POST(
       : `Atenção, seu pedido foi atualizado. Ficou assim:\n\n`
     const msg = `${intro}${lines.join("\n")}${valor}\n\nPode separar assim mesmo?`
 
-    await sendAndSave(order.contact_id, order.jid, msg)
+    sendAndSave(order.contact_id, order.jid, msg).catch(() => {})
     await pool.query(`UPDATE orders SET alteration_sent = true WHERE id = $1`, [id])
 
     return NextResponse.json({ success: true })

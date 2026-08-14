@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 
 export async function POST(
   req: Request,
@@ -59,15 +59,9 @@ export async function POST(
             return `Obrigado${nome}! Seu pedido DTF *${pedido.number}* foi retirado com pagamento até *${d}/${m}/${y}*. Qualquer dúvida é só chamar 😊`
           })()
         : `✅ Pedido DTF *${pedido.number}* retirado! Obrigado${nome} pela preferência 🙏 Até a próxima!`
-      try {
-        const result = await sendWhatsApp(pedido.jid, msg) as { key?: { id?: string } }
-        await pool.query(
-          `INSERT INTO wa_messages (contact_id, message_id, direction, content, created_at)
-           VALUES ($1, $2, 'out', $3, NOW())
-           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-          [pedido.contact_id, result?.key?.id ?? null, msg]
-        )
-      } catch { /* Evolution fora do ar — segue sem travar a conclusão */ }
+      // fire-and-forget: sendAndSave grava o resultado (sent ou failed) mesmo se
+      // o envio falhar — antes essa falha desaparecia sem deixar rastro nenhum.
+      sendAndSave(pedido.contact_id, pedido.jid, msg).catch(() => {})
     }
 
     // Fire-and-forget: colunas opcionais (podem não existir ainda)
