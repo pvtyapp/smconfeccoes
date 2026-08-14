@@ -32,7 +32,13 @@ export async function POST(req: Request) {
       `SELECT 'MKT-' || LPAD(nextval('marketplace_separation_seq')::text, 4, '0') AS num`
     )
     const number = numRes.rows[0].num as string
-    const totalItems = rows.length
+    // "Itens" = linhas do pedido, não peça de kit expandida — mesma conta que
+    // a tela de conferência usa (grupo de kit conta 1x, não 1x por peça).
+    // Bug antigo: contava rows.length direto, ou seja cada peça de kit
+    // dobrava o total (56 em vez de 33 numa lista real de teste).
+    const kitLinesSeen = new Set(rows.filter(r => r.isKit).map(r => r.sku))
+    const nonKitLines = rows.filter(r => !r.isKit).length
+    const totalItems = kitLinesSeen.size + nonKitLines
     const totalPieces = rows.reduce((s, r) => s + r.qty, 0)
 
     const sepRes = await client.query(`
