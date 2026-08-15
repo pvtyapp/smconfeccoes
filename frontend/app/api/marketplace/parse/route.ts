@@ -1,7 +1,19 @@
 import { NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
+import { pool } from "@/lib/db"
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+// Prefixo do SKU → tipo de peça (texto livre, cadastrado na tela). NÃO é
+// matching de produto — só separa itens com cor+tamanho igual mas peça
+// diferente (ex: moletom preto M vs camiseta preta M) na hora de agrupar.
+type SkuPrefix = { prefix: string; tipo: string }
+function findTipo(sku: string, prefixes: SkuPrefix[]): string {
+  if (!sku) return ""
+  const skuUpper = sku.toUpperCase()
+  const hit = prefixes.filter(p => skuUpper.startsWith(p.prefix)).sort((a, b) => b.prefix.length - a.prefix.length)[0]
+  return hit?.tipo ?? ""
+}
 
 // `variacao` é o texto cru da coluna Variação do picklist (ex: "Camiseta Rosa,TAM.
 // 4", "KIT Bordo,TAM.12"). `cor`/`tamanho` são os dois pedaços já separados —
@@ -168,15 +180,16 @@ Responda APENAS um JSON: {"resumoTopo":{"pedidos":<inteiro ou null>,"totalItens"
 // avulsa (são picks físicos diferentes mesmo com cor/tamanho igual), mas o
 // mesmo "Kit Azul Royal · 6" pedido em 3 anúncios diferentes vira 1 linha
 // só, quantidade somada. ────────────────────────────────────────────────────
-type FlatGroup = { isKit: boolean; cor: string; tamanho: string; qty: number; anuncios: number }
+type FlatGroup = { isKit: boolean; tipo: string; cor: string; tamanho: string; qty: number; anuncios: number }
 
-function buildFlatGroups(rows: ExtractedRow[]): FlatGroup[] {
+function buildFlatGroups(rows: ExtractedRow[], prefixes: SkuPrefix[]): FlatGroup[] {
   const groups = new Map<string, FlatGroup & { titles: Set<string> }>()
   for (const r of rows) {
     const isKit = /\bkit\b/i.test(r.title) || /\bkit\b/i.test(r.cor)
     const corLimpa = r.cor.replace(/^kit\s*/i, "").trim()
-    const key = `${isKit ? "KIT" : "ITEM"}|${corLimpa.toLowerCase()}|${r.tamanho.toLowerCase()}`
-    if (!groups.has(key)) groups.set(key, { isKit, cor: corLimpa, tamanho: r.tamanho, qty: 0, anuncios: 0, titles: new Set() })
+    const tipo = findTipo(r.sku, prefixes)
+    const key = `${isKit ? "KIT" : "ITEM"}|${tipo.toLowerCase()}|${corLimpa.toLowerCase()}|${r.tamanho.toLowerCase()}`
+    if (!groups.has(key)) groups.set(key, { isKit, tipo, cor: corLimpa, tamanho: r.tamanho, qty: 0, anuncios: 0, titles: new Set() })
     const g = groups.get(key)!
     g.qty += r.qty
     g.titles.add(r.title.trim())
@@ -228,7 +241,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Não consegui identificar linhas nesse arquivo" }, { status: 400 })
     }
 
-    const groups = buildFlatGroups(extracted)
+    const { rows: prefixRows } = await pool.query(`SELECT prefix, tipo FROM marketplace_sku_prefixes`)
+    const groups = buildFlatGroups(extracted, prefixRows as SkuPrefix[])
 
     return NextResponse.json({
       filename,

@@ -19,8 +19,12 @@ type CatalogVariant = {
 // "Separar" — só leitura, sem casamento com catálogo. Não agrupa por
 // anúncio/título — pra separar estoque físico o print não importa, só cor +
 // tamanho + quantidade (kit fica separado de peça avulsa, é pick diferente).
-type FlatGroup = { isKit: boolean; cor: string; tamanho: string; qty: number; anuncios: number }
+type FlatGroup = { isKit: boolean; tipo: string; cor: string; tamanho: string; qty: number; anuncios: number }
 type SourceSummary = { pedidos: number | null; totalItens: number | null } | null
+
+// Prefixo do SKU → tipo de peça (texto livre) — só separa cor+tamanho igual
+// que são peças diferentes (moletom vs camiseta), não é matching de produto.
+type SkuPrefix = { id: number; prefix: string; tipo: string; createdAt: string }
 
 // "Lançar manual" — cada linha já é uma escolha real de produto/cor/tamanho,
 // vira baixa de estoque de verdade ao confirmar.
@@ -76,6 +80,34 @@ export default function MarketplacePage() {
   const [sourceSummary, setSourceSummary] = useState<SourceSummary>(null)
   const [readFilename, setReadFilename] = useState("")
   const [showBlocksPrint, setShowBlocksPrint] = useState(false)
+
+  // ── Prefixos de SKU (tipo de peça) ──
+  const [prefixOpen, setPrefixOpen] = useState(false)
+  const [prefixes, setPrefixes] = useState<SkuPrefix[]>([])
+  const [prefixLoading, setPrefixLoading] = useState(false)
+  const [newPrefix, setNewPrefix] = useState("")
+  const [newTipo, setNewTipo] = useState("")
+
+  async function loadPrefixes() {
+    setPrefixLoading(true)
+    try {
+      const res = await fetch("/api/marketplace/prefixes")
+      if (res.ok) setPrefixes(await res.json())
+    } finally { setPrefixLoading(false) }
+  }
+  function openPrefixModal() { setPrefixOpen(true); loadPrefixes() }
+  async function addPrefix() {
+    if (!newPrefix.trim() || !newTipo.trim()) return
+    const res = await fetch("/api/marketplace/prefixes", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefix: newPrefix, tipo: newTipo }),
+    })
+    if (res.ok) { setNewPrefix(""); setNewTipo(""); loadPrefixes() }
+  }
+  async function deletePrefix(id: number) {
+    setPrefixes(prev => prev.filter(p => p.id !== id))
+    await fetch(`/api/marketplace/prefixes/${id}`, { method: "DELETE" })
+  }
 
   async function runParse(payload: FormData) {
     setProcessing(true); setUploadError(""); setProcessMsg("Lendo o arquivo…")
@@ -302,7 +334,10 @@ export default function MarketplacePage() {
           {/* ── Coluna esquerda: referência (leitura, sem estoque) ── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
             <div className="p-5">
-              <h2 className="text-sm font-bold text-[#0F1E3C] mb-3">Referência</h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-bold text-[#0F1E3C]">Referência</h2>
+                <button onClick={openPrefixModal} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#4361EE]">Prefixos de SKU</button>
+              </div>
 
               {!groups ? (
                 <div>
@@ -375,7 +410,7 @@ export default function MarketplacePage() {
                           {items.map((g, i) => (
                             <div key={i} className="bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
                               <div className="flex items-center justify-between">
-                                <span className="font-semibold text-[#0F1E3C]">{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}</span>
+                                <span className="font-semibold text-[#0F1E3C]">{g.tipo ? `${g.tipo} · ` : ""}{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}</span>
                                 <div className="flex items-center gap-2">
                                   {g.anuncios > 1 && <span className="text-[10px] text-[#0F1E3C]/35">{g.anuncios} anúncios</span>}
                                   <span className="font-bold text-[#0F1E3C] tabular-nums">× {g.qty}</span>
@@ -611,6 +646,42 @@ export default function MarketplacePage() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de prefixos de SKU — texto livre, só separa tipo de peça na lista */}
+      {prefixOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPrefixOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
+              <div>
+                <h2 className="font-bold text-[#0F1E3C]">Prefixos de SKU</h2>
+                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Prefixo do SKU → tipo de peça (texto livre). Só serve pra separar itens de cor/tamanho igual mas peça diferente na lista de separação — não mexe em estoque.</p>
+              </div>
+              <button onClick={() => setPrefixOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto">
+              {prefixLoading ? (
+                <p className="text-xs text-[#0F1E3C]/40">Carregando…</p>
+              ) : prefixes.length === 0 ? (
+                <p className="text-xs text-[#0F1E3C]/40 text-center py-4">Nenhum prefixo cadastrado ainda.</p>
+              ) : (
+                <div className="space-y-1 mb-4">
+                  {prefixes.map(p => (
+                    <div key={p.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                      <span><span className="font-mono font-bold text-[#0F1E3C]">{p.prefix}</span> <span className="text-[#0F1E3C]/40">→</span> <span className="font-semibold text-[#0F1E3C]">{p.tipo}</span></span>
+                      <button onClick={() => deletePrefix(p.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="grid gap-2 pt-3 border-t border-dashed border-[#0F1E3C]/10" style={{ gridTemplateColumns: "1fr 1fr auto" }}>
+                <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: MOL_" className={inputCls} />
+                <input value={newTipo} onChange={e => setNewTipo(e.target.value)} placeholder="Ex: Moletom" className={inputCls} />
+                <button onClick={addPrefix} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
