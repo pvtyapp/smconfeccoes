@@ -14,10 +14,10 @@ type CatalogVariant = {
   color: string; size: string; sku: string; availableStock: number
 }
 
-// "Separar" — só leitura, sem casamento com catálogo. Um bloco por produto
-// (título do anúncio), com cor/tamanho/quantidade já somados por dentro.
-type SeparationItem = { cor: string; tamanho: string; qty: number }
-type SeparationBlock = { title: string; isKit: boolean; items: SeparationItem[] }
+// "Separar" — só leitura, sem casamento com catálogo. Não agrupa por
+// anúncio/título — pra separar estoque físico o print não importa, só cor +
+// tamanho + quantidade (kit fica separado de peça avulsa, é pick diferente).
+type FlatGroup = { isKit: boolean; cor: string; tamanho: string; qty: number; anuncios: number }
 type SourceSummary = { pedidos: number | null; totalItens: number | null } | null
 
 // "Lançar manual" — cada linha já é uma escolha real de produto/cor/tamanho,
@@ -71,7 +71,7 @@ export default function MarketplacePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
 
-  const [blocks, setBlocks] = useState<SeparationBlock[] | null>(null)
+  const [groups, setGroups] = useState<FlatGroup[] | null>(null)
   const [sourceSummary, setSourceSummary] = useState<SourceSummary>(null)
   const [readFilename, setReadFilename] = useState("")
   const [showBlocksPrint, setShowBlocksPrint] = useState(false)
@@ -82,7 +82,7 @@ export default function MarketplacePage() {
       const res = await fetch("/api/marketplace/parse", { method: "POST", body: payload })
       const data = await res.json()
       if (!res.ok) { setUploadError(data.error ?? "Erro ao analisar"); return }
-      setBlocks(data.blocks); setSourceSummary(data.sourceSummary ?? null); setReadFilename(data.filename ?? "")
+      setGroups(data.groups); setSourceSummary(data.sourceSummary ?? null); setReadFilename(data.filename ?? "")
     } catch {
       setUploadError("Falha de rede ao enviar o arquivo")
     } finally {
@@ -101,17 +101,17 @@ export default function MarketplacePage() {
     runParse(form)
   }
   function resetRead() {
-    setBlocks(null); setSourceSummary(null); setReadFilename(""); setUploadError("")
+    setGroups(null); setSourceSummary(null); setReadFilename(""); setUploadError("")
     setPastedText(""); setShowPaste(false)
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
-  const blocksTotals = useMemo(() => {
-    if (!blocks) return { produtos: 0, pecas: 0 }
-    const produtos = blocks.length
-    const pecas = blocks.reduce((s, b) => s + b.items.reduce((s2, i) => s2 + i.qty, 0), 0)
-    return { produtos, pecas }
-  }, [blocks])
+  const groupsTotals = useMemo(() => {
+    if (!groups) return { combinacoes: 0, pecas: 0 }
+    const combinacoes = groups.length
+    const pecas = groups.reduce((s, g) => s + g.qty, 0)
+    return { combinacoes, pecas }
+  }, [groups])
 
   // ── "Lançar manual" — cada linha é uma baixa real, confirmar desconta estoque ──
   const [manualRows, setManualRows] = useState<ManualRow[]>([])
@@ -286,7 +286,7 @@ export default function MarketplacePage() {
             {/* ── Modo: Ler picklist ── */}
             {mode === "ler" && (
               <div>
-                {!blocks ? (
+                {!groups ? (
                   <div>
                     {!processing ? (
                       <>
@@ -337,7 +337,7 @@ export default function MarketplacePage() {
                             O arquivo diz:{sourceSummary.pedidos != null ? ` ${sourceSummary.pedidos} pedidos` : ""}{sourceSummary.totalItens != null ? `, ${sourceSummary.totalItens} itens no total` : ""}
                           </p>
                         )}
-                        <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{blocksTotals.produtos} produtos diferentes, {blocksTotals.pecas} peças pra separar</p>
+                        <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{groupsTotals.combinacoes} combinações de cor/tamanho, {groupsTotals.pecas} peças pra separar</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <button onClick={() => { setShowBlocksPrint(true); printWhenReady() }} className="flex items-center gap-1.5 bg-[#4361EE] text-white text-xs font-bold px-3 py-2 rounded-xl">
@@ -347,23 +347,26 @@ export default function MarketplacePage() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      {blocks.map((b, i) => (
-                        <div key={i} className="rounded-lg border border-[#0F1E3C]/8 bg-[#F9FAFB] px-3 py-2">
-                          <div className="flex items-center gap-1.5 mb-1">
-                            {b.isKit && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">KIT</span>}
-                            <p className="text-xs font-bold text-[#0F1E3C] truncate">{b.title}</p>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {b.items.map((it, j) => (
-                              <span key={j} className="text-[11px] bg-white border border-[#0F1E3C]/10 rounded-lg px-2 py-1 text-[#0F1E3C]/70">
-                                {it.cor || "—"}{it.tamanho ? ` · ${it.tamanho}` : ""} <span className="font-bold text-[#0F1E3C]">× {it.qty}</span>
-                              </span>
+                    {(["kit", "avulso"] as const).map(section => {
+                      const items = groups.filter(g => (section === "kit") === g.isKit)
+                      if (items.length === 0) return null
+                      return (
+                        <div key={section} className="mb-3">
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">{section === "kit" ? "Kits" : "Peças avulsas"}</p>
+                          <div className="space-y-1">
+                            {items.map((g, i) => (
+                              <div key={i} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                                <span className="font-semibold text-[#0F1E3C]">{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}</span>
+                                <div className="flex items-center gap-2">
+                                  {g.anuncios > 1 && <span className="text-[10px] text-[#0F1E3C]/35">{g.anuncios} anúncios</span>}
+                                  <span className="font-bold text-[#0F1E3C] tabular-nums">× {g.qty}</span>
+                                </div>
+                              </div>
                             ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -561,8 +564,8 @@ export default function MarketplacePage() {
         </div>
       )}
 
-      {showBlocksPrint && blocks && (
-        <MarketplaceBlocksPrintSheet blocks={blocks} sourceSummary={sourceSummary} filename={readFilename} onDone={() => setShowBlocksPrint(false)} />
+      {showBlocksPrint && groups && (
+        <MarketplaceBlocksPrintSheet groups={groups} sourceSummary={sourceSummary} filename={readFilename} onDone={() => setShowBlocksPrint(false)} />
       )}
       {showResultPrint && result && (
         <MarketplacePrintSheet result={result} origin={origin} onDone={() => setShowResultPrint(false)} />

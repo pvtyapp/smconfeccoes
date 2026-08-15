@@ -161,30 +161,29 @@ Responda APENAS um JSON: {"resumoTopo":{"pedidos":<inteiro ou null>,"totalItens"
   }
 }
 
-// ── Agrupa em blocos por produto (título) — dentro de cada bloco, junta
-// cor+tamanho repetidos somando a quantidade. Puramente organizacional, não
-// decide nada contra estoque (essa página não casa mais com catálogo). ──────
-type SeparationItem = { cor: string; tamanho: string; qty: number }
-type SeparationBlock = { title: string; isKit: boolean; items: SeparationItem[] }
+// ── Agrupa pra impressão — não decide nada contra estoque (essa página não
+// casa mais com catálogo). Não agrupa por título/anúncio: pra separar
+// estoque físico, o print (Naruto, Sasuke...) não importa, só o que puxa do
+// estoque em branco — cor + tamanho + quantidade. Kit fica separado de peça
+// avulsa (são picks físicos diferentes mesmo com cor/tamanho igual), mas o
+// mesmo "Kit Azul Royal · 6" pedido em 3 anúncios diferentes vira 1 linha
+// só, quantidade somada. ────────────────────────────────────────────────────
+type FlatGroup = { isKit: boolean; cor: string; tamanho: string; qty: number; anuncios: number }
 
-function buildBlocks(rows: ExtractedRow[]): SeparationBlock[] {
-  const byTitle = new Map<string, ExtractedRow[]>()
+function buildFlatGroups(rows: ExtractedRow[]): FlatGroup[] {
+  const groups = new Map<string, FlatGroup & { titles: Set<string> }>()
   for (const r of rows) {
-    const key = r.title.trim() || "(sem nome)"
-    if (!byTitle.has(key)) byTitle.set(key, [])
-    byTitle.get(key)!.push(r)
+    const isKit = /\bkit\b/i.test(r.title) || /\bkit\b/i.test(r.cor)
+    const corLimpa = r.cor.replace(/^kit\s*/i, "").trim()
+    const key = `${isKit ? "KIT" : "ITEM"}|${corLimpa.toLowerCase()}|${r.tamanho.toLowerCase()}`
+    if (!groups.has(key)) groups.set(key, { isKit, cor: corLimpa, tamanho: r.tamanho, qty: 0, anuncios: 0, titles: new Set() })
+    const g = groups.get(key)!
+    g.qty += r.qty
+    g.titles.add(r.title.trim())
   }
-
-  return [...byTitle.entries()].map(([title, group]) => {
-    const byVariant = new Map<string, SeparationItem>()
-    for (const r of group) {
-      const key = `${r.cor.toLowerCase()}|${r.tamanho.toLowerCase()}`
-      if (!byVariant.has(key)) byVariant.set(key, { cor: r.cor, tamanho: r.tamanho, qty: 0 })
-      byVariant.get(key)!.qty += r.qty
-    }
-    const isKit = /\bkit\b/i.test(title) || group.some(r => /\bkit\b/i.test(r.cor))
-    return { title, isKit, items: [...byVariant.values()] }
-  }).sort((a, b) => b.items.reduce((s, i) => s + i.qty, 0) - a.items.reduce((s, i) => s + i.qty, 0))
+  return [...groups.values()]
+    .map(({ titles, ...g }) => ({ ...g, anuncios: titles.size }))
+    .sort((a, b) => (a.isKit === b.isKit ? b.qty - a.qty : a.isKit ? -1 : 1))
 }
 
 export async function POST(req: Request) {
@@ -229,14 +228,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Não consegui identificar linhas nesse arquivo" }, { status: 400 })
     }
 
-    const blocks = buildBlocks(extracted)
+    const groups = buildFlatGroups(extracted)
 
     return NextResponse.json({
       filename,
       sourceSummary,
       totalLinhas: extracted.length,
       totalPecas: extracted.reduce((s, r) => s + r.qty, 0),
-      blocks,
+      groups,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
