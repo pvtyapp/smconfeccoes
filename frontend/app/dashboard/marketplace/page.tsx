@@ -1,8 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Printer, Plus, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X } from "lucide-react"
+import { Printer, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
+import { colorSwatch } from "@/lib/colorSwatch"
+import { sizeCompare } from "@/lib/sizeOrder"
 import { printWhenReady } from "@/components/print/print-utils"
 import MarketplacePrintSheet from "./MarketplacePrintSheet"
 import MarketplaceBlocksPrintSheet from "./MarketplaceBlocksPrintSheet"
@@ -46,7 +48,6 @@ const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm
 
 export default function MarketplacePage() {
   const [tab, setTab] = useState<"separar" | "relatorio">("separar")
-  const [mode, setMode] = useState<"ler" | "manual">("ler")
   const [origin, setOrigin] = useState<Origin>("shopee")
 
   const [catalog, setCatalog] = useState<CatalogVariant[]>([])
@@ -113,30 +114,57 @@ export default function MarketplacePage() {
     return { combinacoes, pecas }
   }, [groups])
 
-  // ── "Lançar manual" — cada linha é uma baixa real, confirmar desconta estoque ──
+  // Hoje só existe 1 composição de kit no catálogo (Camiseta Infantil +
+  // Bermuda Infantil Moletinho, que só vem em Preto) — nota fixa, não é
+  // configurável. Se aparecer outro tipo de kit, isso precisa virar tela.
+  function kitNote(g: FlatGroup) {
+    if (!g.isKit) return null
+    return `= Camiseta Infantil ${g.cor} · ${g.tamanho}  +  Bermuda Preta · ${g.tamanho}`
+  }
+
+  // ── Carrinho — cada linha é uma baixa real, confirmar desconta estoque.
+  // Clique estilo PDV (produto → cor → tamanho já soma no carrinho, sem
+  // formulário) em vez do dropdown+Add de antes. ──────────────────────────
   const [manualRows, setManualRows] = useState<ManualRow[]>([])
-  const [manualName, setManualName] = useState("")
-  const [manualColor, setManualColor] = useState("")
-  const [manualSize, setManualSize] = useState("")
-  const [manualQty, setManualQty] = useState(1)
+  const [cartProductName, setCartProductName] = useState("")
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState("")
   const [result, setResult] = useState<{ number: string; totalItems: number; totalPieces: number; items: { productName: string; color: string; size: string; sku: string; qty: number }[] } | null>(null)
   const [showResultPrint, setShowResultPrint] = useState(false)
 
-  const effName = productNames.includes(manualName) ? manualName : (productNames[0] ?? "")
-  const manualColors = useMemo(() => [...new Set(catalog.filter(c => c.productName === effName).map(c => c.color))], [catalog, effName])
-  const effColor = manualColors.includes(manualColor) ? manualColor : (manualColors[0] ?? "")
-  const manualSizes = useMemo(() => catalog.filter(c => c.productName === effName && c.color === effColor), [catalog, effName, effColor])
-  const effSize = manualSizes.some(v => v.size === manualSize) ? manualSize : (manualSizes[0]?.size ?? "")
+  const effCartProduct = productNames.includes(cartProductName) ? cartProductName : (productNames[0] ?? "")
+  const cartColorGroups = useMemo(() => {
+    const variants = catalog.filter(c => c.productName === effCartProduct)
+    const byColor = new Map<string, CatalogVariant[]>()
+    for (const v of variants) {
+      if (!byColor.has(v.color)) byColor.set(v.color, [])
+      byColor.get(v.color)!.push(v)
+    }
+    const groupsArr = [...byColor.entries()].sort(([a], [b]) => a.localeCompare(b))
+    groupsArr.forEach(([, vs]) => vs.sort((a, b) => sizeCompare(a.size, b.size)))
+    return groupsArr
+  }, [catalog, effCartProduct])
 
-  function addManualRow() {
-    const variant = catalog.find(c => c.productName === effName && c.color === effColor && c.size === effSize)
-    if (!variant) return
-    setManualRows(prev => [...prev, {
-      id: newRowId(), variantId: variant.variantId, productName: variant.productName,
-      color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty: Math.max(1, manualQty),
-    }])
+  function addToCart(variant: CatalogVariant) {
+    setManualRows(prev => {
+      const existing = prev.find(r => r.variantId === variant.variantId)
+      if (existing) return prev.map(r => r.variantId === variant.variantId ? { ...r, qty: r.qty + 1 } : r)
+      return [...prev, {
+        id: newRowId(), variantId: variant.variantId, productName: variant.productName,
+        color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty: 1,
+      }]
+    })
+  }
+  function cartQtyFor(variantId: string) {
+    return manualRows.find(r => r.variantId === variantId)?.qty ?? 0
+  }
+  function variantChipCls(v: CatalogVariant): string {
+    const base = "relative flex flex-col items-center px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all min-w-[46px]"
+    const inCart = cartQtyFor(v.variantId) > 0
+    if (v.availableStock < 0) return `${base} border-red-300 bg-red-50 text-red-500`
+    if (v.availableStock === 0) return `${base} border-orange-300 bg-orange-50 text-orange-500`
+    if (inCart) return `${base} border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]`
+    return `${base} border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#4361EE]/6`
   }
   function updateManualQty(id: string, qty: number) {
     setManualRows(prev => prev.map(r => r.id === id ? { ...r, qty: Math.max(1, qty || 1) } : r))
@@ -269,150 +297,173 @@ export default function MarketplacePage() {
       </div>
 
       {tab === "separar" && (
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-          <div className="p-6">
-            <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/6">
-                <button onClick={() => setMode("ler")} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${mode === "ler" ? "bg-white text-[#0F1E3C] shadow-sm" : "text-[#0F1E3C]/45"}`}>Ler picklist</button>
-                <button onClick={() => setMode("manual")} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${mode === "manual" ? "bg-white text-[#0F1E3C] shadow-sm" : "text-[#0F1E3C]/45"}`}>Lançar manual</button>
-              </div>
-              {mode === "manual" && (
-                <select value={origin} onChange={e => setOrigin(e.target.value as Origin)} className={`${inputCls} !w-auto text-xs font-semibold`}>
-                  {(Object.keys(ORIGIN_LABEL) as Origin[]).map(o => <option key={o} value={o}>{ORIGIN_LABEL[o]}</option>)}
-                </select>
-              )}
-            </div>
+        <div className="grid gap-4 md:grid-cols-2 items-start">
 
-            {/* ── Modo: Ler picklist ── */}
-            {mode === "ler" && (
-              <div>
-                {!groups ? (
-                  <div>
-                    {!processing ? (
-                      <>
-                        <div
-                          onClick={() => fileInputRef.current?.click()}
-                          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-                          onDragLeave={() => setDragOver(false)}
-                          onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f) }}
-                          className={`border-2 border-dashed rounded-2xl p-11 text-center cursor-pointer transition-colors ${dragOver ? "border-[#4361EE] bg-[#4361EE]/5" : "border-[#0F1E3C]/12 hover:border-[#4361EE]/50"}`}
-                        >
-                          <div className="w-12 h-12 rounded-full bg-[#0F1E3C]/5 flex items-center justify-center mx-auto mb-3">
-                            <PackageSearch size={22} className="text-[#4361EE]" />
-                          </div>
-                          <p className="font-bold text-sm text-[#0F1E3C]">Arraste o picklist aqui</p>
-                          <p className="text-xs text-[#0F1E3C]/40 mt-0.5">ou clique pra escolher o arquivo</p>
-                          <p className="text-[11px] text-[#0F1E3C]/30 mt-2.5">CSV, TXT ou PDF exportado do Shopee/Mercado Livre</p>
-                        </div>
-                        <input ref={fileInputRef} type="file" accept=".csv,.txt,.pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+          {/* ── Coluna esquerda: referência (leitura, sem estoque) ── */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="p-5">
+              <h2 className="text-sm font-bold text-[#0F1E3C] mb-3">Referência</h2>
 
-                        <div className="text-center mt-3">
-                          <button onClick={() => setShowPaste(v => !v)} className="text-xs font-bold text-[#4361EE] underline">
-                            {showPaste ? "Fechar" : "Não tenho um arquivo — colar o texto"}
-                          </button>
+              {!groups ? (
+                <div>
+                  {!processing ? (
+                    <>
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f) }}
+                        className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-colors ${dragOver ? "border-[#4361EE] bg-[#4361EE]/5" : "border-[#0F1E3C]/12 hover:border-[#4361EE]/50"}`}
+                      >
+                        <div className="w-11 h-11 rounded-full bg-[#0F1E3C]/5 flex items-center justify-center mx-auto mb-2.5">
+                          <PackageSearch size={20} className="text-[#4361EE]" />
                         </div>
-                        {showPaste && (
-                          <div className="mt-3 space-y-2">
-                            <textarea value={pastedText} onChange={e => setPastedText(e.target.value)} rows={6}
-                              placeholder="Cola aqui as linhas do picklist (SKU, título, quantidade)…"
-                              className={inputCls} />
-                            <button onClick={handlePasteSubmit} disabled={!pastedText.trim()} className="w-full py-2.5 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold">Analisar texto</button>
-                          </div>
-                        )}
-                        {uploadError && <p className="text-xs text-red-600 mt-3 text-center">{uploadError}</p>}
-                      </>
-                    ) : (
-                      <div className="py-14 flex flex-col items-center gap-3">
-                        <Loader2 size={26} className="animate-spin text-[#4361EE]" />
-                        <p className="text-sm font-semibold text-[#0F1E3C]">{processMsg || "Processando…"}</p>
+                        <p className="font-bold text-sm text-[#0F1E3C]">Arraste o picklist aqui</p>
+                        <p className="text-xs text-[#0F1E3C]/40 mt-0.5">ou clique pra escolher o arquivo</p>
+                        <p className="text-[11px] text-[#0F1E3C]/30 mt-2">CSV, TXT ou PDF exportado do Shopee/Mercado Livre</p>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                      <div>
-                        {sourceSummary && (sourceSummary.pedidos != null || sourceSummary.totalItens != null) && (
-                          <p className="text-[11px] text-[#0F1E3C]/35">
-                            O arquivo diz:{sourceSummary.pedidos != null ? ` ${sourceSummary.pedidos} pedidos` : ""}{sourceSummary.totalItens != null ? `, ${sourceSummary.totalItens} itens no total` : ""}
-                          </p>
-                        )}
-                        <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{groupsTotals.combinacoes} combinações de cor/tamanho, {groupsTotals.pecas} peças pra separar</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => { setShowBlocksPrint(true); printWhenReady() }} className="flex items-center gap-1.5 bg-[#4361EE] text-white text-xs font-bold px-3 py-2 rounded-xl">
-                          <Printer size={13} /> Imprimir lista
+                      <input ref={fileInputRef} type="file" accept=".csv,.txt,.pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+
+                      <div className="text-center mt-3">
+                        <button onClick={() => setShowPaste(v => !v)} className="text-xs font-bold text-[#4361EE] underline">
+                          {showPaste ? "Fechar" : "Não tenho um arquivo — colar o texto"}
                         </button>
-                        <button onClick={resetRead} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#0F1E3C]">Nova leitura</button>
                       </div>
+                      {showPaste && (
+                        <div className="mt-3 space-y-2">
+                          <textarea value={pastedText} onChange={e => setPastedText(e.target.value)} rows={5}
+                            placeholder="Cola aqui as linhas do picklist (SKU, título, quantidade)…"
+                            className={inputCls} />
+                          <button onClick={handlePasteSubmit} disabled={!pastedText.trim()} className="w-full py-2.5 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold">Analisar texto</button>
+                        </div>
+                      )}
+                      {uploadError && <p className="text-xs text-red-600 mt-3 text-center">{uploadError}</p>}
+                    </>
+                  ) : (
+                    <div className="py-12 flex flex-col items-center gap-3">
+                      <Loader2 size={24} className="animate-spin text-[#4361EE]" />
+                      <p className="text-sm font-semibold text-[#0F1E3C]">{processMsg || "Processando…"}</p>
                     </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <div>
+                      {sourceSummary && (sourceSummary.pedidos != null || sourceSummary.totalItens != null) && (
+                        <p className="text-[11px] text-[#0F1E3C]/35">
+                          O arquivo diz:{sourceSummary.pedidos != null ? ` ${sourceSummary.pedidos} pedidos` : ""}{sourceSummary.totalItens != null ? `, ${sourceSummary.totalItens} itens no total` : ""}
+                        </p>
+                      )}
+                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{groupsTotals.combinacoes} combinações, {groupsTotals.pecas} peças pra separar</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => { setShowBlocksPrint(true); printWhenReady() }} className="flex items-center gap-1.5 bg-[#4361EE] text-white text-xs font-bold px-3 py-2 rounded-xl">
+                        <Printer size={13} /> Imprimir
+                      </button>
+                      <button onClick={resetRead} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#0F1E3C]">Nova leitura</button>
+                    </div>
+                  </div>
 
-                    {(["kit", "avulso"] as const).map(section => {
-                      const items = groups.filter(g => (section === "kit") === g.isKit)
-                      if (items.length === 0) return null
-                      return (
-                        <div key={section} className="mb-3">
-                          <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">{section === "kit" ? "Kits" : "Peças avulsas"}</p>
-                          <div className="space-y-1">
-                            {items.map((g, i) => (
-                              <div key={i} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                  {(["kit", "avulso"] as const).map(section => {
+                    const items = groups.filter(g => (section === "kit") === g.isKit)
+                    if (items.length === 0) return null
+                    return (
+                      <div key={section} className="mb-3">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">{section === "kit" ? "Kits" : "Peças avulsas"}</p>
+                        <div className="space-y-1">
+                          {items.map((g, i) => (
+                            <div key={i} className="bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                              <div className="flex items-center justify-between">
                                 <span className="font-semibold text-[#0F1E3C]">{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}</span>
                                 <div className="flex items-center gap-2">
                                   {g.anuncios > 1 && <span className="text-[10px] text-[#0F1E3C]/35">{g.anuncios} anúncios</span>}
                                   <span className="font-bold text-[#0F1E3C] tabular-nums">× {g.qty}</span>
                                 </div>
                               </div>
-                            ))}
-                          </div>
+                              {kitNote(g) && <p className="text-[10px] text-[#4361EE]/70 mt-0.5">{kitNote(g)}</p>}
+                            </div>
+                          ))}
                         </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
 
-            {/* ── Modo: Lançar manual ── */}
-            {mode === "manual" && (
-              <div>
+          {/* ── Coluna direita: carrinho, igual o PDV — vira baixa real de estoque ── */}
+          <div className="md:sticky md:top-4">
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-[#0F1E3C]">Carrinho — baixa de estoque</h2>
+                  {!result && (
+                    <select value={origin} onChange={e => setOrigin(e.target.value as Origin)} className={`${inputCls} !w-auto text-xs font-semibold`}>
+                      {(Object.keys(ORIGIN_LABEL) as Origin[]).map(o => <option key={o} value={o}>{ORIGIN_LABEL[o]}</option>)}
+                    </select>
+                  )}
+                </div>
+
                 {!result ? (
                   <div>
-                    <div className="bg-[#F4F6FB] rounded-xl px-4 py-2.5 text-xs text-[#0F1E3C]/50 mb-4">
-                      Escolhe produto, cor e tamanho pra cada peça separada — confirmar desconta o estoque de verdade.
-                    </div>
-
                     {catalogLoading ? (
                       <p className="text-xs text-[#0F1E3C]/40">Carregando catálogo…</p>
                     ) : (
-                      <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr 80px auto" }}>
-                        <select value={effName} onChange={e => setManualName(e.target.value)} className={inputCls}>
-                          {productNames.map(n => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                        <select value={effColor} onChange={e => setManualColor(e.target.value)} className={inputCls}>
-                          {manualColors.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <select value={effSize} onChange={e => setManualSize(e.target.value)} className={inputCls}>
-                          {manualSizes.map(v => <option key={v.size} value={v.size}>{v.size}</option>)}
-                        </select>
-                        <input type="number" min={1} value={manualQty} onChange={e => setManualQty(parseInt(e.target.value) || 1)} className={inputCls} />
-                        <button onClick={addManualRow} className="flex items-center justify-center gap-1 bg-[#4361EE] text-white rounded-xl px-3 text-xs font-bold">
-                          <Plus size={13} /> Add
-                        </button>
-                      </div>
+                      <>
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {productNames.map(n => (
+                            <button key={n} type="button" onClick={() => setCartProductName(n)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                                n === effCartProduct ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                              }`}>
+                              {n}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
+                          {cartColorGroups.map(([color, variants]) => (
+                            <div key={color}>
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                                <span className="text-[11px] font-bold text-[#0F1E3C]">{color}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {variants.map(v => {
+                                  const qtyIn = cartQtyFor(v.variantId)
+                                  return (
+                                    <button key={v.variantId} type="button" onClick={() => addToCart(v)} className={variantChipCls(v)}
+                                      title={v.availableStock < 0 ? `Estoque negativo: ${v.availableStock}` : v.availableStock === 0 ? "Sem estoque" : `${v.availableStock} em estoque`}>
+                                      <span>{v.size || "U"}</span>
+                                      {qtyIn > 0 && (
+                                        <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#4361EE] text-white rounded-full text-[8px] font-black flex items-center justify-center leading-none">
+                                          {qtyIn}
+                                        </span>
+                                      )}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     )}
 
                     {manualRows.length > 0 && (
-                      <div className="mt-4 space-y-1.5">
+                      <div className="mt-3 pt-3 border-t border-dashed border-[#0F1E3C]/10 space-y-1.5 max-h-[200px] overflow-y-auto">
                         {manualRows.map(r => {
                           const after = r.stock - r.qty
                           const low = after < 0
                           return (
                             <div key={r.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
                                 <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo — vai ficar negativo" : "Tem estoque"} />
-                                <span className="font-semibold text-[#0F1E3C]">{r.productName} · {r.color} · {r.size}</span>
+                                <span className="font-semibold text-[#0F1E3C] truncate">{r.productName} · {r.color} · {r.size}</span>
                               </div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-shrink-0">
                                 <input type="number" min={1} value={r.qty} onChange={e => updateManualQty(r.id, parseInt(e.target.value))}
                                   className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
                                 <button onClick={() => removeManualRow(r.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
@@ -443,21 +494,21 @@ export default function MarketplacePage() {
                   </div>
                 )}
               </div>
-            )}
-          </div>
 
-          {mode === "manual" && !result && (
-            <div className="flex items-center justify-between gap-4 flex-wrap px-6 py-4 bg-[#F4F6FB] border-t border-[#0F1E3C]/8">
-              <div className="flex gap-6">
-                <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-lg font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
-                <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-lg font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
-              </div>
-              <button onClick={confirmSeparation} disabled={manualRows.length === 0 || confirming}
-                className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
-                {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar separação
-              </button>
+              {!result && (
+                <div className="flex items-center justify-between gap-4 flex-wrap px-5 py-3.5 bg-[#F4F6FB] border-t border-[#0F1E3C]/8">
+                  <div className="flex gap-5">
+                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
+                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
+                  </div>
+                  <button onClick={confirmSeparation} disabled={manualRows.length === 0 || confirming}
+                    className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
+                    {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar separação
+                  </button>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
 
