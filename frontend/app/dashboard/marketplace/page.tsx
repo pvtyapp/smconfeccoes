@@ -242,10 +242,12 @@ export default function MarketplacePage() {
     setManualRows(prev => {
       const existing = prev.find(r => r.variantId === variant.variantId && r.kitGroupId === kitGroupId)
       if (existing) return prev.map(r => r === existing ? { ...r, qty: r.qty + 1 } : r)
-      return [...prev, {
+      // Item novo entra no topo — o último lançado sempre aparece primeiro.
+      // Incrementar um que já existe não move ele de lugar (só soma).
+      return [{
         id: newRowId(), variantId: variant.variantId, productName: variant.productName,
         color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty: 1, kitGroupId,
-      }]
+      }, ...prev]
     })
   }
   function cartQtyFor(variantId: string) {
@@ -592,6 +594,61 @@ export default function MarketplacePage() {
                       </button>
                     </div>
 
+                    {/* Carrinho no topo — o que acabou de ser lançado aparece primeiro,
+                        pra sempre ver o que já foi feito sem ter que rolar até embaixo. */}
+                    {manualRows.length > 0 && (
+                      <div className="mb-3 pb-3 border-b border-dashed border-[#0F1E3C]/10 space-y-1.5 max-h-[260px] overflow-y-auto">
+                        {cartGroups.kitGroups.map(([groupId, rows]) => {
+                          const qty = rows[0]?.qty ?? 1
+                          return (
+                            <div key={groupId} className="bg-[#4361EE]/[0.04] border border-[#4361EE]/15 rounded-lg px-3 py-2 text-xs">
+                              <div className="flex items-center gap-1 mb-1.5">
+                                <Layers size={11} className="text-[#4361EE]" />
+                                <span className="text-[9px] font-bold uppercase tracking-wide text-[#4361EE]">Kit</span>
+                              </div>
+                              <div className="space-y-1 mb-2">
+                                {rows.map(r => {
+                                  const low = r.stock - qty < 0
+                                  return (
+                                    <div key={r.id} className="flex items-center gap-2 min-w-0">
+                                      <span className={`inline-block w-[6px] h-[6px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} />
+                                      <span className="text-[#0F1E3C]/70 truncate">{r.productName} · {r.color} · {r.size}</span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-[#0F1E3C]/40">quantos kits</span>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <input type="number" min={1} value={qty} onChange={e => updateKitGroupQty(groupId, parseInt(e.target.value))}
+                                    className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
+                                  <button onClick={() => removeKitGroup(groupId)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {cartGroups.solo.map(r => {
+                          const after = r.stock - r.qty
+                          const low = after < 0
+                          return (
+                            <div key={r.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo: vai ficar negativo" : "Tem estoque"} />
+                                <span className="font-semibold text-[#0F1E3C] truncate">{r.productName} · {r.color} · {r.size}</span>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <input type="number" min={1} value={r.qty} onChange={e => updateManualQty(r.id, parseInt(e.target.value))}
+                                  className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
+                                <button onClick={() => removeManualRow(r.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {/* Seletor de produto — sempre embaixo do carrinho, posição fixa */}
                     {catalogLoading ? (
                       <p className="text-xs text-[#0F1E3C]/40">Carregando catálogo…</p>
                     ) : cartMode === "peca" ? (
@@ -698,58 +755,6 @@ export default function MarketplacePage() {
                             )}
                           </>
                         )}
-                      </div>
-                    )}
-
-                    {manualRows.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-dashed border-[#0F1E3C]/10 space-y-1.5 max-h-[220px] overflow-y-auto">
-                        {cartGroups.kitGroups.map(([groupId, rows]) => {
-                          const qty = rows[0]?.qty ?? 1
-                          return (
-                            <div key={groupId} className="bg-[#4361EE]/[0.04] border border-[#4361EE]/15 rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center gap-1 mb-1.5">
-                                <Layers size={11} className="text-[#4361EE]" />
-                                <span className="text-[9px] font-bold uppercase tracking-wide text-[#4361EE]">Kit</span>
-                              </div>
-                              <div className="space-y-1 mb-2">
-                                {rows.map(r => {
-                                  const low = r.stock - qty < 0
-                                  return (
-                                    <div key={r.id} className="flex items-center gap-2 min-w-0">
-                                      <span className={`inline-block w-[6px] h-[6px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} />
-                                      <span className="text-[#0F1E3C]/70 truncate">{r.productName} · {r.color} · {r.size}</span>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-[#0F1E3C]/40">quantos kits</span>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                  <input type="number" min={1} value={qty} onChange={e => updateKitGroupQty(groupId, parseInt(e.target.value))}
-                                    className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
-                                  <button onClick={() => removeKitGroup(groupId)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                        {cartGroups.solo.map(r => {
-                          const after = r.stock - r.qty
-                          const low = after < 0
-                          return (
-                            <div key={r.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo: vai ficar negativo" : "Tem estoque"} />
-                                <span className="font-semibold text-[#0F1E3C] truncate">{r.productName} · {r.color} · {r.size}</span>
-                              </div>
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                <input type="number" min={1} value={r.qty} onChange={e => updateManualQty(r.id, parseInt(e.target.value))}
-                                  className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
-                                <button onClick={() => removeManualRow(r.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
-                              </div>
-                            </div>
-                          )
-                        })}
                       </div>
                     )}
 
