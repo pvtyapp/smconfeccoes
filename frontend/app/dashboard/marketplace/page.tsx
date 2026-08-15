@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Printer, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X, Tag, ShoppingCart } from "lucide-react"
+import { Printer, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X, Tag, ShoppingCart, Layers } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
 import { colorSwatch } from "@/lib/colorSwatch"
 import { sizeCompare } from "@/lib/sizeOrder"
@@ -25,6 +25,12 @@ type SourceSummary = { pedidos: number | null; totalItens: number | null } | nul
 // Prefixo do SKU → tipo de peça (texto livre) — só separa cor+tamanho igual
 // que são peças diferentes (moletom vs camiseta), não é matching de produto.
 type SkuPrefix = { id: number; prefix: string; tipo: string; createdAt: string }
+
+// Modelo de kit — só guarda quais produtos compõem (ex: Camisetas Infantil +
+// Bermuda Infantil Moletinho). Cor/tamanho são resolvidos contra o catálogo
+// de verdade na hora de montar o carrinho, nunca fixados aqui.
+type KitTemplateItem = { templateId: number; productId: string; productName: string }
+type KitTemplate = { id: number; nome: string; createdAt: string; items: KitTemplateItem[] }
 
 // "Lançar manual" — cada linha já é uma escolha real de produto/cor/tamanho,
 // vira baixa de estoque de verdade ao confirmar.
@@ -66,6 +72,11 @@ export default function MarketplacePage() {
   }, [])
   useEffect(() => { loadCatalog() }, [loadCatalog])
   const productNames = useMemo(() => [...new Set(catalog.map(c => c.productName))].sort(), [catalog])
+  const productList = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of catalog) map.set(c.productId, c.productName)
+    return [...map.entries()].map(([productId, productName]) => ({ productId, productName })).sort((a, b) => a.productName.localeCompare(b.productName))
+  }, [catalog])
 
   // ── "Ler picklist" — extração + agrupamento, sem gravar nada ──
   const [processing, setProcessing] = useState(false)
@@ -117,6 +128,42 @@ export default function MarketplacePage() {
   async function deletePrefix(id: number) {
     setPrefixes(prev => prev.filter(p => p.id !== id))
     await fetch(`/api/marketplace/prefixes/${id}`, { method: "DELETE" })
+  }
+
+  // ── Modelos de kit (nome + produtos que compõem) ──
+  const [kitTemplateOpen, setKitTemplateOpen] = useState(false)
+  const [kitTemplates, setKitTemplates] = useState<KitTemplate[]>([])
+  const [kitTemplateLoading, setKitTemplateLoading] = useState(false)
+  const [newKitNome, setNewKitNome] = useState("")
+  const [newKitProductIds, setNewKitProductIds] = useState<Set<string>>(new Set())
+
+  async function loadKitTemplates() {
+    setKitTemplateLoading(true)
+    try {
+      const res = await fetch("/api/marketplace/kit-templates")
+      if (res.ok) setKitTemplates(await res.json())
+    } finally { setKitTemplateLoading(false) }
+  }
+  useEffect(() => { loadKitTemplates() }, [])
+  function openKitTemplateModal() { setKitTemplateOpen(true); loadKitTemplates() }
+  function toggleNewKitProduct(productId: string) {
+    setNewKitProductIds(prev => {
+      const next = new Set(prev)
+      if (next.has(productId)) next.delete(productId); else next.add(productId)
+      return next
+    })
+  }
+  async function addKitTemplate() {
+    if (!newKitNome.trim() || newKitProductIds.size < 2) return
+    const res = await fetch("/api/marketplace/kit-templates", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome: newKitNome, productIds: [...newKitProductIds] }),
+    })
+    if (res.ok) { setNewKitNome(""); setNewKitProductIds(new Set()); loadKitTemplates() }
+  }
+  async function deleteKitTemplate(id: number) {
+    setKitTemplates(prev => prev.filter(t => t.id !== id))
+    await fetch(`/api/marketplace/kit-templates/${id}`, { method: "DELETE" })
   }
 
   async function runParse(payload: FormData) {
@@ -208,6 +255,47 @@ export default function MarketplacePage() {
     if (inCart) return `${base} border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]`
     return `${base} border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#4361EE]/6`
   }
+  // ── Sub-aba "Kit" do carrinho — escolhe modelo + tamanho, cor só aparece
+  // pra peça que tem mais de 1 cor no catálogo (a Bermuda, por ex, resolve
+  // sozinha porque só existe em Preto). "Adicionar kit" solta cada peça
+  // resolvida no carrinho de uma vez, reaproveitando addToCart. ──────────
+  const [cartMode, setCartMode] = useState<"peca" | "kit">("peca")
+  const [kitTemplateId, setKitTemplateId] = useState<number | null>(null)
+  const [kitSize, setKitSize] = useState("")
+  const [kitColors, setKitColors] = useState<Record<string, string>>({})
+
+  const selectedKitTemplate = kitTemplates.find(t => t.id === kitTemplateId) ?? kitTemplates[0] ?? null
+
+  const kitSizeOptions = useMemo(() => {
+    if (!selectedKitTemplate) return []
+    const sizeSets = selectedKitTemplate.items.map(it => new Set(catalog.filter(c => c.productId === it.productId).map(c => c.size)))
+    if (sizeSets.length === 0) return []
+    const [first, ...rest] = sizeSets
+    return [...first].filter(s => rest.every(set => set.has(s))).sort(sizeCompare)
+  }, [selectedKitTemplate, catalog])
+  const effKitSize = kitSizeOptions.includes(kitSize) ? kitSize : (kitSizeOptions[0] ?? "")
+
+  const kitComponents = useMemo(() => {
+    if (!selectedKitTemplate || !effKitSize) return []
+    return selectedKitTemplate.items.map(it => {
+      const variants = catalog.filter(c => c.productId === it.productId && c.size === effKitSize)
+      const colors = [...new Set(variants.map(v => v.color))]
+      const resolvedColor = colors.length === 1 ? colors[0] : (kitColors[it.productId] ?? null)
+      const variant = resolvedColor ? variants.find(v => v.color === resolvedColor) ?? null : null
+      return { productId: it.productId, productName: it.productName, colors, resolvedColor, variant }
+    })
+  }, [selectedKitTemplate, effKitSize, catalog, kitColors])
+
+  const kitReady = kitComponents.length > 0 && kitComponents.every(c => c.variant != null)
+
+  function setKitColor(productId: string, color: string) {
+    setKitColors(prev => ({ ...prev, [productId]: color }))
+  }
+  function addKitToCart() {
+    if (!kitReady) return
+    for (const c of kitComponents) if (c.variant) addToCart(c.variant)
+  }
+
   function updateManualQty(id: string, qty: number) {
     setManualRows(prev => prev.map(r => r.id === id ? { ...r, qty: Math.max(1, qty || 1) } : r))
   }
@@ -467,9 +555,19 @@ export default function MarketplacePage() {
 
                 {!result ? (
                   <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex rounded-lg border border-[#0F1E3C]/10 overflow-hidden text-xs font-bold">
+                        <button onClick={() => setCartMode("peca")} className={`px-3 py-1.5 transition-colors ${cartMode === "peca" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Peça a peça</button>
+                        <button onClick={() => setCartMode("kit")} className={`px-3 py-1.5 transition-colors ${cartMode === "kit" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Kit</button>
+                      </div>
+                      <button onClick={openKitTemplateModal} className="flex items-center gap-1.5 text-[11px] font-bold text-[#0F1E3C]/45 hover:text-[#4361EE] border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-lg px-2.5 py-1.5 transition-colors">
+                        <Layers size={12} /> Modelos de kit
+                      </button>
+                    </div>
+
                     {catalogLoading ? (
                       <p className="text-xs text-[#0F1E3C]/40">Carregando catálogo…</p>
-                    ) : (
+                    ) : cartMode === "peca" ? (
                       <>
                         <div className="flex flex-wrap gap-1.5 mb-3">
                           {productNames.map(n => (
@@ -509,6 +607,71 @@ export default function MarketplacePage() {
                           ))}
                         </div>
                       </>
+                    ) : kitTemplates.length === 0 ? (
+                      <p className="text-xs text-[#0F1E3C]/40 py-3">Nenhum modelo de kit cadastrado ainda. Clica em "Modelos de kit" pra criar um.</p>
+                    ) : (
+                      <div>
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {kitTemplates.map(t => (
+                            <button key={t.id} type="button" onClick={() => { setKitTemplateId(t.id); setKitColors({}) }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                                t.id === (selectedKitTemplate?.id ?? -1) ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                              }`}>
+                              {t.nome}
+                            </button>
+                          ))}
+                        </div>
+
+                        {selectedKitTemplate && (
+                          <>
+                            {kitSizeOptions.length === 0 ? (
+                              <p className="text-xs text-red-500 py-2">Esse kit não tem nenhum tamanho em comum entre as peças no catálogo.</p>
+                            ) : (
+                              <>
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
+                                <div className="flex flex-wrap gap-1.5 mb-3">
+                                  {kitSizeOptions.map(s => (
+                                    <button key={s} type="button" onClick={() => { setKitSize(s); setKitColors({}) }}
+                                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                                        s === effKitSize ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                                      }`}>
+                                      {s}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="space-y-3">
+                                  {kitComponents.map(c => (
+                                    <div key={c.productId}>
+                                      <p className="text-[11px] font-bold text-[#0F1E3C] mb-1">{c.productName}</p>
+                                      {c.colors.length <= 1 ? (
+                                        <p className="text-[11px] text-[#0F1E3C]/40">automático: {c.colors[0] ?? "sem estoque nesse tamanho"}</p>
+                                      ) : (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {c.colors.map(color => (
+                                            <button key={color} type="button" onClick={() => setKitColor(c.productId, color)}
+                                              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold transition-colors ${
+                                                color === c.resolvedColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+                                              }`}>
+                                              <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                                              {color}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <button onClick={addKitToCart} disabled={!kitReady}
+                                  className="w-full mt-3 py-2 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold">
+                                  Adicionar kit ao carrinho
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
                     )}
 
                     {manualRows.length > 0 && (
@@ -704,6 +867,57 @@ export default function MarketplacePage() {
                 <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: MOL_" className={inputCls} />
                 <input value={newTipo} onChange={e => setNewTipo(e.target.value)} placeholder="Ex: Moletom" className={inputCls} />
                 <button onClick={addPrefix} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de modelos de kit — nome + produtos que compõem, cor/tamanho vêm do catálogo na hora de usar */}
+      {kitTemplateOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setKitTemplateOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
+              <div>
+                <h2 className="font-bold text-[#0F1E3C]">Modelos de kit</h2>
+                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Nome do kit + quais produtos compõem ele. Cor e tamanho de cada peça vêm do catálogo na hora de montar o carrinho.</p>
+              </div>
+              <button onClick={() => setKitTemplateOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto">
+              {kitTemplateLoading ? (
+                <p className="text-xs text-[#0F1E3C]/40">Carregando…</p>
+              ) : kitTemplates.length === 0 ? (
+                <p className="text-xs text-[#0F1E3C]/40 text-center py-4">Nenhum modelo cadastrado ainda.</p>
+              ) : (
+                <div className="space-y-1.5 mb-4">
+                  {kitTemplates.map(t => (
+                    <div key={t.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                      <div>
+                        <p className="font-bold text-[#0F1E3C]">{t.nome}</p>
+                        <p className="text-[#0F1E3C]/45 mt-0.5">{t.items.map(i => i.productName).join(" + ")}</p>
+                      </div>
+                      <button onClick={() => deleteKitTemplate(t.id)} className="text-[#0F1E3C]/30 hover:text-red-500 flex-shrink-0"><Trash2 size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="pt-3 border-t border-dashed border-[#0F1E3C]/10 space-y-2">
+                <input value={newKitNome} onChange={e => setNewKitNome(e.target.value)} placeholder="Ex: Kit Infantil" className={inputCls} />
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos do kit (marca 2 ou mais)</p>
+                <div className="space-y-1 max-h-[160px] overflow-y-auto">
+                  {productList.map(p => (
+                    <label key={p.productId} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg hover:bg-[#F9FAFB] cursor-pointer">
+                      <input type="checkbox" checked={newKitProductIds.has(p.productId)} onChange={() => toggleNewKitProduct(p.productId)}
+                        className="w-3.5 h-3.5 rounded accent-[#4361EE]" />
+                      <span className="text-[#0F1E3C]">{p.productName}</span>
+                    </label>
+                  ))}
+                </div>
+                <button onClick={addKitTemplate} disabled={!newKitNome.trim() || newKitProductIds.size < 2}
+                  className="w-full bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold rounded-xl px-3 py-2">
+                  Salvar modelo ({newKitProductIds.size} produto{newKitProductIds.size === 1 ? "" : "s"})
+                </button>
               </div>
             </div>
           </div>
