@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Printer, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X } from "lucide-react"
+import { Printer, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X, Tag, ShoppingCart } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
 import { colorSwatch } from "@/lib/colorSwatch"
 import { sizeCompare } from "@/lib/sizeOrder"
@@ -80,6 +80,16 @@ export default function MarketplacePage() {
   const [sourceSummary, setSourceSummary] = useState<SourceSummary>(null)
   const [readFilename, setReadFilename] = useState("")
   const [showBlocksPrint, setShowBlocksPrint] = useState(false)
+  // Marcar "já separei essa" — só visual, ajuda a não se perder na lista
+  // enquanto monta o carrinho ao lado. Não é salvo, zera numa leitura nova.
+  const [checkedGroups, setCheckedGroups] = useState<Set<string>>(new Set())
+  function toggleChecked(key: string) {
+    setCheckedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }
 
   // ── Prefixos de SKU (tipo de peça) ──
   const [prefixOpen, setPrefixOpen] = useState(false)
@@ -115,7 +125,7 @@ export default function MarketplacePage() {
       const res = await fetch("/api/marketplace/parse", { method: "POST", body: payload })
       const data = await res.json()
       if (!res.ok) { setUploadError(data.error ?? "Erro ao analisar"); return }
-      setGroups(data.groups); setSourceSummary(data.sourceSummary ?? null); setReadFilename(data.filename ?? "")
+      setGroups(data.groups); setSourceSummary(data.sourceSummary ?? null); setReadFilename(data.filename ?? ""); setCheckedGroups(new Set())
     } catch {
       setUploadError("Falha de rede ao enviar o arquivo")
     } finally {
@@ -134,7 +144,7 @@ export default function MarketplacePage() {
     runParse(form)
   }
   function resetRead() {
-    setGroups(null); setSourceSummary(null); setReadFilename(""); setUploadError("")
+    setGroups(null); setSourceSummary(null); setReadFilename(""); setUploadError(""); setCheckedGroups(new Set())
     setPastedText(""); setShowPaste(false)
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
@@ -306,18 +316,18 @@ export default function MarketplacePage() {
   }
 
   return (
-    <div className="max-w-4xl space-y-5">
+    <div className="max-w-6xl space-y-6">
 
       {/* Header */}
       <div>
         <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Separação · Marketplace</h1>
         <p className="text-sm text-[#0F1E3C]/45 mt-0.5 max-w-2xl">
-          Lê o picklist do Shopee/ML (CSV, TXT ou PDF), organiza por produto e imprime — sem mexer no estoque. Pra baixar de verdade, usa "Lançar manual".
+          Lê o picklist e organiza por cor e tamanho na referência. Monta o carrinho ao lado pra descontar o estoque de verdade.
         </p>
       </div>
 
       {/* Tabs principais */}
-      <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-sm font-semibold bg-white w-fit">
+      <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-sm font-semibold bg-white w-fit shadow-sm">
         <button onClick={() => setTab("separar")}
           className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "separar" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
           <PackageSearch size={14} /> Separar
@@ -329,14 +339,16 @@ export default function MarketplacePage() {
       </div>
 
       {tab === "separar" && (
-        <div className="grid gap-4 md:grid-cols-2 items-start">
+        <div className="grid gap-5 md:grid-cols-2 items-start">
 
           {/* ── Coluna esquerda: referência (leitura, sem estoque) ── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
             <div className="p-5">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-bold text-[#0F1E3C]">Referência</h2>
-                <button onClick={openPrefixModal} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#4361EE]">Prefixos de SKU</button>
+                <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-1.5"><PackageSearch size={15} className="text-[#4361EE]" /> Referência</h2>
+                <button onClick={openPrefixModal} className="flex items-center gap-1.5 text-[11px] font-bold text-[#0F1E3C]/45 hover:text-[#4361EE] border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-lg px-2.5 py-1.5 transition-colors">
+                  <Tag size={12} /> Prefixos de SKU
+                </button>
               </div>
 
               {!groups ? (
@@ -361,7 +373,7 @@ export default function MarketplacePage() {
 
                       <div className="text-center mt-3">
                         <button onClick={() => setShowPaste(v => !v)} className="text-xs font-bold text-[#4361EE] underline">
-                          {showPaste ? "Fechar" : "Não tenho um arquivo — colar o texto"}
+                          {showPaste ? "Fechar" : "Não tenho um arquivo: colar o texto"}
                         </button>
                       </div>
                       {showPaste && (
@@ -390,7 +402,7 @@ export default function MarketplacePage() {
                           O arquivo diz:{sourceSummary.pedidos != null ? ` ${sourceSummary.pedidos} pedidos` : ""}{sourceSummary.totalItens != null ? `, ${sourceSummary.totalItens} itens no total` : ""}
                         </p>
                       )}
-                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{groupsTotals.combinacoes} combinações, {groupsTotals.pecas} peças pra separar</p>
+                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{groupsTotals.combinacoes} itens pra localizar · {groupsTotals.pecas} peças no total</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => { setShowBlocksPrint(true); printWhenReady() }} className="flex items-center gap-1.5 bg-[#4361EE] text-white text-xs font-bold px-3 py-2 rounded-xl">
@@ -407,18 +419,30 @@ export default function MarketplacePage() {
                       <div key={section} className="mb-3">
                         <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">{section === "kit" ? "Kits" : "Peças avulsas"}</p>
                         <div className="space-y-1">
-                          {items.map((g, i) => (
-                            <div key={i} className="bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold text-[#0F1E3C]">{g.tipo ? `${g.tipo} · ` : ""}{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}</span>
-                                <div className="flex items-center gap-2">
-                                  {g.anuncios > 1 && <span className="text-[10px] text-[#0F1E3C]/35">{g.anuncios} anúncios</span>}
-                                  <span className="font-bold text-[#0F1E3C] tabular-nums">× {g.qty}</span>
-                                </div>
+                          {items.map((g, i) => {
+                            const key = `${g.isKit}|${g.tipo}|${g.cor}|${g.tamanho}|${i}`
+                            const done = checkedGroups.has(key)
+                            return (
+                              <div key={key} className={`rounded-lg px-3 py-2 text-xs transition-colors ${done ? "bg-transparent" : "bg-[#F9FAFB]"}`}>
+                                <label className="flex items-center gap-2.5 cursor-pointer">
+                                  <input type="checkbox" checked={done} onChange={() => toggleChecked(key)}
+                                    className="w-3.5 h-3.5 rounded accent-[#4361EE] flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between">
+                                      <span className={`font-semibold ${done ? "text-[#0F1E3C]/30 line-through" : "text-[#0F1E3C]"}`}>
+                                        {g.tipo ? `${g.tipo} · ` : ""}{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}
+                                      </span>
+                                      <div className="flex items-center gap-2 flex-shrink-0">
+                                        {g.anuncios > 1 && <span className="text-[10px] text-[#0F1E3C]/35">{g.anuncios} anúncios</span>}
+                                        <span className={`font-bold tabular-nums ${done ? "text-[#0F1E3C]/30" : "text-[#0F1E3C]"}`}>× {g.qty}</span>
+                                      </div>
+                                    </div>
+                                    {kitNote(g) && !done && <p className="text-[10px] text-[#4361EE]/70 mt-0.5">{kitNote(g)}</p>}
+                                  </div>
+                                </label>
                               </div>
-                              {kitNote(g) && <p className="text-[10px] text-[#4361EE]/70 mt-0.5">{kitNote(g)}</p>}
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     )
@@ -433,7 +457,7 @@ export default function MarketplacePage() {
             <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
               <div className="p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-bold text-[#0F1E3C]">Carrinho — baixa de estoque</h2>
+                  <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-1.5"><ShoppingCart size={15} className="text-[#4361EE]" /> Carrinho</h2>
                   {!result && (
                     <select value={origin} onChange={e => setOrigin(e.target.value as Origin)} className={`${inputCls} !w-auto text-xs font-semibold`}>
                       {(Object.keys(ORIGIN_LABEL) as Origin[]).map(o => <option key={o} value={o}>{ORIGIN_LABEL[o]}</option>)}
@@ -495,7 +519,7 @@ export default function MarketplacePage() {
                           return (
                             <div key={r.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo — vai ficar negativo" : "Tem estoque"} />
+                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo: vai ficar negativo" : "Tem estoque"} />
                                 <span className="font-semibold text-[#0F1E3C] truncate">{r.productName} · {r.color} · {r.size}</span>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
@@ -657,7 +681,7 @@ export default function MarketplacePage() {
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
               <div>
                 <h2 className="font-bold text-[#0F1E3C]">Prefixos de SKU</h2>
-                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Prefixo do SKU → tipo de peça (texto livre). Só serve pra separar itens de cor/tamanho igual mas peça diferente na lista de separação — não mexe em estoque.</p>
+                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Prefixo do SKU → tipo de peça (texto livre). Só separa itens de cor/tamanho igual mas peça diferente na lista: não mexe em estoque.</p>
               </div>
               <button onClick={() => setPrefixOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
             </div>
