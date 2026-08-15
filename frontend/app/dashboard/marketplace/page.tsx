@@ -37,6 +37,7 @@ type KitTemplate = { id: number; nome: string; createdAt: string; items: KitTemp
 type ManualRow = {
   id: string; variantId: string; productName: string; color: string; size: string
   sku: string; stock: number; qty: number
+  kitGroupId?: string // peças que vieram do mesmo clique em "Adicionar kit" — editam quantidade juntas
 }
 
 type HistoryRow = {
@@ -234,13 +235,16 @@ export default function MarketplacePage() {
     return groupsArr
   }, [catalog, effCartProduct])
 
-  function addToCart(variant: CatalogVariant) {
+  // `kitGroupId` mantém peça avulsa (sem grupo) e peça de kit sempre em linhas
+  // separadas, mesmo que seja a mesma variante — clicar de novo no mesmo kit
+  // soma na linha do grupo certo, não mistura com uma peça solta igual.
+  function addToCart(variant: CatalogVariant, kitGroupId?: string) {
     setManualRows(prev => {
-      const existing = prev.find(r => r.variantId === variant.variantId)
-      if (existing) return prev.map(r => r.variantId === variant.variantId ? { ...r, qty: r.qty + 1 } : r)
+      const existing = prev.find(r => r.variantId === variant.variantId && r.kitGroupId === kitGroupId)
+      if (existing) return prev.map(r => r === existing ? { ...r, qty: r.qty + 1 } : r)
       return [...prev, {
         id: newRowId(), variantId: variant.variantId, productName: variant.productName,
-        color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty: 1,
+        color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty: 1, kitGroupId,
       }]
     })
   }
@@ -292,8 +296,11 @@ export default function MarketplacePage() {
     setKitColors(prev => ({ ...prev, [productId]: color }))
   }
   function addKitToCart() {
-    if (!kitReady) return
-    for (const c of kitComponents) if (c.variant) addToCart(c.variant)
+    if (!kitReady || !selectedKitTemplate) return
+    // Determinístico (template+tamanho+cores), não aleatório — clicar de novo
+    // no mesmo kit incrementa o grupo já existente em vez de duplicar linha.
+    const groupId = `kit-${selectedKitTemplate.id}-${effKitSize}-${kitComponents.map(c => c.resolvedColor).join("-")}`
+    for (const c of kitComponents) if (c.variant) addToCart(c.variant, groupId)
   }
 
   function updateManualQty(id: string, qty: number) {
@@ -302,6 +309,26 @@ export default function MarketplacePage() {
   function removeManualRow(id: string) {
     setManualRows(prev => prev.filter(r => r.id !== id))
   }
+  // Peças do mesmo grupo de kit editam quantidade juntas — sempre a mesma
+  // proporção (1 camiseta pra 1 bermuda), então 1 número só controla as duas.
+  function updateKitGroupQty(groupId: string, qty: number) {
+    const q = Math.max(1, qty || 1)
+    setManualRows(prev => prev.map(r => r.kitGroupId === groupId ? { ...r, qty: q } : r))
+  }
+  function removeKitGroup(groupId: string) {
+    setManualRows(prev => prev.filter(r => r.kitGroupId !== groupId))
+  }
+  const cartGroups = useMemo(() => {
+    const byKit = new Map<string, ManualRow[]>()
+    const solo: ManualRow[] = []
+    for (const r of manualRows) {
+      if (r.kitGroupId) {
+        if (!byKit.has(r.kitGroupId)) byKit.set(r.kitGroupId, [])
+        byKit.get(r.kitGroupId)!.push(r)
+      } else solo.push(r)
+    }
+    return { kitGroups: [...byKit.entries()], solo }
+  }, [manualRows])
 
   const manualTotals = useMemo(() => ({
     produtos: manualRows.length,
@@ -675,8 +702,38 @@ export default function MarketplacePage() {
                     )}
 
                     {manualRows.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-dashed border-[#0F1E3C]/10 space-y-1.5 max-h-[200px] overflow-y-auto">
-                        {manualRows.map(r => {
+                      <div className="mt-3 pt-3 border-t border-dashed border-[#0F1E3C]/10 space-y-1.5 max-h-[220px] overflow-y-auto">
+                        {cartGroups.kitGroups.map(([groupId, rows]) => {
+                          const qty = rows[0]?.qty ?? 1
+                          return (
+                            <div key={groupId} className="bg-[#4361EE]/[0.04] border border-[#4361EE]/15 rounded-lg px-3 py-2 text-xs">
+                              <div className="flex items-center gap-1 mb-1.5">
+                                <Layers size={11} className="text-[#4361EE]" />
+                                <span className="text-[9px] font-bold uppercase tracking-wide text-[#4361EE]">Kit</span>
+                              </div>
+                              <div className="space-y-1 mb-2">
+                                {rows.map(r => {
+                                  const low = r.stock - qty < 0
+                                  return (
+                                    <div key={r.id} className="flex items-center gap-2 min-w-0">
+                                      <span className={`inline-block w-[6px] h-[6px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} />
+                                      <span className="text-[#0F1E3C]/70 truncate">{r.productName} · {r.color} · {r.size}</span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-[#0F1E3C]/40">quantos kits</span>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <input type="number" min={1} value={qty} onChange={e => updateKitGroupQty(groupId, parseInt(e.target.value))}
+                                    className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
+                                  <button onClick={() => removeKitGroup(groupId)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {cartGroups.solo.map(r => {
                           const after = r.stock - r.qty
                           const low = after < 0
                           return (
