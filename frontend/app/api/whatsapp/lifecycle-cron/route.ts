@@ -33,7 +33,11 @@ export async function GET(req: Request) {
   const s: Record<string, string> = {}
   for (const row of settingsRes.rows) s[row.key] = row.value
 
-  const lifecycleActive = s.lifecycle_ativo !== "false"
+  // Disjuntor geral tem prioridade sobre lifecycle_ativo — pausado, nem os
+  // contadores de sequência (novo_seq/ausente_seq) avançam, senão o contato
+  // "queima" a etapa sem nunca ter recebido a mensagem quando religar.
+  const automacaoPausada = s.automacao_pausada === "true"
+  const lifecycleActive = s.lifecycle_ativo !== "false" && !automacaoPausada
 
   function t(template: string, name: string) {
     return (template || "").replace(/\{nome\}/gi, name.split(" ")[0])

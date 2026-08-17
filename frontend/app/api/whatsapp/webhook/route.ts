@@ -11,6 +11,7 @@ import { sortSizes } from "@/lib/sizeOrder"
 import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
 import { getProvider } from "@/lib/whatsapp/provider"
+import { isAutomationPaused } from "@/lib/whatsapp/automationGate"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -581,9 +582,14 @@ function replyWA(jid: string, text: string): void {
 // resposta pro cliente é que some.
 async function replyAndSave(contactId: number, jid: string, text: string): Promise<void> {
   const { rows } = await pool.query(
-    `SELECT value FROM app_settings WHERE key = 'chatbot_ativo'`
-  ).catch(() => ({ rows: [] as { value: string }[] }))
-  if (rows[0]?.value === "false") return
+    `SELECT key, value FROM app_settings WHERE key IN ('chatbot_ativo', 'automacao_pausada')`
+  ).catch(() => ({ rows: [] as { key: string; value: string }[] }))
+  const flags: Record<string, string> = {}
+  for (const r of rows) flags[r.key] = r.value
+  // Disjuntor geral tem prioridade sobre chatbot_ativo — os dois calam a
+  // resposta reativa, mas o disjuntor é o "sem exceção" que também cala
+  // tudo mais (kanban, cobrança, lifecycle) via sendAndSave().
+  if (flags.chatbot_ativo === "false" || flags.automacao_pausada === "true") return
 
   // Silenciado manual ou pausa automática (operador respondeu direto pelo
   // celular) — fica mudo, mas a captura de pedido (chamada antes desse ponto)
@@ -1631,6 +1637,10 @@ async function handleMedia(
   // mesmo tempo e criar 2 pedidos DTF duplicados, ou mandar "Recebi seu arquivo!" 2x.
   let ackSent = false
   let ackRowId: number | null = null
+  // Checado ANTES da trava — decide só se o ack (mensagem) é reservado/mandado;
+  // a captura do pedido DTF virgem abaixo roda sempre, disjuntor ligado ou não
+  // (mesmo princípio de captura contínua usado no resto do sistema).
+  const automacaoPausada = await isAutomationPaused()
   const cliMedia = await pool.connect()
   try {
     await cliMedia.query("BEGIN")
@@ -1654,19 +1664,21 @@ async function handleMedia(
     // Dedup: cliente pode mandar vários arquivos ao mesmo tempo — não repete a mensagem.
     // Marca a linha em wa_messages dentro da mesma trava, antes de mandar de verdade —
     // assim uma segunda chamada concorrente já enxerga o "ack" reservado, sem brecha.
-    const { rows: recentAck } = await cliMedia.query(
-      `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
-       AND content = 'Recebi seu arquivo! Já vou te atender. 😊'
-       AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
-      [contactId]
-    )
-    ackSent = recentAck.length === 0
-    if (ackSent) {
-      const { rows: ackRow } = await cliMedia.query(
-        `INSERT INTO wa_messages (contact_id, direction, content, created_at) VALUES ($1, 'out', $2, NOW()) RETURNING id`,
-        [contactId, "Recebi seu arquivo! Já vou te atender. 😊"]
+    if (!automacaoPausada) {
+      const { rows: recentAck } = await cliMedia.query(
+        `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out'
+         AND content = 'Recebi seu arquivo! Já vou te atender. 😊'
+         AND created_at > NOW() - INTERVAL '30 seconds' LIMIT 1`,
+        [contactId]
       )
-      ackRowId = ackRow[0]?.id ?? null
+      ackSent = recentAck.length === 0
+      if (ackSent) {
+        const { rows: ackRow } = await cliMedia.query(
+          `INSERT INTO wa_messages (contact_id, direction, content, created_at) VALUES ($1, 'out', $2, NOW()) RETURNING id`,
+          [contactId, "Recebi seu arquivo! Já vou te atender. 😊"]
+        )
+        ackRowId = ackRow[0]?.id ?? null
+      }
     }
 
     await cliMedia.query("COMMIT")

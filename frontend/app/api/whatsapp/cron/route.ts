@@ -68,10 +68,16 @@ export async function GET(req: Request) {
   for (const row of settingsRes.rows) s[row.key] = row.value
 
   const today = todayBR()
+  // Disjuntor geral: além de sendAndSave() ficar mudo, essas seções também
+  // precisam nem tentar rodar — sem isso, last_reminder_at e o avanço de fila
+  // de reserva (9b) marcariam "já avisei" mesmo sem a mensagem ter saído, e o
+  // cliente perderia o aviso pra sempre quando o disjuntor for religado.
+  const automacaoPausada = s.automacao_pausada === "true"
+
   // Cobrança de cliente (seções 7, 8, 8b) só dispara em dia útil (seg-sex).
   // Pedido vencido no fim de semana não fica sem aviso: cai pra seção 8b
   // (due_date < hoje) assim que o cron rodar na segunda-feira seguinte.
-  const cobrancaHabilitada = !isWeekendBR()
+  const cobrancaHabilitada = !isWeekendBR() && !automacaoPausada
 
   // Nota: lifecycle (novo D2, ausente D15/30/45 + transições pra frio)
   // migrou pro /api/whatsapp/lifecycle-cron (roda de hora em hora, 08h-20h)
@@ -208,7 +214,10 @@ export async function GET(req: Request) {
   } catch { results.errors++ }
 
   // ── 9b. Expira reservas sem resposta (>= reserva_expiry_hours) ───────────────
-  try {
+  // Fora do bloco cobrancaHabilitada (não depende de dia útil) — precisa do
+  // próprio guard: sem isso, a fila avançaria (status='notified') mesmo com
+  // o disjuntor pausado, "queimando" a vez do próximo da fila sem avisar ninguém.
+  try { if (!automacaoPausada) {
     const expiryHours = Number(s.reserva_expiry_hours ?? 4)
 
     // Expira reservas vencidas
@@ -258,7 +267,7 @@ export async function GET(req: Request) {
         ).catch(() => {})
       }
     }
-  } catch (e) { console.error("[cron] reserva expiry falhou:", e instanceof Error ? e.message : e); results.errors++ }
+  } } catch (e) { console.error("[cron] reserva expiry falhou:", e instanceof Error ? e.message : e); results.errors++ }
 
   // ── 10. Mídia TTL 48h + evicção 500MB + delete mensagens > 14 dias ────────────
   try {

@@ -1,11 +1,16 @@
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { isAutomationPaused } from "@/lib/whatsapp/automationGate"
 
 // Envia WhatsApp E salva em wa_messages — usado por toda rota que dispara mensagem
 // automática pro cliente (pagamento confirmado, status de pedido, lembrete, etc).
 // Antes cada rota reimplementava isso (ou esquecia de salvar): a mensagem chegava
 // de verdade pro cliente mas ficava invisível na conversa aqui dentro.
 export async function sendAndSave(contactId: number, jid: string, text: string): Promise<void> {
+  // Disjuntor geral ligado: mesmo padrão do chatbot_ativo em replyAndSave()
+  // (webhook) — nada é enviado nem salvo, fica mudo de verdade.
+  if (await isAutomationPaused()) return
+
   let msgId: string | null = null
   let ok = true
   try {

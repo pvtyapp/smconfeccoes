@@ -362,6 +362,12 @@ export default function PedidosPage() {
   const [resetting,         setResetting]          = useState(false)
   const [mergingDupes,      setMergingDupes]       = useState(false)
 
+  // Disjuntor geral — desliga TODA mensagem automática (kanban, cobrança,
+  // lifecycle, reserva, ack de arquivo, resposta reativa), sem exceção.
+  // Só o envio manual pelo chat continua funcionando com ele pausado.
+  const [automacaoPausada,  setAutomacaoPausada]  = useState(false)
+  const [togglingAutomacao, setTogglingAutomacao] = useState(false)
+
   // Per-service toggles
   const [dtfAtivo,          setDtfAtivo]           = useState(true)
   const [togglingDtf,       setTogglingDtf]        = useState(false)
@@ -408,6 +414,7 @@ export default function PedidosPage() {
       .then((s: Record<string, string>) => {
         if (s.chatbot_ativo           !== undefined) setChatbotAtivo(s.chatbot_ativo         !== "false")
         if (s.dtf_ativo               !== undefined) setDtfAtivo(s.dtf_ativo                !== "false")
+        if (s.automacao_pausada      !== undefined) setAutomacaoPausada(s.automacao_pausada === "true")
         if (s.produto_horario_dias)   setProdDias(s.produto_horario_dias.split(",").map(Number))
         if (s.produto_horario_inicio) setProdInicio(s.produto_horario_inicio)
         if (s.produto_horario_fim)    setProdFim(s.produto_horario_fim)
@@ -446,6 +453,19 @@ export default function PedidosPage() {
       body: JSON.stringify({ chatbot_ativo: String(next) }),
     }).catch(() => setChatbotAtivo(!next))
     setTogglingBot(false)
+  }
+
+  async function toggleAutomacaoPausada() {
+    const next = !automacaoPausada
+    if (next && !confirm("Isolar o bot? Nenhuma mensagem automática sai mais (kanban, cobrança, lifecycle, reservas, ack de arquivo) — só o que você mandar na mão no chat continua indo.")) return
+    setTogglingAutomacao(true)
+    setAutomacaoPausada(next)
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ automacao_pausada: String(next) }),
+    }).catch(() => setAutomacaoPausada(!next))
+    setTogglingAutomacao(false)
   }
 
   async function toggleDtf() {
@@ -1938,6 +1958,15 @@ export default function PedidosPage() {
           </div>
 
           <div className="flex items-center gap-3">
+
+            {/* Disjuntor geral — isola TODA mensagem automática, sem exceção */}
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-bold" style={{ color: automacaoPausada ? "#DC2626" : "#0F1E3C80" }}>Isolar bot</p>
+              <Tip text="Disjuntor geral: desliga TODA mensagem automática sem exceção — kanban (pedido pronto/entregue), cobrança, lifecycle, reserva disponível e o ack de 'recebi seu arquivo'. Só o que você digitar e mandar aqui no chat continua saindo. Pedidos continuam sendo capturados normalmente por trás." />
+              <Toggle on={automacaoPausada} onChange={toggleAutomacaoPausada} disabled={togglingAutomacao} />
+            </div>
+
+            <div className="w-px h-5 bg-[#0F1E3C]/8" />
 
             {/* Toggle Chatbot */}
             <div className="flex items-center gap-1.5">
