@@ -300,6 +300,7 @@ export default function PedidosPage() {
   const convListRef      = useRef<HTMLDivElement>(null)
   const [chatContact,    setChatContact]    = useState<Conversation | null>(null)
   const [messages,       setMessages]       = useState<Message[]>([])
+  const [loadingMessages,setLoadingMessages] = useState(false)
   const [chatInput,      setChatInput]      = useState("")
   const [sendingChat,    setSendingChat]    = useState(false)
   const [chatSearch,     setChatSearch]     = useState("")
@@ -405,6 +406,9 @@ export default function PedidosPage() {
   const lastSeenId      = useRef<number>(0)
   // Ref síncrono para acessar chatContact dentro de callbacks sem stale closure
   const chatContactRef  = useRef<Conversation | null>(null)
+  // Sobe a cada troca de contato — resposta de carga que chega depois de outra troca
+  // é descartada (corrige mensagens do contato antigo aparecendo por engano no novo)
+  const chatSwitchToken = useRef(0)
 
   // ── Load global settings ───────────────────────────────────────────────────
 
@@ -634,11 +638,16 @@ export default function PedidosPage() {
   // Sync chatContactRef with state so pollMessages can access jid without stale closure
   useEffect(() => { chatContactRef.current = chatContact }, [chatContact])
 
-  // Poll conversations from DB every 3s (fast, local)
+  // Poll conversations from DB every 3s — só quando não tem chat aberto. Com um
+  // contato aberto, pollMessages (2s) já chama loadConvs a cada rodada; manter os
+  // dois rodando juntos duplicava a mesma chamada sem necessidade.
   useEffect(() => {
-    const t = setInterval(loadConvs, 3_000)
+    if (chatContact) return
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") loadConvs()
+    }, 3_000)
     return () => clearInterval(t)
-  }, [loadConvs])
+  }, [chatContact, loadConvs])
 
   // Reload conversations when user returns to this tab
   useEffect(() => {
@@ -692,6 +701,7 @@ export default function PedidosPage() {
     loadGroupMessages(selectedGroup.jid)
     const jid = selectedGroup.jid
     const t = setInterval(() => {
+      if (document.visibilityState !== "visible") return
       fetch(`/api/chat/thread?jid=${encodeURIComponent(jid)}&skip=0&limit=20`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
@@ -749,10 +759,15 @@ export default function PedidosPage() {
   }, [fetchMessageMedia, fetchingMedia, mediaLoaded])
 
   const loadMessages = useCallback(async (contactId: number, noSync = false) => {
+    // Snapshot do token no momento em que a carga começou — se o contato trocar de
+    // novo antes da resposta chegar, chatSwitchToken.current já vai ter subido e a
+    // gente descarta essa resposta em vez de escrever o contato errado na tela.
+    const token = chatSwitchToken.current
     try {
       const r = await fetch(`/api/chat/messages?contactId=${contactId}${noSync ? "&noSync=1" : ""}`)
       if (!r.ok) return
       const data = await r.json()
+      if (token !== chatSwitchToken.current) return
       const msgs: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
       const more: boolean   = Array.isArray(data) ? false : (data.hasMore ?? false)
       setMessages(msgs)
@@ -763,10 +778,13 @@ export default function PedidosPage() {
       if (newMax > lastSeenId.current) lastSeenId.current = newMax
 
     } finally {
-      // Libera o poll mesmo quando o load retorna vazio (contato sem histórico no DB)
-      isFirstLoad.current = false
+      if (token === chatSwitchToken.current) {
+        // Libera o poll mesmo quando o load retorna vazio (contato sem histórico no DB)
+        isFirstLoad.current = false
+        setLoadingMessages(false)
+      }
     }
-  }, [fetchMessageMedia])
+  }, [])
 
   const loadOlderMsgs = useCallback(async (contactId: number, currentOffset: number) => {
     setLoadingOlderMsgs(true)
@@ -793,9 +811,11 @@ export default function PedidosPage() {
   const pollMessages = useCallback(async (contactId: number) => {
     if (isFirstLoad.current) return
     if (lastSeenId.current === 0) return
+    const token = chatSwitchToken.current
     const r = await fetch(`/api/chat/messages?contactId=${contactId}&afterId=${lastSeenId.current}`)
     if (!r.ok) return
     const newMsgs: Message[] = await r.json()
+    if (token !== chatSwitchToken.current) return
     if (newMsgs.length === 0) return
     setMessages(prev => {
       const existingIds = new Set(prev.map(m => m.id))
@@ -838,9 +858,14 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (!chatContact) return
+    chatSwitchToken.current += 1
     latestMsgAt.current = null
     lastSeenId.current  = 0
     isFirstLoad.current = true
+    // Limpa o livro do contato anterior na hora — antes ficava mostrando a conversa
+    // velha até a resposta nova chegar (parecia mensagem do contato errado).
+    setMessages([])
+    setLoadingMessages(true)
     // Espera o sync terminar (backfill de mensagens mandadas do celular) ANTES de
     // carregar — antes rodava em paralelo e a mensagem que faltava só aparecia via
     // poll uns segundos depois, reordenando a conversa já renderizada na cara do
@@ -858,7 +883,9 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (!chatContact) return
-    const t = setInterval(() => pollMessages(chatContact.id), 2_000)
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") pollMessages(chatContact.id)
+    }, 2_000)
     return () => clearInterval(t)
   }, [chatContact, pollMessages])
 
@@ -882,9 +909,12 @@ export default function PedidosPage() {
     if (!chatContact) return
     const contactId = chatContact.id
     const t = setInterval(async () => {
+      if (document.visibilityState !== "visible") return
+      const token = chatSwitchToken.current
       const r = await fetch(`/api/chat/messages?contactId=${contactId}&noSync=1`)
       if (!r.ok) return
       const data = await r.json()
+      if (token !== chatSwitchToken.current) return
       const fresh: Message[] = Array.isArray(data) ? data : (data.messages ?? [])
       if (!fresh.length) return
       setMessages(prev => {
@@ -1484,7 +1514,11 @@ export default function PedidosPage() {
                   </button>
                 </div>
               )}
-              {messages.length === 0 ? (
+              {loadingMessages ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#8696A0", borderTopColor: "transparent" }} />
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-2" style={{ color: "#8696A0" }}>
                   <MessageCircle size={32} strokeWidth={1} />
                   <p className="text-[12px]">Nenhuma mensagem ainda.</p>
