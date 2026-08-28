@@ -1,10 +1,8 @@
 ﻿import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
-import { parseOrder } from "@/lib/ai/parseOrder"
 import { classifyAndParse } from "@/lib/ai/classifyAndParse"
 import { downloadEvolutionMedia, classifyMediaCategory, type MediaCategory } from "@/lib/whatsapp/media"
-import { matchVariants } from "@/lib/whatsapp/matchVariant"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
 import { sortSizes } from "@/lib/sizeOrder"
@@ -1804,7 +1802,7 @@ async function handleText(
           `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'novo_pedido', updated_at = NOW() WHERE id = $1`,
           [contactId]
         )
-        await createOrderDirect(jid, contactId, [text], chatbotObs, undefined, chatbotDtfEnabled, globalSettings, openOrder.id)
+        await createTriagemVirgem(jid, contactId, text, openOrder.id)
       } else {
         await pool.query(
           `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
@@ -1814,7 +1812,7 @@ async function handleText(
       return
     }
     // status === "triagem" → não retorna, a mensagem também é interpretada abaixo
-    // (createOrderDirect acha essa mesma triagem sozinho e adiciona os itens nela)
+    // (createTriagemVirgem acha essa mesma triagem sozinho e anexa a mensagem nela)
   }
 
   // ── Interpreta a mensagem: pedido, arquivo (menção) ou pergunta ─────────────
@@ -1825,14 +1823,14 @@ async function handleText(
     return
   }
 
-  const { intent, items: parsed } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
+  const { intent } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
 
   if (intent === "pedido") {
     if (!chatbotProdutoEnabled || !produtoStatus.available) {
       await replyAndSave(contactId, jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
       return
     }
-    await createOrderDirect(jid, contactId, [text], chatbotObs, parsed, chatbotDtfEnabled, globalSettings)
+    await createTriagemVirgem(jid, contactId, text)
     return
   }
 
@@ -1879,141 +1877,9 @@ async function handleText(
   }
 }
 
-async function createOrderDirect(
-  jid: string,
-  contactId: number,
-  rawMessages: string[],
-  chatbotObs: string | null = null,
-  preParsed?: import("@/lib/ai/parseOrder").ParsedItem[],
-  chatbotDtfEnabled = false,
-  globalSettings: Record<string, string> = {},
-  parentOrderId?: number
-) {
-  void chatbotDtfEnabled
-  const fullText = rawMessages.join("\n")
-
-  let parsed: import("@/lib/ai/parseOrder").ParsedItem[] = []
-  try {
-    parsed = preParsed && preParsed.length > 0
-      ? preParsed
-      : await parseOrder(fullText, chatbotObs)
-  } catch { /* parsed fica vazio, cai no fallback de triagem virgem abaixo */ }
-
-  // Item sem cor/tamanho é aceito como veio — operador completa no Gerenciador de Pedidos
-  const matched = parsed.length ? await matchVariants(parsed) : []
-
-  // Reconheceu que é pedido mas não bateu nenhum produto do catálogo — cria triagem
-  // virgem (sem itens) como alerta, igual o pedido DTF. Operador monta manualmente
-  // vendo a mensagem original (salva em notes) e a conversa aberta.
-  // Usa productRecognized (não matched): item pode ter o produto identificado
-  // mas cor/tamanho ambíguos (ex: "moletom" sem dizer qual) — nesse caso o
-  // item ainda deve entrar na triagem sem variante, não virar texto cru.
-  if (!matched.some(m => m.productRecognized)) {
-    await createTriagemVirgem(jid, contactId, fullText, parentOrderId)
-    return
-  }
-
-  const totalValue = matched.reduce((sum, m) => sum + (m.unitPrice ?? 0) * m.qty, 0)
-
-  // Seção crítica: advisory lock por contactId evita que webhooks paralelos
-  // do mesmo contato criem pedidos duplicados (race condition SELECT → INSERT)
-  let orderId = 0
-  let orderNumber = ""
-  let isNewOrder = false
-
-  const cli = await pool.connect()
-  try {
-    await cli.query("BEGIN")
-    await cli.query("SELECT pg_advisory_xact_lock($1)", [contactId])
-
-    const { rows: openTriagem } = await cli.query(
-      `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       AND created_at > NOW() - INTERVAL '2 hours' ORDER BY created_at DESC LIMIT 1`,
-      [contactId]
-    )
-
-    if (openTriagem[0]) {
-      orderId     = openTriagem[0].id as number
-      orderNumber = openTriagem[0].number as string
-      for (const item of matched) {
-        await cli.query(
-          `INSERT INTO order_items (order_id, product_name, color, size, qty, variant_id, unit_price)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [orderId, item.productName, item.color || "", item.size || "", item.qty, item.variantId, item.unitPrice]
-        )
-      }
-      await cli.query(
-        `UPDATE orders SET total_value = (
-           SELECT COALESCE(SUM(qty * COALESCE(unit_price,0)),0) FROM order_items WHERE order_id = $1
-         ) WHERE id = $1`,
-        [orderId]
-      )
-    } else {
-      isNewOrder = true
-      const numRes = await cli.query("SELECT nextval('order_number_seq') AS n")
-      const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
-      const orderRes = await cli.query(`
-        INSERT INTO orders (number, contact_id, status, total_value, source, parent_order_id)
-        VALUES ($1, $2, 'triagem', $3, 'whatsapp', $4)
-        RETURNING id, number
-      `, [number, contactId, totalValue > 0 ? totalValue : null, parentOrderId ?? null])
-      orderId     = orderRes.rows[0].id as number
-      orderNumber = orderRes.rows[0].number as string
-      for (const item of matched) {
-        await cli.query(`
-          INSERT INTO order_items (order_id, product_name, color, size, qty, variant_id, unit_price)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `, [orderId, item.productName, item.color || "", item.size || "", item.qty, item.variantId, item.unitPrice])
-      }
-      await cli.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'triagem', 'chatbot', 'Pedido registrado via WhatsApp')
-      `, [orderId])
-      await cli.query(`
-        UPDATE wa_contacts
-        SET lifecycle_state      = 'active',
-            lifecycle_updated_at = NOW(),
-            last_order_at        = NOW(),
-            ausente_seq          = 0
-        WHERE id = $1
-      `, [contactId])
-    }
-
-    await cli.query("COMMIT")
-  } catch (e) {
-    await cli.query("ROLLBACK").catch(() => {})
-    throw e
-  } finally {
-    cli.release()
-  }
-
-  if (!isNewOrder) {
-    // Mensagem já em triagem — continuação silenciosa. Operador vê tudo no Gerenciador de Pedidos.
-    await setState(contactId, "triagem", { orderId, orderNumber })
-    return
-  }
-
-  // Kanban 3 estágios: nada sai pro cliente na criação — Triagem é onde o
-  // pedido é captado/alterado em silêncio. Só fala com o cliente quando o
-  // operador clicar "Solicitar Confirmação" no dashboard.
-  await setState(contactId, "triagem", { orderId, orderNumber })
-
-  pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
-    const opJid = rows[0]?.value
-    if (opJid && opJid !== jid) {
-      const pedLines = matched.map((m, idx) => {
-        const desc = [m.productName, m.color, m.size].filter(Boolean).join(" ")
-        return `${idx + 1}. ${desc} · ${m.qty}un`
-      })
-      const totalStr = totalValue > 0 ? ` · R$ ${totalValue.toFixed(2).replace(".", ",")}` : ""
-      replyWA(opJid, `🛍️ *Novo pedido ${orderNumber}*${totalStr}\n\n${pedLines.join("\n")}`)
-    }
-  }).catch(() => {})
-}
-
-// Pedido reconhecido mas nenhum produto bateu com o catálogo — cria (ou reaproveita)
-// uma triagem sem itens, com a mensagem original salva em notes. Operador monta
-// manualmente pelo Gerenciador de Pedidos, vendo a conversa.
+// Pedido detectado por intenção (sem tentar advinhar produto/cor/tamanho/qty) —
+// cria (ou reaproveita) uma triagem sem itens, com a mensagem original salva em
+// notes. Operador monta manualmente pelo Gerenciador de Pedidos, vendo a conversa.
 async function createTriagemVirgem(
   jid: string,
   contactId: number,
@@ -2055,7 +1921,7 @@ async function createTriagemVirgem(
       orderNumber = orderRes.rows[0].number as string
       await cli.query(`
         INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'triagem', 'chatbot', 'Pedido registrado via WhatsApp — produto não identificado, montar manualmente')
+        VALUES ($1, 'triagem', 'chatbot', 'Pedido registrado via WhatsApp — montar manualmente')
       `, [orderId])
       await cli.query(`
         UPDATE wa_contacts
@@ -2084,7 +1950,7 @@ async function createTriagemVirgem(
   pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
     const opJid = rows[0]?.value
     if (opJid && opJid !== jid) {
-      replyWA(opJid, `🛍️ *Novo pedido ${orderNumber}* — sem produto identificado, revisar mensagem do cliente.`)
+      replyWA(opJid, `🛍️ *Novo pedido ${orderNumber}* — revisar mensagem do cliente e montar manualmente.`)
     }
   }).catch(() => {})
 }
