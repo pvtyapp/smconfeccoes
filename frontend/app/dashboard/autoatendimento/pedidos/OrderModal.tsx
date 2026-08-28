@@ -233,6 +233,19 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     })
   }
 
+  // Autosave silencioso — só na Triagem e antes de pedir confirmação ao cliente
+  // (a fase de montar o pedido na mão vendo a conversa). Persiste sozinho no
+  // banco a cada alteração pra não perder item se o operador fechar o modal pra
+  // voltar na conversa. Não mexe em lastSavedHash: o rastreio de edição pós-
+  // confirmação/separação (Reenviar Confirmação, Reconfirmar Pedido) continua
+  // exigindo clique explícito, sem mudança.
+  useEffect(() => {
+    if (!isTriagem || aguardandoConf || !hasPendingEdit) return
+    const timer = setTimeout(() => { saveItems().catch(() => {}) }, 700)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentHash, isTriagem, aguardandoConf, hasPendingEdit])
+
   async function postStatus(status: string, extra: Record<string, unknown> = {}) {
     return fetch(`/api/orders/${order.id}/status`, {
       method: "POST",

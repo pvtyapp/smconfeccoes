@@ -1802,7 +1802,7 @@ async function handleText(
           `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'novo_pedido', updated_at = NOW() WHERE id = $1`,
           [contactId]
         )
-        await createTriagemVirgem(jid, contactId, text, openOrder.id)
+        await createTriagemVirgem(jid, contactId, openOrder.id)
       } else {
         await pool.query(
           `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
@@ -1830,7 +1830,7 @@ async function handleText(
       await replyAndSave(contactId, jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
       return
     }
-    await createTriagemVirgem(jid, contactId, text)
+    await createTriagemVirgem(jid, contactId)
     return
   }
 
@@ -1878,12 +1878,11 @@ async function handleText(
 }
 
 // Pedido detectado por intenção (sem tentar advinhar produto/cor/tamanho/qty) —
-// cria (ou reaproveita) uma triagem sem itens, com a mensagem original salva em
-// notes. Operador monta manualmente pelo Gerenciador de Pedidos, vendo a conversa.
+// cria (ou reaproveita) uma triagem sem itens. Operador monta manualmente pelo
+// Gerenciador de Pedidos, vendo a conversa aberta com o cliente.
 async function createTriagemVirgem(
   jid: string,
   contactId: number,
-  fullText: string,
   parentOrderId?: number
 ) {
   let orderId = 0
@@ -1902,21 +1901,19 @@ async function createTriagemVirgem(
     )
 
     if (openTriagem[0]) {
+      // Mensagem de continuação — já existe triagem aberta pra esse contato,
+      // não precisa gravar nada: operador acompanha tudo pela conversa aberta.
       orderId     = openTriagem[0].id as number
       orderNumber = openTriagem[0].number as string
-      await cli.query(
-        `UPDATE orders SET notes = COALESCE(notes || E'\n---\n', '') || $1 WHERE id = $2`,
-        [fullText, orderId]
-      )
     } else {
       isNewOrder = true
       const numRes = await cli.query("SELECT nextval('order_number_seq') AS n")
       const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
       const orderRes = await cli.query(`
-        INSERT INTO orders (number, contact_id, status, notes, source, parent_order_id)
-        VALUES ($1, $2, 'triagem', $3, 'whatsapp', $4)
+        INSERT INTO orders (number, contact_id, status, source, parent_order_id)
+        VALUES ($1, $2, 'triagem', 'whatsapp', $3)
         RETURNING id, number
-      `, [number, contactId, fullText, parentOrderId ?? null])
+      `, [number, contactId, parentOrderId ?? null])
       orderId     = orderRes.rows[0].id as number
       orderNumber = orderRes.rows[0].number as string
       await cli.query(`
