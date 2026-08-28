@@ -69,6 +69,12 @@ export async function PUT(
     const { notes, items, paidLabel } = body
 
     await client.query("BEGIN")
+    // Trava a linha do pedido por toda a transação — qualquer outro PUT pra
+    // esse mesmo id (autosave, outro clique, outra aba) espera essa terminar
+    // em vez de rodar em paralelo. Sem isso, duas transações fazendo
+    // DELETE+INSERT nos itens ao mesmo tempo podiam duplicar item (cada uma
+    // insere sua cópia sem ver a da outra ainda não commitada).
+    await client.query("SELECT id FROM orders WHERE id = $1 FOR UPDATE", [id])
 
     if (notes !== undefined) {
       await client.query("UPDATE orders SET notes = $1 WHERE id = $2", [notes, id])

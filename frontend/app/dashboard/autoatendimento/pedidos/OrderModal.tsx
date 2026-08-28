@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw, Search } from "lucide-react"
 import type { Order, OrderItem } from "./page"
 import PrintSheet from "./PrintSheet"
@@ -225,12 +225,25 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
     }
   }
 
-  async function saveItems() {
-    await fetch(`/api/orders/${order.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    })
+  // Serializa os saves: autosave (debounce 700ms) e o save explícito de cada
+  // botão (Solicitar Confirmação, Reconfirmar, Concluir Separação) podiam
+  // disparar dois PUT quase juntos. Como o PUT faz DELETE+INSERT (não é
+  // upsert atômico), duas transações sobrepostas duplicavam o item no banco
+  // — cada uma inserindo sua cópia sem ver a da outra ainda não commitada.
+  // Encadeando pela mesma promise, o segundo save só começa depois que o
+  // primeiro terminou, nunca correndo em paralelo pro mesmo pedido.
+  const savePromiseRef = useRef<Promise<void>>(Promise.resolve())
+
+  function saveItems(): Promise<void> {
+    const run = savePromiseRef.current.then(() =>
+      fetch(`/api/orders/${order.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      }).then(() => {})
+    )
+    savePromiseRef.current = run.catch(() => {})
+    return run
   }
 
   // Autosave silencioso — só na Triagem e antes de pedir confirmação ao cliente
