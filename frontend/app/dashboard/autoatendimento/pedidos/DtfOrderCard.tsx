@@ -146,42 +146,67 @@ export default function DtfOrderCard({ order, onClick, onTogglePaid }: Props) {
             🖨 Imp. {order.impressoraId}
           </span>
         )}
-        {/* Pago/Não Pago só faz sentido a partir de Pronto — antes disso o pedido
-            nem foi entregue, pagamento ainda não é uma decisão real */}
-        {(order.status === "pronto" || order.status === "concluido") && (
-          <>
-            {!order.isPaid && order.dueDate && (() => {
-              const [, m, d] = order.dueDate.split("-")
-              return (
-                <span className="text-[9px] font-semibold text-[#0F1E3C]/40" title="Vencimento">
-                  Vence {d}/{m}
-                </span>
-              )
-            })()}
-            {onTogglePaid ? (
+      </div>
+
+      {/* Pago/Não Pago — mesmo padrão visual do Kanban de Produto (2 botões lado
+          a lado), cores mantidas verde/vermelho do DTF. Só faz sentido a partir
+          de Pronto — antes disso o pedido nem foi entregue, pagamento ainda não
+          é uma decisão real. */}
+      {(order.status === "pronto" || order.status === "concluido") && (
+        <div className="mt-2 flex items-center gap-1.5">
+          {!order.isPaid && order.dueDate && (() => {
+            const [, m, d] = order.dueDate.split("-")
+            return (
+              <span className="text-[9px] font-semibold text-[#0F1E3C]/40 flex-shrink-0" title="Vencimento">
+                Vence {d}/{m}
+              </span>
+            )
+          })()}
+          {onTogglePaid ? (
+            <div className="flex-1 flex gap-1.5">
               <button
                 type="button"
-                onClick={handleTogglePaid}
-                title="Clique pra alternar"
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
+                onClick={e => { e.stopPropagation(); if (!order.isPaid) handleTogglePaid(e) }}
+                className={`flex-1 text-[9px] font-black px-2 py-1 rounded-lg border transition-colors ${
                   order.isPaid
-                    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                    : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
-                }`}>
-                {order.isPaid ? "Pago" : "Não Pago"}
+                    ? "bg-emerald-500 text-white border-emerald-500"
+                    : "bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                }`}
+              >
+                Pago
               </button>
-            ) : (
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); if (order.isPaid) handleTogglePaid(e) }}
+                className={`flex-1 text-[9px] font-black px-2 py-1 rounded-lg border transition-colors ${
+                  !order.isPaid
+                    ? "bg-red-500 text-white border-red-500"
+                    : "bg-white text-red-600 border-red-200 hover:bg-red-50"
+                }`}
+              >
+                Não Pago
+              </button>
+            </div>
+          ) : (
+            <div className="flex-1 flex gap-1.5">
+              <span className={`flex-1 text-center text-[9px] font-black px-2 py-1 rounded-lg border ${
                 order.isPaid
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  : "bg-red-50 text-red-700 border-red-200"
+                  ? "bg-emerald-500 text-white border-emerald-500"
+                  : "bg-white text-emerald-600 border-emerald-200"
               }`}>
-                {order.isPaid ? "Pago" : "Não Pago"}
+                Pago
               </span>
-            )}
-          </>
-        )}
-      </div>
+              <span className={`flex-1 text-center text-[9px] font-black px-2 py-1 rounded-lg border ${
+                !order.isPaid
+                  ? "bg-red-500 text-white border-red-500"
+                  : "bg-white text-red-600 border-red-200"
+              }`}>
+                Não Pago
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </button>
   )
 
