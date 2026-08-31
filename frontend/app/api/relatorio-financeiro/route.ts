@@ -230,8 +230,15 @@ export async function GET(req: Request) {
     const custoVariavel  = Number(varCosts[0]?.total ?? 0)
     const despesasPagas  = Number(payablesRows[0]?.total ?? 0)
     const lucroBruto     = custoInsumosKnown ? receitaBruta - custoInsumos : null
+    // Resultado desconta só Custo Fixo (aluguel/energia, rateado por dias
+    // corridos) e Perdas por Descarte (dado real do estoque de avarias).
+    // Custo de Costura, Custo Variável e Contas a Pagar quitadas viram
+    // informativos nas próprias telas: o material_cost cadastrado no produto
+    // já embute mão de obra, é a única fonte de verdade de custo por peça
+    // (confirmado no cadastro: labor_cost/additional_costs sempre zerados,
+    // tudo é lançado direto em material_cost). Decidido com o PIV em 2026-08-31.
     const resultadoOp    = lucroBruto !== null
-      ? lucroBruto - custoCostura - custoFixo - custoVariavel - perdasDescarte - despesasPagas
+      ? lucroBruto - custoFixo - perdasDescarte
       : null
 
     const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>

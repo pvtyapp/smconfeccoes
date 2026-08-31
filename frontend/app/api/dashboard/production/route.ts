@@ -69,9 +69,12 @@ export async function GET(req: Request) {
         `, [productIds])
       : { rows: [] }
 
-    // 4. Monthly operational cost total
+    // 4. Monthly operational cost total — só Custo Fixo (aluguel/energia).
+    // Custo de Costura fica de fora: o material_cost do produto já embute mão
+    // de obra, somar os dois juntos dobraria o custo de costura. Mesma
+    // decisão aplicada em /api/relatorio-financeiro, 2026-08-31.
     const { rows: opRows } = await pool.query(
-      `SELECT COALESCE(SUM(monthly_value), 0) AS total FROM operational_costs WHERE active = true`
+      `SELECT COALESCE(SUM(monthly_value), 0) AS total FROM operational_costs WHERE active = true AND category = 'Custo Fixo'`
     )
     const monthlyOp     = Number(opRows[0].total)
     const totalOpForPeriod = monthlyOp * (days / 30)

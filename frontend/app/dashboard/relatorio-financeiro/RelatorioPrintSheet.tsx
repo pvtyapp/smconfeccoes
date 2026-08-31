@@ -119,22 +119,28 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
               <DreLine label="↳ Avarias vendidas" value={dre.receitaAvarias} indent sub="vendas de peças com desconto" />
             )}
             <DreLine label="(-) Custo de Insumos" value={dre.custoInsumos != null ? -dre.custoInsumos : null}
-              indent sub="material dos produtos vendidos" />
+              indent sub="material dos produtos vendidos, já embute mão de obra" />
             <DreLine bold label="Resultado s/ Insumos" value={dre.lucroBruto}
               sub={dre.lucroBruto != null ? `margem ${pct(summary.margemBruta)}` : undefined} />
-            <DreLine label="(-) Custo de Costura" value={-dre.custoCostura} indent
-              sub={`${data.period.days}d proporcionais ao mês`} />
-            <DreLine label="(-) Custo Fixo" value={-dre.custoFixo} indent />
-            <DreLine label="(-) Custo Variável" value={-dre.custoVariavel} indent sub="despesas variáveis lançadas no período" />
+            <DreLine label="(-) Custo Fixo" value={-dre.custoFixo} indent sub={`${data.period.days}d proporcionais ao mês · aluguel, energia`} />
             {dre.perdasDescarte > 0 && (
               <DreLine label="(-) Perdas por Descarte" value={-dre.perdasDescarte} indent sub="avarias descartadas no período" />
             )}
-            {dre.despesasPagas > 0 && (
-              <DreLine label="(-) Contas a Pagar quitadas" value={-dre.despesasPagas} indent
-                sub={`${dre.despesasPagasCount} conta${dre.despesasPagasCount !== 1 ? "s" : ""} paga${dre.despesasPagasCount !== 1 ? "s" : ""} no período`} />
-            )}
             <DreLine bold label="Resultado Operacional" value={dre.resultadoOp}
               sub={dre.resultadoOp != null ? `margem op. ${pct(summary.margemOp)}` : undefined} />
+
+            <div style={{ marginTop: "8px", paddingTop: "6px", borderTop: "1px dashed #c8cdd8" }}>
+              <p style={{ fontSize: "7px", fontWeight: 800, color: "#999", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "2px" }}>
+                Referência — não desconta do resultado acima
+              </p>
+              <DreLine label="Custo de Costura (simulador)" value={dre.custoCostura} indent
+                sub={`${data.period.days}d proporcionais ao mês`} />
+              <DreLine label="Custo Variável" value={dre.custoVariavel} indent sub="despesas variáveis lançadas no período" />
+              {dre.despesasPagas > 0 && (
+                <DreLine label="Contas a Pagar quitadas" value={dre.despesasPagas} indent
+                  sub={`${dre.despesasPagasCount} conta${dre.despesasPagasCount !== 1 ? "s" : ""} paga${dre.despesasPagasCount !== 1 ? "s" : ""} no período`} />
+              )}
+            </div>
           </div>
         </div>
 

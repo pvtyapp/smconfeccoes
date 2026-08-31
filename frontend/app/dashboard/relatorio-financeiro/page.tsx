@@ -673,26 +673,33 @@ export default function RelatorioFinanceiroPage() {
                     sub="vendas de peças com desconto" />
                 )}
                 <DRERow label="(-) Custo de Insumos" value={dre?.custoInsumos != null ? -(dre.custoInsumos) : null}
-                  indent negative sub="material_cost dos produtos vendidos" />
+                  indent negative sub="material_cost dos produtos vendidos, já embute mão de obra" />
                 <DRERow separator />
                 <DRERow bold label="Resultado s/ Insumos" value={dre?.lucroBruto}
                   sub={dre?.lucroBruto != null ? `margem ${pct(summary?.margemBruta ?? null)}` : undefined} />
-                <DRERow label="(-) Custo de Costura" value={-(dre?.custoCostura ?? 0)} indent negative
-                  sub={`${data.period.days}d proporcionais ao mês`} />
-                <DRERow label="(-) Custo Fixo" value={-(dre?.custoFixo ?? 0)} indent negative />
-                <DRERow label="(-) Custo Variável" value={-(dre?.custoVariavel ?? 0)} indent negative
-                  sub="despesas variáveis lançadas no período" />
+                <DRERow label="(-) Custo Fixo" value={-(dre?.custoFixo ?? 0)} indent negative
+                  sub={`${data.period.days}d proporcionais ao mês · aluguel, energia`} />
                 {(dre?.perdasDescarte ?? 0) > 0 && (
                   <DRERow label="(-) Perdas por Descarte" value={-(dre?.perdasDescarte ?? 0)} indent negative
                     sub="qty × custo médio · avarias descartadas no período" />
                 )}
-                {(dre?.despesasPagas ?? 0) > 0 && (
-                  <DRERow label="(-) Contas a Pagar quitadas" value={-(dre?.despesasPagas ?? 0)} indent negative
-                    sub={`${dre?.despesasPagasCount ?? 0} conta${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} paga${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} no período`} />
-                )}
                 <DRERow separator />
                 <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}
                   sub={dre?.resultadoOp != null ? `margem op. ${pct(summary?.margemOp ?? null)}` : undefined} />
+
+                <div className="mt-4 pt-3 border-t border-dashed border-[#0F1E3C]/10">
+                  <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider mb-1">
+                    Referência — não desconta do resultado acima
+                  </p>
+                  <DRERow label="Custo de Costura (simulador)" value={dre?.custoCostura ?? 0} indent
+                    sub={`${data.period.days}d proporcionais ao mês · use pra ajustar o custo cadastrado do produto`} />
+                  <DRERow label="Custo Variável" value={dre?.custoVariavel ?? 0} indent
+                    sub="despesas variáveis lançadas no período" />
+                  {(dre?.despesasPagas ?? 0) > 0 && (
+                    <DRERow label="Contas a Pagar quitadas" value={dre?.despesasPagas ?? 0} indent
+                      sub={`${dre?.despesasPagasCount ?? 0} conta${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} paga${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} no período`} />
+                  )}
+                </div>
               </div>
             )}
           </div>
