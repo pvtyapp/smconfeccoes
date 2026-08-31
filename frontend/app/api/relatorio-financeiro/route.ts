@@ -100,11 +100,14 @@ export async function GET(req: Request) {
         AND DATE(resolved_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
     `, [from, to])
 
-    // 5b. Perdas por descarte (qty × custo médio da variante ou custo do produto)
+    // 5b. Perdas por descarte (qty × material_cost do produto). Nunca
+    // average_cost da variante: esse campo pode carregar Custo de Costura
+    // injetado por concludeOrder.ts/calculate_sku_costs ou por um Fechamento
+    // de Custo antigo (/api/cost-closures) — material_cost é a única fonte
+    // de verdade de custo por peça. Decidido com o PIV em 2026-08-31.
     const { rows: avariaDescartes } = await pool.query(`
-      SELECT COALESCE(SUM(ds.qty * COALESCE(pv.average_cost, p.material_cost, 0)), 0)::float AS total
+      SELECT COALESCE(SUM(ds.qty * COALESCE(p.material_cost, 0)), 0)::float AS total
       FROM defect_stock ds
-      LEFT JOIN product_variants pv ON pv.id = ds.variant_id
       LEFT JOIN LATERAL (
         SELECT material_cost FROM products
         WHERE LOWER(TRIM(name)) = LOWER(TRIM(ds.product_name)) AND status = 'active'

@@ -85,9 +85,12 @@ export async function POST(req: Request) {
       const d2 = new Date(periodEnd   + "T00:00:00Z")
       const periodDays = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1)
 
+      // Só Custo Fixo — Custo de Costura já embutido no material_cost do
+      // produto, não injeta mais em average_cost. Decidido com o PIV em
+      // 2026-08-31.
       const { rows: opCosts } = await client.query(`
         SELECT COALESCE(SUM(monthly_value), 0) AS total
-        FROM operational_costs WHERE active = true
+        FROM operational_costs WHERE active = true AND category = 'Custo Fixo'
       `)
       const monthlyTotal = Number(opCosts[0].total)
       const totalOperational = monthlyTotal * (periodDays / 30)

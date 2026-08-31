@@ -82,7 +82,12 @@ export async function GET(req: Request) {
       monthlyValue: Number(c.monthlyValue),
       periodValue:  Math.round(Number(c.monthlyValue) * (periodDays / 30) * 100) / 100,
     }))
-    const totalOperational = operationalCosts.reduce((s, c) => s + c.periodValue, 0)
+    // Lista completa continua exibida (referência), mas só Custo Fixo soma
+    // no total que vira average_cost — Custo de Costura já embutido no
+    // material_cost do produto. Decidido com o PIV em 2026-08-31.
+    const totalOperational = operationalCosts
+      .filter(c => c.category === "Custo Fixo")
+      .reduce((s, c) => s + c.periodValue, 0)
     const costPerWeightUnit = totalWeighted > 0 ? totalOperational / totalWeighted : 0
 
     // SKU breakdown: unique sizes across all orders with their weight

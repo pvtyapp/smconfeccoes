@@ -94,31 +94,12 @@ export async function concludeProdOrder(
     }
 
     if (anyCostCalculated) {
-      const { rows: sewRows } = await client.query(`
-        SELECT COALESCE(SUM(monthly_value), 0) AS total
-        FROM operational_costs
-        WHERE active = true AND category = 'Custo de Costura'
-      `)
-      const monthlySewing = Number(sewRows[0].total)
-
-      const { rows: monthPieces } = await client.query(`
-        SELECT COALESCE(SUM(poi.qty_produced), 0) AS total
-        FROM prod_order_items poi
-        JOIN prod_orders po ON po.id = poi.order_id
-        WHERE (
-          (po.status IN ('concluida', 'encerrada')
-           AND DATE_TRUNC('month', po.concluded_at AT TIME ZONE 'America/Sao_Paulo')
-             = DATE_TRUNC('month', NOW() AT TIME ZONE 'America/Sao_Paulo'))
-          OR po.id = $1
-        )
-      `, [orderId])
-      const totalPiecesMonth = Number(monthPieces[0].total)
-
-      const sewingCostForOrder = monthlySewing > 0 && totalPiecesMonth > 0
-        ? (monthlySewing / totalPiecesMonth) * totalProduced
-        : 0
-
-      await client.query("SELECT calculate_sku_costs($1, $2)", [orderId, sewingCostForOrder])
+      // calculate_sku_costs recebe só material agora — Custo de Costura não
+      // injeta mais automaticamente em average_cost (fica só no simulador da
+      // tela de Custo Operacional; material_cost do produto é a única fonte
+      // de verdade de custo por peça). Default do parâmetro de costura da
+      // função é 0. Decidido com o PIV em 2026-08-31.
+      await client.query("SELECT calculate_sku_costs($1)", [orderId])
 
       await client.query(`
         UPDATE product_variants pv
