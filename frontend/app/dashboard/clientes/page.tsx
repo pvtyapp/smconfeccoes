@@ -5,7 +5,7 @@ import {
   Search, X, RefreshCw, ChevronRight,
   Calendar, ShoppingBag, CheckCircle, Save, User, Bot,
   Printer, Download, Tag, Plus, Trash2, UserPlus, Phone, Pencil,
-  FileText,
+  FileText, Loader2,
 } from "lucide-react"
 import Toggle from "@/components/Toggle"
 
@@ -117,6 +117,27 @@ function fmtPhone(phone: string | null | undefined) {
   if (p.length === 12) return `+${p.slice(0, 2)} (${p.slice(2, 4)}) ${p.slice(4, 8)}-${p.slice(8)}`
   if (p.length === 11) return `(${p.slice(0, 2)}) ${p.slice(2, 7)}-${p.slice(7)}`
   return phone
+}
+
+// Máscara conforme digita — CPF (11 díg.) ou CNPJ (14 díg.), decide pelo
+// tipo de pessoa selecionado pra não confundir os dois formatos.
+function maskCpfCnpj(raw: string, tipoPessoa: string) {
+  const d = raw.replace(/\D/g, "")
+  if (tipoPessoa === "juridica") {
+    return d.slice(0, 14)
+      .replace(/^(\d{2})(\d)/, "$1.$2")
+      .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+      .replace(/\.(\d{3})(\d)/, ".$1/$2")
+      .replace(/(\d{4})(\d)/, "$1-$2")
+  }
+  return d.slice(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1-$2")
+}
+
+function maskCep(raw: string) {
+  return raw.replace(/\D/g, "").slice(0, 8).replace(/(\d{5})(\d)/, "$1-$2")
 }
 
 function isLidUnresolved(c: { jid: string; phoneJid: string | null }) {
@@ -449,6 +470,34 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const [cidade,         setCidade]         = useState(contact.cidade ?? "")
   const [uf,             setUf]             = useState(contact.uf ?? "")
   const [codigoIbge,     setCodigoIbge]     = useState(contact.codigoMunicipioIbge ?? "")
+  const [cepLoading,     setCepLoading]     = useState(false)
+  const [cepError,       setCepError]       = useState("")
+
+  // ViaCEP — público, sem chave. Preenche logradouro/bairro/cidade/UF e,
+  // principalmente, o código IBGE — sem isso o operador teria que caçar
+  // esse número na mão.
+  async function handleCepChange(raw: string) {
+    const masked = maskCep(raw)
+    setCep(masked)
+    setCepError("")
+    const digits = masked.replace(/\D/g, "")
+    if (digits.length !== 8) return
+    setCepLoading(true)
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${digits}/json/`)
+      const data = await res.json()
+      if (data.erro) { setCepError("CEP não encontrado"); return }
+      setLogradouro(data.logradouro || "")
+      setBairro(data.bairro || "")
+      setCidade(data.localidade || "")
+      setUf(data.uf || "")
+      setCodigoIbge(data.ibge || "")
+    } catch {
+      setCepError("Erro ao buscar CEP — preencha manualmente")
+    } finally {
+      setCepLoading(false)
+    }
+  }
   const [saving,         setSaving]         = useState(false)
   const [saved,          setSaved]          = useState(false)
   const [confirmDelete,  setConfirmDelete]  = useState(false)
@@ -729,8 +778,8 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
             ))}
           </div>
 
-          <input value={cpfCnpj} onChange={e => setCpfCnpj(e.target.value)}
-            placeholder={tipoPessoa === "juridica" ? "CNPJ" : "CPF"}
+          <input value={cpfCnpj} onChange={e => setCpfCnpj(maskCpfCnpj(e.target.value, tipoPessoa))}
+            placeholder={tipoPessoa === "juridica" ? "00.000.000/0000-00" : "000.000.000-00"}
             className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
 
           {tipoPessoa === "juridica" && (
@@ -740,15 +789,20 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
           )}
 
           <div className="flex gap-2">
-            <input value={cep} onChange={e => setCep(e.target.value)} placeholder="CEP"
-              className="w-28 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            <div className="relative w-32">
+              <input value={cep} onChange={e => handleCepChange(e.target.value)} placeholder="CEP"
+                className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+              {cepLoading && <Loader2 size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-[#4361EE]" />}
+            </div>
             <input value={uf} onChange={e => setUf(e.target.value.toUpperCase().slice(0, 2))} placeholder="UF"
               className="w-16 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
             <input value={cidade} onChange={e => setCidade(e.target.value)} placeholder="Cidade"
               className="flex-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
           </div>
-          <input value={codigoIbge} onChange={e => setCodigoIbge(e.target.value)} placeholder="Código IBGE do município (ex: 3516200)"
+          {cepError && <p className="text-[10px] text-red-500">{cepError}</p>}
+          <input value={codigoIbge} onChange={e => setCodigoIbge(e.target.value)} placeholder="Código IBGE do município"
             className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+          <p className="text-[10px] text-[#0F1E3C]/30 -mt-1.5">Preenchido sozinho ao digitar o CEP — só mexe aqui se precisar corrigir.</p>
 
           <div className="flex gap-2">
             <input value={logradouro} onChange={e => setLogradouro(e.target.value)} placeholder="Logradouro (rua/avenida)"
