@@ -91,7 +91,13 @@ export async function POST(req: Request) {
         })
         await pool.query(`UPDATE fiscal_notes SET enviado_whatsapp_em = NOW() WHERE id = $1`, [note.id])
       }
-    } catch { /* nota já autorizada e salva — falha no envio de WhatsApp não desfaz isso, só fica sem o timestamp */ }
+    } catch (err) {
+      // Nota já autorizada e salva — falha no envio de WhatsApp não desfaz
+      // isso, só fica sem o timestamp. Mas precisa logar, senão fica
+      // impossível diagnosticar (foi assim que o bug do endpoint
+      // sendDocument passou despercebido).
+      console.error("[fiscal/webhook] falha ao enviar WhatsApp:", err instanceof Error ? err.message : err)
+    }
 
     return NextResponse.json({ ok: true })
   } catch (err) {

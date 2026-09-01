@@ -132,9 +132,11 @@ export const evolutionProvider: WhatsAppProvider = {
   async sendMedia(number: string, opts: SendMediaOpts): Promise<SendResult> {
     const instance = opts.instanceName || EVO_INSTANCE
     const timeoutMs = opts.timeoutMs ?? 12_000
-    const endpoint = opts.mediatype === "document"
-      ? `${EVO_URL}/message/sendDocument/${instance}`
-      : `${EVO_URL}/message/sendMedia/${instance}`
+    // Rota /message/sendDocument/{instance} não existe nessa versão da
+    // Evolution API (404) — testado manualmente com envio real de PDF antes
+    // de corrigir. /message/sendMedia/{instance} genérico funciona pra
+    // qualquer mediatype, incluindo "document" (basta vir no corpo).
+    const endpoint = `${EVO_URL}/message/sendMedia/${instance}`
 
     const res = await fetch(endpoint, {
       method: "POST",
