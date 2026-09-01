@@ -8,12 +8,16 @@ export async function POST(
 ) {
   try {
     const { id } = await params
+    // Nota pode cobrir vários pedidos consolidados — todos do mesmo cliente
+    // (validado na emissão), então LIMIT 1 já basta pra achar o contato.
     const { rows } = await pool.query(`
       SELECT fn.pdf, fn.numero, c.jid, COALESCE(c.nome_cadastro, c.name) AS name
       FROM fiscal_notes fn
-      JOIN orders o ON o.id = fn.order_id
+      JOIN fiscal_note_orders fno ON fno.fiscal_note_id = fn.id
+      JOIN orders o ON o.id = fno.order_id
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE fn.id = $1 AND fn.status = 'autorizada'
+      LIMIT 1
     `, [id])
     const note = rows[0]
     if (!note) return NextResponse.json({ error: "Nota não encontrada ou não autorizada" }, { status: 404 })

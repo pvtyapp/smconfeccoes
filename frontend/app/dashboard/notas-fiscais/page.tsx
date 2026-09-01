@@ -20,8 +20,7 @@ type Nota = {
   autorizadoEm: string | null
   enviadoEmailEm: string | null
   enviadoWhatsappEm: string | null
-  orderId: number
-  orderNumber: string
+  orderNumbers: string
   contactName: string
 }
 
@@ -154,7 +153,7 @@ export default function NotasFiscaisPage() {
             <tbody className="divide-y divide-[#0F1E3C]/5">
               {notas.map(n => (
                 <tr key={n.id} className="hover:bg-[#F4F6FB]/50">
-                  <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{n.orderNumber}</td>
+                  <td className="px-5 py-3 font-semibold text-[#0F1E3C]">{n.orderNumbers}</td>
                   <td className="px-4 py-3 text-[#0F1E3C]/70">{n.contactName}</td>
                   <td className="px-4 py-3 text-[#0F1E3C]/70">{n.numero ? `${n.numero} / ${n.serie}` : "—"}</td>
                   <td className="px-4 py-3">

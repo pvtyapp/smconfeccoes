@@ -67,6 +67,7 @@ export type Order = {
   paymentTermEnabled: boolean
   paymentTermType: string | null
   paymentTermDays: number | null
+  precoExclusivo: boolean
   paidAt: string | null
   needsPrint: boolean
   isPartial: boolean

@@ -60,9 +60,11 @@ export async function GET(req: Request) {
         c.payment_term_enabled AS "paymentTermEnabled",
         c.payment_term_type    AS "paymentTermType",
         c.payment_term_days    AS "paymentTermDays",
+        COALESCE(c.preco_exclusivo, false) AS "precoExclusivo",
         (
-          SELECT fn.status FROM fiscal_notes fn
-          WHERE fn.order_id = o.id AND fn.status != 'rejeitada'
+          SELECT fn.status FROM fiscal_note_orders fno
+          JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
+          WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
           ORDER BY fn.id DESC LIMIT 1
         )                      AS "fiscalNoteStatus",
         COALESCE(
@@ -87,7 +89,7 @@ export async function GET(req: Request) {
       JOIN wa_contacts c ON c.id = o.contact_id
       LEFT JOIN order_items i ON i.order_id = o.id
       ${where}
-      GROUP BY o.id, c.id, c.payment_term_enabled, c.payment_term_type, c.payment_term_days
+      GROUP BY o.id, c.id, c.payment_term_enabled, c.payment_term_type, c.payment_term_days, c.preco_exclusivo
       ORDER BY o.created_at DESC
     `, params)
 

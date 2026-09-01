@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useCallback, useMemo } from "react"
-import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, XCircle, Printer, X, Loader2, FileDown } from "lucide-react"
+import { RefreshCw, ChevronRight, ShoppingBag, DollarSign, Package, TrendingUp, XCircle, Printer, X, Loader2, FileDown, Search, FileText, CheckCircle2 } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateBR, fmtDateOnlyBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import Toggle from "@/components/Toggle"
@@ -31,8 +31,10 @@ type OrderRecord = {
   pixConfirmed: boolean | null
   paymentMethod: string | null
   createdAt: string
+  contactId: number | null
   contactName: string | null
   contactPhone: string | null
+  fiscalNoteStatus: "pendente" | "processando" | "autorizada" | null
   items: OrderItem[] | null
 }
 
@@ -160,6 +162,11 @@ export default function RelatorioVendasPage() {
   const [canceling,    setCanceling]    = useState<OrderRecord | null>(null)
   const [reprinting,   setReprinting]   = useState<SaleReceipt | null>(null)
   const [showPrint,    setShowPrint]    = useState(false)
+  const [search,       setSearch]       = useState("")
+  const [selected,     setSelected]     = useState<Set<number>>(new Set())
+  const [emitting,     setEmitting]     = useState(false)
+  const [emitError,    setEmitError]    = useState("")
+  const [emittingId,   setEmittingId]   = useState<number | null>(null)
 
   const load = useCallback(async () => {
     const dates = getPeriodDates(period, rangeStart, rangeEnd)
@@ -181,16 +188,18 @@ export default function RelatorioVendasPage() {
   // Unified filtered list
   const entries = useMemo<SaleEntry[]>(() => {
     const list: SaleEntry[] = []
+    const q = search.trim().toLowerCase()
 
     if (sourceFilter !== "avarias") {
       for (const o of orders) {
         if (sourceFilter === "manual" && o.number.startsWith("COB-")) continue
+        if (q && !(o.contactName ?? "").toLowerCase().includes(q)) continue
         if (sourceFilter === "all" || o.source === sourceFilter)
           list.push({ kind: "order", data: o })
       }
     }
 
-    if (sourceFilter === "all" || sourceFilter === "avarias") {
+    if (!q && (sourceFilter === "all" || sourceFilter === "avarias")) {
       for (const a of avarias)
         list.push({ kind: "avaria", data: a })
     }
@@ -199,7 +208,7 @@ export default function RelatorioVendasPage() {
       new Date(b.data.createdAt).getTime() - new Date(a.data.createdAt).getTime()
     )
     return list
-  }, [orders, avarias, sourceFilter])
+  }, [orders, avarias, sourceFilter, search])
 
   // Mesma lista formatada pro relatório impresso (sem paginação/expansão)
   const printEntries = useMemo(() => entries.map(entry => {
@@ -331,6 +340,65 @@ export default function RelatorioVendasPage() {
     }
   }
 
+  // Emissão consolidada — só deixa selecionar pedido do mesmo cliente que já
+  // está selecionado, elegível pra NFe (concluído, sem nota pendente/autorizada).
+  const selectedContactId = useMemo(() => {
+    if (selected.size === 0) return null
+    const first = orders.find(o => selected.has(o.id))
+    return first?.contactId ?? null
+  }, [selected, orders])
+
+  function canSelectForNF(o: OrderRecord): boolean {
+    if (o.status !== "concluido") return false
+    if (o.fiscalNoteStatus === "processando" || o.fiscalNoteStatus === "autorizada") return false
+    if (selectedContactId != null && o.contactId !== selectedContactId) return false
+    return true
+  }
+
+  function toggleSelect(o: OrderRecord) {
+    if (!canSelectForNF(o)) return
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(o.id) ? next.delete(o.id) : next.add(o.id)
+      return next
+    })
+    setEmitError("")
+  }
+
+  async function emitirNota(orderIds: number[]) {
+    setEmitError("")
+    try {
+      const res = await fetch("/api/fiscal/emitir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderIds }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setEmitError(data.error ?? "Erro ao emitir nota"); return false }
+      return true
+    } catch {
+      setEmitError("Erro de rede ao emitir nota")
+      return false
+    }
+  }
+
+  async function handleEmitirSelecionadas() {
+    if (selected.size === 0) return
+    setEmitting(true)
+    try {
+      const ok = await emitirNota([...selected])
+      if (ok) { setSelected(new Set()); await load() }
+    } finally { setEmitting(false) }
+  }
+
+  async function handleEmitirIndividual(o: OrderRecord) {
+    setEmittingId(o.id)
+    try {
+      const ok = await emitirNota([o.id])
+      if (ok) await load()
+    } finally { setEmittingId(null) }
+  }
+
   async function handleCancelConfirm(order: OrderRecord, notify: boolean) {
     await fetch(`/api/orders/${order.id}/status`, {
       method: "POST",
@@ -359,6 +427,16 @@ export default function RelatorioVendasPage() {
           <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Manual · Avarias vendidas — só pedidos concluídos, pela data em que foram feitos</p>
         </div>
         <div className="flex items-center gap-2">
+          {selected.size > 0 && (
+            <button
+              onClick={handleEmitirSelecionadas}
+              disabled={emitting}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors disabled:opacity-60"
+            >
+              {emitting ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              Emitir Nota ({selected.size})
+            </button>
+          )}
           <button
             onClick={handleExtrairRelatorio}
             className="flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
@@ -371,9 +449,21 @@ export default function RelatorioVendasPage() {
         </div>
       </div>
 
+      {emitError && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
+          <p className="text-xs text-red-600">{emitError}</p>
+          <button onClick={() => setEmitError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0F1E3C]/30" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar cliente..."
+              className="pl-8 pr-3 py-2 rounded-xl border border-[#0F1E3C]/10 text-xs w-48 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+          </div>
           <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">
             {PERIODS.map(({ key, label }) => (
               <button
@@ -493,6 +583,7 @@ export default function RelatorioVendasPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[#0F1E3C]/6">
+              <th className="px-4 py-3 w-8" />
               <th className="text-left  px-5 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Data</th>
               <th className="text-left  px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Pedido / Produto</th>
               <th className="text-left  px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Cliente</th>
@@ -507,11 +598,11 @@ export default function RelatorioVendasPage() {
           <tbody className="divide-y divide-[#0F1E3C]/4">
             {loading ? (
               <tr>
-                <td colSpan={9} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td>
+                <td colSpan={10} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td>
               </tr>
             ) : entries.length === 0 ? (
               <tr>
-                <td colSpan={9} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhuma venda no período</td>
+                <td colSpan={10} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhuma venda no período</td>
               </tr>
             ) : entries.map(entry => {
 
@@ -539,6 +630,12 @@ export default function RelatorioVendasPage() {
                       onClick={() => hasItems && toggle(key)}
                       className={`transition-all ${hasItems ? "cursor-pointer" : ""} ${rowBaseCls}`}
                     >
+                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                        {canSelectForNF(o) && (
+                          <input type="checkbox" checked={selected.has(o.id)} onChange={() => toggleSelect(o)}
+                            className="w-3.5 h-3.5 rounded accent-emerald-600 cursor-pointer" />
+                        )}
+                      </td>
                       <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                       <td className="px-4 py-3.5">
                         <p className="text-xs font-bold text-[#0F1E3C]">{o.number}</p>
@@ -566,6 +663,22 @@ export default function RelatorioVendasPage() {
                       </td>
                       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
+                          {o.fiscalNoteStatus === "autorizada" && (
+                            <span title="Nota fiscal emitida" className="p-1.5 rounded-lg text-emerald-600"><CheckCircle2 size={13} /></span>
+                          )}
+                          {o.fiscalNoteStatus === "processando" && (
+                            <span title="Nota fiscal processando" className="p-1.5 rounded-lg text-blue-500"><Loader2 size={13} className="animate-spin" /></span>
+                          )}
+                          {canSelectForNF(o) && (
+                            <button
+                              onClick={() => handleEmitirIndividual(o)}
+                              disabled={emittingId === o.id}
+                              title="Emitir nota fiscal dessa venda"
+                              className="p-1.5 rounded-lg border border-[#0F1E3C]/10 text-[#0F1E3C]/40 hover:border-emerald-300 hover:text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                            >
+                              {emittingId === o.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                            </button>
+                          )}
                           {isConcluido && (
                             <button
                               onClick={() => setReprinting(buildReceipt(o))}
@@ -596,7 +709,7 @@ export default function RelatorioVendasPage() {
                     {/* Expanded items */}
                     {isOpen && (
                       <tr key={`${key}-items`}>
-                        <td colSpan={9} className="bg-[#F4F6FB] px-10 py-3">
+                        <td colSpan={10} className="bg-[#F4F6FB] px-10 py-3">
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="border-b border-[#0F1E3C]/8">
@@ -667,6 +780,7 @@ export default function RelatorioVendasPage() {
               const desc = [a.productName, a.color, a.size].filter(Boolean).join(" · ")
               return (
                 <tr key={key} className="hover:bg-[#0F1E3C]/3 transition-colors">
+                  <td className="px-4 py-3.5" />
                   <td className="px-5 py-3.5 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(a.createdAt)}</td>
                   <td className="px-4 py-3.5">
                     <p className="text-xs font-semibold text-[#0F1E3C]">{desc}</p>

@@ -48,8 +48,15 @@ export async function GET(req: Request) {
           o.pix_confirmed AS "pixConfirmed",
           o.payment_method AS "paymentMethod",
           o.created_at   AS "createdAt",
-          c.name         AS "contactName",
+          c.id           AS "contactId",
+          COALESCE(c.nome_cadastro, c.name) AS "contactName",
           c.phone        AS "contactPhone",
+          (
+            SELECT fn.status FROM fiscal_note_orders fno
+            JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
+            WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
+            ORDER BY fn.id DESC LIMIT 1
+          )              AS "fiscalNoteStatus",
           json_agg(
             json_build_object(
               'productName', oi.product_name,
@@ -73,7 +80,7 @@ export async function GET(req: Request) {
           AND o.source IN ('pdv', 'whatsapp')
           AND o.number NOT LIKE 'COB-%'
           ${orderDateCond}
-        GROUP BY o.id, c.name, c.phone
+        GROUP BY o.id, c.id, c.name, c.nome_cadastro, c.phone
         ORDER BY o.created_at DESC
       `, params)
       orders = r.rows

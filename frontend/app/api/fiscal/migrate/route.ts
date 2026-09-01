@@ -34,10 +34,11 @@ export async function POST() {
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS cfop_dentro_estado TEXT NOT NULL DEFAULT '5101'`)
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS cfop_fora_estado TEXT NOT NULL DEFAULT '6101'`)
 
+    // Uma nota pode cobrir vários pedidos (emissão consolidada) — por isso
+    // não tem order_id direto aqui, a ligação é feita por fiscal_note_orders.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS fiscal_notes (
         id                   SERIAL PRIMARY KEY,
-        order_id             INTEGER NOT NULL REFERENCES orders(id),
         status               TEXT NOT NULL DEFAULT 'pendente'
                                CHECK (status IN ('pendente', 'processando', 'autorizada', 'rejeitada')),
         ambiente             TEXT NOT NULL DEFAULT 'homologacao',
@@ -56,8 +57,17 @@ export async function POST() {
         enviado_whatsapp_em  TIMESTAMPTZ
       )
     `)
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_fiscal_notes_order ON fiscal_notes(order_id)`)
+    await pool.query(`ALTER TABLE fiscal_notes DROP COLUMN IF EXISTS order_id`)
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_fiscal_notes_status ON fiscal_notes(status)`)
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS fiscal_note_orders (
+        fiscal_note_id INTEGER NOT NULL REFERENCES fiscal_notes(id) ON DELETE CASCADE,
+        order_id       INTEGER NOT NULL REFERENCES orders(id),
+        PRIMARY KEY (fiscal_note_id, order_id)
+      )
+    `)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_fiscal_note_orders_order ON fiscal_note_orders(order_id)`)
 
     // Config fiscal (token, CNPJ emitente, ambiente, série) reaproveita a
     // tabela genérica app_settings já usada pelo resto do sistema — ver

@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     if (!ref) return NextResponse.json({ error: "ref ausente" }, { status: 400 })
 
     const { rows } = await pool.query(
-      `SELECT id, order_id AS "orderId", ambiente FROM fiscal_notes WHERE ref = $1`,
+      `SELECT id, ambiente FROM fiscal_notes WHERE ref = $1`,
       [ref]
     )
     const note = rows[0]
@@ -65,11 +65,17 @@ export async function POST(req: Request) {
     // Envia o DANFE por WhatsApp pro contato do pedido — reusa o sendMedia já
     // existente na Evolution API (mediatype "document"), sem infra nova.
     try {
+      // Nota pode cobrir vários pedidos consolidados — todos garantidamente
+      // do mesmo cliente (validado na emissão), então qualquer um serve pra
+      // achar o contato.
       const { rows: contactRows } = await pool.query(`
         SELECT c.jid, COALESCE(c.nome_cadastro, c.name) AS name
-        FROM orders o JOIN wa_contacts c ON c.id = o.contact_id
-        WHERE o.id = $1
-      `, [note.orderId])
+        FROM fiscal_note_orders fno
+        JOIN orders o ON o.id = fno.order_id
+        JOIN wa_contacts c ON c.id = o.contact_id
+        WHERE fno.fiscal_note_id = $1
+        LIMIT 1
+      `, [note.id])
       const contact = contactRows[0]
       if (contact?.jid) {
         const number = contact.jid.endsWith("@lid")

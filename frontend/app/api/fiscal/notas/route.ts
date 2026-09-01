@@ -19,18 +19,23 @@ export async function GET(req: Request) {
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""
 
+    // Uma nota pode cobrir vários pedidos (emissão consolidada) — todos
+    // garantidamente do mesmo cliente, por isso MAX(contactName) é seguro
+    // (mesmo valor em toda linha do grupo).
     const { rows } = await pool.query(`
       SELECT
         fn.id, fn.status, fn.numero, fn.serie, fn.chave_acesso AS "chaveAcesso",
         fn.motivo_rejeicao AS "motivoRejeicao", fn.valor_total AS "valorTotal",
         fn.ambiente, fn.criado_em AS "criadoEm", fn.autorizado_em AS "autorizadoEm",
         fn.enviado_email_em AS "enviadoEmailEm", fn.enviado_whatsapp_em AS "enviadoWhatsappEm",
-        o.id AS "orderId", o.number AS "orderNumber",
-        COALESCE(c.nome_cadastro, c.name) AS "contactName"
+        string_agg(o.number, ', ' ORDER BY o.number) AS "orderNumbers",
+        MAX(COALESCE(c.nome_cadastro, c.name)) AS "contactName"
       FROM fiscal_notes fn
-      JOIN orders o ON o.id = fn.order_id
+      JOIN fiscal_note_orders fno ON fno.fiscal_note_id = fn.id
+      JOIN orders o ON o.id = fno.order_id
       JOIN wa_contacts c ON c.id = o.contact_id
       ${where}
+      GROUP BY fn.id
       ORDER BY fn.criado_em DESC
       LIMIT 500
     `, params)

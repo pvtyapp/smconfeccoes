@@ -30,10 +30,16 @@ async function loadFiscalSettings() {
   }
 }
 
+// Emissão consolidada: N pedidos selecionados (do mesmo cliente) viram 1 NFe
+// só, com os itens de todos somados. Emissão individual é só o caso N=1 —
+// mesmo caminho de código, sem duplicar lógica.
 export async function POST(req: Request) {
   try {
-    const { orderId } = await req.json()
-    if (!orderId) return NextResponse.json({ error: "orderId é obrigatório" }, { status: 400 })
+    const body = await req.json()
+    const orderIds: number[] = Array.isArray(body.orderIds)
+      ? body.orderIds
+      : body.orderId ? [body.orderId] : []
+    if (orderIds.length === 0) return NextResponse.json({ error: "orderIds é obrigatório" }, { status: 400 })
 
     const settings = await loadFiscalSettings()
     if (!settings.cnpjEmitente || !settings.tokenHomologacao || !settings.tokenProducao) {
@@ -45,7 +51,7 @@ export async function POST(req: Request) {
 
     const { rows: orderRows } = await pool.query(`
       SELECT
-        o.id, o.number, o.total_value AS "totalValue",
+        o.id, o.number,
         c.id                       AS "contactId",
         COALESCE(c.nome_cadastro, c.name) AS "contactName",
         c.cpf_cnpj                 AS "cpfCnpj",
@@ -55,10 +61,23 @@ export async function POST(req: Request) {
         c.codigo_municipio_ibge    AS "codigoMunicipioIbge"
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
-      WHERE o.id = $1
-    `, [orderId])
+      WHERE o.id = ANY($1::int[])
+    `, [orderIds])
+
+    if (orderRows.length !== orderIds.length) {
+      return NextResponse.json({ error: "Um ou mais pedidos não foram encontrados." }, { status: 404 })
+    }
+
+    // Trava de servidor — mesma checagem que a tela já faz antes de deixar
+    // selecionar, mas aqui é a garantia de verdade.
+    const contactIds = new Set(orderRows.map((o: { contactId: number }) => o.contactId))
+    if (contactIds.size > 1) {
+      return NextResponse.json(
+        { error: "Os pedidos selecionados são de clientes diferentes — uma nota só pode ter 1 destinatário." },
+        { status: 400 }
+      )
+    }
     const order = orderRows[0]
-    if (!order) return NextResponse.json({ error: "Pedido não encontrado" }, { status: 404 })
 
     // Bloqueio claro — sem dado genérico pra forçar passar (decisão do dono
     // do projeto: emissão trava aqui, não inventa CPF/endereço).
@@ -78,13 +97,17 @@ export async function POST(req: Request) {
       )
     }
 
-    const { rows: existing } = await pool.query(
-      `SELECT id, status FROM fiscal_notes WHERE order_id = $1 AND status IN ('pendente','processando','autorizada') ORDER BY id DESC LIMIT 1`,
-      [orderId]
-    )
+    const { rows: existing } = await pool.query(`
+      SELECT fno.order_id AS "orderId", fn.status
+      FROM fiscal_note_orders fno
+      JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
+      WHERE fno.order_id = ANY($1::int[]) AND fn.status IN ('pendente','processando','autorizada')
+    `, [orderIds])
     if (existing[0]) {
+      const nums = orderRows.filter((o: { id: number }) => existing.some((e: { orderId: number }) => e.orderId === o.id))
+        .map((o: { number: string }) => o.number).join(", ")
       return NextResponse.json(
-        { error: `Já existe uma nota ${existing[0].status} pra esse pedido.` },
+        { error: `Pedido(s) ${nums} já tem nota ${existing[0].status} — remova da seleção.` },
         { status: 409 }
       )
     }
@@ -98,11 +121,11 @@ export async function POST(req: Request) {
         COALESCE(p.cfop_fora_estado, '6101')    AS "cfopForaEstado"
       FROM order_items i
       LEFT JOIN products p ON p.id = i.product_id
-      WHERE i.order_id = $1 AND COALESCE(i.is_service, false) = false
-    `, [orderId])
+      WHERE i.order_id = ANY($1::int[]) AND COALESCE(i.is_service, false) = false
+    `, [orderIds])
 
     if (items.length === 0) {
-      return NextResponse.json({ error: "Pedido sem itens de produto pra faturar." }, { status: 400 })
+      return NextResponse.json({ error: "Pedido(s) sem item de produto pra faturar." }, { status: 400 })
     }
     const itemSemNcm = items.find((it: { ncm: string | null }) => !it.ncm)
     if (itemSemNcm) {
@@ -115,7 +138,7 @@ export async function POST(req: Request) {
     const dentroDoEstado = order.uf === EMITENTE_UF
     const valorTotal = items.reduce((s: number, it: { qty: number; unitPrice: number | null }) => s + it.qty * (it.unitPrice ?? 0), 0)
 
-    const ref = `pedido-${orderId}-${Date.now()}`
+    const ref = `pedidos-${orderIds.join("-")}-${Date.now()}`
 
     const payload: Record<string, unknown> = {
       cnpj_emitente: settings.cnpjEmitente,
@@ -172,10 +195,29 @@ export async function POST(req: Request) {
       payload.cpf_destinatario = cpfLimpo
     }
 
-    await pool.query(`
-      INSERT INTO fiscal_notes (order_id, status, ambiente, ref, valor_total)
-      VALUES ($1, 'processando', $2, $3, $4)
-    `, [orderId, settings.ambienteAtivo, ref, valorTotal])
+    const client = await pool.connect()
+    let noteId: number
+    try {
+      await client.query("BEGIN")
+      const { rows: noteRows } = await client.query(`
+        INSERT INTO fiscal_notes (status, ambiente, ref, valor_total)
+        VALUES ('processando', $1, $2, $3)
+        RETURNING id
+      `, [settings.ambienteAtivo, ref, valorTotal])
+      noteId = noteRows[0].id
+      for (const orderId of orderIds) {
+        await client.query(
+          `INSERT INTO fiscal_note_orders (fiscal_note_id, order_id) VALUES ($1, $2)`,
+          [noteId, orderId]
+        )
+      }
+      await client.query("COMMIT")
+    } catch (err) {
+      await client.query("ROLLBACK")
+      throw err
+    } finally {
+      client.release()
+    }
 
     const token = settings.ambienteAtivo === "producao" ? settings.tokenProducao : settings.tokenHomologacao
     const baseUrl = settings.ambienteAtivo === "producao"
@@ -194,8 +236,8 @@ export async function POST(req: Request) {
 
     if (focusRes.status !== 202) {
       await pool.query(
-        `UPDATE fiscal_notes SET status = 'rejeitada', motivo_rejeicao = $1 WHERE ref = $2`,
-        [focusData.mensagem || JSON.stringify(focusData), ref]
+        `UPDATE fiscal_notes SET status = 'rejeitada', motivo_rejeicao = $1 WHERE id = $2`,
+        [focusData.mensagem || JSON.stringify(focusData), noteId]
       )
       return NextResponse.json(
         { error: focusData.mensagem || "Focus NFe recusou a requisição.", detail: focusData },

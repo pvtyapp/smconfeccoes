@@ -6,6 +6,7 @@ import type { Order, OrderItem } from "./page"
 import PrintSheet from "./PrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
 import { sizeCompare } from "@/lib/sizeOrder"
+import { todayBR } from "@/lib/tz"
 import { colorSwatch } from "@/lib/colorSwatch"
 import Toggle from "@/components/Toggle"
 import ConfirmDialog from "@/components/ConfirmDialog"
@@ -92,28 +93,24 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [sendingAlteration, setSendingAlteration] = useState(false)
   const [pendingAction, setPendingAction] = useState<{ title: string; run: () => Promise<void> } | null>(null)
   const [confirming,    setConfirming]    = useState(false)
-  const [nfStatus,      setNfStatus]      = useState(order.fiscalNoteStatus)
-  const [emittingNF,    setEmittingNF]    = useState(false)
-  const [nfError,       setNfError]       = useState("")
+  // Prazo automático — mesmo cálculo do PDV: hoje + dias configurados no
+  // cliente. Só preenche se o operador ainda não digitou nada na mão.
+  useEffect(() => {
+    if (paymentChoice !== false || dueDate) return
+    if (!order.paymentTermEnabled || order.paymentTermType !== "days" || !order.paymentTermDays) return
+    const base = new Date(todayBR() + "T12:00:00Z")
+    base.setUTCDate(base.getUTCDate() + Number(order.paymentTermDays))
+    setDueDate(base.toISOString().slice(0, 10))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentChoice])
 
-  async function handleEmitirNF() {
-    setEmittingNF(true)
-    setNfError("")
-    try {
-      const res = await fetch("/api/fiscal/emitir", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: order.id }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setNfError(data.error ?? "Erro ao emitir nota"); return }
-      setNfStatus("processando")
-      onRefresh()
-    } finally { setEmittingNF(false) }
-  }
+  const nfStatus = order.fiscalNoteStatus
 
+  // Inclui unitPrice — sem isso, editar preço (Preço Exclusivo) não dispara
+  // "Pedido mudou depois do envio"/"Reconfirmar Pedido", e o cliente pagaria
+  // um valor que nunca foi avisado.
   function itemsHash(list: OrderItem[]) {
-    return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}`).join(",")
+    return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}|${i.unitPrice ?? ""}`).join(",")
   }
   const currentHash  = itemsHash(items)
   const needsReprint = hasPrinted && currentHash !== printedHash
@@ -156,6 +153,12 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
 
   function setQty(idx: number, val: number) {
     setItems(prev => prev.map((item, i) => i === idx ? { ...item, qty: Math.max(1, val) } : item))
+  }
+
+  // Só chamado quando order.precoExclusivo — preço não editável pra cliente normal
+  function setItemPrice(idx: number, val: string) {
+    const parsed = parseFloat(val.replace(",", "."))
+    setItems(prev => prev.map((item, i) => i === idx ? { ...item, unitPrice: isNaN(parsed) ? null : parsed } : item))
   }
 
   function removeItem(idx: number) {
@@ -377,6 +380,18 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
               </span>
             </div>
             <p className="text-xs text-[#0F1E3C]/40">{order.contactName} · {order.contactPhone}</p>
+            {(order.precoExclusivo || order.paymentTermEnabled) && (
+              <div className="flex items-center gap-1.5 mt-1">
+                {order.precoExclusivo && (
+                  <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">★ Preço Exclusivo</span>
+                )}
+                {order.paymentTermEnabled && (
+                  <span className="text-[9px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-full">
+                    {order.paymentTermDays ? `Prazo ${order.paymentTermDays}d` : "Prazo"}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40">
             <X size={18} />
@@ -488,6 +503,21 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                         <span className="text-sm font-black text-[#0F1E3C] flex-shrink-0 w-10 text-right">
                           {item.qtyConfirmed ?? item.qty}
                         </span>
+                      )}
+
+                      {/* Preço — só cliente com Preço Exclusivo, triagem e em_separacao */}
+                      {order.precoExclusivo && (isTriagem || isSeparacao) && (
+                        <div className="flex items-center gap-1 flex-shrink-0 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                          <span className="text-[10px] text-amber-600 font-bold">R$</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={item.unitPrice ?? ""}
+                            onChange={e => setItemPrice(item._idx, e.target.value)}
+                            placeholder="0,00"
+                            className="w-14 bg-transparent text-xs font-bold text-amber-700 text-right focus:outline-none placeholder-amber-300"
+                          />
+                        </div>
                       )}
 
                       {/* Delete — triagem e em_separacao */}
@@ -635,7 +665,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             </div>
           )}
 
-          {/* Nota Fiscal — emissão manual, sob demanda, só depois que o pedido estiver pronto/concluído */}
+          {/* Nota Fiscal — emissão saiu daqui, agora é no Relatório de Vendas
+              (permite emitir várias vendas juntas numa nota só) */}
           {(isPronte || isDone) && (
             <div className="pt-1">
               {nfStatus === "autorizada" ? (
@@ -649,14 +680,11 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                   <p className="text-xs font-bold text-blue-700">Nota fiscal em processamento na Sefaz...</p>
                 </div>
               ) : (
-                <>
-                  <button onClick={handleEmitirNF} disabled={emittingNF}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-[#0F1E3C]/70 text-sm font-medium hover:bg-[#0F1E3C]/6 transition-colors disabled:opacity-50">
-                    {emittingNF ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-                    Emitir Nota Fiscal
-                  </button>
-                  {nfError && <p className="mt-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{nfError}</p>}
-                </>
+                <a href="/dashboard/relatorio-vendas"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-[#0F1E3C]/70 text-sm font-medium hover:bg-[#0F1E3C]/6 transition-colors">
+                  <FileText size={14} />
+                  Emitir Nota Fiscal — ir pro Relatório de Vendas
+                </a>
               )}
             </div>
           )}
