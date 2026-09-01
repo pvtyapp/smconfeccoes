@@ -48,20 +48,22 @@ export async function GET() {
         c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf,
         c.codigo_municipio_ibge                   AS "codigoMunicipioIbge",
         c.created_at                             AS "createdAt",
-        COUNT(o.id)
-          FILTER (WHERE o.status = 'concluido')             AS "orderCount",
-        COALESCE(
-          SUM(o.total_value)
-          FILTER (WHERE o.status = 'concluido'), 0
-        ) + COALESCE(
-          SUM(dp.preco_cobrado)
-          FILTER (WHERE dp.status = 'concluido'), 0
-        )                                                  AS "totalSpent"
+        (
+          SELECT COUNT(*) FROM orders o2
+          WHERE o2.contact_id = c.id AND o2.status = 'concluido'
+        ) + (
+          SELECT COUNT(*) FROM dtf_pedidos dp2
+          WHERE dp2.contact_id = c.id AND dp2.status = 'concluido'
+        )                                                  AS "orderCount",
+        COALESCE((
+          SELECT SUM(o2.total_value) FROM orders o2
+          WHERE o2.contact_id = c.id AND o2.status = 'concluido'
+        ), 0) + COALESCE((
+          SELECT SUM(dp2.preco_cobrado) FROM dtf_pedidos dp2
+          WHERE dp2.contact_id = c.id AND dp2.status = 'concluido'
+        ), 0)                                                AS "totalSpent"
       FROM wa_contacts c
-      LEFT JOIN orders o ON o.contact_id = c.id
-      LEFT JOIN dtf_pedidos dp ON dp.contact_id = c.id
       WHERE c.linked_user_id IS NULL
-      GROUP BY c.id
       ORDER BY COALESCE(c.last_order_at, c.created_at) DESC
     `)
     return NextResponse.json(rows)
