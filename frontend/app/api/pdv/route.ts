@@ -6,7 +6,7 @@ import { findOrCreateManualContact } from "@/lib/whatsapp/resolveContact"
 export async function GET() {
   try {
     const { rows } = await pool.query(`
-      SELECT o.id, o.number, c.name AS "contactName"
+      SELECT o.id, o.number, COALESCE(c.nome_cadastro, c.name) AS "contactName"
       FROM orders o
       LEFT JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.source = 'pdv'

@@ -26,7 +26,9 @@ export async function GET() {
     const { rows } = await pool.query(`
       SELECT
         c.id,
-        c.name,
+        COALESCE(c.nome_cadastro, c.name) AS name,
+        c.name                    AS "nomeWhatsapp",
+        c.nome_cadastro           AS "nomeCadastro",
         c.phone,
         c.phone_jid  AS "phoneJid",
         c.jid,
@@ -40,6 +42,11 @@ export async function GET() {
         COALESCE(c.chatbot_produto_enabled, true)  AS "chatbotProdutoEnabled",
         COALESCE(c.chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
         c.state                                  AS "chatbotState",
+        c.cpf_cnpj                               AS "cpfCnpj",
+        c.tipo_pessoa                             AS "tipoPessoa",
+        c.inscricao_estadual                      AS "inscricaoEstadual",
+        c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf,
+        c.codigo_municipio_ibge                   AS "codigoMunicipioIbge",
         c.created_at                             AS "createdAt",
         COUNT(o.id)
           FILTER (WHERE o.status = 'concluido')             AS "orderCount",

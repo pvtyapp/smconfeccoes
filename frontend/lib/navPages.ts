@@ -4,7 +4,7 @@ import {
   TrendingUp, CalendarClock, UserRound, Users, Images, ShoppingBag,
   Receipt, ClipboardCheck, Layers, AlertTriangle, Store, TrendingDown,
   BarChart2, Printer, FlaskConical, FileBarChart, Megaphone, PieChart,
-  Settings, Signal, CalendarDays, ShoppingCart, DollarSign,
+  Settings, Signal, CalendarDays, ShoppingCart, DollarSign, FileText,
 } from "lucide-react"
 
 // Lista única das páginas do menu — usada pela Sidebar (renderizar/filtrar), pela tela
@@ -37,6 +37,7 @@ export const navFinanceiro: NavItem[] = [
   { href: "/dashboard/contas-a-pagar",       label: "Contas a Pagar",        icon: CalendarDays },
   { href: "/dashboard/custo-operacional",    label: "Custo Operacional",     icon: Wallet       },
   { href: "/dashboard/custo-variavel",       label: "Custo Variável",        icon: TrendingDown },
+  { href: "/dashboard/notas-fiscais",        label: "Notas Fiscais",         icon: FileText     },
 ]
 
 export const navDTF: NavItem[] = [

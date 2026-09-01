@@ -13,6 +13,8 @@ const ALLOWED_KEYS = new Set([
   "reserva_expiry_hours", "chatbot_idle_return_minutes", "print_receipt_printer",
   "dtf_num_impressoras",
   "dtf_film_alerta_m", "dtf_film_tamanho_padrao",
+  "fiscal_cnpj_emitente", "fiscal_token_homologacao", "fiscal_token_producao",
+  "fiscal_ambiente_ativo", "fiscal_serie_ativa",
 ])
 
 export async function GET() {

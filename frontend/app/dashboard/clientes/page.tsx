@@ -5,6 +5,7 @@ import {
   Search, X, RefreshCw, ChevronRight,
   Calendar, ShoppingBag, CheckCircle, Save, User, Bot,
   Printer, Download, Tag, Plus, Trash2, UserPlus, Phone, Pencil,
+  FileText,
 } from "lucide-react"
 import Toggle from "@/components/Toggle"
 
@@ -24,6 +25,19 @@ type Contact = {
   chatbotObs: string | null
   chatbotProdutoEnabled: boolean
   chatbotDtfEnabled: boolean
+  nomeWhatsapp: string | null
+  nomeCadastro: string | null
+  cpfCnpj: string | null
+  tipoPessoa: string | null
+  inscricaoEstadual: string | null
+  cep: string | null
+  logradouro: string | null
+  numero: string | null
+  complemento: string | null
+  bairro: string | null
+  cidade: string | null
+  uf: string | null
+  codigoMunicipioIbge: string | null
   createdAt: string
   orderCount: string
   totalSpent: string
@@ -424,6 +438,17 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const [chatbotObs,     setChatbotObs]     = useState(contact.chatbotObs ?? "")
   const [chatbotProduto, setChatbotProduto] = useState(contact.chatbotProdutoEnabled)
   const [chatbotDtf,     setChatbotDtf]     = useState(contact.chatbotDtfEnabled)
+  const [cpfCnpj,        setCpfCnpj]        = useState(contact.cpfCnpj ?? "")
+  const [tipoPessoa,     setTipoPessoa]     = useState(contact.tipoPessoa ?? "fisica")
+  const [inscricaoEst,   setInscricaoEst]   = useState(contact.inscricaoEstadual ?? "")
+  const [cep,            setCep]            = useState(contact.cep ?? "")
+  const [logradouro,     setLogradouro]     = useState(contact.logradouro ?? "")
+  const [numero,         setNumero]         = useState(contact.numero ?? "")
+  const [complemento,    setComplemento]    = useState(contact.complemento ?? "")
+  const [bairro,         setBairro]         = useState(contact.bairro ?? "")
+  const [cidade,         setCidade]         = useState(contact.cidade ?? "")
+  const [uf,             setUf]             = useState(contact.uf ?? "")
+  const [codigoIbge,     setCodigoIbge]     = useState(contact.codigoMunicipioIbge ?? "")
   const [saving,         setSaving]         = useState(false)
   const [saved,          setSaved]          = useState(false)
   const [confirmDelete,  setConfirmDelete]  = useState(false)
@@ -500,6 +525,17 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
           chatbotObs: chatbotObs.trim() || null,
           chatbotProdutoEnabled: chatbotProduto,
           chatbotDtfEnabled: chatbotDtf,
+          cpfCnpj: cpfCnpj.trim() || null,
+          tipoPessoa,
+          inscricaoEstadual: inscricaoEst.trim() || null,
+          cep: cep.trim() || null,
+          logradouro: logradouro.trim() || null,
+          numero: numero.trim() || null,
+          complemento: complemento.trim() || null,
+          bairro: bairro.trim() || null,
+          cidade: cidade.trim() || null,
+          uf: uf.trim() || null,
+          codigoMunicipioIbge: codigoIbge.trim() || null,
         }),
       })
       setSaved(true)
@@ -544,6 +580,9 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
               <p className="text-xs text-[#0F1E3C]/40 mt-1">
                 {isLidUnresolved(contact) ? "Nº pendente de identificação" : fmtPhone(contact.phone)}
               </p>
+              {contact.nomeCadastro && contact.nomeWhatsapp && contact.nomeCadastro !== contact.nomeWhatsapp && (
+                <p className="text-[10px] text-[#0F1E3C]/30 mt-0.5">Importado do WhatsApp: {contact.nomeWhatsapp}</p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 mt-2 ml-10">
@@ -667,6 +706,58 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
               <p className="text-sm font-semibold text-[#0F1E3C]">Preço Exclusivo</p>
               <p className="text-[10px] text-[#0F1E3C]/40">PDV exige confirmação de preço</p>
             </div>
+          </div>
+        </div>
+
+        {/* ── Dados Fiscais ── */}
+        <div className="px-5 py-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <FileText size={13} className="text-[#4361EE]" />
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40">Dados Fiscais</p>
+          </div>
+          <p className="text-[10px] text-[#0F1E3C]/40 -mt-1.5">Opcional — só é exigido na hora de emitir nota fiscal</p>
+
+          <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-xs font-medium">
+            {[{ val: "fisica", label: "Pessoa Física" }, { val: "juridica", label: "Pessoa Jurídica" }].map(({ val, label }) => (
+              <button key={val} onClick={() => setTipoPessoa(val)}
+                className={`flex-1 py-2 transition-colors ${tipoPessoa === val ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <input value={cpfCnpj} onChange={e => setCpfCnpj(e.target.value)}
+            placeholder={tipoPessoa === "juridica" ? "CNPJ" : "CPF"}
+            className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+
+          {tipoPessoa === "juridica" && (
+            <input value={inscricaoEst} onChange={e => setInscricaoEst(e.target.value)}
+              placeholder="Inscrição Estadual"
+              className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+          )}
+
+          <div className="flex gap-2">
+            <input value={cep} onChange={e => setCep(e.target.value)} placeholder="CEP"
+              className="w-28 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            <input value={uf} onChange={e => setUf(e.target.value.toUpperCase().slice(0, 2))} placeholder="UF"
+              className="w-16 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            <input value={cidade} onChange={e => setCidade(e.target.value)} placeholder="Cidade"
+              className="flex-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+          </div>
+          <input value={codigoIbge} onChange={e => setCodigoIbge(e.target.value)} placeholder="Código IBGE do município (ex: 3516200)"
+            className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+
+          <div className="flex gap-2">
+            <input value={logradouro} onChange={e => setLogradouro(e.target.value)} placeholder="Logradouro (rua/avenida)"
+              className="flex-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            <input value={numero} onChange={e => setNumero(e.target.value)} placeholder="Nº"
+              className="w-16 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+          </div>
+          <div className="flex gap-2">
+            <input value={bairro} onChange={e => setBairro(e.target.value)} placeholder="Bairro"
+              className="flex-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            <input value={complemento} onChange={e => setComplemento(e.target.value)} placeholder="Complemento"
+              className="flex-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
           </div>
         </div>
 

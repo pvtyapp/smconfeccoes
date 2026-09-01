@@ -12,7 +12,7 @@ export async function GET(req: Request) {
       SELECT
         id,
         jid,
-        name,
+        COALESCE(nome_cadastro, name) AS name,
         phone,
         state,
         state_data   AS "stateData",
@@ -20,8 +20,8 @@ export async function GET(req: Request) {
         updated_at   AS "updatedAt"
       FROM wa_contacts
       WHERE linked_user_id IS NULL
-      ${search ? `AND (name ILIKE $1 OR phone ILIKE $1)` : ""}
-      ORDER BY name ASC, updated_at DESC
+      ${search ? `AND (COALESCE(nome_cadastro, name) ILIKE $1 OR phone ILIKE $1)` : ""}
+      ORDER BY COALESCE(nome_cadastro, name) ASC, updated_at DESC
     `, search ? [`%${search}%`] : [])
     return NextResponse.json(rows)
   } catch (err) {

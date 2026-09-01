@@ -108,6 +108,13 @@ const formInit = {
   chatbotEnabled: false,
   stockEnabled: false,
   precoPorMetro: false,
+  ncm: "",
+  cest: "",
+  origem: "0",
+  csosn: "102",
+  unidadeTributavel: "UN",
+  cfopDentroEstado: "5101",
+  cfopForaEstado: "6101",
 }
 
 function catName(cats: Category[], id?: string | null) {
@@ -157,6 +164,13 @@ export default function ProdutosPage() {
       chatbotEnabled: p.chatbotEnabled ?? false,
       stockEnabled:   p.stockEnabled ?? false,
       precoPorMetro:  p.precoPorMetro ?? false,
+      ncm:               p.ncm ?? "",
+      cest:              p.cest ?? "",
+      origem:            p.origem ?? "0",
+      csosn:             p.csosn ?? "102",
+      unidadeTributavel: p.unidadeTributavel ?? "UN",
+      cfopDentroEstado:  p.cfopDentroEstado ?? "5101",
+      cfopForaEstado:    p.cfopForaEstado ?? "6101",
     })
     setError(""); setShowForm(true)
   }
@@ -183,6 +197,13 @@ export default function ProdutosPage() {
         chatbotEnabled: form.chatbotEnabled,
         stockEnabled:   form.stockEnabled,
         precoPorMetro:  form.precoPorMetro,
+        ncm:               form.ncm || null,
+        cest:              form.cest || null,
+        origem:            form.origem || null,
+        csosn:             form.csosn || null,
+        unidadeTributavel: form.unidadeTributavel || null,
+        cfopDentroEstado:  form.cfopDentroEstado || null,
+        cfopForaEstado:    form.cfopForaEstado || null,
       }
       const res = await fetch(editing ? `/api/products/${editing.id}` : "/api/products", {
         method: editing ? "PUT" : "POST",
@@ -318,6 +339,49 @@ export default function ProdutosPage() {
                 <div>
                   <p className="text-sm font-semibold text-[#0F1E3C]">Cobrar por metro</p>
                   <p className="text-xs text-[#0F1E3C]/45">PDV cobra proporcional ao tamanho</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Dados Fiscais */}
+            <div className="border border-[#0F1E3C]/10 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-bold text-[#0F1E3C]">Dados Fiscais</p>
+              <p className="text-xs text-[#0F1E3C]/40 -mt-2">Opcional — só é exigido na hora de emitir nota fiscal</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">NCM</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="61091000" value={form.ncm} onChange={(e) => set("ncm", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">CEST</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="(se aplicável)" value={form.cest} onChange={(e) => set("cest", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">Origem</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="0 = nacional" value={form.origem} onChange={(e) => set("origem", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">CSOSN</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="102" value={form.csosn} onChange={(e) => set("csosn", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">Unidade tributável</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="UN" value={form.unidadeTributavel} onChange={(e) => set("unidadeTributavel", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">CFOP dentro do estado</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="5101" value={form.cfopDentroEstado} onChange={(e) => set("cfopDentroEstado", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-[#0F1E3C]/50">CFOP fora do estado</label>
+                  <input className="w-full mt-1 border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30"
+                    placeholder="6101" value={form.cfopForaEstado} onChange={(e) => set("cfopForaEstado", e.target.value)} />
                 </div>
               </div>
             </div>

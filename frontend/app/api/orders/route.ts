@@ -54,12 +54,17 @@ export async function GET(req: Request) {
           LIMIT 1
         )                      AS "needsAttention",
         c.id                   AS "contactId",
-        c.name                 AS "contactName",
+        COALESCE(c.nome_cadastro, c.name) AS "contactName",
         c.phone                AS "contactPhone",
         c.jid                  AS "contactJid",
         c.payment_term_enabled AS "paymentTermEnabled",
         c.payment_term_type    AS "paymentTermType",
         c.payment_term_days    AS "paymentTermDays",
+        (
+          SELECT fn.status FROM fiscal_notes fn
+          WHERE fn.order_id = o.id AND fn.status != 'rejeitada'
+          ORDER BY fn.id DESC LIMIT 1
+        )                      AS "fiscalNoteStatus",
         COALESCE(
           json_agg(
             json_build_object(

@@ -1,6 +1,6 @@
 "use client"
 
-import { Phone, Clock, AlertTriangle } from "lucide-react"
+import { Phone, Clock, AlertTriangle, FileText } from "lucide-react"
 import type { Order } from "./page"
 
 const STATUS_LABEL: Record<string, string> = {
@@ -147,6 +147,15 @@ export default function OrderCard({ order, onClick, onSetPaidLabel }: Props) {
         <span>{order.items.length} iten{order.items.length !== 1 ? "s" : ""}</span>
         <span className="font-semibold text-[#0F1E3C]/60">{totalQty} un total</span>
       </div>
+
+      {order.fiscalNoteStatus && (
+        <div className={`mt-2 flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded-lg ${
+          order.fiscalNoteStatus === "autorizada" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
+        }`}>
+          <FileText size={10} />
+          {order.fiscalNoteStatus === "autorizada" ? "NFe emitida" : "NFe processando"}
+        </div>
+      )}
 
       {/* Selo Pagou/Não pagou — só informativo, Pronto p/ Retirada */}
       {isPronto && (

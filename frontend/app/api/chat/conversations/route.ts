@@ -44,7 +44,7 @@ export async function GET(req: Request) {
       WITH ranked AS (
         SELECT
           c.id,
-          c.name,
+          COALESCE(c.nome_cadastro, c.name) AS name,
           c.phone,
           c.jid,
           c.profile_pic            AS "profilePic",

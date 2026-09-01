@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef } from "react"
-import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw, Search } from "lucide-react"
+import { X, Printer, Check, Trash2, Plus, ChevronRight, Loader2, Package, Clock, AlertTriangle, RotateCcw, Search, FileText } from "lucide-react"
 import type { Order, OrderItem } from "./page"
 import PrintSheet from "./PrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
@@ -92,6 +92,25 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [sendingAlteration, setSendingAlteration] = useState(false)
   const [pendingAction, setPendingAction] = useState<{ title: string; run: () => Promise<void> } | null>(null)
   const [confirming,    setConfirming]    = useState(false)
+  const [nfStatus,      setNfStatus]      = useState(order.fiscalNoteStatus)
+  const [emittingNF,    setEmittingNF]    = useState(false)
+  const [nfError,       setNfError]       = useState("")
+
+  async function handleEmitirNF() {
+    setEmittingNF(true)
+    setNfError("")
+    try {
+      const res = await fetch("/api/fiscal/emitir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: order.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setNfError(data.error ?? "Erro ao emitir nota"); return }
+      setNfStatus("processando")
+      onRefresh()
+    } finally { setEmittingNF(false) }
+  }
 
   function itemsHash(list: OrderItem[]) {
     return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}`).join(",")
@@ -613,6 +632,32 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-[#0F1E3C]/60 text-sm font-medium hover:bg-[#0F1E3C]/6 transition-colors">
                 <Printer size={14} /> Reimprimir Ordem do Pedido
               </button>
+            </div>
+          )}
+
+          {/* Nota Fiscal — emissão manual, sob demanda, só depois que o pedido estiver pronto/concluído */}
+          {(isPronte || isDone) && (
+            <div className="pt-1">
+              {nfStatus === "autorizada" ? (
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <FileText size={14} className="text-emerald-600 flex-shrink-0" />
+                  <p className="text-xs font-bold text-emerald-700">Nota fiscal emitida — enviada por email e WhatsApp</p>
+                </div>
+              ) : nfStatus === "processando" ? (
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+                  <Loader2 size={14} className="text-blue-500 animate-spin flex-shrink-0" />
+                  <p className="text-xs font-bold text-blue-700">Nota fiscal em processamento na Sefaz...</p>
+                </div>
+              ) : (
+                <>
+                  <button onClick={handleEmitirNF} disabled={emittingNF}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-[#0F1E3C]/10 text-[#0F1E3C]/70 text-sm font-medium hover:bg-[#0F1E3C]/6 transition-colors disabled:opacity-50">
+                    {emittingNF ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                    Emitir Nota Fiscal
+                  </button>
+                  {nfError && <p className="mt-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{nfError}</p>}
+                </>
+              )}
             </div>
           )}
 

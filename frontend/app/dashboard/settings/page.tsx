@@ -228,6 +228,43 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Nota Fiscal */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Nota Fiscal (Focus NFe)</h2>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">CNPJ emitente</label>
+              <input className={inputCls} value={settings.fiscal_cnpj_emitente ?? ""} onChange={e => set("fiscal_cnpj_emitente", e.target.value)} placeholder="67564957000131" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Token de Homologação</label>
+              <input className={inputCls} value={settings.fiscal_token_homologacao ?? ""} onChange={e => set("fiscal_token_homologacao", e.target.value)} placeholder="Token da aba Tokens no Focus NFe" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Token de Produção</label>
+              <input className={inputCls} value={settings.fiscal_token_producao ?? ""} onChange={e => set("fiscal_token_producao", e.target.value)} placeholder="Token da aba Tokens no Focus NFe" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-2 block">Ambiente ativo</label>
+              <div className="flex gap-2">
+                {([{ v: "homologacao", l: "Homologação (teste)" }, { v: "producao", l: "Produção (real)" }] as const).map(({ v, l }) => (
+                  <button key={v} onClick={() => set("fiscal_ambiente_ativo", v)}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all ${
+                      (settings.fiscal_ambiente_ativo ?? "homologacao") === v
+                        ? "bg-[#4361EE] text-white border-[#4361EE]"
+                        : "bg-[#F4F6FB] text-[#0F1E3C]/50 border-transparent hover:text-[#0F1E3C]"
+                    }`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Série ativa</label>
+              <input className={inputCls} value={settings.fiscal_serie_ativa ?? "2"} onChange={e => set("fiscal_serie_ativa", e.target.value)} placeholder="2" />
+              <p className="text-[10px] text-[#0F1E3C]/30 mt-1">Marketplace usa série 1 — o sistema emite sempre na série 2 pra não colidir numeração.</p>
+            </div>
+          </section>
+
           {/* Armazenamento */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <div className="flex items-center justify-between">

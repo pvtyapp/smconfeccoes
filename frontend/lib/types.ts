@@ -18,6 +18,13 @@ export type Product = {
   chatbotEnabled: boolean
   stockEnabled: boolean
   precoPorMetro: boolean
+  ncm?: string | null
+  cest?: string | null
+  origem?: string | null
+  csosn?: string | null
+  unidadeTributavel?: string
+  cfopDentroEstado?: string
+  cfopForaEstado?: string
   createdAt: string
 }
 

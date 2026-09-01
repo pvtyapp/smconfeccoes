@@ -13,7 +13,11 @@ export async function GET(
 
     const contactRes = await pool.query(`
       SELECT
-        id, name, phone, jid,
+        id,
+        COALESCE(nome_cadastro, name) AS name,
+        name                        AS "nomeWhatsapp",
+        nome_cadastro               AS "nomeCadastro",
+        phone, jid,
         lifecycle_state            AS "lifecycleState",
         state                      AS "chatbotState",
         last_order_at              AS "lastOrderAt",
@@ -24,6 +28,11 @@ export async function GET(
         chatbot_obs                AS "chatbotObs",
         COALESCE(chatbot_produto_enabled, true)  AS "chatbotProdutoEnabled",
         COALESCE(chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
+        cpf_cnpj                   AS "cpfCnpj",
+        tipo_pessoa                AS "tipoPessoa",
+        inscricao_estadual         AS "inscricaoEstadual",
+        cep, logradouro, numero, complemento, bairro, cidade, uf,
+        codigo_municipio_ibge      AS "codigoMunicipioIbge",
         created_at                 AS "createdAt"
       FROM wa_contacts
       WHERE id = $1
@@ -128,19 +137,37 @@ export async function PUT(
 ) {
   try {
     const { id } = await params
-    const { name, enabled, type, days, precoExclusivo, chatbotObs, chatbotProdutoEnabled, chatbotDtfEnabled } = await req.json()
+    const {
+      name, enabled, type, days, precoExclusivo, chatbotObs, chatbotProdutoEnabled, chatbotDtfEnabled,
+      cpfCnpj, tipoPessoa, inscricaoEstadual,
+      cep, logradouro, numero, complemento, bairro, cidade, uf, codigoMunicipioIbge,
+    } = await req.json()
 
+    // "name" aqui é a correção manual do operador — nunca escreve na coluna
+    // `name` (essa é só o import do perfil do WhatsApp, re-sincronizado todo dia
+    // pelo cron do chat; escrever nela aqui seria apagado na próxima sync).
     await pool.query(`
       UPDATE wa_contacts
-      SET name                      = COALESCE(NULLIF($1, ''), name),
+      SET nome_cadastro             = COALESCE(NULLIF($1, ''), nome_cadastro),
           payment_term_enabled      = $2,
           payment_term_type         = $3,
           payment_term_days         = $4,
           preco_exclusivo           = $5,
           chatbot_obs               = $6,
           chatbot_produto_enabled   = COALESCE($7, chatbot_produto_enabled),
-          chatbot_dtf_enabled       = COALESCE($8, chatbot_dtf_enabled)
-      WHERE id = $9
+          chatbot_dtf_enabled       = COALESCE($8, chatbot_dtf_enabled),
+          cpf_cnpj                  = COALESCE(NULLIF($9, ''), cpf_cnpj),
+          tipo_pessoa               = COALESCE(NULLIF($10, ''), tipo_pessoa),
+          inscricao_estadual        = COALESCE(NULLIF($11, ''), inscricao_estadual),
+          cep                       = COALESCE(NULLIF($12, ''), cep),
+          logradouro                = COALESCE(NULLIF($13, ''), logradouro),
+          numero                    = COALESCE(NULLIF($14, ''), numero),
+          complemento               = COALESCE(NULLIF($15, ''), complemento),
+          bairro                    = COALESCE(NULLIF($16, ''), bairro),
+          cidade                    = COALESCE(NULLIF($17, ''), cidade),
+          uf                        = COALESCE(NULLIF($18, ''), uf),
+          codigo_municipio_ibge     = COALESCE(NULLIF($19, ''), codigo_municipio_ibge)
+      WHERE id = $20
     `, [
       name?.trim() ?? null,
       Boolean(enabled),
@@ -150,6 +177,17 @@ export async function PUT(
       chatbotObs ?? null,
       chatbotProdutoEnabled !== undefined ? Boolean(chatbotProdutoEnabled) : null,
       chatbotDtfEnabled !== undefined ? Boolean(chatbotDtfEnabled) : null,
+      cpfCnpj?.trim() ?? null,
+      tipoPessoa ?? null,
+      inscricaoEstadual?.trim() ?? null,
+      cep?.trim() ?? null,
+      logradouro?.trim() ?? null,
+      numero?.trim() ?? null,
+      complemento?.trim() ?? null,
+      bairro?.trim() ?? null,
+      cidade?.trim() ?? null,
+      uf?.trim() ?? null,
+      codigoMunicipioIbge?.trim() ?? null,
       id,
     ])
 

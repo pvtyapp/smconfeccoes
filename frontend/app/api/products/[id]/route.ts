@@ -10,7 +10,10 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await req.json()
-    const { name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled, precoPorMetro, pesoCostura } = body
+    const {
+      name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled, precoPorMetro, pesoCostura,
+      ncm, cest, origem, csosn, unidadeTributavel, cfopDentroEstado, cfopForaEstado,
+    } = body
 
     const sizeArr  = Array.isArray(sizes)  ? sizes.filter(Boolean)  : null
     const colorArr = Array.isArray(colors) ? colors.filter(Boolean) : null
@@ -31,7 +34,14 @@ export async function PUT(
         chatbot_enabled   = COALESCE($9, chatbot_enabled),
         stock_enabled     = COALESCE($10, stock_enabled),
         preco_por_metro   = COALESCE($11, preco_por_metro),
-        peso_costura      = COALESCE($13, peso_costura)
+        peso_costura      = COALESCE($13, peso_costura),
+        ncm                 = COALESCE(NULLIF($14, ''), ncm),
+        cest                = COALESCE(NULLIF($15, ''), cest),
+        origem              = COALESCE(NULLIF($16, ''), origem),
+        csosn               = COALESCE(NULLIF($17, ''), csosn),
+        unidade_tributavel  = COALESCE(NULLIF($18, ''), unidade_tributavel),
+        cfop_dentro_estado  = COALESCE(NULLIF($19, ''), cfop_dentro_estado),
+        cfop_fora_estado    = COALESCE(NULLIF($20, ''), cfop_fora_estado)
       WHERE id = $12
       RETURNING
         id, name,
@@ -46,6 +56,10 @@ export async function PUT(
         COALESCE(color_list, '{}') AS colors,
         status,
         chatbot_enabled AS "chatbotEnabled",
+        ncm, cest, origem, csosn,
+        COALESCE(unidade_tributavel, 'UN')      AS "unidadeTributavel",
+        COALESCE(cfop_dentro_estado, '5101')    AS "cfopDentroEstado",
+        COALESCE(cfop_fora_estado, '6101')      AS "cfopForaEstado",
         created_at      AS "createdAt"
     `, [
       name ?? null,
@@ -61,6 +75,8 @@ export async function PUT(
       precoPorMetro  ?? null,
       id,
       pesoCostura    ?? null,
+      ncm ?? "", cest ?? "", origem ?? "", csosn ?? "",
+      unidadeTributavel ?? "", cfopDentroEstado ?? "", cfopForaEstado ?? "",
     ])
 
     if (rows.length === 0) {

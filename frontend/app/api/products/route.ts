@@ -20,6 +20,10 @@ export async function GET() {
         COALESCE(color_list, '{}') AS colors,
         status,
         chatbot_enabled AS "chatbotEnabled",
+        ncm, cest, origem, csosn,
+        COALESCE(unidade_tributavel, 'UN')      AS "unidadeTributavel",
+        COALESCE(cfop_dentro_estado, '5101')    AS "cfopDentroEstado",
+        COALESCE(cfop_fora_estado, '6101')      AS "cfopForaEstado",
         created_at      AS "createdAt"
       FROM products
       ORDER BY name ASC

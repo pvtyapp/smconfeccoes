@@ -54,7 +54,7 @@ export async function GET(req: Request) {
     try {
       if (!sent) {
         const rows = await pool.query(`
-          SELECT id, jid, name, jid AS send_jid FROM wa_contacts
+          SELECT id, jid, COALESCE(nome_cadastro, name) AS name, jid AS send_jid FROM wa_contacts
           WHERE lifecycle_state = 'new'
           AND linked_user_id IS NULL
             AND COALESCE(novo_seq, 0) = 0
@@ -122,7 +122,7 @@ export async function GET(req: Request) {
     try {
       if (!sent) {
         const rows = await pool.query(`
-          SELECT id, jid, name, jid AS send_jid FROM wa_contacts
+          SELECT id, jid, COALESCE(nome_cadastro, name) AS name, jid AS send_jid FROM wa_contacts
           WHERE lifecycle_state = 'active'
           AND linked_user_id IS NULL
             AND last_order_at IS NOT NULL
@@ -174,7 +174,7 @@ export async function GET(req: Request) {
     try {
       if (!sent) {
         const rows = await pool.query(`
-          SELECT id, jid, name, jid AS send_jid FROM wa_contacts
+          SELECT id, jid, COALESCE(nome_cadastro, name) AS name, jid AS send_jid FROM wa_contacts
           WHERE lifecycle_state = 'ausente'
           AND linked_user_id IS NULL
             AND ausente_seq = 1
@@ -220,7 +220,7 @@ export async function GET(req: Request) {
     try {
       if (!sent) {
         const rows = await pool.query(`
-          SELECT id, jid, name, jid AS send_jid FROM wa_contacts
+          SELECT id, jid, COALESCE(nome_cadastro, name) AS name, jid AS send_jid FROM wa_contacts
           WHERE lifecycle_state = 'ausente'
           AND linked_user_id IS NULL
             AND ausente_seq = 2
