@@ -186,6 +186,24 @@ export default function RelatorioVendasPage() {
 
   useEffect(() => { load() }, [load])
 
+  // Não dá pra confiar só no webhook da Focus NFe pra saber quando autorizou
+  // (não chegou de forma confiável nos testes reais) — enquanto tiver nota
+  // "processando" na tela, pergunta ativamente pra Focus NFe a cada 5s até
+  // resolver, sem precisar o operador ficar clicando em atualizar.
+  useEffect(() => {
+    const pendentes = [...new Set(
+      orders.filter(o => o.fiscalNoteStatus === "processando" && o.fiscalNoteId).map(o => o.fiscalNoteId as number)
+    )]
+    if (pendentes.length === 0) return
+    const timer = setTimeout(async () => {
+      await Promise.all(pendentes.map(id =>
+        fetch(`/api/fiscal/notas/${id}/verificar`, { method: "POST" }).catch(() => {})
+      ))
+      await load()
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [orders, load])
+
   // Unified filtered list
   const entries = useMemo<SaleEntry[]>(() => {
     const list: SaleEntry[] = []
