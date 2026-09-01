@@ -6,6 +6,8 @@ import { firstAllowedPage } from "@/lib/navPages"
 const PUBLIC_API_PREFIXES = [
   "/api/auth/",
   "/api/whatsapp/webhook",
+  "/api/fiscal/webhook",
+  "/api/fiscal/migrate",
   "/api/whatsapp/cron",
   "/api/whatsapp/lifecycle-cron",
   "/api/marketing/cron",
