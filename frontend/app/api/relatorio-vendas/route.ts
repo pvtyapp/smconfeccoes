@@ -51,12 +51,8 @@ export async function GET(req: Request) {
           c.id           AS "contactId",
           COALESCE(c.nome_cadastro, c.name) AS "contactName",
           c.phone        AS "contactPhone",
-          (
-            SELECT fn.status FROM fiscal_note_orders fno
-            JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
-            WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
-            ORDER BY fn.id DESC LIMIT 1
-          )              AS "fiscalNoteStatus",
+          fn.status      AS "fiscalNoteStatus",
+          fn.id          AS "fiscalNoteId",
           json_agg(
             json_build_object(
               'productName', oi.product_name,
@@ -76,11 +72,17 @@ export async function GET(req: Request) {
           ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END
           LIMIT 1
         ) p ON true
+        LEFT JOIN LATERAL (
+          SELECT fn.id, fn.status FROM fiscal_note_orders fno
+          JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
+          WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
+          ORDER BY fn.id DESC LIMIT 1
+        ) fn ON true
         WHERE o.status = 'concluido'
           AND o.source IN ('pdv', 'whatsapp')
           AND o.number NOT LIKE 'COB-%'
           ${orderDateCond}
-        GROUP BY o.id, c.id, c.name, c.nome_cadastro, c.phone
+        GROUP BY o.id, c.id, c.name, c.nome_cadastro, c.phone, fn.id, fn.status
         ORDER BY o.created_at DESC
       `, params)
       orders = r.rows

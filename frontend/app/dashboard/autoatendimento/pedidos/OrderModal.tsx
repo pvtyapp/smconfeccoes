@@ -670,10 +670,11 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
           {(isPronte || isDone) && (
             <div className="pt-1">
               {nfStatus === "autorizada" ? (
-                <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <a href={`/api/fiscal/notas/${order.fiscalNoteId}/download?type=pdf&disposition=inline`} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-colors">
                   <FileText size={14} className="text-emerald-600 flex-shrink-0" />
-                  <p className="text-xs font-bold text-emerald-700">Nota fiscal emitida — enviada por email e WhatsApp</p>
-                </div>
+                  <p className="text-xs font-bold text-emerald-700">Nota fiscal emitida — ver PDF</p>
+                </a>
               ) : nfStatus === "processando" ? (
                 <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
                   <Loader2 size={14} className="text-blue-500 animate-spin flex-shrink-0" />

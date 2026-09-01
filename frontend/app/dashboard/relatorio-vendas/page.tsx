@@ -35,6 +35,7 @@ type OrderRecord = {
   contactName: string | null
   contactPhone: string | null
   fiscalNoteStatus: "pendente" | "processando" | "autorizada" | null
+  fiscalNoteId: number | null
   items: OrderItem[] | null
 }
 
@@ -663,8 +664,12 @@ export default function RelatorioVendasPage() {
                       </td>
                       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
-                          {o.fiscalNoteStatus === "autorizada" && (
-                            <span title="Nota fiscal emitida" className="p-1.5 rounded-lg text-emerald-600"><CheckCircle2 size={13} /></span>
+                          {o.fiscalNoteStatus === "autorizada" && o.fiscalNoteId && (
+                            <a href={`/api/fiscal/notas/${o.fiscalNoteId}/download?type=pdf&disposition=inline`} target="_blank" rel="noopener noreferrer"
+                              title="Ver nota fiscal (PDF)"
+                              className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors">
+                              <CheckCircle2 size={13} />
+                            </a>
                           )}
                           {o.fiscalNoteStatus === "processando" && (
                             <span title="Nota fiscal processando" className="p-1.5 rounded-lg text-blue-500"><Loader2 size={13} className="animate-spin" /></span>

@@ -67,6 +67,12 @@ export async function GET(req: Request) {
           WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
           ORDER BY fn.id DESC LIMIT 1
         )                      AS "fiscalNoteStatus",
+        (
+          SELECT fn.id FROM fiscal_note_orders fno
+          JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
+          WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
+          ORDER BY fn.id DESC LIMIT 1
+        )                      AS "fiscalNoteId",
         COALESCE(
           json_agg(
             json_build_object(

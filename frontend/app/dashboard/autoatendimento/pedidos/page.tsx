@@ -76,6 +76,7 @@ export type Order = {
   confirmationRequestedAt: string | null
   paidLabel: boolean | null
   fiscalNoteStatus: string | null
+  fiscalNoteId: number | null
   items: OrderItem[]
 }
 
