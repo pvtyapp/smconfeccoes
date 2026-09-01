@@ -547,8 +547,8 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const lc = LIFECYCLE_CONFIG[contact.lifecycleState] ?? LIFECYCLE_CONFIG.new
   // "Total Gasto" só conta pedido concluído — a lista abaixo continua mostrando
   // todo pedido ativo (inclusive em andamento), pra operação ver o que tá pendente.
-  const totalGasto = orders.filter(o => o.status === "concluido").reduce((s, o) => s + (o.totalValue ?? 0), 0)
-    + dtfOrders.filter(o => o.status === "concluido").reduce((s, o) => s + (o.totalValue ?? 0), 0)
+  const totalGasto = orders.filter(o => o.status === "concluido").reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    + dtfOrders.filter(o => o.status === "concluido").reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
 
   const allOrders: AnyOrder[] = [
     ...orders,
