@@ -120,7 +120,8 @@ export async function POST(req: Request) {
         COALESCE(p.cfop_dentro_estado, '5101')  AS "cfopDentroEstado",
         COALESCE(p.cfop_fora_estado, '6101')    AS "cfopForaEstado"
       FROM order_items i
-      LEFT JOIN products p ON p.id = i.product_id
+      LEFT JOIN product_variants pv ON pv.id = i.variant_id
+      LEFT JOIN products p ON p.id = COALESCE(i.product_id, pv.product_id)
       WHERE i.order_id = ANY($1::int[]) AND COALESCE(i.is_service, false) = false
     `, [orderIds])
 
