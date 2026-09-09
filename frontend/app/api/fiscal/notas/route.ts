@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     const { rows } = await pool.query(`
       SELECT
         fn.id, fn.status, fn.numero, fn.serie, fn.chave_acesso AS "chaveAcesso",
-        fn.motivo_rejeicao AS "motivoRejeicao", fn.valor_total AS "valorTotal",
+        fn.motivo_rejeicao AS "motivoRejeicao", fn.valor_total::float AS "valorTotal",
         fn.ambiente, fn.criado_em AS "criadoEm", fn.autorizado_em AS "autorizadoEm",
         fn.enviado_email_em AS "enviadoEmailEm", fn.enviado_whatsapp_em AS "enviadoWhatsappEm",
         string_agg(o.number, ', ' ORDER BY o.number) AS "orderNumbers",
