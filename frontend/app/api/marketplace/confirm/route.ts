@@ -15,6 +15,9 @@ export async function POST(req: Request) {
   try {
     const { origin, rows } = await req.json() as { origin?: string; rows?: ConfirmRow[] }
 
+    if (!origin?.trim()) {
+      return NextResponse.json({ error: "Origem é obrigatória" }, { status: 400 })
+    }
     if (!rows || rows.length === 0) {
       return NextResponse.json({ error: "Nenhum item pra confirmar" }, { status: 400 })
     }
@@ -34,7 +37,7 @@ export async function POST(req: Request) {
     const sepRes = await client.query(`
       INSERT INTO marketplace_separations (number, origin, total_items, total_pieces)
       VALUES ($1, $2, $3, $4) RETURNING id
-    `, [number, origin ?? "manual", totalItems, totalPieces])
+    `, [number, origin.trim(), totalItems, totalPieces])
     const separationId = sepRes.rows[0].id
 
     for (const r of rows) {

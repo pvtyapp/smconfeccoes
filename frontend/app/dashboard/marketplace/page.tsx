@@ -36,8 +36,10 @@ type HistoryRow = {
 type SeparationDetailItem = { id: number; variantId: string; productName: string; color: string; size: string; sku: string; qty: number }
 type SeparationDetail = HistoryRow & { items: SeparationDetailItem[] }
 
-type Origin = "shopee" | "mercado_livre" | "manual"
-const ORIGIN_LABEL: Record<Origin, string> = { shopee: "Shopee", mercado_livre: "Mercado Livre", manual: "Manual" }
+// Legado: separações antigas gravaram um desses 3 valores fixos — mantém o
+// rótulo bonito pra elas. Campo agora é texto livre (ver estado `origin`),
+// não restringe mais a essas 3 opções.
+const ORIGIN_LABEL: Record<string, string> = { shopee: "Shopee", mercado_livre: "Mercado Livre", manual: "Manual" }
 
 let rowSeq = 0
 const newRowId = () => `row-${Date.now()}-${rowSeq++}`
@@ -48,7 +50,7 @@ const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm
 
 export default function MarketplacePage() {
   const [tab, setTab] = useState<"lancar" | "relatorio">("lancar")
-  const [origin, setOrigin] = useState<Origin>("shopee")
+  const [origin, setOrigin] = useState("")
 
   const [catalog, setCatalog] = useState<CatalogVariant[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
@@ -233,12 +235,13 @@ export default function MarketplacePage() {
 
   async function confirmSeparation() {
     if (manualRows.length === 0) return
+    if (!origin.trim()) { setConfirmError("Preenche a origem antes de confirmar"); return }
     setConfirming(true); setConfirmError("")
     try {
       const res = await fetch("/api/marketplace/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ origin, rows: manualRows.map(r => ({ variantId: r.variantId, qty: r.qty })) }),
+        body: JSON.stringify({ origin: origin.trim(), rows: manualRows.map(r => ({ variantId: r.variantId, qty: r.qty })) }),
       })
       const data = await res.json()
       if (!res.ok) { setConfirmError(data.error ?? "Erro ao confirmar"); return }
@@ -505,11 +508,11 @@ export default function MarketplacePage() {
 
               {!result ? (
                 <>
-                  {/* Origem */}
+                  {/* Origem — texto livre, obrigatório pra confirmar */}
                   <div className="px-4 pt-3 flex-shrink-0">
-                    <select value={origin} onChange={e => setOrigin(e.target.value as Origin)} className={`${inputCls} text-xs font-semibold`}>
-                      {(Object.keys(ORIGIN_LABEL) as Origin[]).map(o => <option key={o} value={o}>{ORIGIN_LABEL[o]}</option>)}
-                    </select>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Origem *</p>
+                    <input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="Shopee, Mercado Livre, Amazon…"
+                      className={`${inputCls} text-xs font-semibold ${!origin.trim() ? "border-amber-300" : ""}`} />
                   </div>
 
                   {/* Itens */}
@@ -579,7 +582,7 @@ export default function MarketplacePage() {
                       <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
                       <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
                     </div>
-                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || confirming}
+                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || !origin.trim() || confirming}
                       className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
                       {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar
                     </button>
@@ -631,7 +634,7 @@ export default function MarketplacePage() {
                   <tr key={h.id} className={`border-t border-[#0F1E3C]/5 cursor-pointer hover:bg-[#F9FAFB] ${h.canceledAt ? "opacity-50" : ""}`} onClick={() => openDetail(h.id)}>
                     <td className="px-5 py-2.5 font-semibold text-[#0F1E3C]">{h.number}</td>
                     <td className="px-5 py-2.5 text-[#0F1E3C]/50 tabular-nums">{fmtDateBR(h.createdAt)}</td>
-                    <td className="px-5 py-2.5"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/6 text-[#0F1E3C]/50">{ORIGIN_LABEL[h.origin as Origin] ?? h.origin}</span></td>
+                    <td className="px-5 py-2.5"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/6 text-[#0F1E3C]/50">{ORIGIN_LABEL[h.origin] ?? h.origin}</span></td>
                     <td className="px-5 py-2.5 tabular-nums">{h.totalItems}</td>
                     <td className="px-5 py-2.5 tabular-nums">{h.totalPieces} pç</td>
                     <td className="px-5 py-2.5">
@@ -657,7 +660,7 @@ export default function MarketplacePage() {
                 <h2 className="font-bold text-[#0F1E3C]">{detail?.number ?? "Separação"}</h2>
                 {detail && (
                   <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-                    {fmtDateBR(detail.createdAt)} · {ORIGIN_LABEL[detail.origin as Origin] ?? detail.origin}
+                    {fmtDateBR(detail.createdAt)} · {ORIGIN_LABEL[detail.origin] ?? detail.origin}
                     {detail.canceledAt && <span className="text-red-500 font-bold"> · Cancelada</span>}
                   </p>
                 )}
