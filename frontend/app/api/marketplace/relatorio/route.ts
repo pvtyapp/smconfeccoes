@@ -19,7 +19,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "from e to são obrigatórios" }, { status: 400 })
     }
 
-    const [{ rows: configRows }, { rows: dayRows }, { rows: revenueRows }, { rows: lojaRows }] = await Promise.all([
+    const [{ rows: configRows }, { rows: dayRows }, { rows: revenueRows }, { rows: lojaRows }, { rows: lojaDiaRows }, { rows: lojaProdutoRows }] = await Promise.all([
       pool.query(`SELECT markup_percent AS "markupPercent" FROM marketplace_config WHERE id = 1`),
       pool.query(`
         SELECT
@@ -62,6 +62,46 @@ export async function GET(req: Request) {
         GROUP BY ms.loja_id, ml.nome, ms.origin
         ORDER BY custo DESC
       `, [from, to]),
+      // Blocos "por dia", só que 1 bloco por loja em vez de 1 tabela só da
+      // empresa inteira — sem receita/lucro aqui (isso só existe agregado, ver
+      // `days` acima), só peças/custo/separações mesmo.
+      pool.query(`
+        SELECT
+          ms.loja_id AS "lojaId",
+          COALESCE(ml.nome, ms.origin) AS "lojaNome",
+          TO_CHAR(DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM-DD') AS date,
+          SUM(msi.qty)::int AS pecas,
+          SUM(msi.qty * COALESCE(p.material_cost, 0))::float AS custo,
+          COUNT(DISTINCT ms.id)::int AS separacoes
+        FROM marketplace_separations ms
+        JOIN marketplace_separation_items msi ON msi.separation_id = ms.id
+        JOIN product_variants pv ON pv.id = msi.variant_id
+        JOIN products p ON p.id = pv.product_id
+        LEFT JOIN marketplace_lojas ml ON ml.id = ms.loja_id
+        WHERE ms.canceled_at IS NULL
+          AND DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+        GROUP BY ms.loja_id, ml.nome, ms.origin, DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo')
+        ORDER BY ms.loja_id, date DESC
+      `, [from, to]),
+      // Produtos lançados por loja no período — mesma fonte de custo do resto
+      // do relatório, agrupado por produto/cor/tamanho.
+      pool.query(`
+        SELECT
+          ms.loja_id AS "lojaId",
+          COALESCE(ml.nome, ms.origin) AS "lojaNome",
+          p.name AS "productName", pv.color, pv.size,
+          SUM(msi.qty)::int AS qty,
+          SUM(msi.qty * COALESCE(p.material_cost, 0))::float AS custo
+        FROM marketplace_separations ms
+        JOIN marketplace_separation_items msi ON msi.separation_id = ms.id
+        JOIN product_variants pv ON pv.id = msi.variant_id
+        JOIN products p ON p.id = pv.product_id
+        LEFT JOIN marketplace_lojas ml ON ml.id = ms.loja_id
+        WHERE ms.canceled_at IS NULL
+          AND DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+        GROUP BY ms.loja_id, ml.nome, ms.origin, p.name, pv.color, pv.size
+        ORDER BY ms.loja_id, qty DESC
+      `, [from, to]),
     ])
 
     const markupPercent = Number(configRows[0]?.markupPercent ?? 50)
@@ -96,20 +136,33 @@ export async function GET(req: Request) {
     const totalReceita = days.reduce((s, d) => s + d.receita, 0)
     const totalLucro = totalReceita - totalCusto
 
-    const porLoja = lojaRows.map(l => ({
-      lojaId: l.lojaId as number | null,
-      lojaNome: l.lojaNome as string,
-      pecas: Number(l.pecas),
-      custo: Number(l.custo),
-      separacoes: Number(l.separacoes),
-      percentCusto: totalCusto > 0 ? (Number(l.custo) / totalCusto) * 100 : null,
-    }))
+    // Chave do bloco: loja_id quando existe; senão o nome congelado em `origin`
+    // (separações de antes da feature de loja — vira um bloco "histórico").
+    const blocoKey = (lojaId: number | null, lojaNome: string) => lojaId != null ? `id:${lojaId}` : `hist:${lojaNome}`
+
+    const blocos = lojaRows.map(l => {
+      const key = blocoKey(l.lojaId, l.lojaNome)
+      return {
+        lojaId: l.lojaId as number | null,
+        lojaNome: l.lojaNome as string,
+        pecas: Number(l.pecas),
+        custo: Number(l.custo),
+        separacoes: Number(l.separacoes),
+        percentCusto: totalCusto > 0 ? (Number(l.custo) / totalCusto) * 100 : null,
+        dias: lojaDiaRows
+          .filter(d => blocoKey(d.lojaId, d.lojaNome) === key)
+          .map(d => ({ date: d.date as string, pecas: Number(d.pecas), custo: Number(d.custo), separacoes: Number(d.separacoes) })),
+        produtos: lojaProdutoRows
+          .filter(p => blocoKey(p.lojaId, p.lojaNome) === key)
+          .map(p => ({ productName: p.productName as string, color: p.color as string, size: p.size as string, qty: Number(p.qty), custo: Number(p.custo) })),
+      }
+    })
 
     return NextResponse.json({
       period: { from, to },
       markupPercent,
       days,
-      porLoja,
+      blocos,
       summary: {
         totalPecas,
         totalCusto,

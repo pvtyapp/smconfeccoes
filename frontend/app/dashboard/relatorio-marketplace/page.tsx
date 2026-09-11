@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
-import { RefreshCw, Pencil, Check, X, DollarSign, Package, TrendingUp, AlertTriangle } from "lucide-react"
+import { useState, useCallback, useEffect, useMemo } from "react"
+import { RefreshCw, Pencil, Check, X, DollarSign, Package, TrendingUp, AlertTriangle, Store, ClipboardList } from "lucide-react"
 import { todayBR, subDaysBR, fmtDateOnlyBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 
@@ -19,20 +19,24 @@ type DayRow = {
   margem: number | null
 }
 
-type LojaRow = {
+type BlocoDia = { date: string; pecas: number; custo: number; separacoes: number }
+type BlocoProduto = { productName: string; color: string; size: string; qty: number; custo: number }
+type Bloco = {
   lojaId: number | null
   lojaNome: string
   pecas: number
   custo: number
   separacoes: number
   percentCusto: number | null
+  dias: BlocoDia[]
+  produtos: BlocoProduto[]
 }
 
 type ReportData = {
   period: { from: string; to: string }
   markupPercent: number
   days: DayRow[]
-  porLoja: LojaRow[]
+  blocos: Bloco[]
   summary: {
     totalPecas: number
     totalCusto: number
@@ -42,6 +46,8 @@ type ReportData = {
     diasComCustoIncompleto: number
   }
 }
+
+type Loja = { id: number; nome: string }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -74,6 +80,12 @@ function pct(v: number | null) {
   return `${v.toFixed(1)}%`
 }
 
+// Chave estável do bloco — igual a que o backend usa pra montar `blocos`:
+// loja_id quando existe, senão o nome congelado em `origin` (histórico).
+function blocoKeyOf(b: { lojaId: number | null; lojaNome: string }): string {
+  return b.lojaId != null ? `id:${b.lojaId}` : `hist:${b.lojaNome}`
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function KPICard({ label, value, sub, color, icon: Icon }: {
@@ -99,6 +111,107 @@ function KPICard({ label, value, sub, color, icon: Icon }: {
   )
 }
 
+function BlocoLojaCard({ bloco, view, onSetView }: {
+  bloco: Bloco; view: "produtos" | "dias"; onSetView: (v: "produtos" | "dias") => void
+}) {
+  return (
+    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 flex items-center justify-between flex-wrap gap-3 border-b border-[#0F1E3C]/6">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-[#4361EE]/8 flex items-center justify-center flex-shrink-0">
+            <Store size={16} className="text-[#4361EE]" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-[#0F1E3C] truncate">
+              {bloco.lojaNome}
+              {bloco.lojaId == null && (
+                <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[#0F1E3C]/30">histórico</span>
+              )}
+            </p>
+            <p className="text-[11px] text-[#0F1E3C]/40">{bloco.separacoes} separações · {bloco.pecas} peças · {fmtR(bloco.custo)}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-1.5">
+            <div className="w-16 h-1.5 rounded-full bg-[#0F1E3C]/8 overflow-hidden">
+              <div className="h-full bg-[#4361EE] rounded-full" style={{ width: `${Math.max(0, Math.min(100, bloco.percentCusto ?? 0))}%` }} />
+            </div>
+            <span className="text-[10px] font-bold text-[#0F1E3C]/45 tabular-nums w-9 text-right">{pct(bloco.percentCusto)}</span>
+          </div>
+          <div className="flex rounded-lg border border-[#0F1E3C]/10 overflow-hidden text-[11px] font-bold">
+            <button onClick={() => onSetView("produtos")}
+              className={`px-2.5 py-1.5 transition-colors ${view === "produtos" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
+              Produtos
+            </button>
+            <button onClick={() => onSetView("dias")}
+              className={`px-2.5 py-1.5 transition-colors ${view === "dias" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
+              Por dia
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {view === "produtos" ? (
+        bloco.produtos.length === 0 ? (
+          <p className="text-xs text-center text-[#0F1E3C]/30 py-8">Nenhum produto lançado nessa loja no período.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#0F1E3C]/6 text-[10px] uppercase tracking-wider text-[#0F1E3C]/40">
+                  <th className="text-left  px-5 py-2 font-semibold">Produto</th>
+                  <th className="text-left  px-4 py-2 font-semibold">Cor</th>
+                  <th className="text-left  px-4 py-2 font-semibold">Tamanho</th>
+                  <th className="text-right px-4 py-2 font-semibold">Qtd</th>
+                  <th className="text-right px-5 py-2 font-semibold">Custo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bloco.produtos.map((p, i) => (
+                  <tr key={i} className="border-b border-[#0F1E3C]/4 last:border-0 hover:bg-[#0F1E3C]/2">
+                    <td className="px-5 py-2 text-[#0F1E3C] font-medium">{p.productName}</td>
+                    <td className="px-4 py-2 text-[#0F1E3C]/60">{p.color || "—"}</td>
+                    <td className="px-4 py-2 text-[#0F1E3C]/60">{p.size || "—"}</td>
+                    <td className="px-4 py-2 text-right text-[#0F1E3C]/70 tabular-nums">{p.qty}</td>
+                    <td className="px-5 py-2 text-right text-[#0F1E3C]/70 tabular-nums">{fmtR(p.custo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        bloco.dias.length === 0 ? (
+          <p className="text-xs text-center text-[#0F1E3C]/30 py-8">Nenhuma separação dessa loja no período.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#0F1E3C]/6 text-[10px] uppercase tracking-wider text-[#0F1E3C]/40">
+                  <th className="text-left  px-5 py-2 font-semibold">Data</th>
+                  <th className="text-right px-4 py-2 font-semibold">Separações</th>
+                  <th className="text-right px-4 py-2 font-semibold">Peças</th>
+                  <th className="text-right px-5 py-2 font-semibold">Custo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bloco.dias.map(d => (
+                  <tr key={d.date} className="border-b border-[#0F1E3C]/4 last:border-0 hover:bg-[#0F1E3C]/2">
+                    <td className="px-5 py-2 text-[#0F1E3C] font-medium tabular-nums">{fmtDateOnlyBR(d.date)}</td>
+                    <td className="px-4 py-2 text-right text-[#0F1E3C]/70 tabular-nums">{d.separacoes}</td>
+                    <td className="px-4 py-2 text-right text-[#0F1E3C]/70 tabular-nums">{d.pecas}</td>
+                    <td className="px-5 py-2 text-right text-[#0F1E3C]/70 tabular-nums">{fmtR(d.custo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RelatorioMarketplacePage() {
@@ -115,6 +228,16 @@ export default function RelatorioMarketplacePage() {
   const [editingDate, setEditingDate] = useState<string | null>(null)
   const [editValue,   setEditValue]   = useState("")
   const [savingEdit,  setSavingEdit]  = useState(false)
+
+  // Filtro de loja — mesma fonte de dados do dropdown do carrinho no
+  // Marketplace. "all" mostra tudo; senão filtra pra 1 bloco só.
+  const [lojas, setLojas] = useState<Loja[]>([])
+  const [lojaFilter, setLojaFilter] = useState("all")
+  const [blocoView, setBlocoView] = useState<Record<string, "produtos" | "dias">>({})
+
+  useEffect(() => {
+    fetch("/api/marketplace/lojas").then(r => r.ok ? r.json() : []).then(setLojas).catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     const dates = getPresetDates(preset, rangeStart, rangeEnd)
@@ -176,6 +299,23 @@ export default function RelatorioMarketplacePage() {
 
   const summary = data?.summary
 
+  // Opções do filtro: "Todas as lojas" + lojas cadastradas + qualquer bucket
+  // histórico (loja_id nulo) que apareça nos blocos do período selecionado.
+  const filterOptions = useMemo(() => {
+    const cadastradas = lojas.map(l => ({ key: `id:${l.id}`, label: l.nome }))
+    const historicos = (data?.blocos ?? [])
+      .filter(b => b.lojaId === null)
+      .map(b => ({ key: blocoKeyOf(b), label: `${b.lojaNome} (histórico)` }))
+    return [{ key: "all", label: "Todas as lojas" }, ...cadastradas, ...historicos]
+  }, [lojas, data])
+
+  const visibleBlocos = useMemo(() => {
+    if (!data) return []
+    return lojaFilter === "all" ? data.blocos : data.blocos.filter(b => blocoKeyOf(b) === lojaFilter)
+  }, [data, lojaFilter])
+
+  const blocoFiltrado = lojaFilter !== "all" ? visibleBlocos[0] ?? null : null
+
   return (
     <div className="space-y-6">
 
@@ -186,7 +326,7 @@ export default function RelatorioMarketplacePage() {
             Financeiro Marketplace
           </h1>
           <p className="text-sm text-[#0F1E3C]/45 mt-0.5">
-            Custo real do que foi separado, receita digitada ou estimada por dia.
+            Custo real do que foi separado, receita digitada ou estimada por dia, detalhado por loja.
           </p>
         </div>
         <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors border border-[#0F1E3C]/8">
@@ -220,29 +360,45 @@ export default function RelatorioMarketplacePage() {
         </div>
       </div>
 
-      {/* Period selector */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8 w-fit">
-          {PRESETS.map(({ key, label }) => (
-            <button key={key} onClick={() => setPreset(key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                preset === key
-                  ? "bg-[#4361EE] text-white shadow-sm"
-                  : "text-[#0F1E3C]/50 hover:text-[#0F1E3C] hover:bg-white/60"
+      {/* Filtros: período + loja */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8 w-fit">
+            {PRESETS.map(({ key, label }) => (
+              <button key={key} onClick={() => setPreset(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  preset === key
+                    ? "bg-[#4361EE] text-white shadow-sm"
+                    : "text-[#0F1E3C]/50 hover:text-[#0F1E3C] hover:bg-white/60"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {preset === "range" && (
+            <div className="flex items-center gap-2">
+              <input type="date" value={rangeStart} onChange={e => setRangeStart(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+              <span className="text-xs text-[#0F1E3C]/40">até</span>
+              <input type="date" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Store size={13} className="text-[#0F1E3C]/30 mr-0.5" />
+          {filterOptions.map(({ key, label }) => (
+            <button key={key} onClick={() => setLojaFilter(key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                lojaFilter === key
+                  ? "bg-[#0F1E3C] text-white border-[#0F1E3C]"
+                  : "text-[#0F1E3C]/55 border-[#0F1E3C]/10 hover:bg-[#0F1E3C]/5"
               }`}>
               {label}
             </button>
           ))}
         </div>
-        {preset === "range" && (
-          <div className="flex items-center gap-2">
-            <input type="date" value={rangeStart} onChange={e => setRangeStart(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-            <span className="text-xs text-[#0F1E3C]/40">até</span>
-            <input type="date" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
-          </div>
-        )}
       </div>
 
       {error && (
@@ -255,7 +411,7 @@ export default function RelatorioMarketplacePage() {
         </div>
       ) : data && summary && (
         <>
-          {summary.diasComCustoIncompleto > 0 && (
+          {lojaFilter === "all" && summary.diasComCustoIncompleto > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2">
               <AlertTriangle size={14} className="text-amber-600 mt-0.5 shrink-0" />
               <p className="text-xs text-amber-700">
@@ -264,138 +420,129 @@ export default function RelatorioMarketplacePage() {
             </div>
           )}
 
-          {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <KPICard label="Peças" value={String(summary.totalPecas)} icon={Package} color="blue" />
-            <KPICard label="Custo" value={fmtR(summary.totalCusto)} icon={DollarSign} color="amber" />
-            <KPICard label="Receita" value={fmtR(summary.totalReceita)} icon={DollarSign} color="blue" />
-            <KPICard label="Lucro" value={fmtR(summary.totalLucro)} icon={TrendingUp}
-              color={summary.totalLucro >= 0 ? "green" : "red"} />
-            <KPICard label="Margem" value={pct(summary.margem)} icon={TrendingUp}
-              color={summary.margem !== null && summary.margem >= 0 ? "green" : "red"} />
-          </div>
-
-          {/* Por loja — peças e custo real, sem depender da receita digitada por dia */}
-          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
-              <p className="text-sm font-bold text-[#0F1E3C]">Por loja</p>
-              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">Peças e custo real separados no período, por loja.</p>
+          {/* KPIs — visão geral (receita/lucro só existem no nível da empresa,
+              não são rastreados por loja) ou recorte da loja filtrada */}
+          {lojaFilter === "all" ? (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <KPICard label="Peças" value={String(summary.totalPecas)} icon={Package} color="blue" />
+              <KPICard label="Custo" value={fmtR(summary.totalCusto)} icon={DollarSign} color="amber" />
+              <KPICard label="Receita" value={fmtR(summary.totalReceita)} icon={DollarSign} color="blue" />
+              <KPICard label="Lucro" value={fmtR(summary.totalLucro)} icon={TrendingUp}
+                color={summary.totalLucro >= 0 ? "green" : "red"} />
+              <KPICard label="Margem" value={pct(summary.margem)} icon={TrendingUp}
+                color={summary.margem !== null && summary.margem >= 0 ? "green" : "red"} />
             </div>
-            {data.porLoja.length === 0 ? (
-              <p className="text-sm text-center text-[#0F1E3C]/30 py-10">Nenhuma separação de marketplace no período</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#0F1E3C]/6 text-[10px] uppercase tracking-wider text-[#0F1E3C]/40">
-                      <th className="text-left  px-6 py-2.5 font-semibold">Loja</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Separações</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Peças</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Custo</th>
-                      <th className="text-right px-6 py-2.5 font-semibold">% do custo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.porLoja.map(l => (
-                      <tr key={l.lojaId ?? l.lojaNome} className="border-b border-[#0F1E3C]/4 last:border-0 hover:bg-[#0F1E3C]/2">
-                        <td className="px-6 py-3 text-[#0F1E3C] font-medium">
-                          {l.lojaNome}
-                          {l.lojaId == null && (
-                            <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[#0F1E3C]/30">histórico</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{l.separacoes}</td>
-                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{l.pecas}</td>
-                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{fmtR(l.custo)}</td>
-                        <td className="px-6 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{pct(l.percentCusto)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          ) : blocoFiltrado ? (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <KPICard label="Separações" value={String(blocoFiltrado.separacoes)} icon={ClipboardList} color="blue" />
+                <KPICard label="Peças" value={String(blocoFiltrado.pecas)} icon={Package} color="blue" />
+                <KPICard label="Custo" value={fmtR(blocoFiltrado.custo)} icon={DollarSign} color="amber" />
               </div>
-            )}
-          </div>
-
-          {/* Tabela por dia */}
-          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
-              <p className="text-sm font-bold text-[#0F1E3C]">Por dia</p>
-              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">
-                {data.period.from} → {data.period.to} · clique no lápis pra digitar a receita real de um dia
+              <p className="text-[11px] text-[#0F1E3C]/35 -mt-1">
+                Receita e lucro não aparecem aqui — são digitados por dia pra empresa toda, não por loja (ver "Todas as lojas").
               </p>
-            </div>
-            {data.days.length === 0 ? (
-              <p className="text-sm text-center text-[#0F1E3C]/30 py-10">Nenhuma separação de marketplace no período</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#0F1E3C]/6 text-[10px] uppercase tracking-wider text-[#0F1E3C]/40">
-                      <th className="text-left  px-6 py-2.5 font-semibold">Data</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Peças</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Custo</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Receita</th>
-                      <th className="text-right px-4 py-2.5 font-semibold">Lucro</th>
-                      <th className="text-right px-6 py-2.5 font-semibold">Margem</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.days.map(row => (
-                      <tr key={row.date} className="border-b border-[#0F1E3C]/4 last:border-0 hover:bg-[#0F1E3C]/2">
-                        <td className="px-6 py-3 text-[#0F1E3C] font-medium tabular-nums">
-                          {fmtDateOnlyBR(row.date)}
-                          {row.custoIncompleto && (
-                            <span title="Produto sem custo cadastrado nesse dia">
-                              <AlertTriangle size={11} className="inline ml-1.5 text-amber-500 mb-0.5" />
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{row.pecas}</td>
-                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{fmtR(row.custo)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {editingDate === row.date ? (
-                            <div className="flex items-center justify-end gap-1.5">
-                              <input
-                                type="number" min={0} step="0.01" autoFocus value={editValue}
-                                onChange={e => setEditValue(e.target.value)}
-                                placeholder="valor real"
-                                className="w-24 px-2 py-1 rounded-md border border-[#4361EE]/30 text-right text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
-                              />
-                              <button onClick={() => saveEdit(row.date)} disabled={savingEdit}
-                                className="p-1 rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50">
-                                <Check size={12} />
-                              </button>
-                              <button onClick={() => setEditingDate(null)} disabled={savingEdit}
-                                className="p-1 rounded-md bg-[#0F1E3C]/6 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/12">
-                                <X size={12} />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-end gap-1.5">
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
-                                row.isReal ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
-                              }`}>
-                                {row.isReal ? "Real" : "Estimado"}
-                              </span>
-                              <span className="text-[#0F1E3C]/70">{fmtR(row.receita)}</span>
-                              <button onClick={() => startEdit(row)}
-                                className="p-1 rounded-md text-[#0F1E3C]/25 hover:text-[#4361EE] hover:bg-[#4361EE]/8">
-                                <Pencil size={11} />
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                        <td className={`px-4 py-3 text-right font-bold tabular-nums ${row.lucro >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                          {fmtR(row.lucro)}
-                        </td>
-                        <td className="px-6 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{pct(row.margem)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            </>
+          ) : (
+            <p className="text-sm text-center text-[#0F1E3C]/30 py-10">Essa loja não teve separação nesse período.</p>
+          )}
+
+          {/* Por dia — financeiro geral da empresa, só aparece sem filtro de loja */}
+          {lojaFilter === "all" && (
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+                <p className="text-sm font-bold text-[#0F1E3C]">Por dia</p>
+                <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">
+                  {data.period.from} → {data.period.to} · clique no lápis pra digitar a receita real de um dia
+                </p>
               </div>
-            )}
-          </div>
+              {data.days.length === 0 ? (
+                <p className="text-sm text-center text-[#0F1E3C]/30 py-10">Nenhuma separação de marketplace no período</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[#0F1E3C]/6 text-[10px] uppercase tracking-wider text-[#0F1E3C]/40">
+                        <th className="text-left  px-6 py-2.5 font-semibold">Data</th>
+                        <th className="text-right px-4 py-2.5 font-semibold">Peças</th>
+                        <th className="text-right px-4 py-2.5 font-semibold">Custo</th>
+                        <th className="text-right px-4 py-2.5 font-semibold">Receita</th>
+                        <th className="text-right px-4 py-2.5 font-semibold">Lucro</th>
+                        <th className="text-right px-6 py-2.5 font-semibold">Margem</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.days.map(row => (
+                        <tr key={row.date} className="border-b border-[#0F1E3C]/4 last:border-0 hover:bg-[#0F1E3C]/2">
+                          <td className="px-6 py-3 text-[#0F1E3C] font-medium tabular-nums">
+                            {fmtDateOnlyBR(row.date)}
+                            {row.custoIncompleto && (
+                              <span title="Produto sem custo cadastrado nesse dia">
+                                <AlertTriangle size={11} className="inline ml-1.5 text-amber-500 mb-0.5" />
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{row.pecas}</td>
+                          <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{fmtR(row.custo)}</td>
+                          <td className="px-4 py-3 text-right tabular-nums">
+                            {editingDate === row.date ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <input
+                                  type="number" min={0} step="0.01" autoFocus value={editValue}
+                                  onChange={e => setEditValue(e.target.value)}
+                                  placeholder="valor real"
+                                  className="w-24 px-2 py-1 rounded-md border border-[#4361EE]/30 text-right text-xs focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+                                />
+                                <button onClick={() => saveEdit(row.date)} disabled={savingEdit}
+                                  className="p-1 rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50">
+                                  <Check size={12} />
+                                </button>
+                                <button onClick={() => setEditingDate(null)} disabled={savingEdit}
+                                  className="p-1 rounded-md bg-[#0F1E3C]/6 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/12">
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
+                                  row.isReal ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                                }`}>
+                                  {row.isReal ? "Real" : "Estimado"}
+                                </span>
+                                <span className="text-[#0F1E3C]/70">{fmtR(row.receita)}</span>
+                                <button onClick={() => startEdit(row)}
+                                  className="p-1 rounded-md text-[#0F1E3C]/25 hover:text-[#4361EE] hover:bg-[#4361EE]/8">
+                                  <Pencil size={11} />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          <td className={`px-4 py-3 text-right font-bold tabular-nums ${row.lucro >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                            {fmtR(row.lucro)}
+                          </td>
+                          <td className="px-6 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{pct(row.margem)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Por loja — 1 bloco por loja (produtos lançados / dias), ou só a filtrada */}
+          {visibleBlocos.length > 0 && (
+            <div className="space-y-3">
+              {lojaFilter === "all" && <p className="text-sm font-bold text-[#0F1E3C]">Por loja</p>}
+              {visibleBlocos.map(b => {
+                const key = blocoKeyOf(b)
+                return (
+                  <BlocoLojaCard key={key} bloco={b} view={blocoView[key] ?? "produtos"}
+                    onSetView={v => setBlocoView(prev => ({ ...prev, [key]: v }))} />
+                )
+              })}
+            </div>
+          )}
         </>
       )}
     </div>
