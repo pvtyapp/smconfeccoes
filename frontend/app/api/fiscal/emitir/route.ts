@@ -56,6 +56,7 @@ export async function POST(req: Request) {
         COALESCE(c.nome_cadastro, c.name) AS "contactName",
         c.cpf_cnpj                 AS "cpfCnpj",
         c.tipo_pessoa              AS "tipoPessoa",
+        c.razao_social             AS "razaoSocial",
         c.inscricao_estadual       AS "inscricaoEstadual",
         c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf,
         c.codigo_municipio_ibge    AS "codigoMunicipioIbge"
@@ -83,6 +84,7 @@ export async function POST(req: Request) {
     // do projeto: emissão trava aqui, não inventa CPF/endereço).
     const faltando: string[] = []
     if (!order.cpfCnpj) faltando.push(order.tipoPessoa === "juridica" ? "CNPJ" : "CPF")
+    if (order.tipoPessoa === "juridica" && !order.razaoSocial) faltando.push("razão social")
     if (!order.logradouro) faltando.push("logradouro")
     if (!order.numero) faltando.push("número")
     if (!order.bairro) faltando.push("bairro")
@@ -151,7 +153,7 @@ export async function POST(req: Request) {
       presenca_comprador: 1,
       modalidade_frete: 9,
       serie: settings.serieAtiva,
-      nome_destinatario: order.contactName,
+      nome_destinatario: order.tipoPessoa === "juridica" ? order.razaoSocial : order.contactName,
       logradouro_destinatario: order.logradouro,
       numero_destinatario: order.numero,
       complemento_destinatario: order.complemento || undefined,

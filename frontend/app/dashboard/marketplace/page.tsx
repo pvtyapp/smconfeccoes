@@ -1,13 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Printer, Trash2, Loader2, CheckCircle2, PackageSearch, History, Ban, Pencil, Check, X, Tag, ShoppingCart, Layers } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Printer, Trash2, Loader2, CheckCircle2, History, Ban, Pencil, Check, X, ShoppingCart, Layers } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
 import { colorSwatch } from "@/lib/colorSwatch"
 import { sizeCompare } from "@/lib/sizeOrder"
 import { printWhenReady } from "@/components/print/print-utils"
 import MarketplacePrintSheet from "./MarketplacePrintSheet"
-import MarketplaceBlocksPrintSheet from "./MarketplaceBlocksPrintSheet"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,23 +15,13 @@ type CatalogVariant = {
   color: string; size: string; sku: string; availableStock: number
 }
 
-// "Separar" — só leitura, sem casamento com catálogo. Não agrupa por
-// anúncio/título — pra separar estoque físico o print não importa, só cor +
-// tamanho + quantidade (kit fica separado de peça avulsa, é pick diferente).
-type FlatGroup = { isKit: boolean; tipo: string; cor: string; tamanho: string; qty: number; anuncios: number }
-type SourceSummary = { pedidos: number | null; totalItens: number | null } | null
-
-// Prefixo do SKU → tipo de peça (texto livre) — só separa cor+tamanho igual
-// que são peças diferentes (moletom vs camiseta), não é matching de produto.
-type SkuPrefix = { id: number; prefix: string; tipo: string; createdAt: string }
-
 // Modelo de kit — só guarda quais produtos compõem (ex: Camisetas Infantil +
 // Bermuda Infantil Moletinho). Cor/tamanho são resolvidos contra o catálogo
 // de verdade na hora de montar o carrinho, nunca fixados aqui.
 type KitTemplateItem = { templateId: number; productId: string; productName: string }
 type KitTemplate = { id: number; nome: string; createdAt: string; items: KitTemplateItem[] }
 
-// "Lançar manual" — cada linha já é uma escolha real de produto/cor/tamanho,
+// "Carrinho" — cada linha já é uma escolha real de produto/cor/tamanho,
 // vira baixa de estoque de verdade ao confirmar.
 type ManualRow = {
   id: string; variantId: string; productName: string; color: string; size: string
@@ -58,7 +47,7 @@ const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MarketplacePage() {
-  const [tab, setTab] = useState<"separar" | "relatorio">("separar")
+  const [tab, setTab] = useState<"lancar" | "relatorio">("lancar")
   const [origin, setOrigin] = useState<Origin>("shopee")
 
   const [catalog, setCatalog] = useState<CatalogVariant[]>([])
@@ -78,58 +67,6 @@ export default function MarketplacePage() {
     for (const c of catalog) map.set(c.productId, c.productName)
     return [...map.entries()].map(([productId, productName]) => ({ productId, productName })).sort((a, b) => a.productName.localeCompare(b.productName))
   }, [catalog])
-
-  // ── "Ler picklist" — extração + agrupamento, sem gravar nada ──
-  const [processing, setProcessing] = useState(false)
-  const [processMsg, setProcessMsg] = useState("")
-  const [uploadError, setUploadError] = useState("")
-  const [pastedText, setPastedText] = useState("")
-  const [showPaste, setShowPaste] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [dragOver, setDragOver] = useState(false)
-
-  const [groups, setGroups] = useState<FlatGroup[] | null>(null)
-  const [sourceSummary, setSourceSummary] = useState<SourceSummary>(null)
-  const [readFilename, setReadFilename] = useState("")
-  const [showBlocksPrint, setShowBlocksPrint] = useState(false)
-  // Marcar "já separei essa" — só visual, ajuda a não se perder na lista
-  // enquanto monta o carrinho ao lado. Não é salvo, zera numa leitura nova.
-  const [checkedGroups, setCheckedGroups] = useState<Set<string>>(new Set())
-  function toggleChecked(key: string) {
-    setCheckedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key); else next.add(key)
-      return next
-    })
-  }
-
-  // ── Prefixos de SKU (tipo de peça) ──
-  const [prefixOpen, setPrefixOpen] = useState(false)
-  const [prefixes, setPrefixes] = useState<SkuPrefix[]>([])
-  const [prefixLoading, setPrefixLoading] = useState(false)
-  const [newPrefix, setNewPrefix] = useState("")
-  const [newTipo, setNewTipo] = useState("")
-
-  async function loadPrefixes() {
-    setPrefixLoading(true)
-    try {
-      const res = await fetch("/api/marketplace/prefixes")
-      if (res.ok) setPrefixes(await res.json())
-    } finally { setPrefixLoading(false) }
-  }
-  function openPrefixModal() { setPrefixOpen(true); loadPrefixes() }
-  async function addPrefix() {
-    if (!newPrefix.trim() || !newTipo.trim()) return
-    const res = await fetch("/api/marketplace/prefixes", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prefix: newPrefix, tipo: newTipo }),
-    })
-    if (res.ok) { setNewPrefix(""); setNewTipo(""); loadPrefixes() }
-  }
-  async function deletePrefix(id: number) {
-    setPrefixes(prev => prev.filter(p => p.id !== id))
-    await fetch(`/api/marketplace/prefixes/${id}`, { method: "DELETE" })
-  }
 
   // ── Modelos de kit (nome + produtos que compõem) ──
   const [kitTemplateOpen, setKitTemplateOpen] = useState(false)
@@ -167,56 +104,11 @@ export default function MarketplacePage() {
     await fetch(`/api/marketplace/kit-templates/${id}`, { method: "DELETE" })
   }
 
-  async function runParse(payload: FormData) {
-    setProcessing(true); setUploadError(""); setProcessMsg("Lendo o arquivo…")
-    try {
-      const res = await fetch("/api/marketplace/parse", { method: "POST", body: payload })
-      const data = await res.json()
-      if (!res.ok) { setUploadError(data.error ?? "Erro ao analisar"); return }
-      setGroups(data.groups); setSourceSummary(data.sourceSummary ?? null); setReadFilename(data.filename ?? ""); setCheckedGroups(new Set())
-    } catch {
-      setUploadError("Falha de rede ao enviar o arquivo")
-    } finally {
-      setProcessing(false); setProcessMsg("")
-    }
-  }
-  function handleFile(file: File) {
-    const form = new FormData()
-    form.append("file", file)
-    runParse(form)
-  }
-  function handlePasteSubmit() {
-    if (!pastedText.trim()) return
-    const form = new FormData()
-    form.append("text", pastedText)
-    runParse(form)
-  }
-  function resetRead() {
-    setGroups(null); setSourceSummary(null); setReadFilename(""); setUploadError(""); setCheckedGroups(new Set())
-    setPastedText(""); setShowPaste(false)
-    if (fileInputRef.current) fileInputRef.current.value = ""
-  }
-
-  const groupsTotals = useMemo(() => {
-    if (!groups) return { combinacoes: 0, pecas: 0 }
-    const combinacoes = groups.length
-    const pecas = groups.reduce((s, g) => s + g.qty, 0)
-    return { combinacoes, pecas }
-  }, [groups])
-
-  // Hoje só existe 1 composição de kit no catálogo (Camiseta Infantil +
-  // Bermuda Infantil Moletinho, que só vem em Preto) — nota fixa, não é
-  // configurável. Se aparecer outro tipo de kit, isso precisa virar tela.
-  function kitNote(g: FlatGroup) {
-    if (!g.isKit) return null
-    return `= Camiseta Infantil ${g.cor} · ${g.tamanho}  +  Bermuda Preta · ${g.tamanho}`
-  }
-
   // ── Carrinho — cada linha é uma baixa real, confirmar desconta estoque.
-  // Clique estilo PDV (produto → cor → tamanho já soma no carrinho, sem
-  // formulário) em vez do dropdown+Add de antes. ──────────────────────────
+  // Seleção guiada em 3 passos (Produto → Cor → Tamanho), igual o PDV. ──────
   const [manualRows, setManualRows] = useState<ManualRow[]>([])
   const [cartProductName, setCartProductName] = useState("")
+  const [cartSelectedColor, setCartSelectedColor] = useState("")
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState("")
   const [result, setResult] = useState<{ number: string; totalItems: number; totalPieces: number; items: { productName: string; color: string; size: string; sku: string; qty: number }[] } | null>(null)
@@ -234,6 +126,8 @@ export default function MarketplacePage() {
     groupsArr.forEach(([, vs]) => vs.sort((a, b) => sizeCompare(a.size, b.size)))
     return groupsArr
   }, [catalog, effCartProduct])
+  const effCartColor = cartColorGroups.some(([c]) => c === cartSelectedColor) ? cartSelectedColor : (cartColorGroups[0]?.[0] ?? "")
+  const cartSizeVariants = cartColorGroups.find(([c]) => c === effCartColor)?.[1] ?? []
 
   // `kitGroupId` mantém peça avulsa (sem grupo) e peça de kit sempre em linhas
   // separadas, mesmo que seja a mesma variante — clicar de novo no mesmo kit
@@ -254,7 +148,7 @@ export default function MarketplacePage() {
     return manualRows.find(r => r.variantId === variantId)?.qty ?? 0
   }
   function variantChipCls(v: CatalogVariant): string {
-    const base = "relative flex flex-col items-center px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all min-w-[46px]"
+    const base = "relative flex flex-col items-center px-4 py-2.5 rounded-xl border text-sm font-bold transition-all min-w-[56px]"
     const inCart = cartQtyFor(v.variantId) > 0
     if (v.availableStock < 0) return `${base} border-red-300 bg-red-50 text-red-500`
     if (v.availableStock === 0) return `${base} border-orange-300 bg-orange-50 text-orange-500`
@@ -439,15 +333,15 @@ export default function MarketplacePage() {
       <div>
         <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Separação · Marketplace</h1>
         <p className="text-sm text-[#0F1E3C]/45 mt-0.5 max-w-2xl">
-          Lê o picklist e organiza por cor e tamanho na referência. Monta o carrinho ao lado pra descontar o estoque de verdade.
+          Monta o carrinho igual o PDV — produto, cor e tamanho — pra descontar o estoque de verdade.
         </p>
       </div>
 
       {/* Tabs principais */}
       <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-sm font-semibold bg-white w-fit shadow-sm">
-        <button onClick={() => setTab("separar")}
-          className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "separar" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
-          <PackageSearch size={14} /> Separar
+        <button onClick={() => setTab("lancar")}
+          className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "lancar" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
+          <ShoppingCart size={14} /> Lançar
         </button>
         <button onClick={() => setTab("relatorio")}
           className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "relatorio" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
@@ -455,149 +349,178 @@ export default function MarketplacePage() {
         </button>
       </div>
 
-      {tab === "separar" && (
-        <div className="grid gap-5 md:grid-cols-2 items-start">
+      {tab === "lancar" && (
+        <div className="flex gap-5 items-start">
 
-          {/* ── Coluna esquerda: referência (leitura, sem estoque) ── */}
-          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-1.5"><PackageSearch size={15} className="text-[#4361EE]" /> Referência</h2>
-                <button onClick={openPrefixModal} className="flex items-center gap-1.5 text-[11px] font-bold text-[#0F1E3C]/45 hover:text-[#4361EE] border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-lg px-2.5 py-1.5 transition-colors">
-                  <Tag size={12} /> Prefixos de SKU
+          {/* ── Esquerda: seleção guiada Produto → Cor → Tamanho ── */}
+          <div className="flex-1 min-w-0">
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex rounded-lg border border-[#0F1E3C]/10 overflow-hidden text-xs font-bold">
+                  <button onClick={() => setCartMode("peca")} className={`px-3 py-1.5 transition-colors ${cartMode === "peca" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Peça a peça</button>
+                  <button onClick={() => setCartMode("kit")} className={`px-3 py-1.5 transition-colors ${cartMode === "kit" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Kit</button>
+                </div>
+                <button onClick={openKitTemplateModal} className="flex items-center gap-1.5 text-[11px] font-bold text-[#0F1E3C]/45 hover:text-[#4361EE] border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-lg px-2.5 py-1.5 transition-colors">
+                  <Layers size={12} /> Modelos de kit
                 </button>
               </div>
 
-              {!groups ? (
-                <div>
-                  {!processing ? (
-                    <>
-                      <div
-                        onClick={() => fileInputRef.current?.click()}
-                        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f) }}
-                        className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-colors ${dragOver ? "border-[#4361EE] bg-[#4361EE]/5" : "border-[#0F1E3C]/12 hover:border-[#4361EE]/50"}`}
-                      >
-                        <div className="w-11 h-11 rounded-full bg-[#0F1E3C]/5 flex items-center justify-center mx-auto mb-2.5">
-                          <PackageSearch size={20} className="text-[#4361EE]" />
-                        </div>
-                        <p className="font-bold text-sm text-[#0F1E3C]">Arraste o picklist aqui</p>
-                        <p className="text-xs text-[#0F1E3C]/40 mt-0.5">ou clique pra escolher o arquivo</p>
-                        <p className="text-[11px] text-[#0F1E3C]/30 mt-2">CSV, TXT ou PDF exportado do Shopee/Mercado Livre</p>
-                      </div>
-                      <input ref={fileInputRef} type="file" accept=".csv,.txt,.pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-
-                      <div className="text-center mt-3">
-                        <button onClick={() => setShowPaste(v => !v)} className="text-xs font-bold text-[#4361EE] underline">
-                          {showPaste ? "Fechar" : "Não tenho um arquivo: colar o texto"}
-                        </button>
-                      </div>
-                      {showPaste && (
-                        <div className="mt-3 space-y-2">
-                          <textarea value={pastedText} onChange={e => setPastedText(e.target.value)} rows={5}
-                            placeholder="Cola aqui as linhas do picklist (SKU, título, quantidade)…"
-                            className={inputCls} />
-                          <button onClick={handlePasteSubmit} disabled={!pastedText.trim()} className="w-full py-2.5 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold">Analisar texto</button>
-                        </div>
-                      )}
-                      {uploadError && <p className="text-xs text-red-600 mt-3 text-center">{uploadError}</p>}
-                    </>
-                  ) : (
-                    <div className="py-12 flex flex-col items-center gap-3">
-                      <Loader2 size={24} className="animate-spin text-[#4361EE]" />
-                      <p className="text-sm font-semibold text-[#0F1E3C]">{processMsg || "Processando…"}</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                    <div>
-                      {sourceSummary && (sourceSummary.pedidos != null || sourceSummary.totalItens != null) && (
-                        <p className="text-[11px] text-[#0F1E3C]/35">
-                          O arquivo diz:{sourceSummary.pedidos != null ? ` ${sourceSummary.pedidos} pedidos` : ""}{sourceSummary.totalItens != null ? `, ${sourceSummary.totalItens} itens no total` : ""}
-                        </p>
-                      )}
-                      <p className="text-xs text-[#0F1E3C]/40 mt-0.5">{groupsTotals.combinacoes} itens pra localizar · {groupsTotals.pecas} peças no total</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => { setShowBlocksPrint(true); printWhenReady() }} className="flex items-center gap-1.5 bg-[#4361EE] text-white text-xs font-bold px-3 py-2 rounded-xl">
-                        <Printer size={13} /> Imprimir
+              {catalogLoading ? (
+                <p className="text-xs text-[#0F1E3C]/40">Carregando catálogo…</p>
+              ) : cartMode === "peca" ? (
+                <>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Produto</p>
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    {productNames.map(n => (
+                      <button key={n} type="button" onClick={() => { setCartProductName(n); setCartSelectedColor("") }}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
+                          n === effCartProduct ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                        }`}>
+                        {n}
                       </button>
-                      <button onClick={resetRead} className="text-xs font-bold text-[#0F1E3C]/40 hover:text-[#0F1E3C]">Nova leitura</button>
-                    </div>
+                    ))}
                   </div>
 
-                  {(["kit", "avulso"] as const).map(section => {
-                    const items = groups.filter(g => (section === "kit") === g.isKit)
-                    if (items.length === 0) return null
-                    return (
-                      <div key={section} className="mb-3">
-                        <p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">{section === "kit" ? "Kits" : "Peças avulsas"}</p>
-                        <div className="space-y-1">
-                          {items.map((g, i) => {
-                            const key = `${g.isKit}|${g.tipo}|${g.cor}|${g.tamanho}|${i}`
-                            const done = checkedGroups.has(key)
-                            return (
-                              <div key={key} className={`rounded-lg px-3 py-2 text-xs transition-colors ${done ? "bg-transparent" : "bg-[#F9FAFB]"}`}>
-                                <label className="flex items-center gap-2.5 cursor-pointer">
-                                  <input type="checkbox" checked={done} onChange={() => toggleChecked(key)}
-                                    className="w-3.5 h-3.5 rounded accent-[#4361EE] flex-shrink-0" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between">
-                                      <span className={`font-semibold ${done ? "text-[#0F1E3C]/30 line-through" : "text-[#0F1E3C]"}`}>
-                                        {g.tipo ? `${g.tipo} · ` : ""}{g.cor || "—"}{g.tamanho ? ` · ${g.tamanho}` : ""}
-                                      </span>
-                                      <div className="flex items-center gap-2 flex-shrink-0">
-                                        {g.anuncios > 1 && <span className="text-[10px] text-[#0F1E3C]/35">{g.anuncios} anúncios</span>}
-                                        <span className={`font-bold tabular-nums ${done ? "text-[#0F1E3C]/30" : "text-[#0F1E3C]"}`}>× {g.qty}</span>
-                                      </div>
-                                    </div>
-                                    {kitNote(g) && !done && <p className="text-[10px] text-[#4361EE]/70 mt-0.5">{kitNote(g)}</p>}
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Cor</p>
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {cartColorGroups.map(([color]) => (
+                      <button key={color} type="button" onClick={() => setCartSelectedColor(color)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-bold transition-colors ${
+                          color === effCartColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/70 hover:border-[#4361EE]/40"
+                        }`}>
+                        <span className="w-3 h-3 rounded-[4px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                        {color}
+                      </button>
+                    ))}
+                  </div>
+
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
+                  <div className="flex flex-wrap gap-2">
+                    {cartSizeVariants.map(v => {
+                      const qtyIn = cartQtyFor(v.variantId)
+                      return (
+                        <button key={v.variantId} type="button" onClick={() => addToCart(v)} className={variantChipCls(v)}
+                          title={v.availableStock < 0 ? `Estoque negativo: ${v.availableStock}` : v.availableStock === 0 ? "Sem estoque" : `${v.availableStock} em estoque`}>
+                          <span>{v.size || "U"}</span>
+                          {qtyIn > 0 && (
+                            <span className="absolute -top-2 -right-2 w-5 h-5 bg-[#4361EE] text-white rounded-full text-[10px] font-black flex items-center justify-center leading-none">
+                              {qtyIn}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              ) : kitTemplates.length === 0 ? (
+                <p className="text-xs text-[#0F1E3C]/40 py-3">Nenhum modelo de kit cadastrado ainda. Clica em "Modelos de kit" pra criar um.</p>
+              ) : (
+                <div>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {kitTemplates.map(t => (
+                      <button key={t.id} type="button" onClick={() => { setKitTemplateId(t.id); setKitColors({}) }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                          t.id === (selectedKitTemplate?.id ?? -1) ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                        }`}>
+                        {t.nome}
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedKitTemplate && (
+                    <>
+                      {kitSizeOptions.length === 0 ? (
+                        <p className="text-xs text-red-500 py-2">Esse kit não tem nenhum tamanho em comum entre as peças no catálogo.</p>
+                      ) : (
+                        <>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {kitSizeOptions.map(s => (
+                              <button key={s} type="button" onClick={() => { setKitSize(s); setKitColors({}) }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                                  s === effKitSize ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
+                                }`}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="space-y-3">
+                            {kitComponents.map(c => (
+                              <div key={c.productId}>
+                                <p className="text-[11px] font-bold text-[#0F1E3C] mb-1">{c.productName}</p>
+                                {c.colors.length <= 1 ? (
+                                  <p className="text-[11px] text-[#0F1E3C]/40">automático: {c.colors[0] ?? "sem estoque nesse tamanho"}</p>
+                                ) : (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {c.colors.map(color => (
+                                      <button key={color} type="button" onClick={() => setKitColor(c.productId, color)}
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold transition-colors ${
+                                          color === c.resolvedColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+                                        }`}>
+                                        <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                                        {color}
+                                      </button>
+                                    ))}
                                   </div>
-                                </label>
+                                )}
                               </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )
-                  })}
+                            ))}
+                          </div>
+
+                          <button onClick={addKitToCart} disabled={!kitReady}
+                            className="w-full mt-3 py-2 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold">
+                            Adicionar kit ao carrinho
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </div>
           </div>
 
-          {/* ── Coluna direita: carrinho, igual o PDV — vira baixa real de estoque ── */}
-          <div className="md:sticky md:top-4">
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-              <div className="p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-bold text-[#0F1E3C] flex items-center gap-1.5"><ShoppingCart size={15} className="text-[#4361EE]" /> Carrinho</h2>
-                  {!result && (
-                    <select value={origin} onChange={e => setOrigin(e.target.value as Origin)} className={`${inputCls} !w-auto text-xs font-semibold`}>
-                      {(Object.keys(ORIGIN_LABEL) as Origin[]).map(o => <option key={o} value={o}>{ORIGIN_LABEL[o]}</option>)}
-                    </select>
+          {/* ── Direita: carrinho, igual o PDV — vira baixa real de estoque ── */}
+          <div className="w-[340px] flex-shrink-0">
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 flex flex-col overflow-hidden">
+
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/8 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  <ShoppingCart size={15} className="text-[#0F1E3C]/40" />
+                  <span className="text-sm font-bold text-[#0F1E3C]">Carrinho</span>
+                  {manualRows.length > 0 && (
+                    <span className="text-[10px] font-black bg-[#4361EE] text-white px-1.5 py-0.5 rounded-full leading-none">
+                      {manualTotals.pecas}
+                    </span>
                   )}
                 </div>
+                {!result && manualRows.length > 0 && (
+                  <button onClick={() => setManualRows([])} className="text-xs text-red-400 hover:text-red-600 font-semibold transition-colors">
+                    Limpar
+                  </button>
+                )}
+              </div>
 
-                {!result ? (
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex rounded-lg border border-[#0F1E3C]/10 overflow-hidden text-xs font-bold">
-                        <button onClick={() => setCartMode("peca")} className={`px-3 py-1.5 transition-colors ${cartMode === "peca" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Peça a peça</button>
-                        <button onClick={() => setCartMode("kit")} className={`px-3 py-1.5 transition-colors ${cartMode === "kit" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Kit</button>
+              {!result ? (
+                <>
+                  {/* Origem */}
+                  <div className="px-4 pt-3 flex-shrink-0">
+                    <select value={origin} onChange={e => setOrigin(e.target.value as Origin)} className={`${inputCls} text-xs font-semibold`}>
+                      {(Object.keys(ORIGIN_LABEL) as Origin[]).map(o => <option key={o} value={o}>{ORIGIN_LABEL[o]}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Itens */}
+                  <div className="px-4 py-3">
+                    {manualRows.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-12 gap-2 text-[#0F1E3C]/20">
+                        <ShoppingCart size={28} strokeWidth={1.2} />
+                        <p className="text-xs text-center">Clica em produto → cor → tamanho pra lançar</p>
                       </div>
-                      <button onClick={openKitTemplateModal} className="flex items-center gap-1.5 text-[11px] font-bold text-[#0F1E3C]/45 hover:text-[#4361EE] border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-lg px-2.5 py-1.5 transition-colors">
-                        <Layers size={12} /> Modelos de kit
-                      </button>
-                    </div>
-
-                    {/* Carrinho no topo — o que acabou de ser lançado aparece primeiro,
-                        pra sempre ver o que já foi feito sem ter que rolar até embaixo. */}
-                    {manualRows.length > 0 && (
-                      <div className="mb-3 pb-3 border-b border-dashed border-[#0F1E3C]/10 space-y-1.5 max-h-[260px] overflow-y-auto">
+                    ) : (
+                      <div className="space-y-1.5">
                         {cartGroups.kitGroups.map(([groupId, rows]) => {
                           const qty = rows[0]?.qty ?? 1
                           return (
@@ -647,148 +570,36 @@ export default function MarketplacePage() {
                         })}
                       </div>
                     )}
-
-                    {/* Seletor de produto — sempre embaixo do carrinho, posição fixa */}
-                    {catalogLoading ? (
-                      <p className="text-xs text-[#0F1E3C]/40">Carregando catálogo…</p>
-                    ) : cartMode === "peca" ? (
-                      <>
-                        <div className="flex flex-wrap gap-1.5 mb-3">
-                          {productNames.map(n => (
-                            <button key={n} type="button" onClick={() => setCartProductName(n)}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                                n === effCartProduct ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
-                              }`}>
-                              {n}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
-                          {cartColorGroups.map(([color, variants]) => (
-                            <div key={color}>
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
-                                <span className="text-[11px] font-bold text-[#0F1E3C]">{color}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                {variants.map(v => {
-                                  const qtyIn = cartQtyFor(v.variantId)
-                                  return (
-                                    <button key={v.variantId} type="button" onClick={() => addToCart(v)} className={variantChipCls(v)}
-                                      title={v.availableStock < 0 ? `Estoque negativo: ${v.availableStock}` : v.availableStock === 0 ? "Sem estoque" : `${v.availableStock} em estoque`}>
-                                      <span>{v.size || "U"}</span>
-                                      {qtyIn > 0 && (
-                                        <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#4361EE] text-white rounded-full text-[8px] font-black flex items-center justify-center leading-none">
-                                          {qtyIn}
-                                        </span>
-                                      )}
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    ) : kitTemplates.length === 0 ? (
-                      <p className="text-xs text-[#0F1E3C]/40 py-3">Nenhum modelo de kit cadastrado ainda. Clica em "Modelos de kit" pra criar um.</p>
-                    ) : (
-                      <div>
-                        <div className="flex flex-wrap gap-1.5 mb-3">
-                          {kitTemplates.map(t => (
-                            <button key={t.id} type="button" onClick={() => { setKitTemplateId(t.id); setKitColors({}) }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                                t.id === (selectedKitTemplate?.id ?? -1) ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
-                              }`}>
-                              {t.nome}
-                            </button>
-                          ))}
-                        </div>
-
-                        {selectedKitTemplate && (
-                          <>
-                            {kitSizeOptions.length === 0 ? (
-                              <p className="text-xs text-red-500 py-2">Esse kit não tem nenhum tamanho em comum entre as peças no catálogo.</p>
-                            ) : (
-                              <>
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
-                                <div className="flex flex-wrap gap-1.5 mb-3">
-                                  {kitSizeOptions.map(s => (
-                                    <button key={s} type="button" onClick={() => { setKitSize(s); setKitColors({}) }}
-                                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                                        s === effKitSize ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
-                                      }`}>
-                                      {s}
-                                    </button>
-                                  ))}
-                                </div>
-
-                                <div className="space-y-3">
-                                  {kitComponents.map(c => (
-                                    <div key={c.productId}>
-                                      <p className="text-[11px] font-bold text-[#0F1E3C] mb-1">{c.productName}</p>
-                                      {c.colors.length <= 1 ? (
-                                        <p className="text-[11px] text-[#0F1E3C]/40">automático: {c.colors[0] ?? "sem estoque nesse tamanho"}</p>
-                                      ) : (
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {c.colors.map(color => (
-                                            <button key={color} type="button" onClick={() => setKitColor(c.productId, color)}
-                                              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold transition-colors ${
-                                                color === c.resolvedColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
-                                              }`}>
-                                              <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
-                                              {color}
-                                            </button>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-
-                                <button onClick={addKitToCart} disabled={!kitReady}
-                                  className="w-full mt-3 py-2 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold">
-                                  Adicionar kit ao carrinho
-                                </button>
-                              </>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
-
                     {confirmError && <p className="text-xs text-red-600 mt-3">{confirmError}</p>}
                   </div>
-                ) : (
-                  <div>
-                    <div className="text-center py-6">
-                      <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
-                        <CheckCircle2 size={26} />
-                      </div>
-                      <h2 className="text-lg font-bold text-[#0F1E3C]">Separação confirmada</h2>
-                      <p className="text-sm text-[#0F1E3C]/45 mt-0.5">{result.number} · Estoque descontado · {result.totalItems} produtos · {result.totalPieces} peças</p>
-                    </div>
-                    <div className="flex justify-center gap-2 py-2">
-                      <button onClick={() => { setShowResultPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-sm font-bold px-4 py-2.5 rounded-xl">
-                        <Printer size={14} /> Imprimir ficha
-                      </button>
-                      <button onClick={resetResult} className="bg-[#4361EE] text-white text-sm font-bold px-4 py-2.5 rounded-xl">Nova separação</button>
-                    </div>
-                  </div>
-                )}
-              </div>
 
-              {!result && (
-                <div className="flex items-center justify-between gap-4 flex-wrap px-5 py-3.5 bg-[#F4F6FB] border-t border-[#0F1E3C]/8">
-                  <div className="flex gap-5">
-                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
-                    <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
+                  {/* Footer */}
+                  <div className="flex items-center justify-between gap-4 flex-wrap px-4 py-3.5 bg-[#F4F6FB] border-t border-[#0F1E3C]/8 flex-shrink-0">
+                    <div className="flex gap-5">
+                      <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
+                      <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
+                    </div>
+                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || confirming}
+                      className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
+                      {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar
+                    </button>
                   </div>
-                  <button onClick={confirmSeparation} disabled={manualRows.length === 0 || confirming}
-                    className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
-                    {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar separação
-                  </button>
+                </>
+              ) : (
+                <div className="p-5">
+                  <div className="text-center py-6">
+                    <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+                      <CheckCircle2 size={26} />
+                    </div>
+                    <h2 className="text-lg font-bold text-[#0F1E3C]">Separação confirmada</h2>
+                    <p className="text-sm text-[#0F1E3C]/45 mt-0.5">{result.number} · Estoque descontado · {result.totalItems} produtos · {result.totalPieces} peças</p>
+                  </div>
+                  <div className="flex justify-center gap-2 py-2">
+                    <button onClick={() => { setShowResultPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-sm font-bold px-4 py-2.5 rounded-xl">
+                      <Printer size={14} /> Imprimir ficha
+                    </button>
+                    <button onClick={resetResult} className="bg-[#4361EE] text-white text-sm font-bold px-4 py-2.5 rounded-xl">Nova separação</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -899,42 +710,6 @@ export default function MarketplacePage() {
         </div>
       )}
 
-      {/* Modal de prefixos de SKU — texto livre, só separa tipo de peça na lista */}
-      {prefixOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPrefixOpen(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
-              <div>
-                <h2 className="font-bold text-[#0F1E3C]">Prefixos de SKU</h2>
-                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Prefixo do SKU → tipo de peça (texto livre). Só separa itens de cor/tamanho igual mas peça diferente na lista: não mexe em estoque.</p>
-              </div>
-              <button onClick={() => setPrefixOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
-            </div>
-            <div className="px-6 py-4 overflow-y-auto">
-              {prefixLoading ? (
-                <p className="text-xs text-[#0F1E3C]/40">Carregando…</p>
-              ) : prefixes.length === 0 ? (
-                <p className="text-xs text-[#0F1E3C]/40 text-center py-4">Nenhum prefixo cadastrado ainda.</p>
-              ) : (
-                <div className="space-y-1 mb-4">
-                  {prefixes.map(p => (
-                    <div key={p.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                      <span><span className="font-mono font-bold text-[#0F1E3C]">{p.prefix}</span> <span className="text-[#0F1E3C]/40">→</span> <span className="font-semibold text-[#0F1E3C]">{p.tipo}</span></span>
-                      <button onClick={() => deletePrefix(p.id)} className="text-[#0F1E3C]/30 hover:text-red-500"><Trash2 size={13} /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="grid gap-2 pt-3 border-t border-dashed border-[#0F1E3C]/10" style={{ gridTemplateColumns: "1fr 1fr auto" }}>
-                <input value={newPrefix} onChange={e => setNewPrefix(e.target.value)} placeholder="Ex: MOL_" className={inputCls} />
-                <input value={newTipo} onChange={e => setNewTipo(e.target.value)} placeholder="Ex: Moletom" className={inputCls} />
-                <button onClick={addPrefix} className="bg-[#4361EE] text-white text-xs font-bold rounded-xl px-3">+ Add</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Modal de modelos de kit — nome + produtos que compõem, cor/tamanho vêm do catálogo na hora de usar */}
       {kitTemplateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setKitTemplateOpen(false)}>
@@ -986,9 +761,6 @@ export default function MarketplacePage() {
         </div>
       )}
 
-      {showBlocksPrint && groups && (
-        <MarketplaceBlocksPrintSheet groups={groups} sourceSummary={sourceSummary} filename={readFilename} onDone={() => setShowBlocksPrint(false)} />
-      )}
       {showResultPrint && result && (
         <MarketplacePrintSheet result={result} origin={origin} onDone={() => setShowResultPrint(false)} />
       )}

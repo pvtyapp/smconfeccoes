@@ -30,6 +30,7 @@ export async function GET(
         COALESCE(chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
         cpf_cnpj                   AS "cpfCnpj",
         tipo_pessoa                AS "tipoPessoa",
+        razao_social               AS "razaoSocial",
         inscricao_estadual         AS "inscricaoEstadual",
         cep, logradouro, numero, complemento, bairro, cidade, uf,
         codigo_municipio_ibge      AS "codigoMunicipioIbge",
@@ -139,7 +140,7 @@ export async function PUT(
     const { id } = await params
     const {
       name, enabled, type, days, precoExclusivo, chatbotObs, chatbotProdutoEnabled, chatbotDtfEnabled,
-      cpfCnpj, tipoPessoa, inscricaoEstadual,
+      cpfCnpj, tipoPessoa, razaoSocial, inscricaoEstadual,
       cep, logradouro, numero, complemento, bairro, cidade, uf, codigoMunicipioIbge,
     } = await req.json()
 
@@ -158,16 +159,17 @@ export async function PUT(
           chatbot_dtf_enabled       = COALESCE($8, chatbot_dtf_enabled),
           cpf_cnpj                  = COALESCE(NULLIF($9, ''), cpf_cnpj),
           tipo_pessoa               = COALESCE(NULLIF($10, ''), tipo_pessoa),
-          inscricao_estadual        = COALESCE(NULLIF($11, ''), inscricao_estadual),
-          cep                       = COALESCE(NULLIF($12, ''), cep),
-          logradouro                = COALESCE(NULLIF($13, ''), logradouro),
-          numero                    = COALESCE(NULLIF($14, ''), numero),
-          complemento               = COALESCE(NULLIF($15, ''), complemento),
-          bairro                    = COALESCE(NULLIF($16, ''), bairro),
-          cidade                    = COALESCE(NULLIF($17, ''), cidade),
-          uf                        = COALESCE(NULLIF($18, ''), uf),
-          codigo_municipio_ibge     = COALESCE(NULLIF($19, ''), codigo_municipio_ibge)
-      WHERE id = $20
+          razao_social              = COALESCE(NULLIF($11, ''), razao_social),
+          inscricao_estadual        = COALESCE(NULLIF($12, ''), inscricao_estadual),
+          cep                       = COALESCE(NULLIF($13, ''), cep),
+          logradouro                = COALESCE(NULLIF($14, ''), logradouro),
+          numero                    = COALESCE(NULLIF($15, ''), numero),
+          complemento               = COALESCE(NULLIF($16, ''), complemento),
+          bairro                    = COALESCE(NULLIF($17, ''), bairro),
+          cidade                    = COALESCE(NULLIF($18, ''), cidade),
+          uf                        = COALESCE(NULLIF($19, ''), uf),
+          codigo_municipio_ibge     = COALESCE(NULLIF($20, ''), codigo_municipio_ibge)
+      WHERE id = $21
     `, [
       name?.trim() ?? null,
       Boolean(enabled),
@@ -179,6 +181,7 @@ export async function PUT(
       chatbotDtfEnabled !== undefined ? Boolean(chatbotDtfEnabled) : null,
       cpfCnpj?.trim() ?? null,
       tipoPessoa ?? null,
+      razaoSocial?.trim() ?? null,
       inscricaoEstadual?.trim() ?? null,
       cep?.trim() ?? null,
       logradouro?.trim() ?? null,

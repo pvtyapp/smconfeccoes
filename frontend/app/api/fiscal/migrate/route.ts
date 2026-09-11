@@ -13,6 +13,10 @@ export async function POST() {
 
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS cpf_cnpj TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS tipo_pessoa TEXT CHECK (tipo_pessoa IN ('fisica', 'juridica'))`)
+    // Razão social é o nome legal da empresa pra Sefaz — isolado de
+    // nome_cadastro, que é a correção manual do operador (pode ser nome
+    // fantasia, nome de contato etc.) e nunca deve ir na NFe de pessoa jurídica.
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS razao_social TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS inscricao_estadual TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS cep TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS logradouro TEXT`)

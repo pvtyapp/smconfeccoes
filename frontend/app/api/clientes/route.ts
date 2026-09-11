@@ -44,6 +44,7 @@ export async function GET() {
         c.state                                  AS "chatbotState",
         c.cpf_cnpj                               AS "cpfCnpj",
         c.tipo_pessoa                             AS "tipoPessoa",
+        c.razao_social                            AS "razaoSocial",
         c.inscricao_estadual                      AS "inscricaoEstadual",
         c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf,
         c.codigo_municipio_ibge                   AS "codigoMunicipioIbge",

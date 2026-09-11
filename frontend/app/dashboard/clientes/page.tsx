@@ -29,6 +29,7 @@ type Contact = {
   nomeCadastro: string | null
   cpfCnpj: string | null
   tipoPessoa: string | null
+  razaoSocial: string | null
   inscricaoEstadual: string | null
   cep: string | null
   logradouro: string | null
@@ -461,6 +462,7 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const [chatbotDtf,     setChatbotDtf]     = useState(contact.chatbotDtfEnabled)
   const [cpfCnpj,        setCpfCnpj]        = useState(contact.cpfCnpj ?? "")
   const [tipoPessoa,     setTipoPessoa]     = useState(contact.tipoPessoa ?? "fisica")
+  const [razaoSocial,    setRazaoSocial]    = useState(contact.razaoSocial ?? "")
   const [inscricaoEst,   setInscricaoEst]   = useState(contact.inscricaoEstadual ?? "")
   const [cep,            setCep]            = useState(contact.cep ?? "")
   const [logradouro,     setLogradouro]     = useState(contact.logradouro ?? "")
@@ -577,6 +579,7 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
           chatbotDtfEnabled: chatbotDtf,
           cpfCnpj: cpfCnpj.trim() || null,
           tipoPessoa,
+          razaoSocial: razaoSocial.trim() || null,
           inscricaoEstadual: inscricaoEst.trim() || null,
           cep: cep.trim() || null,
           logradouro: logradouro.trim() || null,
@@ -783,9 +786,14 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
             className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
 
           {tipoPessoa === "juridica" && (
-            <input value={inscricaoEst} onChange={e => setInscricaoEst(e.target.value)}
-              placeholder="Inscrição Estadual"
-              className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            <>
+              <input value={razaoSocial} onChange={e => setRazaoSocial(e.target.value)}
+                placeholder="Razão social (nome legal da empresa)"
+                className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+              <input value={inscricaoEst} onChange={e => setInscricaoEst(e.target.value)}
+                placeholder="Inscrição Estadual"
+                className="w-full border border-[#0F1E3C]/10 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/30" />
+            </>
           )}
 
           <div className="flex gap-2">
