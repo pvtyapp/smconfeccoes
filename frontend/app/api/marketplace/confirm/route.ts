@@ -13,10 +13,10 @@ type ConfirmRow = { variantId: string; qty: number }
 export async function POST(req: Request) {
   const client = await pool.connect()
   try {
-    const { origin, rows } = await req.json() as { origin?: string; rows?: ConfirmRow[] }
+    const { lojaId, rows } = await req.json() as { lojaId?: number; rows?: ConfirmRow[] }
 
-    if (!origin?.trim()) {
-      return NextResponse.json({ error: "Origem é obrigatória" }, { status: 400 })
+    if (!lojaId) {
+      return NextResponse.json({ error: "Loja é obrigatória" }, { status: 400 })
     }
     if (!rows || rows.length === 0) {
       return NextResponse.json({ error: "Nenhum item pra confirmar" }, { status: 400 })
@@ -24,6 +24,16 @@ export async function POST(req: Request) {
     if (rows.some(r => !r.variantId || !r.qty || r.qty <= 0)) {
       return NextResponse.json({ error: "Item com variante ou quantidade inválida" }, { status: 400 })
     }
+
+    const { rows: lojaRows } = await client.query(`SELECT nome FROM marketplace_lojas WHERE id = $1`, [lojaId])
+    if (!lojaRows[0]) {
+      return NextResponse.json({ error: "Loja não encontrada" }, { status: 404 })
+    }
+    // `origin` guarda o nome da loja como estava no momento da confirmação —
+    // se a loja for renomeada depois, separações antigas mantêm o nome de
+    // então (histórico não reescreve). `loja_id` é o vínculo de verdade,
+    // usado pro detalhamento por loja no Financeiro Marketplace.
+    const lojaNomeSnapshot = lojaRows[0].nome as string
 
     await client.query("BEGIN")
 
@@ -35,9 +45,9 @@ export async function POST(req: Request) {
     const totalPieces = rows.reduce((s, r) => s + r.qty, 0)
 
     const sepRes = await client.query(`
-      INSERT INTO marketplace_separations (number, origin, total_items, total_pieces)
-      VALUES ($1, $2, $3, $4) RETURNING id
-    `, [number, origin.trim(), totalItems, totalPieces])
+      INSERT INTO marketplace_separations (number, origin, loja_id, total_items, total_pieces)
+      VALUES ($1, $2, $3, $4, $5) RETURNING id
+    `, [number, lojaNomeSnapshot, lojaId, totalItems, totalPieces])
     const separationId = sepRes.rows[0].id
 
     for (const r of rows) {

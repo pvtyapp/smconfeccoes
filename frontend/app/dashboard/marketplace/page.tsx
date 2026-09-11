@@ -36,10 +36,12 @@ type HistoryRow = {
 type SeparationDetailItem = { id: number; variantId: string; productName: string; color: string; size: string; sku: string; qty: number }
 type SeparationDetail = HistoryRow & { items: SeparationDetailItem[] }
 
-// Legado: separações antigas gravaram um desses 3 valores fixos — mantém o
-// rótulo bonito pra elas. Campo agora é texto livre (ver estado `origin`),
-// não restringe mais a essas 3 opções.
+// Legado: separações de antes da tela de Lojas gravaram um desses 3 valores
+// fixos em `origin` — mantém o rótulo bonito pra elas. Separações novas
+// gravam o nome da loja escolhida (snapshot, ver /api/marketplace/confirm).
 const ORIGIN_LABEL: Record<string, string> = { shopee: "Shopee", mercado_livre: "Mercado Livre", manual: "Manual" }
+
+type Loja = { id: number; nome: string; createdAt: string }
 
 let rowSeq = 0
 const newRowId = () => `row-${Date.now()}-${rowSeq++}`
@@ -50,7 +52,59 @@ const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm
 
 export default function MarketplacePage() {
   const [tab, setTab] = useState<"lancar" | "relatorio">("lancar")
-  const [origin, setOrigin] = useState("")
+
+  // ── Lojas — dropdown editável (renomear) + "+ Adicionar loja" inline.
+  // Substituiu o campo de origem em texto livre. ──────────────────────────
+  const [lojas, setLojas] = useState<Loja[]>([])
+  const [lojaId, setLojaId] = useState<number | null>(null)
+  const [addingLoja, setAddingLoja] = useState(false)
+  const [newLojaNome, setNewLojaNome] = useState("")
+  const [renamingLoja, setRenamingLoja] = useState(false)
+  const [renameLojaNome, setRenameLojaNome] = useState("")
+  const [savingLoja, setSavingLoja] = useState(false)
+
+  const loadLojas = useCallback(async () => {
+    const res = await fetch("/api/marketplace/lojas")
+    if (res.ok) {
+      const data: Loja[] = await res.json()
+      setLojas(data)
+      setLojaId(prev => (prev && data.some(l => l.id === prev)) ? prev : (data[0]?.id ?? null))
+    }
+  }, [])
+  useEffect(() => { loadLojas() }, [loadLojas])
+
+  async function createLoja() {
+    if (!newLojaNome.trim()) return
+    setSavingLoja(true)
+    try {
+      const res = await fetch("/api/marketplace/lojas", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: newLojaNome.trim() }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setNewLojaNome(""); setAddingLoja(false)
+        setLojas(prev => [...prev, data].sort((a, b) => a.nome.localeCompare(b.nome)))
+        setLojaId(data.id)
+      }
+    } finally { setSavingLoja(false) }
+  }
+  function startRenameLoja() {
+    const l = lojas.find(l => l.id === lojaId)
+    if (!l) return
+    setRenameLojaNome(l.nome); setRenamingLoja(true)
+  }
+  async function saveRenameLoja() {
+    if (!lojaId || !renameLojaNome.trim()) return
+    setSavingLoja(true)
+    try {
+      const res = await fetch(`/api/marketplace/lojas/${lojaId}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: renameLojaNome.trim() }),
+      })
+      if (res.ok) { setRenamingLoja(false); await loadLojas() }
+    } finally { setSavingLoja(false) }
+  }
 
   const [catalog, setCatalog] = useState<CatalogVariant[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
@@ -136,6 +190,13 @@ export default function MarketplacePage() {
   // soma na linha do grupo certo, não mistura com uma peça solta igual.
   function addToCart(variant: CatalogVariant, kitGroupId?: string) {
     setManualRows(prev => {
+      // Clique avulso (Peça a peça) numa variante que já faz parte de um kit no
+      // carrinho: soma o kit inteiro (mantém a proporção 1:1 das peças) em vez de
+      // criar uma 2ª linha solo duplicando o mesmo produto/cor/tamanho.
+      if (!kitGroupId) {
+        const kitRow = prev.find(r => r.variantId === variant.variantId && r.kitGroupId)
+        if (kitRow) return prev.map(r => r.kitGroupId === kitRow.kitGroupId ? { ...r, qty: r.qty + 1 } : r)
+      }
       const existing = prev.find(r => r.variantId === variant.variantId && r.kitGroupId === kitGroupId)
       if (existing) return prev.map(r => r === existing ? { ...r, qty: r.qty + 1 } : r)
       // Item novo entra no topo — o último lançado sempre aparece primeiro.
@@ -157,10 +218,11 @@ export default function MarketplacePage() {
     if (inCart) return `${base} border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]`
     return `${base} border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#4361EE]/6`
   }
-  // ── Sub-aba "Kit" do carrinho — escolhe modelo + tamanho, cor só aparece
-  // pra peça que tem mais de 1 cor no catálogo (a Bermuda, por ex, resolve
-  // sozinha porque só existe em Preto). "Adicionar kit" solta cada peça
-  // resolvida no carrinho de uma vez, reaproveitando addToCart. ──────────
+  // ── Sub-aba "Kit" do carrinho — escolhe modelo → cor de cada peça (cor só
+  // aparece pra peça que tem mais de 1 cor no catálogo; a Bermuda, por ex,
+  // resolve sozinha porque só existe em Preto) → tamanho, já filtrado pelas
+  // cores escolhidas. "Adicionar kit" solta cada peça resolvida no carrinho
+  // de uma vez, reaproveitando addToCart. ──────────────────────────────────
   const [cartMode, setCartMode] = useState<"peca" | "kit">("peca")
   const [kitTemplateId, setKitTemplateId] = useState<number | null>(null)
   const [kitSize, setKitSize] = useState("")
@@ -168,30 +230,41 @@ export default function MarketplacePage() {
 
   const selectedKitTemplate = kitTemplates.find(t => t.id === kitTemplateId) ?? kitTemplates[0] ?? null
 
-  const kitSizeOptions = useMemo(() => {
+  // Cor de cada peça — não depende de tamanho nenhum, olha o catálogo inteiro
+  // do produto.
+  const kitComponentColors = useMemo(() => {
     if (!selectedKitTemplate) return []
-    const sizeSets = selectedKitTemplate.items.map(it => new Set(catalog.filter(c => c.productId === it.productId).map(c => c.size)))
+    return selectedKitTemplate.items.map(it => {
+      const colors = [...new Set(catalog.filter(c => c.productId === it.productId).map(c => c.color))]
+      const resolvedColor = colors.length === 1 ? colors[0] : (kitColors[it.productId] ?? null)
+      return { productId: it.productId, productName: it.productName, colors, resolvedColor }
+    })
+  }, [selectedKitTemplate, catalog, kitColors])
+  const kitColorsReady = kitComponentColors.length > 0 && kitComponentColors.every(c => c.resolvedColor != null)
+
+  // Tamanhos em comum entre as peças, já restritos às cores escolhidas acima.
+  const kitSizeOptions = useMemo(() => {
+    if (!selectedKitTemplate || !kitColorsReady) return []
+    const sizeSets = kitComponentColors.map(c => new Set(catalog.filter(v => v.productId === c.productId && v.color === c.resolvedColor).map(v => v.size)))
     if (sizeSets.length === 0) return []
     const [first, ...rest] = sizeSets
     return [...first].filter(s => rest.every(set => set.has(s))).sort(sizeCompare)
-  }, [selectedKitTemplate, catalog])
+  }, [selectedKitTemplate, kitColorsReady, kitComponentColors, catalog])
   const effKitSize = kitSizeOptions.includes(kitSize) ? kitSize : (kitSizeOptions[0] ?? "")
 
   const kitComponents = useMemo(() => {
-    if (!selectedKitTemplate || !effKitSize) return []
-    return selectedKitTemplate.items.map(it => {
-      const variants = catalog.filter(c => c.productId === it.productId && c.size === effKitSize)
-      const colors = [...new Set(variants.map(v => v.color))]
-      const resolvedColor = colors.length === 1 ? colors[0] : (kitColors[it.productId] ?? null)
-      const variant = resolvedColor ? variants.find(v => v.color === resolvedColor) ?? null : null
-      return { productId: it.productId, productName: it.productName, colors, resolvedColor, variant }
-    })
-  }, [selectedKitTemplate, effKitSize, catalog, kitColors])
+    if (!kitColorsReady || !effKitSize) return []
+    return kitComponentColors.map(c => ({
+      ...c,
+      variant: catalog.find(v => v.productId === c.productId && v.color === c.resolvedColor && v.size === effKitSize) ?? null,
+    }))
+  }, [kitComponentColors, kitColorsReady, effKitSize, catalog])
 
   const kitReady = kitComponents.length > 0 && kitComponents.every(c => c.variant != null)
 
   function setKitColor(productId: string, color: string) {
     setKitColors(prev => ({ ...prev, [productId]: color }))
+    setKitSize("") // cor mudou — o conjunto de tamanhos em comum pode ter mudado
   }
   function addKitToCart() {
     if (!kitReady || !selectedKitTemplate) return
@@ -235,13 +308,13 @@ export default function MarketplacePage() {
 
   async function confirmSeparation() {
     if (manualRows.length === 0) return
-    if (!origin.trim()) { setConfirmError("Preenche a origem antes de confirmar"); return }
+    if (!lojaId) { setConfirmError("Escolhe a loja antes de confirmar"); return }
     setConfirming(true); setConfirmError("")
     try {
       const res = await fetch("/api/marketplace/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ origin: origin.trim(), rows: manualRows.map(r => ({ variantId: r.variantId, qty: r.qty })) }),
+        body: JSON.stringify({ lojaId, rows: manualRows.map(r => ({ variantId: r.variantId, qty: r.qty })) }),
       })
       const data = await res.json()
       if (!res.ok) { setConfirmError(data.error ?? "Erro ao confirmar"); return }
@@ -421,7 +494,7 @@ export default function MarketplacePage() {
                 <div>
                   <div className="flex flex-wrap gap-1.5 mb-3">
                     {kitTemplates.map(t => (
-                      <button key={t.id} type="button" onClick={() => { setKitTemplateId(t.id); setKitColors({}) }}
+                      <button key={t.id} type="button" onClick={() => { setKitTemplateId(t.id); setKitColors({}); setKitSize("") }}
                         className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
                           t.id === (selectedKitTemplate?.id ?? -1) ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
                         }`}>
@@ -432,42 +505,44 @@ export default function MarketplacePage() {
 
                   {selectedKitTemplate && (
                     <>
-                      {kitSizeOptions.length === 0 ? (
-                        <p className="text-xs text-red-500 py-2">Esse kit não tem nenhum tamanho em comum entre as peças no catálogo.</p>
+                      <div className="space-y-3 mb-3">
+                        {kitComponentColors.map(c => (
+                          <div key={c.productId}>
+                            <p className="text-[11px] font-bold text-[#0F1E3C] mb-1">{c.productName}</p>
+                            {c.colors.length <= 1 ? (
+                              <p className="text-[11px] text-[#0F1E3C]/40">automático: {c.colors[0] ?? "sem estoque"}</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {c.colors.map(color => (
+                                  <button key={color} type="button" onClick={() => setKitColor(c.productId, color)}
+                                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold transition-colors ${
+                                      color === c.resolvedColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+                                    }`}>
+                                    <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
+                                    {color}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {!kitColorsReady ? (
+                        <p className="text-xs text-[#0F1E3C]/40 py-2">Escolhe a cor de cada peça pra ver os tamanhos disponíveis.</p>
+                      ) : kitSizeOptions.length === 0 ? (
+                        <p className="text-xs text-red-500 py-2">Essas cores não têm nenhum tamanho em comum entre as peças no catálogo.</p>
                       ) : (
                         <>
                           <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
                           <div className="flex flex-wrap gap-1.5 mb-3">
                             {kitSizeOptions.map(s => (
-                              <button key={s} type="button" onClick={() => { setKitSize(s); setKitColors({}) }}
+                              <button key={s} type="button" onClick={() => setKitSize(s)}
                                 className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
                                   s === effKitSize ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
                                 }`}>
                                 {s}
                               </button>
-                            ))}
-                          </div>
-
-                          <div className="space-y-3">
-                            {kitComponents.map(c => (
-                              <div key={c.productId}>
-                                <p className="text-[11px] font-bold text-[#0F1E3C] mb-1">{c.productName}</p>
-                                {c.colors.length <= 1 ? (
-                                  <p className="text-[11px] text-[#0F1E3C]/40">automático: {c.colors[0] ?? "sem estoque nesse tamanho"}</p>
-                                ) : (
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {c.colors.map(color => (
-                                      <button key={color} type="button" onClick={() => setKitColor(c.productId, color)}
-                                        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold transition-colors ${
-                                          color === c.resolvedColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
-                                        }`}>
-                                        <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
-                                        {color}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
                             ))}
                           </div>
 
@@ -508,11 +583,43 @@ export default function MarketplacePage() {
 
               {!result ? (
                 <>
-                  {/* Origem — texto livre, obrigatório pra confirmar */}
+                  {/* Loja — obrigatória pra confirmar, editável e dá pra criar nova aqui mesmo */}
                   <div className="px-4 pt-3 flex-shrink-0">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Origem *</p>
-                    <input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="Shopee, Mercado Livre, Amazon…"
-                      className={`${inputCls} text-xs font-semibold ${!origin.trim() ? "border-amber-300" : ""}`} />
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Loja *</p>
+                    {addingLoja ? (
+                      <div className="flex items-center gap-1.5">
+                        <input value={newLojaNome} onChange={e => setNewLojaNome(e.target.value)} placeholder="Nome da loja" autoFocus
+                          onKeyDown={e => e.key === "Enter" && createLoja()}
+                          className={`${inputCls} text-xs font-semibold`} />
+                        <button onClick={createLoja} disabled={!newLojaNome.trim() || savingLoja}
+                          className="p-2 rounded-lg bg-[#4361EE] text-white disabled:opacity-40 flex-shrink-0"><Check size={14} /></button>
+                        <button onClick={() => { setAddingLoja(false); setNewLojaNome("") }}
+                          className="p-2 rounded-lg text-[#0F1E3C]/40 hover:text-red-500 flex-shrink-0"><X size={14} /></button>
+                      </div>
+                    ) : renamingLoja ? (
+                      <div className="flex items-center gap-1.5">
+                        <input value={renameLojaNome} onChange={e => setRenameLojaNome(e.target.value)} autoFocus
+                          onKeyDown={e => e.key === "Enter" && saveRenameLoja()}
+                          className={`${inputCls} text-xs font-semibold`} />
+                        <button onClick={saveRenameLoja} disabled={!renameLojaNome.trim() || savingLoja}
+                          className="p-2 rounded-lg bg-[#4361EE] text-white disabled:opacity-40 flex-shrink-0"><Check size={14} /></button>
+                        <button onClick={() => setRenamingLoja(false)}
+                          className="p-2 rounded-lg text-[#0F1E3C]/40 hover:text-red-500 flex-shrink-0"><X size={14} /></button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <select value={lojaId ?? ""} onChange={e => e.target.value === "__new__" ? setAddingLoja(true) : setLojaId(Number(e.target.value))}
+                          className={`${inputCls} text-xs font-semibold ${!lojaId ? "border-amber-300" : ""}`}>
+                          {lojas.length === 0 && <option value="">Nenhuma loja cadastrada</option>}
+                          {lojas.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+                          <option value="__new__">+ Adicionar loja</option>
+                        </select>
+                        {lojaId != null && (
+                          <button onClick={startRenameLoja} title="Renomear loja"
+                            className="p-2 rounded-lg text-[#0F1E3C]/30 hover:text-[#4361EE] hover:bg-[#4361EE]/8 flex-shrink-0"><Pencil size={13} /></button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Itens */}
@@ -526,11 +633,16 @@ export default function MarketplacePage() {
                       <div className="space-y-1.5">
                         {cartGroups.kitGroups.map(([groupId, rows]) => {
                           const qty = rows[0]?.qty ?? 1
+                          // Cor/tamanho já viram o título ("Kit (Cor · Tamanho)") — o tamanho é
+                          // sempre igual em todas as peças do grupo (faz parte do groupId), a cor
+                          // pode variar peça a peça, por isso junta as únicas com "/".
+                          const groupColors = [...new Set(rows.map(r => r.color))].join("/")
+                          const groupSize = rows[0]?.size ?? ""
                           return (
                             <div key={groupId} className="bg-[#4361EE]/[0.04] border border-[#4361EE]/15 rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center gap-1 mb-1.5">
-                                <Layers size={11} className="text-[#4361EE]" />
-                                <span className="text-[9px] font-bold uppercase tracking-wide text-[#4361EE]">Kit</span>
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <Layers size={11} className="text-[#4361EE] flex-shrink-0" />
+                                <span className="text-[11px] font-bold text-[#4361EE] truncate">Kit ({groupColors} · {groupSize})</span>
                               </div>
                               <div className="space-y-1 mb-2">
                                 {rows.map(r => {
@@ -538,7 +650,7 @@ export default function MarketplacePage() {
                                   return (
                                     <div key={r.id} className="flex items-center gap-2 min-w-0">
                                       <span className={`inline-block w-[6px] h-[6px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} />
-                                      <span className="text-[#0F1E3C]/70 truncate">{r.productName} · {r.color} · {r.size}</span>
+                                      <span className="text-[#0F1E3C]/70 truncate">{r.productName}</span>
                                     </div>
                                   )
                                 })}
@@ -582,7 +694,7 @@ export default function MarketplacePage() {
                       <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
                       <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
                     </div>
-                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || !origin.trim() || confirming}
+                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || !lojaId || confirming}
                       className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
                       {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar
                     </button>
@@ -622,7 +734,7 @@ export default function MarketplacePage() {
                 <tr className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30 bg-[#F9FAFB]">
                   <th className="text-left px-5 py-2.5">Número</th>
                   <th className="text-left px-5 py-2.5">Data</th>
-                  <th className="text-left px-5 py-2.5">Origem</th>
+                  <th className="text-left px-5 py-2.5">Loja</th>
                   <th className="text-left px-5 py-2.5">Produtos</th>
                   <th className="text-left px-5 py-2.5">Peças</th>
                   <th className="text-left px-5 py-2.5">Status</th>
@@ -765,7 +877,7 @@ export default function MarketplacePage() {
       )}
 
       {showResultPrint && result && (
-        <MarketplacePrintSheet result={result} origin={origin} onDone={() => setShowResultPrint(false)} />
+        <MarketplacePrintSheet result={result} origin={lojas.find(l => l.id === lojaId)?.nome ?? ""} onDone={() => setShowResultPrint(false)} />
       )}
       {showDetailPrint && detail && (
         <MarketplacePrintSheet

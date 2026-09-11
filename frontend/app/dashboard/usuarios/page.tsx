@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Plus, X, Loader2, Check, ShieldCheck, UserX, Pencil } from "lucide-react"
 import Toggle from "@/components/Toggle"
 import {
-  navTop, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
+  navTop, navMarketplace, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
   type NavItem,
 } from "@/lib/navPages"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
@@ -27,6 +27,7 @@ type User = {
 
 const PERMISSION_GROUPS: { label: string; items: NavItem[] }[] = [
   { label: "Painel",       items: navTop },
+  { label: "Marketplace",  items: navMarketplace },
   { label: "Gestão",       items: navGestao },
   { label: "Financeiro",   items: navFinanceiro },
   { label: "DTF",          items: navDTF },

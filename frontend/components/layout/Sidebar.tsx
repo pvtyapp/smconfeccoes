@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { logout, getSession } from "@/lib/auth"
 import { ChevronLeft, ChevronRight, LogOut } from "lucide-react"
 import {
-  navTop, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
+  navTop, navMarketplace, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
 } from "@/lib/navPages"
 import type { NavItem } from "@/lib/navPages"
 
@@ -133,6 +133,7 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
           )
         })}
 
+        <NavSection label="Marketplace"  items={filterNav(navMarketplace)} isActive={isActive} collapsed={collapsed} />
         <NavSection label="Gestão"       items={filterNav(navGestao)}     isActive={isActive} collapsed={collapsed} />
         <NavSection label="Financeiro"   items={filterNav(navFinanceiro)} isActive={isActive} collapsed={collapsed} />
         <NavSection label="DTF"          items={filterNav(navDTF)}        isActive={isActive} collapsed={collapsed} />

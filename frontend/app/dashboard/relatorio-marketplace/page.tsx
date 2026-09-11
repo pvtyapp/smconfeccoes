@@ -19,10 +19,20 @@ type DayRow = {
   margem: number | null
 }
 
+type LojaRow = {
+  lojaId: number | null
+  lojaNome: string
+  pecas: number
+  custo: number
+  separacoes: number
+  percentCusto: number | null
+}
+
 type ReportData = {
   period: { from: string; to: string }
   markupPercent: number
   days: DayRow[]
+  porLoja: LojaRow[]
   summary: {
     totalPecas: number
     totalCusto: number
@@ -263,6 +273,47 @@ export default function RelatorioMarketplacePage() {
               color={summary.totalLucro >= 0 ? "green" : "red"} />
             <KPICard label="Margem" value={pct(summary.margem)} icon={TrendingUp}
               color={summary.margem !== null && summary.margem >= 0 ? "green" : "red"} />
+          </div>
+
+          {/* Por loja — peças e custo real, sem depender da receita digitada por dia */}
+          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+              <p className="text-sm font-bold text-[#0F1E3C]">Por loja</p>
+              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">Peças e custo real separados no período, por loja.</p>
+            </div>
+            {data.porLoja.length === 0 ? (
+              <p className="text-sm text-center text-[#0F1E3C]/30 py-10">Nenhuma separação de marketplace no período</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#0F1E3C]/6 text-[10px] uppercase tracking-wider text-[#0F1E3C]/40">
+                      <th className="text-left  px-6 py-2.5 font-semibold">Loja</th>
+                      <th className="text-right px-4 py-2.5 font-semibold">Separações</th>
+                      <th className="text-right px-4 py-2.5 font-semibold">Peças</th>
+                      <th className="text-right px-4 py-2.5 font-semibold">Custo</th>
+                      <th className="text-right px-6 py-2.5 font-semibold">% do custo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.porLoja.map(l => (
+                      <tr key={l.lojaId ?? l.lojaNome} className="border-b border-[#0F1E3C]/4 last:border-0 hover:bg-[#0F1E3C]/2">
+                        <td className="px-6 py-3 text-[#0F1E3C] font-medium">
+                          {l.lojaNome}
+                          {l.lojaId == null && (
+                            <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-[#0F1E3C]/30">histórico</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{l.separacoes}</td>
+                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{l.pecas}</td>
+                        <td className="px-4 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{fmtR(l.custo)}</td>
+                        <td className="px-6 py-3 text-right text-[#0F1E3C]/70 tabular-nums">{pct(l.percentCusto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Tabela por dia */}

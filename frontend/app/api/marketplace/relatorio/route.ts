@@ -19,7 +19,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "from e to são obrigatórios" }, { status: 400 })
     }
 
-    const [{ rows: configRows }, { rows: dayRows }, { rows: revenueRows }] = await Promise.all([
+    const [{ rows: configRows }, { rows: dayRows }, { rows: revenueRows }, { rows: lojaRows }] = await Promise.all([
       pool.query(`SELECT markup_percent AS "markupPercent" FROM marketplace_config WHERE id = 1`),
       pool.query(`
         SELECT
@@ -41,6 +41,26 @@ export async function GET(req: Request) {
         SELECT TO_CHAR(date, 'YYYY-MM-DD') AS date, receita_real AS "receitaReal"
         FROM marketplace_daily_revenue
         WHERE date BETWEEN $1 AND $2
+      `, [from, to]),
+      // Detalhamento por loja — nome atual da loja (`ml.nome`), não o snapshot
+      // congelado em `ms.origin` (esse só existe pra separações de antes dessa
+      // feature, sem loja_id — aí sim usa o snapshot, é o único nome que tem).
+      pool.query(`
+        SELECT
+          ms.loja_id AS "lojaId",
+          COALESCE(ml.nome, ms.origin) AS "lojaNome",
+          SUM(msi.qty)::int AS pecas,
+          SUM(msi.qty * COALESCE(p.material_cost, 0))::float AS custo,
+          COUNT(DISTINCT ms.id)::int AS separacoes
+        FROM marketplace_separations ms
+        JOIN marketplace_separation_items msi ON msi.separation_id = ms.id
+        JOIN product_variants pv ON pv.id = msi.variant_id
+        JOIN products p ON p.id = pv.product_id
+        LEFT JOIN marketplace_lojas ml ON ml.id = ms.loja_id
+        WHERE ms.canceled_at IS NULL
+          AND DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+        GROUP BY ms.loja_id, ml.nome, ms.origin
+        ORDER BY custo DESC
       `, [from, to]),
     ])
 
@@ -76,10 +96,20 @@ export async function GET(req: Request) {
     const totalReceita = days.reduce((s, d) => s + d.receita, 0)
     const totalLucro = totalReceita - totalCusto
 
+    const porLoja = lojaRows.map(l => ({
+      lojaId: l.lojaId as number | null,
+      lojaNome: l.lojaNome as string,
+      pecas: Number(l.pecas),
+      custo: Number(l.custo),
+      separacoes: Number(l.separacoes),
+      percentCusto: totalCusto > 0 ? (Number(l.custo) / totalCusto) * 100 : null,
+    }))
+
     return NextResponse.json({
       period: { from, to },
       markupPercent,
       days,
+      porLoja,
       summary: {
         totalPecas,
         totalCusto,

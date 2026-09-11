@@ -17,9 +17,14 @@ export const navTop: NavItem[] = [
   { href: "/dashboard",                         label: "Dashboard",       icon: LayoutDashboard },
   { href: "/dashboard/pdv",                     label: "PDV de Vendas",   icon: Store           },
   { href: "/dashboard/autoatendimento/pedidos", label: "Autoatendimento", icon: ShoppingBag     },
-  { href: "/dashboard/marketplace",             label: "Marketplace",    icon: ShoppingCart    },
   { href: "/dashboard/marketing",               label: "Marketing",       icon: Megaphone       },
   { href: "/dashboard/mapa-operacao",           label: "Mapa da Operação", icon: Signal         },
+]
+
+// Marketplace (Lançar + Financeiro) — grupo próprio, acima de Gestão.
+export const navMarketplace: NavItem[] = [
+  { href: "/dashboard/marketplace",             label: "Marketplace",            icon: ShoppingCart },
+  { href: "/dashboard/relatorio-marketplace",   label: "Financeiro Marketplace", icon: DollarSign   },
 ]
 
 export const navGestao: NavItem[] = [
@@ -32,7 +37,6 @@ export const navGestao: NavItem[] = [
 export const navFinanceiro: NavItem[] = [
   { href: "/dashboard/relatorio-vendas",     label: "Relatório de Vendas",   icon: BarChart2    },
   { href: "/dashboard/relatorio-financeiro", label: "Relatório Financeiro",  icon: PieChart     },
-  { href: "/dashboard/relatorio-marketplace", label: "Financeiro Marketplace", icon: DollarSign },
   { href: "/dashboard/clientes-a-receber",   label: "Clientes a Receber",    icon: Receipt      },
   { href: "/dashboard/contas-a-pagar",       label: "Contas a Pagar",        icon: CalendarDays },
   { href: "/dashboard/custo-operacional",    label: "Custo Operacional",     icon: Wallet       },
@@ -70,7 +74,7 @@ export const navSistema: NavItem[] = [
 // Ordem canônica de todas as páginas — usada pra achar a "primeira" liberada de um
 // usuário, na mesma ordem em que elas aparecem na barra lateral.
 export const ALL_NAV_ITEMS: NavItem[] = [
-  ...navTop, ...navGestao, ...navFinanceiro, ...navDTF,
+  ...navTop, ...navMarketplace, ...navGestao, ...navFinanceiro, ...navDTF,
   ...navProducao, ...navCadastros, ...navLP, ...navSistema,
 ]
 
