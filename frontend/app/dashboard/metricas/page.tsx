@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { RefreshCw, AlertTriangle, CheckCircle2, Package, Printer, ChevronRight } from "lucide-react"
+import { printWhenReady } from "@/components/print/print-utils"
+import MetricasPrintSheet from "./MetricasPrintSheet"
 
 // ─── Mock (remover quando houver dados reais) ─────────────────────────────────
 const USE_MOCK = false
@@ -162,46 +164,6 @@ function PatternBars({ pattern, currentSeg }: { pattern: PatternEntry[]; current
   )
 }
 
-// ─── Print sheet (só sai no papel — ver classes print:/hidden) ────────────────
-
-function PrintSheet({ groups, totalItems, totalPieces, dateLabel }: {
-  groups: { productName: string; rows: { color: string; size: string; priority: Priority; qty: number }[] }[]
-  totalItems: number; totalPieces: number; dateLabel: string
-}) {
-  return (
-    <div className="hidden print:block px-2 py-4 text-[#14213D]">
-      <div className="flex items-end justify-between border-b-2 border-[#14213D] pb-3 mb-4">
-        <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-playfair)" }}>Lista de Produção</h2>
-        <div className="text-right text-[11px] text-[#5A6B8C] leading-relaxed">SM Confecções<br />{dateLabel}</div>
-      </div>
-      <div className="flex justify-between text-xs text-[#5A6B8C] mb-5">
-        <span>{totalItems} {totalItems === 1 ? "item" : "itens"} para produzir</span>
-        <span><strong className="text-[#14213D] text-sm">{totalPieces}</strong> peças no total</span>
-      </div>
-      {groups.map(g => (
-        <div key={g.productName} className="mb-4">
-          <p className="text-sm font-bold border-b border-[#D8DEEC] pb-1.5 mb-1.5">{g.productName}</p>
-          {g.rows.map((r, i) => (
-            <div key={i} className="grid items-center gap-2.5 py-1.5 border-b border-dashed border-[#E4E8F2] text-sm"
-              style={{ gridTemplateColumns: "18px 1fr 80px 60px" }}>
-              <span className="w-3.5 h-3.5 border-[1.5px] border-[#14213D] rounded-[3px]" />
-              <span>Tam. {r.size} <span className="text-[#5A6B8C] text-[11.5px]">· {r.color}</span></span>
-              <span className={`text-[9.5px] font-bold uppercase text-right ${r.priority === "urgent" ? "text-red-600" : "text-orange-600"}`}>
-                {PRIORITY_LABEL[r.priority]}
-              </span>
-              <span className="font-bold text-right">{r.qty} pç</span>
-            </div>
-          ))}
-        </div>
-      ))}
-      <div className="flex justify-between text-[10.5px] text-[#8B96AD] mt-6 pt-3 border-t border-[#D8DEEC]">
-        <span>Gerado em {dateLabel}</span>
-        <span>smconfeccoes.vercel.app/dashboard/metricas</span>
-      </div>
-    </div>
-  )
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MetricasPage() {
@@ -212,6 +174,7 @@ export default function MetricasPage() {
   // Guarda só quem o usuário clicou pra inverter o padrão — não precisa
   // sincronizar com os dados carregados, então dispensa efeito de setState.
   const [toggled, setToggled]   = useState<Set<string>>(new Set())
+  const [showPrintSheet, setShowPrintSheet] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError("")
@@ -339,7 +302,7 @@ export default function MetricasPage() {
 
   return (
     <>
-      <div className="space-y-5 print:hidden">
+      <div className="space-y-5">
 
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
@@ -359,12 +322,12 @@ export default function MetricasPage() {
           </div>
           <div className="flex items-center gap-2 mt-1 flex-shrink-0">
             <button
-              onClick={() => window.print()}
+              onClick={() => { setShowPrintSheet(true); printWhenReady() }}
               disabled={printTotals.items === 0}
-              title={printTotals.items === 0 ? "Nada pra produzir agora" : "Imprimir lista de produção"}
+              title={printTotals.items === 0 ? "Nada pra produzir agora" : "Imprimir ficha de métricas e produção"}
               className="flex items-center gap-1.5 bg-[#4361EE] hover:bg-[#3451D4] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-colors"
             >
-              <Printer size={14} /> Imprimir lista
+              <Printer size={14} /> Imprimir ficha
             </button>
             <button onClick={load} className="p-2 rounded-xl hover:bg-[#0F1E3C]/6 text-[#0F1E3C]/40 transition-colors">
               <RefreshCw size={15} />
@@ -603,7 +566,17 @@ export default function MetricasPage() {
 
       </div>
 
-      <PrintSheet groups={printGroups} totalItems={printTotals.items} totalPieces={printTotals.pieces} dateLabel={dateLabel} />
+      {showPrintSheet && (
+        <MetricasPrintSheet
+          segLabel={SEG_LABELS[data.currentSeg - 1]}
+          segDaysLabel={SEG_DAYS[data.currentSeg - 1]}
+          dateLabel={dateLabel}
+          stats={stats}
+          groups={printGroups}
+          totals={printTotals}
+          onDone={() => setShowPrintSheet(false)}
+        />
+      )}
     </>
   )
 }

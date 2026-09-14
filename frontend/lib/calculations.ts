@@ -1,5 +1,17 @@
 import type { InventoryMetric } from "./types"
 
+// `average_cost` da variante vem 0.00 do banco (nunca NULL) até a 1ª entrada
+// de custo real ser calculada — 0 aqui significa "sem custo médio calculado
+// ainda", não que a peça não tem custo. Como o Postgres devolve NUMERIC como
+// string via pg, um `averageCost || costPrice` ingênuo nunca cai no fallback
+// nesse caso ("0.00" é truthy em JS) — silenciosamente zera o valor de
+// produtos que nunca tiveram entrada de custo lançada (achado real: Bermuda
+// Infantil Moletinho e os 2 Cropped, 112 variantes no total).
+export function effectiveCost(averageCost: number | string, costPrice: number | string): number {
+  const avg = Number(averageCost)
+  return avg > 0 ? avg : Number(costPrice)
+}
+
 export type BalanceRow = {
   variantId: string
   productId: string
@@ -25,7 +37,7 @@ export function calcInventoryMetrics(
   return rows.map((v) => {
     const avgDailySales = v.salesLast30Days / 30
     const stockDaysRemaining = avgDailySales > 0 ? v.currentStock / avgDailySales : null
-    const unitProfit = Number(v.salePrice) - Number(v.averageCost)
+    const unitProfit = Number(v.salePrice) - effectiveCost(v.averageCost, v.costPrice)
 
     let status: InventoryMetric["status"] = "healthy"
     let suggestedProduction = 0
