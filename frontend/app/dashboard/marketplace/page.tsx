@@ -664,9 +664,12 @@ export default function MarketplacePage() {
                           const low = after < 0
                           return (
                             <div key={r.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo: vai ficar negativo" : "Tem estoque"} />
-                                <span className="font-semibold text-[#0F1E3C] truncate">{r.productName} · {r.color} · {r.size}</span>
+                              <div className="flex items-start gap-2 min-w-0">
+                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 mt-1 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo: vai ficar negativo" : "Tem estoque"} />
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-[#0F1E3C] truncate">{r.productName}</p>
+                                  <p className="text-[#0F1E3C]/50 text-[11px]">{r.color} · {r.size}</p>
+                                </div>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 <input type="number" min={1} value={r.qty} onChange={e => updateManualQty(r.id, parseInt(e.target.value))}
