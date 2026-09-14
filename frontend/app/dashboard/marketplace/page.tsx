@@ -190,13 +190,6 @@ export default function MarketplacePage() {
   // soma na linha do grupo certo, não mistura com uma peça solta igual.
   function addToCart(variant: CatalogVariant, kitGroupId?: string) {
     setManualRows(prev => {
-      // Clique avulso (Peça a peça) numa variante que já faz parte de um kit no
-      // carrinho: soma o kit inteiro (mantém a proporção 1:1 das peças) em vez de
-      // criar uma 2ª linha solo duplicando o mesmo produto/cor/tamanho.
-      if (!kitGroupId) {
-        const kitRow = prev.find(r => r.variantId === variant.variantId && r.kitGroupId)
-        if (kitRow) return prev.map(r => r.kitGroupId === kitRow.kitGroupId ? { ...r, qty: r.qty + 1 } : r)
-      }
       const existing = prev.find(r => r.variantId === variant.variantId && r.kitGroupId === kitGroupId)
       if (existing) return prev.map(r => r === existing ? { ...r, qty: r.qty + 1 } : r)
       // Item novo entra no topo — o último lançado sempre aparece primeiro.
