@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { calcInventoryMetrics, calcMonthlyOperationalCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
+import { calcInventoryMetrics, calcMonthlyOperationalCost, effectiveCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
 import type { OperationalCost } from "@/lib/types"
 
 export default function RelatoriosPage() {
@@ -122,7 +122,7 @@ export default function RelatoriosPage() {
         rows={marginData.map((m) => {
           const bal = balance.find((b) => b.variantId === m.variantId)
           const price  = bal ? Number(bal.salePrice) : 0
-          const cost   = bal ? Number(bal.averageCost) : 0
+          const cost   = bal ? effectiveCost(bal.averageCost, bal.costPrice) : 0
           const margin = price > 0 ? ((price - cost) / price * 100).toFixed(1) + "%" : "—"
           return [
             `${m.productName} ${m.color} ${m.size}`,

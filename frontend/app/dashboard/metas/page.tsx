@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import MetricCard from "@/components/cards/MetricCard"
-import { calcInventoryMetrics, calcMonthlyOperationalCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
+import { calcInventoryMetrics, calcMonthlyOperationalCost, effectiveCost, formatCurrency, type BalanceRow } from "@/lib/calculations"
 import type { OperationalCost, InventoryMetric } from "@/lib/types"
 
 const statusLabel: Record<string, string> = {
@@ -37,7 +37,7 @@ export default function MetasPage() {
 
   const opCost   = calcMonthlyOperationalCost(costs)
   const avgProfit = balance.length > 0
-    ? balance.reduce((a, v) => a + (Number(v.salePrice) - Number(v.averageCost)), 0) / balance.length
+    ? balance.reduce((a, v) => a + (Number(v.salePrice) - effectiveCost(v.averageCost, v.costPrice)), 0) / balance.length
     : 0
   const breakeven = avgProfit > 0 ? Math.ceil(opCost / avgProfit) : 0
 
