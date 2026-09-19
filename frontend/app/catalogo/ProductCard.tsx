@@ -58,6 +58,7 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
             <button
               type="button"
               onClick={() => setImgIdx((i) => (i - 1 + images.length) % images.length)}
+              aria-label="Foto anterior"
               className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/85 flex items-center justify-center text-[#0F1E3C] hover:bg-white"
             >
               <ChevronLeft size={15} />
@@ -65,6 +66,7 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
             <button
               type="button"
               onClick={() => setImgIdx((i) => (i + 1) % images.length)}
+              aria-label="Próxima foto"
               className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/85 flex items-center justify-center text-[#0F1E3C] hover:bg-white"
             >
               <ChevronRight size={15} />

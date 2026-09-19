@@ -90,7 +90,7 @@ function EsqueciSenhaForm() {
             <form onSubmit={handleRequestCode} className="space-y-4">
               <WhatsAppInput id="fp-phone" value={phone} onChange={setPhone} />
 
-              {error && <p className="text-xs text-red-600">{error}</p>}
+              {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
               <button
                 type="submit" disabled={loading}
@@ -112,7 +112,7 @@ function EsqueciSenhaForm() {
               <PasswordInput id="fp-password" label="Nova senha" value={password} onChange={setPassword} autoComplete="new-password" />
               <PasswordInput id="fp-confirm" label="Confirmar nova senha" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
 
-              {error && <p className="text-xs text-red-600">{error}</p>}
+              {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
               <button
                 type="submit" disabled={loading}

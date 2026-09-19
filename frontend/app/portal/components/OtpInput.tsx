@@ -26,7 +26,7 @@ export default function OtpInput({ value, onChange }: { value: string; onChange:
   return (
     <div>
       <label className="block text-xs font-semibold text-[#0F1E3C]/60 mb-1.5">Código de verificação</label>
-      <div className="flex gap-2" onPaste={handlePaste}>
+      <div className="flex gap-2" onPaste={handlePaste} role="group" aria-label="Código de verificação, 6 dígitos">
         {digits.map((d, i) => (
           <input
             key={i}
@@ -34,6 +34,7 @@ export default function OtpInput({ value, onChange }: { value: string; onChange:
             type="text"
             inputMode="numeric"
             maxLength={1}
+            aria-label={`Dígito ${i + 1} de 6`}
             value={d.trim()}
             onChange={(e) => setDigit(i, e.target.value)}
             onKeyDown={(e) => {

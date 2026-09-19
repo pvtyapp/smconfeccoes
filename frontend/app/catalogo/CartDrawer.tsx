@@ -58,17 +58,17 @@ export default function CartDrawer({
       <div className="w-full max-w-md h-full bg-white flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-5 border-b border-[#0F1E3C]/8">
           <h3 className="text-[#0F1E3C] font-bold text-lg" style={{ fontFamily: "var(--font-playfair)" }}>Seu carrinho</h3>
-          <button onClick={onClose} className="text-[#0F1E3C]/40 hover:text-[#0F1E3C]"><X size={18} /></button>
+          <button onClick={onClose} aria-label="Fechar carrinho" className="text-[#0F1E3C]/40 hover:text-[#0F1E3C]"><X size={18} /></button>
         </div>
 
         {success ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center" role="status" aria-live="polite">
             <div className="w-16 h-16 rounded-full bg-[#1B8F63]/10 flex items-center justify-center">
               <CheckCircle2 size={30} className="text-[#1B8F63]" />
             </div>
             <div>
               <p className="text-lg font-black text-[#0F1E3C] mb-1">Pedido enviado com sucesso!</p>
-              <p className="text-sm text-[#0F1E3C]/50">Pedido *{success.number}* — te mandamos os detalhes pelo WhatsApp.</p>
+              <p className="text-sm text-[#0F1E3C]/50">Pedido <b className="font-bold text-[#0F1E3C]">{success.number}</b> — te mandamos os detalhes pelo WhatsApp.</p>
               {success.outsideBusinessHours && (
                 <p className="text-xs text-amber-600 font-semibold mt-3 bg-amber-50 px-3 py-2 rounded-lg">
                   Estamos fora do horário de atendimento — a separação começa no próximo horário comercial.
@@ -95,11 +95,11 @@ export default function CartDrawer({
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 bg-[#F4F6FB] rounded-lg px-1.5 py-1 flex-shrink-0">
-                      <button onClick={() => onChangeQty(i.variantId, Math.max(1, i.qty - 1))} className="text-[#0F1E3C]/50 hover:text-[#0F1E3C]"><Minus size={12} /></button>
-                      <span className="text-xs font-bold w-5 text-center text-[#0F1E3C]">{i.qty}</span>
-                      <button onClick={() => onChangeQty(i.variantId, i.qty + 1)} className="text-[#0F1E3C]/50 hover:text-[#0F1E3C]"><Plus size={12} /></button>
+                      <button onClick={() => onChangeQty(i.variantId, Math.max(1, i.qty - 1))} aria-label={`Diminuir quantidade de ${i.productName}`} className="text-[#0F1E3C]/50 hover:text-[#0F1E3C]"><Minus size={12} /></button>
+                      <span className="text-xs font-bold w-5 text-center text-[#0F1E3C]" aria-live="polite">{i.qty}</span>
+                      <button onClick={() => onChangeQty(i.variantId, i.qty + 1)} aria-label={`Aumentar quantidade de ${i.productName}`} className="text-[#0F1E3C]/50 hover:text-[#0F1E3C]"><Plus size={12} /></button>
                     </div>
-                    <button onClick={() => onRemove(i.variantId)} className="text-red-400 hover:text-red-500 flex-shrink-0"><Trash2 size={14} /></button>
+                    <button onClick={() => onRemove(i.variantId)} aria-label={`Remover ${i.productName} do carrinho`} className="text-red-400 hover:text-red-500 flex-shrink-0"><Trash2 size={14} /></button>
                   </div>
                 ))
               )}
@@ -129,7 +129,7 @@ export default function CartDrawer({
                   <span className="text-xl font-black text-[#0F1E3C]">{fmtR(total)}</span>
                 </div>
 
-                {error && <p className="text-xs text-red-600">{error}</p>}
+                {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
                 <button
                   onClick={handleFinalizar} disabled={sending}

@@ -99,7 +99,7 @@ function CadastroForm() {
               </div>
               <WhatsAppInput id="cad-phone" value={phone} onChange={setPhone} />
 
-              {error && <p className="text-xs text-red-600">{error}</p>}
+              {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
               <button
                 type="submit" disabled={loading}
@@ -122,7 +122,7 @@ function CadastroForm() {
                 tooltip="Pode ser a senha que quiser, sem regra de tamanho ou caractere especial" autoComplete="new-password" />
               <PasswordInput id="cad-confirm" label="Confirmar senha" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
 
-              {error && <p className="text-xs text-red-600">{error}</p>}
+              {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
               <button
                 type="submit" disabled={loading}

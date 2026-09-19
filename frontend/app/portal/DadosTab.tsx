@@ -194,7 +194,7 @@ export default function DadosTab() {
           {/* Código do município (IBGE): nunca uma caixa de texto — decisão 8 do plano */}
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
 
         <div className="flex items-center gap-3">
           <button type="submit" disabled={saving}
@@ -202,7 +202,7 @@ export default function DadosTab() {
             <Save size={15} />
             {saving ? "Salvando..." : "Salvar"}
           </button>
-          {status === "saved" && <span className="text-xs font-semibold text-[#1B8F63]">Dados atualizados!</span>}
+          {status === "saved" && <span className="text-xs font-semibold text-[#1B8F63]" role="status" aria-live="polite">Dados atualizados!</span>}
         </div>
       </form>
 
@@ -251,14 +251,14 @@ function ChangePasswordCard() {
         <PasswordInput id="dados-new-pw" label="Nova senha" value={newPassword} onChange={setNewPassword} autoComplete="new-password" />
         <PasswordInput id="dados-confirm-pw" label="Confirmar nova senha" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
       <div className="flex items-center gap-3">
         <button type="submit" disabled={saving}
           className="inline-flex items-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white font-bold text-sm px-5 py-3 rounded-xl transition-colors disabled:opacity-50">
           <KeyRound size={15} />
           {saving ? "Salvando..." : "Trocar senha"}
         </button>
-        {ok && <span className="text-xs font-semibold text-[#1B8F63]">Senha trocada!</span>}
+        {ok && <span className="text-xs font-semibold text-[#1B8F63]" role="status" aria-live="polite">Senha trocada!</span>}
       </div>
     </form>
   )

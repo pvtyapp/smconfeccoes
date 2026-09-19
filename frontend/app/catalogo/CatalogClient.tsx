@@ -38,6 +38,7 @@ export default function CatalogClient({ products }: { products: PublicCatalogPro
     <>
       <button
         type="button" onClick={() => setShowCart(true)}
+        aria-label={`Abrir carrinho${cartCount > 0 ? ` — ${cartCount} ite${cartCount === 1 ? "m" : "ns"}` : ""}`}
         className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white shadow-lg flex items-center justify-center transition-colors"
       >
         <ShoppingCart size={20} />

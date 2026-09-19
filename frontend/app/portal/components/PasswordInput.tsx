@@ -34,6 +34,7 @@ export default function PasswordInput({
           type="button"
           onClick={() => setShow((s) => !s)}
           title={show ? "Ocultar senha" : "Mostrar senha"}
+          aria-label={show ? "Ocultar senha" : "Mostrar senha"}
           className="absolute right-3 top-1/2 -translate-y-1/2 text-[#0F1E3C]/35 hover:text-[#0F1E3C]/60"
         >
           {show ? <EyeOff size={16} /> : <Eye size={16} />}

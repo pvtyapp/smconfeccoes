@@ -63,7 +63,7 @@ function LoginForm() {
             <WhatsAppInput id="login-phone" value={phone} onChange={setPhone} />
             <PasswordInput id="login-password" label="Senha" value={password} onChange={setPassword} autoComplete="current-password" />
 
-            {error && <p className="text-xs text-red-600">{error}</p>}
+            {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
             <button
               type="submit"
