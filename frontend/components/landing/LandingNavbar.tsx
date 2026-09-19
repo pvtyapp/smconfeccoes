@@ -4,7 +4,7 @@ import { MessageCircle } from "lucide-react"
 
 const links = [
   { href: "#servicos", label: "Serviços" },
-  { href: "#catalogo", label: "Catálogo" },
+  { href: "/catalogo", label: "Catálogo" },
   { href: "#localizacao", label: "Localização" },
 ]
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Plus, Pencil, Power, Loader2, ChevronRight, ChevronDown, X, Trash2 } from "lucide-react"
 import type { Category, Product } from "@/lib/types"
 import Toggle from "@/components/Toggle"
+import ProductImagesManager from "./ProductImagesManager"
 
 const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 
@@ -309,6 +310,14 @@ export default function ProdutosPage() {
                 </p>
               )}
             </div>
+
+            {editing ? (
+              <ProductImagesManager productId={editing.id} colors={form.colors} />
+            ) : (
+              <p className="text-xs text-[#0F1E3C]/40 border border-dashed border-[#0F1E3C]/15 rounded-xl p-4">
+                Salve o produto primeiro — o upload de fotos libera depois que ele existe.
+              </p>
+            )}
 
             {/* Toggles */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

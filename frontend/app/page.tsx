@@ -3,7 +3,6 @@ export const dynamic = "force-dynamic"
 import Image from "next/image"
 import Link from "next/link"
 import { MessageCircle, MapPin, Package, ChevronRight } from "lucide-react"
-import CatalogCarousel, { type CatalogProduct } from "@/components/landing/CatalogCarousel"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import LandingNavbar from "@/components/landing/LandingNavbar"
 import HeroBannerCarousel, { type HeroBanner } from "@/components/landing/HeroBannerCarousel"
@@ -12,30 +11,6 @@ import { pool } from "@/lib/db"
 const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
   "Olá! Gostaria de mais informações sobre a SM Confecções."
 )}`
-
-async function getCatalog(): Promise<CatalogProduct[]> {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        p.id, p.name, p.image_url, p.display_order, p.description, p.cover_color,
-        COALESCE(
-          json_agg(
-            json_build_object('id', i.id, 'image_url', i.image_url, 'display_order', i.display_order, 'color', i.color)
-            ORDER BY i.display_order ASC, i.created_at ASC
-          ) FILTER (WHERE i.id IS NOT NULL),
-          '[]'
-        ) AS images
-      FROM catalog_products p
-      LEFT JOIN catalog_product_images i ON i.product_id = p.id
-      WHERE p.active = true
-      GROUP BY p.id
-      ORDER BY p.display_order ASC, p.created_at ASC
-    `)
-    return rows
-  } catch {
-    return []
-  }
-}
 
 async function getHeroBanners(): Promise<HeroBanner[]> {
   try {
@@ -76,7 +51,6 @@ const services = [
 ]
 
 export default async function LandingPage() {
-  const catalog = await getCatalog()
   const heroBanners = await getHeroBanners()
 
   return (
@@ -162,13 +136,13 @@ export default async function LandingPage() {
                   <MessageCircle size={19} />
                   Falar no WhatsApp
                 </a>
-                <a
-                  href="#catalogo"
+                <Link
+                  href="/catalogo"
                   className="inline-flex items-center justify-center gap-2 border border-white/20 hover:border-white/40 text-white/75 hover:text-white font-semibold text-base px-7 py-4 rounded-xl transition-all"
                 >
                   Ver catálogo
                   <ChevronRight size={16} />
-                </a>
+                </Link>
               </div>
             </div>
           </div>
@@ -195,9 +169,6 @@ export default async function LandingPage() {
           ))}
         </div>
       </div>
-
-      {/* ── CATÁLOGO ── */}
-      <CatalogCarousel initialProducts={catalog} waLink={WA_LINK} />
 
       {/* ── SERVIÇOS ── */}
       <section id="servicos" className="py-12 sm:py-16 px-5 bg-[#F4F6FB]">
