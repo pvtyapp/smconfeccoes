@@ -423,6 +423,10 @@ export default async function LandingPage() {
               @smconfeccoes.franca
             </a>
             <span className="text-white/15">·</span>
+            <Link href="/portal/login" className="hover:text-white/60 transition-colors">
+              Área do Cliente
+            </Link>
+            <span className="text-white/15">·</span>
             <Link href="/login" className="hover:text-white/60 transition-colors">
               Área administrativa
             </Link>
