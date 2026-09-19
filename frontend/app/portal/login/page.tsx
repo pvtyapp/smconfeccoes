@@ -1,15 +1,25 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { Suspense, useState, type FormEvent } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { LogIn } from "lucide-react"
 import WhatsAppInput from "../components/WhatsAppInput"
 import PasswordInput from "../components/PasswordInput"
 
 export default function PortalLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const next = searchParams.get("next") || "/portal"
   const [phone, setPhone] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -27,7 +37,7 @@ export default function PortalLoginPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Não foi possível entrar"); return }
-      router.push("/portal")
+      router.push(next)
       router.refresh()
     } catch {
       setError("Erro de rede. Tenta de novo em instantes.")
@@ -66,8 +76,8 @@ export default function PortalLoginPage() {
           </form>
 
           <div className="flex items-center justify-between mt-5 text-xs">
-            <Link href="/portal/esqueci-senha" className="text-[#4361EE] font-semibold hover:underline">Esqueci minha senha</Link>
-            <Link href="/portal/cadastro" className="text-[#4361EE] font-semibold hover:underline">Criar conta</Link>
+            <Link href={`/portal/esqueci-senha?next=${encodeURIComponent(next)}`} className="text-[#4361EE] font-semibold hover:underline">Esqueci minha senha</Link>
+            <Link href={`/portal/cadastro?next=${encodeURIComponent(next)}`} className="text-[#4361EE] font-semibold hover:underline">Criar conta</Link>
           </div>
         </div>
 

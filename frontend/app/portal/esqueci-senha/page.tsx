@@ -1,16 +1,26 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { Suspense, useState, type FormEvent } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { KeyRound, ArrowLeft } from "lucide-react"
 import WhatsAppInput from "../components/WhatsAppInput"
 import PasswordInput from "../components/PasswordInput"
 import OtpInput from "../components/OtpInput"
 
 export default function PortalEsqueciSenhaPage() {
+  return (
+    <Suspense fallback={null}>
+      <EsqueciSenhaForm />
+    </Suspense>
+  )
+}
+
+function EsqueciSenhaForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const next = searchParams.get("next") || "/portal"
   const [step, setStep] = useState<"telefone" | "nova-senha">("telefone")
   const [phone, setPhone] = useState("")
   const [code, setCode] = useState("")
@@ -52,7 +62,7 @@ export default function PortalEsqueciSenhaPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Não foi possível trocar a senha"); return }
-      router.push("/portal")
+      router.push(next)
       router.refresh()
     } catch {
       setError("Erro de rede. Tenta de novo em instantes.")
@@ -115,7 +125,7 @@ export default function PortalEsqueciSenhaPage() {
           )}
 
           <p className="text-center text-xs mt-5">
-            <Link href="/portal/login" className="text-[#4361EE] font-semibold hover:underline">Voltar pro login</Link>
+            <Link href={`/portal/login?next=${encodeURIComponent(next)}`} className="text-[#4361EE] font-semibold hover:underline">Voltar pro login</Link>
           </p>
         </div>
 

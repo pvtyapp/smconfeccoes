@@ -1,14 +1,15 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { ChevronLeft, ChevronRight, ImageIcon } from "lucide-react"
+import { ChevronLeft, ChevronRight, ImageIcon, ShoppingCart, Check } from "lucide-react"
 import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
+import type { CartItem } from "./cart"
 
 function fmtR(v: number) {
   return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export default function ProductCard({ product }: { product: PublicCatalogProduct }) {
+export default function ProductCard({ product, onAdd }: { product: PublicCatalogProduct; onAdd: (item: CartItem) => void }) {
   const colors = useMemo(() => [...new Set(product.variants.map((v) => v.color).filter(Boolean))] as string[], [product])
   const [color, setColor] = useState<string | null>(colors[0] ?? null)
   const sizesForColor = product.variants.filter((v) => v.color === color)
@@ -30,6 +31,17 @@ export default function ProductCard({ product }: { product: PublicCatalogProduct
 
   const selectedVariant = product.variants.find((v) => v.color === color && v.size === size)
   const available = selectedVariant?.available ?? false
+  const [added, setAdded] = useState(false)
+
+  function handleAdd() {
+    if (!selectedVariant || !available) return
+    onAdd({
+      variantId: selectedVariant.id, productId: product.id, productName: product.name,
+      color: selectedVariant.color, size: selectedVariant.size, price: product.salePrice, qty: 1,
+    })
+    setAdded(true)
+    setTimeout(() => setAdded(false), 1500)
+  }
 
   return (
     <div className="bg-white border border-[#0F1E3C]/8 rounded-2xl overflow-hidden flex flex-col">
@@ -100,10 +112,17 @@ export default function ProductCard({ product }: { product: PublicCatalogProduct
           </div>
         )}
 
-        <div className="mt-auto">
+        <div className="mt-auto flex items-center justify-between gap-2 pt-1">
           <span className={`text-[11px] font-bold ${available ? "text-[#1B8F63]" : "text-[#B23B3B]"}`}>
             {available ? "Disponível" : "Indisponível"}
           </span>
+          <button
+            type="button" onClick={handleAdd} disabled={!available}
+            className="inline-flex items-center gap-1.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
+          >
+            {added ? <Check size={13} /> : <ShoppingCart size={13} />}
+            {added ? "Adicionado" : "Adicionar"}
+          </button>
         </div>
       </div>
     </div>

@@ -2,9 +2,9 @@ export const dynamic = "force-dynamic"
 
 import Image from "next/image"
 import Link from "next/link"
-import { Package, MessageCircle } from "lucide-react"
+import { MessageCircle } from "lucide-react"
 import { getPublicCatalog } from "@/lib/catalog/getPublicCatalog"
-import ProductCard from "./ProductCard"
+import CatalogClient from "./CatalogClient"
 
 const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
   "Olá! Gostaria de mais informações sobre a SM Confecções."
@@ -41,16 +41,7 @@ export default async function CatalogoPage() {
           </p>
         </div>
 
-        {products.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-24 border border-dashed border-[#0F1E3C]/15 rounded-2xl text-[#0F1E3C]/30">
-            <Package size={28} />
-            <p className="text-sm">Nenhum produto disponível no momento.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {products.map((p) => <ProductCard key={p.id} product={p} />)}
-          </div>
-        )}
+        <CatalogClient products={products} />
       </main>
     </div>
   )
