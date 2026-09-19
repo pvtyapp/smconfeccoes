@@ -4,6 +4,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { MessageCircle, MapPin, Package, ChevronRight } from "lucide-react"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
+import AccessSection from "@/components/landing/AccessSection"
 import LandingNavbar from "@/components/landing/LandingNavbar"
 import HeroBannerCarousel, { type HeroBanner } from "@/components/landing/HeroBannerCarousel"
 import { pool } from "@/lib/db"
@@ -152,6 +153,9 @@ export default async function LandingPage() {
         <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#0A1628] to-transparent" />
       </section>
       )}
+
+      {/* ── ÁREA DO CLIENTE (login/cadastro) ── */}
+      <AccessSection />
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">
