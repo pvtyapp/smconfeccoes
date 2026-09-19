@@ -1,6 +1,6 @@
 import { pool } from "@/lib/db"
 
-export type PublicCatalogVariant = { id: string; color: string | null; size: string | null; available: boolean }
+export type PublicCatalogVariant = { id: string; color: string | null; size: string | null; available: boolean; price: number }
 export type PublicCatalogImage = { url: string; color: string | null }
 export type PublicCatalogProduct = {
   id: string
@@ -24,6 +24,7 @@ export async function getPublicCatalog(): Promise<PublicCatalogProduct[]> {
       pv.id          AS "variantId",
       pv.color,
       pv.size,
+      COALESCE(pv.sale_price, p.sale_price, 0) AS "variantPrice",
       (GREATEST(0, COALESCE(bal.qty, 0) - COALESCE(locked.locked_qty, 0)) > 0) AS available
     FROM products p
     JOIN product_variants pv ON pv.product_id = p.id AND pv.status = 'active'
@@ -59,7 +60,9 @@ export async function getPublicCatalog(): Promise<PublicCatalogProduct[]> {
         variants: [], images: [],
       })
     }
-    products.get(r.productId)!.variants.push({ id: r.variantId, color: r.color, size: r.size, available: r.available })
+    products.get(r.productId)!.variants.push({
+      id: r.variantId, color: r.color, size: r.size, available: r.available, price: Number(r.variantPrice),
+    })
   }
   for (const r of imageRows) {
     products.get(r.productId)?.images.push({ url: r.imageUrl, color: r.color })

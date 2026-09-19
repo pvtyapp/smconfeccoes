@@ -37,7 +37,7 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
     if (!selectedVariant || !available) return
     onAdd({
       variantId: selectedVariant.id, productId: product.id, productName: product.name,
-      color: selectedVariant.color, size: selectedVariant.size, price: product.salePrice, qty: 1,
+      color: selectedVariant.color, size: selectedVariant.size, price: selectedVariant.price, qty: 1,
     })
     setAdded(true)
     setTimeout(() => setAdded(false), 1500)
@@ -76,7 +76,7 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
       <div className="p-4 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-1">
           <p className="text-sm font-bold text-[#0F1E3C]">{product.name}</p>
-          <span className="text-sm font-black text-[#4361EE] flex-shrink-0">{fmtR(product.salePrice)}</span>
+          <span className="text-sm font-black text-[#4361EE] flex-shrink-0">{fmtR(selectedVariant?.price ?? product.salePrice)}</span>
         </div>
         {product.description && <p className="text-xs text-[#0F1E3C]/45 mb-3 line-clamp-2">{product.description}</p>}
 

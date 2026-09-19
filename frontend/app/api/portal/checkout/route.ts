@@ -58,7 +58,8 @@ export async function POST(req: Request) {
 
     const { rows: variantRows } = await client.query(`
       SELECT
-        pv.id AS "variantId", pv.color, pv.size, pv.product_id AS "productId", p.name AS "productName", p.sale_price AS "salePrice",
+        pv.id AS "variantId", pv.color, pv.size, pv.product_id AS "productId", p.name AS "productName",
+        COALESCE(pv.sale_price, p.sale_price, 0) AS "salePrice",
         GREATEST(0, COALESCE(bal.qty, 0) - COALESCE(locked.locked_qty, 0))::int AS available
       FROM product_variants pv
       JOIN products p ON p.id = pv.product_id
