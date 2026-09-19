@@ -24,6 +24,10 @@ const PUBLIC_API_PREFIXES = [
   "/api/dtf/film-bobinas/backfill-saidas",
   "/api/dtf/film-bobinas/fix-saida",
   "/api/dtf/printer-refis/migrate",
+  // Portal do Cliente — auth própria (smc_client_session), não a da equipe.
+  "/api/portal/",
+  "/api/catalogo",
+  "/api/products/migrate-images",
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {

@@ -40,7 +40,8 @@ export async function getPublicCatalog(): Promise<PublicCatalogProduct[]> {
       WHERE o.status IN ('triagem', 'em_separacao', 'pronto') AND oi.variant_id IS NOT NULL
       GROUP BY oi.variant_id
     ) locked ON locked.variant_id = pv.id
-    WHERE p.status = 'active' AND p.chatbot_enabled = true AND p.stock_enabled = true
+    WHERE p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
+      AND p.stock_enabled = true AND LOWER(p.name) NOT LIKE '%dtf%'
     ORDER BY p.name ASC, pv.color ASC, array_position(p.size_list, pv.size)
   `)
 
