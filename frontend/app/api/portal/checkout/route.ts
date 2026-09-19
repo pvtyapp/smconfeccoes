@@ -26,6 +26,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Forma de pagamento inválida" }, { status: 400 })
     }
 
+    // Soma qty por variantId antes de qualquer validação — um payload malicioso
+    // (fora da UI normal, que já manda mesclado) poderia fatiar a mesma variante
+    // em várias linhas pra passar pela checagem "qty <= disponível" item a item
+    // e ainda assim pedir mais do que existe no total.
+    const mergedQty = new Map<string, number>()
+    for (const i of items as { variantId: string; qty: number }[]) {
+      mergedQty.set(i.variantId, (mergedQty.get(i.variantId) ?? 0) + (Number(i.qty) || 0))
+    }
+    const dedupedItems = [...mergedQty.entries()].map(([variantId, qty]) => ({ variantId, qty }))
+
     const { rows: contactRows } = await pool.query(
       `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid, payment_term_enabled
        FROM wa_contacts WHERE id = $1`,
@@ -43,7 +53,7 @@ export async function POST(req: Request) {
 
     // Trava e revalida contra dado real do servidor — nunca confia em preço/nome
     // mandado pelo cliente (só variantId + qty).
-    const variantIds = items.map((i) => i.variantId)
+    const variantIds = dedupedItems.map((i) => i.variantId)
     await client.query(`SELECT id FROM product_variants WHERE id = ANY($1) FOR UPDATE`, [variantIds])
 
     const { rows: variantRows } = await client.query(`
@@ -67,7 +77,7 @@ export async function POST(req: Request) {
 
     const byId = new Map(variantRows.map((r) => [r.variantId, r]))
     const insufficient: string[] = []
-    for (const item of items) {
+    for (const item of dedupedItems) {
       const v = byId.get(item.variantId)
       if (!v) { insufficient.push("item não encontrado"); continue }
       if (!Number.isInteger(item.qty) || item.qty < 1) { insufficient.push(`${v.productName}: quantidade inválida`); continue }
@@ -80,7 +90,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Estoque mudou — ${insufficient.join("; ")}` }, { status: 409 })
     }
 
-    const total = items.reduce((s, i) => s + Number(byId.get(i.variantId)!.salePrice) * i.qty, 0)
+    const total = dedupedItems.reduce((s, i) => s + Number(byId.get(i.variantId)!.salePrice) * i.qty, 0)
 
     const numRes = await client.query("SELECT nextval('order_number_seq') AS n")
     const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
@@ -92,7 +102,7 @@ export async function POST(req: Request) {
     `, [number, contact.id, total, paymentMethod])
     const orderId = orderRows[0].id
 
-    for (const item of items) {
+    for (const item of dedupedItems) {
       const v = byId.get(item.variantId)!
       await client.query(`
         INSERT INTO order_items (order_id, product_id, product_name, color, size, qty, unit_price, is_service, variant_id)
@@ -121,7 +131,7 @@ export async function POST(req: Request) {
     try {
       if (contact.jid) {
         const sendJid = contact.phone_jid || contact.jid
-        const lines = items.map((i) => {
+        const lines = dedupedItems.map((i) => {
           const v = byId.get(i.variantId)!
           return `${i.qty}x ${v.productName}${[v.color, v.size].filter(Boolean).length ? ` (${[v.color, v.size].filter(Boolean).join(", ")})` : ""} — ${fmtR(Number(v.salePrice) * i.qty)}`
         })
