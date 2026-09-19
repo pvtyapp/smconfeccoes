@@ -375,6 +375,11 @@ export default function PedidosPage() {
   // Per-service toggles
   const [dtfAtivo,          setDtfAtivo]           = useState(true)
   const [togglingDtf,       setTogglingDtf]        = useState(false)
+  // produto_ativo — chave da virada pro Portal do Cliente (site). Desligar aqui
+  // manda quem tenta pedir produto por conversa pro site; religar é o rollback
+  // se algo quebrar no site (ver plano "Portal do Cliente SM").
+  const [produtoAtivo,      setProdutoAtivo]       = useState(true)
+  const [togglingProduto,   setTogglingProduto]    = useState(false)
 
   // Reservas
   type Reservation = { id: number; productName: string; color: string; size: string; qty: number; contactName: string; contactPhone: string; status: string; createdAt: string }
@@ -421,6 +426,7 @@ export default function PedidosPage() {
       .then((s: Record<string, string>) => {
         if (s.chatbot_ativo           !== undefined) setChatbotAtivo(s.chatbot_ativo         !== "false")
         if (s.dtf_ativo               !== undefined) setDtfAtivo(s.dtf_ativo                !== "false")
+        if (s.produto_ativo           !== undefined) setProdutoAtivo(s.produto_ativo        !== "false")
         if (s.automacao_pausada      !== undefined) setAutomacaoPausada(s.automacao_pausada === "true")
         if (s.produto_horario_dias)   setProdDias(s.produto_horario_dias.split(",").map(Number))
         if (s.produto_horario_inicio) setProdInicio(s.produto_horario_inicio)
@@ -485,6 +491,19 @@ export default function PedidosPage() {
       body: JSON.stringify({ dtf_ativo: String(next) }),
     }).catch(() => setDtfAtivo(!next))
     setTogglingDtf(false)
+  }
+
+  async function toggleProdutoAtivo() {
+    const next = !produtoAtivo
+    if (!next && !confirm("Desligar pedido de produto por conversa? Quem tentar pedir produto pelo WhatsApp vai ser direcionado pro site. DTF e atendimento continuam normais.")) return
+    setTogglingProduto(true)
+    setProdutoAtivo(next)
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ produto_ativo: String(next) }),
+    }).catch(() => setProdutoAtivo(!next))
+    setTogglingProduto(false)
   }
 
   async function mergeDupeContacts() {
@@ -2010,6 +2029,15 @@ export default function PedidosPage() {
               <p className="text-[10px] font-bold text-[#0F1E3C]/50">Chatbot</p>
               <Tip text="Liga ou desliga as respostas automáticas do bot para todos os contatos. Desligado, o bot fica mudo — mas pedidos continuam sendo capturados e entrando na triagem normalmente, sem confirmação." />
               <Toggle on={chatbotAtivo} onChange={toggleChatbot} disabled={togglingBot} />
+            </div>
+
+            <div className="w-px h-5 bg-[#0F1E3C]/8" />
+
+            {/* Pedido por conversa — chave da virada pro Portal do Cliente */}
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-bold" style={{ color: produtoAtivo ? "#0F1E3C80" : "#DC2626" }}>Pedido por conversa</p>
+              <Tip text="Desligado, quem tentar pedir produto pelo WhatsApp é direcionado pro site (Portal do Cliente) — DTF e atendimento continuam normais. Religar é o rollback: pedido por conversa volta a funcionar na hora, sem deploy." />
+              <Toggle on={produtoAtivo} onChange={toggleProdutoAtivo} disabled={togglingProduto} />
             </div>
 
             <div className="w-px h-5 bg-[#0F1E3C]/8" />

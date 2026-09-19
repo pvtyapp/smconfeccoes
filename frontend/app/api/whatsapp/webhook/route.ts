@@ -1373,6 +1373,8 @@ function getServiceStatus(service: "produto" | "dtf", s: Record<string, string>)
   return { available: true, reason: null }
 }
 
+const SITE_CATALOGO_URL = "https://smconfeccoes.com.br/catalogo"
+
 function buildUnavailableMsg(
   service: "produto" | "dtf",
   status: ServiceStatus,
@@ -1393,10 +1395,13 @@ function buildUnavailableMsg(
     const fim       = s[`${service}_horario_fim`] ?? ""
     const servLabel = isProd ? "pedidos de produto" : "impressão DTF"
     base = `Nosso atendimento de ${servLabel} funciona ${diasStr} das ${inicio} às ${fim}. No momento estamos fora do horário.`
+  } else if (isProd) {
+    // desativado (produto_ativo=false) é o gatilho oficial da virada pro site —
+    // ver plano "Portal do Cliente SM", seção Chatbot: papel novo. Só produto,
+    // DTF continua igual (ramo "else" original, abaixo).
+    base = `Nossos pedidos de produto agora são feitos direto pelo site, mais rápido pra você 🧵\n👉 ${SITE_CATALOGO_URL}`
   } else {
-    base = isProd
-      ? "No momento o atendimento de pedidos de produto está pausado."
-      : "No momento o serviço de DTF está pausado."
+    base = "No momento o serviço de DTF está pausado."
   }
 
   if (otherStatus.available) {
@@ -1858,10 +1863,69 @@ async function handleText(
     return
   }
 
-  // Saudação, ruído, ou qualquer outra coisa não reconhecida — a introdução completa
-  // só vai 1x por dia por contato; nas próximas vezes no mesmo dia, manda só um
-  // redirecionamento curto (evita repetir a apresentação inteira toda hora que o
-  // bot não entende algo).
+  // Saudação, ruído, ou qualquer outra coisa não reconhecida — recepção varia
+  // conforme o contato (plano "Portal do Cliente SM", seção Chatbot: papel
+  // novo). DTF e desvio por palavra-chave de atendimento já rodaram antes de
+  // chegar aqui, nunca são interrompidos por nada abaixo.
+
+  const { rows: accountRows } = await pool.query(
+    `SELECT 1 FROM client_accounts WHERE contact_id = $1`, [contactId]
+  ).catch(() => ({ rows: [] as unknown[] }))
+  const hasAccount = accountRows.length > 0
+
+  if (hasAccount) {
+    const { rows: cRows } = await pool.query(
+      `SELECT needs_attention, attendant_wait_notice_sent_at, known_customer_greeting_sent_at
+       FROM wa_contacts WHERE id = $1`,
+      [contactId]
+    )
+    const c = cRows[0] as {
+      needs_attention: boolean
+      attendant_wait_notice_sent_at: string | null
+      known_customer_greeting_sent_at: string | null
+    } | undefined
+    const { rows: openDtf } = await pool.query(
+      `SELECT 1 FROM dtf_pedidos WHERE contact_id = $1 AND status NOT IN ('pronto', 'concluido', 'cancelado') LIMIT 1`,
+      [contactId]
+    ).catch(() => ({ rows: [] as unknown[] }))
+    const hasOpenCase = c?.needs_attention === true || openDtf.length > 0
+
+    const cooldownField = hasOpenCase ? "attendant_wait_notice_sent_at" : "known_customer_greeting_sent_at"
+    const lastSent = hasOpenCase ? c?.attendant_wait_notice_sent_at : c?.known_customer_greeting_sent_at
+    const withinCooldown = !!lastSent && (Date.now() - new Date(lastSent).getTime()) < 6 * 60 * 60 * 1000
+
+    if (!withinCooldown) {
+      await pool.query(
+        `UPDATE wa_contacts SET ${cooldownField} = NOW(), needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
+        [contactId]
+      ).catch(() => {})
+      await replyAndSave(
+        contactId, jid,
+        hasOpenCase
+          ? "Já te vi por aqui, em breve alguém da equipe te responde. 😊"
+          : `${greeting}${greetSuffix}! Pedido de produto é pelo site, DTF ou falar com a equipe pode ser aqui mesmo. Já aviso nossa equipe. 😊`
+      )
+    }
+    return
+  }
+
+  // Sem conta ainda — aviso de virada, uma vez só, nunca repete pra esse contato.
+  const { rows: noticeRows } = await pool.query(
+    `SELECT site_transition_notice_sent_at FROM wa_contacts WHERE id = $1`, [contactId]
+  ).catch(() => ({ rows: [] as { site_transition_notice_sent_at: string | null }[] }))
+  const alreadyNotified = !!noticeRows[0]?.site_transition_notice_sent_at
+
+  if (!alreadyNotified) {
+    await pool.query(`UPDATE wa_contacts SET site_transition_notice_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
+    await replyAndSave(
+      contactId, jid,
+      `Oi${greetSuffix}! Aqui é da SM Confecções 🧵\n\nPedido de produto agora é direto pelo nosso site, mais rápido pra você:\n👉 ${SITE_CATALOGO_URL}\n\nPra DTF (impressão) ou pra falar com a equipe, pode me chamar aqui mesmo.`
+    )
+    return
+  }
+
+  // Já recebeu o aviso de virada antes — mesmo mecanismo diário de sempre
+  // (last_greeting_sent_at), só com o texto de pedido apontando pro site.
   const { rows: greetRows } = await pool.query(
     `SELECT (DATE(last_greeting_sent_at AT TIME ZONE 'America/Sao_Paulo') = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS "sentToday"
      FROM wa_contacts WHERE id = $1`,
@@ -1870,10 +1934,10 @@ async function handleText(
   const alreadyGreetedToday = greetRows[0]?.sentToday === true
 
   if (alreadyGreetedToday) {
-    await replyAndSave(contactId, jid, "Não entendi 🤔 Pode mandar o *pedido* direto, o *arquivo* de DTF, ou dizer *catálogo* pra ver os produtos.")
+    await replyAndSave(contactId, jid, `Pedido de produto é pelo site (${SITE_CATALOGO_URL}). O *arquivo* de DTF ou *catálogo* pra ver os produtos é aqui mesmo.`)
   } else {
     await pool.query(`UPDATE wa_contacts SET last_greeting_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
-    await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções* — atacado de roupas e impressão DTF.\n\nEm breve já vamos te atender, mas se quiser ir adiantando:\n• Me manda o *pedido* direto\n• Ou me manda o *arquivo* de DTF\n• Ou diga *catálogo* para ver os produtos`)
+    await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções*.\n\n• Pedido de produto agora é pelo site: ${SITE_CATALOGO_URL}\n• Pra DTF, me manda o *arquivo*\n• Pra ver os produtos, diga *catálogo*`)
   }
 }
 
