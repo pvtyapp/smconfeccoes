@@ -73,6 +73,7 @@ const SOURCE_FILTERS = [
   { value: "all",      label: "Todos"    },
   { value: "pdv",      label: "PDV"      },
   { value: "whatsapp", label: "WhatsApp" },
+  { value: "site",     label: "Site"     },
   { value: "manual",   label: "Manual"   },
   { value: "avarias",  label: "Avarias"  },
 ]
@@ -80,6 +81,7 @@ const SOURCE_FILTERS = [
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   pdv:      { label: "PDV",      cls: "bg-blue-100 text-blue-700"   },
   whatsapp: { label: "WhatsApp", cls: "bg-green-100 text-green-700" },
+  site:     { label: "Site",     cls: "bg-violet-100 text-violet-700" },
   manual:   { label: "Manual",   cls: "bg-gray-100 text-gray-600"   },
   avaria:   { label: "Avaria",   cls: "bg-amber-100 text-amber-700" },
 }

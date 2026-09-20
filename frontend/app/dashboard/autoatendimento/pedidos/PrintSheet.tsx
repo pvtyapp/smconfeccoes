@@ -9,10 +9,13 @@ const NAVY = "#0F1E3C"
 const NAVY_LIGHT = "#f0f2f7"
 
 // "format" (papel: A4 vs térmica) e "vias" (quantas cópias) são independentes —
-// Ficha de Separação é sempre 1 via (uso interno da loja), Ordem do Pedido é
-// sempre 2 (loja + cliente, tipo cupom fiscal), em qualquer formato de papel.
-export default function PrintSheet({ order, items, format, title = "Ficha de Separação", vias = 1, onDone }: {
-  order: Order; items: OrderItem[]; format: "a4" | "thermal"; title?: string; vias?: 1 | 2; onDone: () => void
+// Ficha de Separação é sempre 1 via LOJA (uso interno, fica arquivada na
+// separação). Ordem do Pedido é 1 via CLIENTE (única coisa impressa que o
+// cliente leva pra casa na retirada — economia de papel, decisão do dono
+// 2026-09-20: antes eram 2 vias/LOJA+CLIENTE, LOJA virou redundante porque
+// já tem a Ficha de Separação arquivada desde antes).
+export default function PrintSheet({ order, items, format, title = "Ficha de Separação", vias = 1, soloVia = "LOJA", onDone }: {
+  order: Order; items: OrderItem[]; format: "a4" | "thermal"; title?: string; vias?: 1 | 2; soloVia?: "LOJA" | "CLIENTE"; onDone: () => void
 }) {
   const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0)
   const tz = "America/Sao_Paulo"
@@ -278,7 +281,7 @@ export default function PrintSheet({ order, items, format, title = "Ficha de Sep
   if (vias === 1) {
     return (
       <PrintShell wrapperClass="print-a4" onDone={onDone}>
-        {renderFicha("LOJA")}
+        {renderFicha(soloVia)}
       </PrintShell>
     )
   }

@@ -79,7 +79,7 @@ export async function GET(req: Request) {
           ORDER BY fn.id DESC LIMIT 1
         ) fn ON true
         WHERE o.status = 'concluido'
-          AND o.source IN ('pdv', 'whatsapp')
+          AND o.source IN ('pdv', 'whatsapp', 'site')
           AND o.number NOT LIKE 'COB-%'
           ${orderDateCond}
         GROUP BY o.id, c.id, c.name, c.nome_cadastro, c.phone, fn.id, fn.status

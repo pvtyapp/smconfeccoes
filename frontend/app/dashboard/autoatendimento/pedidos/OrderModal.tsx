@@ -58,7 +58,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   const [saving,        setSaving]        = useState(false)
   const [printFormat,   setPrintFormat]   = useState<"a4" | "thermal">("a4")
   const [showPrint,     setShowPrint]     = useState(false)
-  const [orderPrint,    setOrderPrint]    = useState(false) // "Ordem do Pedido" 2 vias, ao concluir separação
+  const [orderPrint,    setOrderPrint]    = useState(false) // "Ordem do Pedido" 1 via CLIENTE, ao concluir separação
   const [hasPrinted,    setHasPrinted]    = useState(false)
   const [printedHash,   setPrintedHash]   = useState("")
 
@@ -323,7 +323,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   }
 
   // EM SEPARAÇÃO — sem alteração pendente: conclui a separação, imprime a Ordem
-  // do Pedido (2 vias) automaticamente e avança pra Pronto p/ Retirada.
+  // do Pedido (1 via CLIENTE) automaticamente e avança pra Pronto p/ Retirada.
   async function handleConcluirSeparacao() {
     setSaving(true)
     try {
@@ -655,7 +655,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
             </div>
           )}
 
-          {/* Reimprimir Ordem do Pedido — só em pronto, sempre 2 vias (loja+cliente) */}
+          {/* Reimprimir Ordem do Pedido — só em pronto, 1 via CLIENTE */}
           {isPronte && (
             <div className="pt-1">
               <button onClick={() => { setOrderPrint(true); printWhenReady() }}
@@ -826,9 +826,10 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
         <PrintSheet order={order} items={items} format={printFormat} vias={1} onDone={() => setShowPrint(false)} />
       )}
 
-      {/* Print — Ordem do Pedido, sempre 2 vias (loja + cliente), automático ao Concluir Separação */}
+      {/* Print — Ordem do Pedido, 1 via CLIENTE (a loja já arquivou a Ficha de
+          Separação), automático ao Concluir Separação */}
       {orderPrint && (
-        <PrintSheet order={order} items={items} format="a4" title="Ordem do Pedido" vias={2} onDone={() => setOrderPrint(false)} />
+        <PrintSheet order={order} items={items} format="a4" title="Ordem do Pedido" vias={1} soloVia="CLIENTE" onDone={() => setOrderPrint(false)} />
       )}
 
       {/* Confirmação de avanço de estágio */}
