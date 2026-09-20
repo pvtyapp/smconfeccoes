@@ -274,7 +274,14 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
 
 // Mensagem de grupo — salva em wa_group_messages. Mesmo motivo do handleFromMeMessage:
 // roda por mensagem, não só na primeira do lote.
-async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key: Record<string, unknown>): Promise<void> {
+//
+// Grupo dos administradores (plano "Grupo Admin Dedicado", 2026-09-20): só
+// nessa instância dedicada, o bot administrativo (o mesmo que já funciona em
+// DM 1:1) responde quando alguém digita "menu", ou quando quem mandou já tem
+// um fluxo em andamento (não precisa repetir "menu" a cada mensagem dentro
+// de um fluxo de várias etapas). Fora isso, fica mudo — não atrapalha a
+// conversa entre os administradores.
+async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key: Record<string, unknown>, instance: string): Promise<void> {
   try {
     const msgObj = msg.message as Record<string, unknown> | undefined
     const content: string =
@@ -308,6 +315,23 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
       FROM wa_groups g WHERE g.jid = $6
       ON CONFLICT (message_id) DO NOTHING
     `, [key?.id ?? null, senderJid, senderName, content || "[mídia]", hasMedia ? "media" : null, jid]).catch(() => {})
+
+    if (!content.trim()) return
+
+    const { rows: adminInstRows } = await pool.query(
+      `SELECT value FROM app_settings WHERE key = 'admin_instance_name'`
+    ).catch(() => ({ rows: [] as { value: string }[] }))
+    const adminInstanceName = adminInstRows[0]?.value
+    if (!adminInstanceName || instance !== adminInstanceName) return
+
+    const adminUser = await resolveAdminUser(senderJid, participantAlt ?? "").catch(() => null)
+    if (!adminUser) return
+
+    const lower = content.trim().toLowerCase()
+    const midFlow = !!adminUser.waState && adminUser.waState !== "idle"
+    if (lower === "menu" || midFlow) {
+      await handleAdminMessage(jid, content.trim(), adminUser)
+    }
   } catch (e) {
     console.error("[webhook] handleGroupMessage falhou:", jid, e instanceof Error ? e.message : e)
   }
@@ -1021,7 +1045,7 @@ export async function POST(req: Request) {
       }
 
       if (jid.endsWith("@g.us")) {
-        await handleGroupMessage(m, jid, key)
+        await handleGroupMessage(m, jid, key, (body?.instance as string) ?? "")
         continue
       }
 

@@ -7,6 +7,7 @@ import { ArrowLeft, RefreshCw, QrCode, Plus, Trash2, X, Loader2 } from "lucide-r
 const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 transition-colors"
 
 type Principal = { instanceName: string; state: string | null; connected: boolean }
+type AdminInstance = { created: boolean; instanceName: string | null; state: string | null; connected: boolean }
 type CommercialInstance = { id: number; instanceName: string; label: string; active: boolean; state: string }
 
 function StatusPill({ connected }: { connected: boolean }) {
@@ -83,10 +84,12 @@ function QrModal({ instanceName, initialBase64, onClose, onConnected }: {
 
 export default function WhatsAppSettingsPage() {
   const [principal, setPrincipal] = useState<Principal | null>(null)
+  const [adminInst, setAdminInst] = useState<AdminInstance | null>(null)
   const [instances, setInstances] = useState<CommercialInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [qrTarget, setQrTarget] = useState<{ instanceName: string; base64: string | null } | null>(null)
   const [startingPrincipal, setStartingPrincipal] = useState(false)
+  const [startingAdmin, setStartingAdmin] = useState(false)
 
   const [showAddForm, setShowAddForm] = useState(false)
   const [newLabel, setNewLabel] = useState("")
@@ -96,11 +99,13 @@ export default function WhatsAppSettingsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [pRes, iRes] = await Promise.all([
+    const [pRes, aRes, iRes] = await Promise.all([
       fetch("/api/whatsapp/principal"),
+      fetch("/api/whatsapp/admin-instance"),
       fetch("/api/marketing/instances"),
     ])
     if (pRes.ok) setPrincipal(await pRes.json())
+    if (aRes.ok) setAdminInst(await aRes.json())
     if (iRes.ok) setInstances(await iRes.json())
     setLoading(false)
   }, [])
@@ -116,6 +121,21 @@ export default function WhatsAppSettingsPage() {
       setQrTarget({ instanceName: principal.instanceName, base64: d.qrcodeBase64 ?? null })
     } finally {
       setStartingPrincipal(false)
+    }
+  }
+
+  // Cria a instância admin na 1ª vez (fica esperando o QR ser escaneado, sem
+  // prazo — o chip físico pode chegar depois) ou só pede QR novo se já existe.
+  async function connectAdmin() {
+    setStartingAdmin(true)
+    try {
+      const r = await fetch("/api/whatsapp/admin-instance", { method: "POST" })
+      const d = await r.json() as { instanceName: string; qrcodeBase64: string | null; error?: string }
+      if (!r.ok) { alert(d.error ?? "Erro ao criar/conectar a instância admin"); return }
+      setQrTarget({ instanceName: d.instanceName, base64: d.qrcodeBase64 ?? null })
+      load()
+    } finally {
+      setStartingAdmin(false)
     }
   }
 
@@ -206,6 +226,42 @@ export default function WhatsAppSettingsPage() {
               </div>
             ) : (
               <p className="text-xs text-red-600">Não foi possível consultar o número principal.</p>
+            )}
+          </section>
+
+          {/* Admin — grupo + DM híbrido */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-3">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">WhatsApp Administradores</h2>
+            <p className="text-[11px] text-[#0F1E3C]/40 -mt-2">Número dedicado, híbrido: participa do grupo dos administradores (bot só responde com "menu") e também aceita DM 1:1 direto nele, igual o principal.</p>
+            {adminInst?.created ? (
+              <div className="flex items-center justify-between bg-[#F4F6FB] rounded-xl px-4 py-3">
+                <div>
+                  <p className="text-xs font-mono text-[#0F1E3C]/70">{adminInst.instanceName}</p>
+                  <div className="mt-1"><StatusPill connected={adminInst.connected} /></div>
+                </div>
+                {!adminInst.connected && (
+                  <button
+                    onClick={connectAdmin}
+                    disabled={startingAdmin}
+                    className="flex items-center gap-1.5 bg-[#4361EE] hover:bg-[#3451D4] text-white text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    {startingAdmin ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />}
+                    {startingAdmin ? "Gerando..." : "Conectar / Reconectar"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between bg-[#F4F6FB] rounded-xl px-4 py-3">
+                <p className="text-xs text-[#0F1E3C]/50">Ainda não criada — fica pronta pra escanear o QR assim que o chip novo chegar.</p>
+                <button
+                  onClick={connectAdmin}
+                  disabled={startingAdmin}
+                  className="flex items-center gap-1.5 bg-[#4361EE] hover:bg-[#3451D4] text-white text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-50 flex-shrink-0"
+                >
+                  {startingAdmin ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                  {startingAdmin ? "Criando..." : "Criar instância"}
+                </button>
+              </div>
             )}
           </section>
 
