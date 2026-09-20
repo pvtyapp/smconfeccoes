@@ -7,8 +7,7 @@ type Solicitacao = {
   id: number
   name: string
   phone: string
-  businessName: string | null
-  purchaseNotes: string | null
+  salesChannels: string[] | null
   status: "pendente" | "aprovado" | "recusado"
   reviewedBy: string | null
   reviewedAt: string | null
@@ -111,9 +110,14 @@ export default function FormulariosPage() {
                   </div>
                   <p className="text-xs text-[#0F1E3C]/45 mt-1 flex items-center gap-1.5">
                     <MessageCircle size={11} /> {fmtPhone(s.phone)}
-                    {s.businessName && <span>· {s.businessName}</span>}
                   </p>
-                  {s.purchaseNotes && <p className="text-xs text-[#0F1E3C]/50 mt-1.5">{s.purchaseNotes}</p>}
+                  {s.salesChannels && s.salesChannels.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {s.salesChannels.map((c) => (
+                        <span key={c} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">{c}</span>
+                      ))}
+                    </div>
+                  )}
                   <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">
                     Enviado em {fmtDate(s.createdAt)}
                     {s.reviewedAt && ` · revisado por ${s.reviewedBy} em ${fmtDate(s.reviewedAt)}`}

@@ -4,14 +4,19 @@ import { useState, type FormEvent } from "react"
 import { Send, CheckCircle2 } from "lucide-react"
 import WhatsAppInput from "@/app/portal/components/WhatsAppInput"
 
+const CHANNELS = ["Shopee", "TikTok", "Outros"]
+
 export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?: string }) {
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
-  const [businessName, setBusinessName] = useState("")
-  const [purchaseNotes, setPurchaseNotes] = useState("")
+  const [channels, setChannels] = useState<string[]>([])
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+
+  function toggleChannel(c: string) {
+    setChannels((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -21,7 +26,7 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
       const res = await fetch("/api/portal/fornecedor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, phone, businessName, purchaseNotes }),
+        body: JSON.stringify({ name, phone, salesChannels: channels }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Não foi possível enviar"); return }
@@ -40,7 +45,7 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
           <CheckCircle2 size={22} className="text-[#1B8F63]" />
         </div>
         <p className="text-sm font-bold text-[#0F1E3C]">Solicitação enviada!</p>
-        <p className="text-xs text-[#0F1E3C]/50 max-w-[26ch]">A gente analisa e avisa pelo WhatsApp assim que aprovar.</p>
+        <p className="text-xs text-[#0F1E3C]/50 max-w-[26ch]">A gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
       </div>
     )
   }
@@ -56,18 +61,23 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
       </div>
       <WhatsAppInput id={`${idPrefix}-phone`} value={phone} onChange={setPhone} />
       <div>
-        <label htmlFor={`${idPrefix}-business`} className="block text-xs font-semibold text-[#0F1E3C]/60 mb-1.5">Nome do negócio (opcional)</label>
-        <input
-          id={`${idPrefix}-business`} type="text" value={businessName} onChange={(e) => setBusinessName(e.target.value)}
-          className="w-full border border-[#0F1E3C]/15 rounded-xl px-4 py-3 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
-        />
-      </div>
-      <div>
-        <label htmlFor={`${idPrefix}-notes`} className="block text-xs font-semibold text-[#0F1E3C]/60 mb-1.5">Com que frequência costuma comprar? (opcional)</label>
-        <textarea
-          id={`${idPrefix}-notes`} rows={2} value={purchaseNotes} onChange={(e) => setPurchaseNotes(e.target.value)}
-          className="w-full border border-[#0F1E3C]/15 rounded-xl px-4 py-3 text-sm text-[#0F1E3C] resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
-        />
+        <p className="block text-xs font-semibold text-[#0F1E3C]/60 mb-2">Principais canais de venda</p>
+        <div className="flex flex-wrap gap-2">
+          {CHANNELS.map((c) => {
+            const active = channels.includes(c)
+            return (
+              <button
+                key={c} type="button" onClick={() => toggleChannel(c)}
+                aria-pressed={active}
+                className={`px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                  active ? "bg-[#4361EE] border-[#4361EE] text-white" : "border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/5"
+                }`}
+              >
+                {c}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {error && <p className="text-xs text-red-600" role="alert">{error}</p>}

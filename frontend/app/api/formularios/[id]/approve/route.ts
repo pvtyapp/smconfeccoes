@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     await sendAndSave(
       contact!.id, contact!.jid,
-      `Oi, ${solicitacao.name.split(" ")[0]}! Sua solicitação de acesso como *Fornecedor Fixo SM* foi aprovada 🎉\n\nJá pode fazer seu pedido pelo site: https://smconfeccoes.com.br/catalogo`
+      `Oi, ${solicitacao.name.split(" ")[0]}! Seu acesso pra comprar com a *SM Confecções* foi liberado 🎉\n\nJá pode fazer seu pedido pelo site: https://smconfeccoes.com.br/catalogo`
     )
 
     return NextResponse.json({ ok: true })

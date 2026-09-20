@@ -59,8 +59,8 @@ export default function AccessSection() {
             <div className="w-11 h-11 rounded-xl bg-white/10 flex items-center justify-center mb-5">
               <Building2 size={19} className="text-[#93A8F4]" />
             </div>
-            <h3 className="text-lg font-black text-white mb-1">Quero ser Fornecedor Fixo</h3>
-            <p className="text-sm text-white/50 mb-6">Prioridade de produção, condição travada e nota fiscal em toda venda. A gente analisa e avisa pelo WhatsApp.</p>
+            <h3 className="text-lg font-black text-white mb-1">Quero comprar com vocês</h3>
+            <p className="text-sm text-white/50 mb-6">Conta pra gente seus canais de venda. A gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
             <div className="[&_label]:text-white/60 [&_input]:bg-white/5 [&_input]:border-white/15 [&_input]:text-white [&_textarea]:bg-white/5 [&_textarea]:border-white/15 [&_textarea]:text-white">
               <FornecedorFormFields idPrefix="lp-forn" />
             </div>

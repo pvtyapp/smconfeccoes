@@ -4,17 +4,19 @@ import { normalizePhone } from "@/lib/portal/phone"
 
 export async function POST(req: Request) {
   try {
-    const { name, phone: rawPhone, businessName, purchaseNotes } =
-      await req.json() as { name: string; phone: string; businessName?: string; purchaseNotes?: string }
+    const { name, phone: rawPhone, salesChannels } =
+      await req.json() as { name: string; phone: string; salesChannels?: string[] }
 
     const phone = normalizePhone(rawPhone ?? "")
     if (!phone) return NextResponse.json({ error: "WhatsApp inválido" }, { status: 400 })
     if (!name?.trim()) return NextResponse.json({ error: "Informe seu nome" }, { status: 400 })
 
+    const channels = Array.isArray(salesChannels) ? salesChannels.filter((c) => typeof c === "string" && c.trim()) : []
+
     await pool.query(
-      `INSERT INTO fornecedor_solicitacoes (name, phone, business_name, purchase_notes)
-       VALUES ($1, $2, $3, $4)`,
-      [name.trim(), phone, businessName?.trim() || null, purchaseNotes?.trim() || null]
+      `INSERT INTO fornecedor_solicitacoes (name, phone, sales_channels)
+       VALUES ($1, $2, $3)`,
+      [name.trim(), phone, channels.length ? channels : null]
     )
 
     return NextResponse.json({ ok: true })

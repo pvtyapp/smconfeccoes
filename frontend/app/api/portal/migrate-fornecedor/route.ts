@@ -19,6 +19,7 @@ export async function POST() {
     `)
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_fornecedor_solicitacoes_status ON fornecedor_solicitacoes(status)`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS fornecedor_fixo_since TIMESTAMPTZ`)
+    await pool.query(`ALTER TABLE fornecedor_solicitacoes ADD COLUMN IF NOT EXISTS sales_channels TEXT[]`)
     return NextResponse.json({ ok: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
