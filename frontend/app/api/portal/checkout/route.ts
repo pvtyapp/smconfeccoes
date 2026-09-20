@@ -158,10 +158,13 @@ export async function POST(req: Request) {
         const pagamento = paymentMethod === "prazo"
           ? "Pagamento: prazo combinado com a loja."
           : "Pagamento: PIX — a chave chega na próxima mensagem."
-        const horarioNota = outsideHours
-          ? "\n\nEstamos fora do horário de atendimento — a separação começa no próximo horário comercial."
-          : ""
-        const resumo = `✅ Pedido *${number}* recebido!\n\n${lines.join("\n")}\n\n💰 Total: *${fmtR(total)}*\n\n${pagamento}${horarioNota}`
+        // Deixa claro o estágio atual e avisa que vem uma 2ª mensagem quando
+        // ficar pronto — pra não confundir "recebido" com "já pode retirar".
+        const statusLine = outsideHours
+          ? "Estamos fora do horário de atendimento agora — a separação começa no próximo horário comercial."
+          : "Seu pedido já está em separação!"
+        const avisoPronto = "\n\nAssim que estiver pronto pra retirada, a gente avisa por aqui. 😊"
+        const resumo = `✅ Pedido *${number}* recebido!\n\n${lines.join("\n")}\n\n💰 Total: *${fmtR(total)}*\n\n${pagamento}\n\n${statusLine}${avisoPronto}`
         await sendAndSave(contact.id, sendJid, resumo).catch(() => {})
 
         if (paymentMethod === "pix") {

@@ -1,6 +1,7 @@
 "use client"
 
-import { Phone, Clock, AlertTriangle, FileText } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Phone, Clock, AlertTriangle, FileText, Printer, Check } from "lucide-react"
 import type { Order } from "./page"
 
 const STATUS_LABEL: Record<string, string> = {
@@ -19,6 +20,12 @@ const STATUS_COLOR: Record<string, string> = {
   cancelado:     "bg-red-50 text-red-600 border-red-200",
 }
 
+// Mesmo hash usado no OrderModal — precisa bater exatamente, senão reimprimir
+// por aqui deixa o modal achando (por engano) que o pedido mudou depois.
+function itemsHash(list: Order["items"]) {
+  return list.map(i => `${i.productName}|${i.color}|${i.size}|${i.qty}|${i.unitPrice ?? ""}`).join(",")
+}
+
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(diff / 60_000)
@@ -33,9 +40,10 @@ type Props = {
   order: Order
   onClick: () => void
   onSetPaidLabel?: (orderId: number, value: boolean) => void
+  onPrint?: (order: Order) => void
 }
 
-export default function OrderCard({ order, onClick, onSetPaidLabel }: Props) {
+export default function OrderCard({ order, onClick, onSetPaidLabel, onPrint }: Props) {
   const totalQty  = order.items.reduce((s, i) => s + i.qty, 0)
   const isPronto  = order.status === "pronto"
   const isTriagem = order.status === "triagem"
@@ -44,9 +52,27 @@ export default function OrderCard({ order, onClick, onSetPaidLabel }: Props) {
   const hasStockAlert = isSeparacao && !!order.stockAlert?.length
   const isAlterado = isSeparacao && order.alterationSent
 
+  // Mesmo rastreio do OrderModal (localStorage, por navegador) — só pra dar
+  // sinal visual de "já impressa" direto no card, sem abrir o pedido.
+  const [printed, setPrinted] = useState(false)
+  useEffect(() => {
+    if (!isSeparacao) return
+    try {
+      const raw = localStorage.getItem(`print_${order.id}`)
+      setPrinted(!!raw)
+    } catch { /* ignora */ }
+  }, [isSeparacao, order.id, order.items])
+
   function handleSetPaid(e: React.MouseEvent, value: boolean) {
     e.stopPropagation()
     onSetPaidLabel?.(order.id, value)
+  }
+
+  function handlePrintClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    try { localStorage.setItem(`print_${order.id}`, JSON.stringify({ hash: itemsHash(order.items) })) } catch { /* ignora */ }
+    setPrinted(true)
+    onPrint?.(order)
   }
 
   const card = (
@@ -155,6 +181,21 @@ export default function OrderCard({ order, onClick, onSetPaidLabel }: Props) {
           <FileText size={10} />
           {order.fiscalNoteStatus === "autorizada" ? "NFe emitida" : "NFe processando"}
         </div>
+      )}
+
+      {/* Imprimir Ficha de Separação — direto no card, sem abrir o pedido */}
+      {isSeparacao && onPrint && (
+        <button
+          onClick={handlePrintClick}
+          className={`mt-2 w-full flex items-center justify-center gap-1.5 text-[10px] font-black px-2 py-1.5 rounded-lg border transition-colors ${
+            printed
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+              : "bg-[#4361EE] text-white border-[#4361EE] hover:bg-[#3451D4]"
+          }`}
+        >
+          {printed ? <Check size={11} /> : <Printer size={11} />}
+          {printed ? "Ficha impressa · reimprimir" : "Imprimir Ficha de Separação"}
+        </button>
       )}
 
       {/* Selo Pagou/Não pagou — só informativo, Pronto p/ Retirada */}

@@ -9,6 +9,8 @@ import {
   Image as ImageIcon, Video as VideoIcon, Plus,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
+import PrintSheet from "./PrintSheet"
+import { printWhenReady } from "@/components/print/print-utils"
 import OrderModal from "./OrderModal"
 import AudioPlayer from "./AudioPlayer"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
@@ -325,6 +327,12 @@ export default function PedidosPage() {
   // DTF panel within chat modal
   const [showDtfPanel,      setShowDtfPanel]      = useState(false)
   const [showNewOrderForm,  setShowNewOrderForm]  = useState(false)
+  // Imprimir Ficha de Separação direto do card do Kanban, sem abrir o pedido
+  const [printingOrder,     setPrintingOrder]      = useState<Order | null>(null)
+  function handlePrintFromCard(order: Order) {
+    setPrintingOrder(order)
+    printWhenReady()
+  }
   const [showHistProdutos,  setShowHistProdutos]  = useState(false)
   const [showHistDtf,       setShowHistDtf]       = useState(false)
   const [contactDtfOrders,  setContactDtfOrders]  = useState<DtfOrder[]>([])
@@ -2226,6 +2234,7 @@ export default function PedidosPage() {
                           <OrderCard key={order.id} order={order}
                             onClick={() => { selectedIdRef.current = order.id; setSelected(order) }}
                             onSetPaidLabel={setPaidLabel}
+                            onPrint={handlePrintFromCard}
                           />
                         ))}
                         {/* Reservas — seção colapsável na Triagem */}
@@ -2470,6 +2479,9 @@ export default function PedidosPage() {
       )}
       {selectedDtf && (
         <DtfOrderModal order={selectedDtf} onClose={() => { setSelectedDtf(null); selectedDtfIdRef.current = null }} onRefresh={() => loadDtf()} numImpressoras={numImpressoras} />
+      )}
+      {printingOrder && (
+        <PrintSheet order={printingOrder} items={printingOrder.items} format="a4" vias={1} onDone={() => setPrintingOrder(null)} />
       )}
       {dtfUnpayId !== null && (
         <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
