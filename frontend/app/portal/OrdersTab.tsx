@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Package, FileText, Receipt, Clock, ChevronDown, Pencil, ChevronLeft, ChevronRight, AlertTriangle, Wallet } from "lucide-react"
+import { Package, FileText, Receipt, Clock, ChevronDown, Pencil, ChevronLeft, ChevronRight, AlertTriangle, Wallet, CalendarRange, X } from "lucide-react"
 import PdvReceiptModal, { type SaleReceipt } from "@/app/dashboard/pdv/PdvReceiptModal"
 import OrderEditModal from "./OrderEditModal"
 
@@ -54,12 +54,17 @@ function buildReceipt(o: Order): SaleReceipt {
   }
 }
 
-// Mural de pagamento — só pedido a prazo, não pago, não cancelado. No prazo
-// (laranja) até a data de vencimento, vencido (vermelho) depois dela. Fica
-// no topo de Meus Pedidos, separado da lista completa abaixo — resumo do
-// que o cliente deve, não substitui o histórico.
+// Mural de pagamento — qualquer pedido com vencimento em aberto (não pago,
+// não cancelado), não só quem escolheu "prazo" no checkout. payment_method
+// guarda a ESCOLHA no checkout (pix/prazo) — pedido que fechou pagando Pix
+// mas foi concluído na retirada como "a prazo" (Concluir a Prazo, sem Pix
+// confirmado ainda) também tem due_date e fica devendo, então também entra
+// aqui. Quem realmente é o dono da régua é due_date + paidAt, não a escolha
+// original. No prazo (laranja) até a data de vencimento, vencido (vermelho)
+// depois dela. Fica no topo de Meus Pedidos, separado da lista completa
+// abaixo — resumo do que o cliente deve, não substitui o histórico.
 function PaymentMural({ orders }: { orders: Order[] }) {
-  const pending = orders.filter((o) => o.paymentMethod === "prazo" && !o.paidAt && o.status !== "cancelado" && o.dueDate)
+  const pending = orders.filter((o) => !o.paidAt && o.status !== "cancelado" && o.dueDate)
   if (pending.length === 0) return null
 
   const overdue = pending.filter((o) => isPastDue(o.dueDate!))
@@ -113,6 +118,8 @@ export default function OrdersTab() {
   const [receipt, setReceipt] = useState<SaleReceipt | null>(null)
   const [editing, setEditing] = useState<Order | null>(null)
   const [page, setPage] = useState(1)
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
 
   function load() {
     return fetch("/api/portal/orders")
@@ -122,8 +129,20 @@ export default function OrdersTab() {
   }
   useEffect(() => { load() }, [])
 
-  const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
-  const pageOrders = useMemo(() => orders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [orders, page])
+  const filteredOrders = useMemo(() => {
+    if (!dateFrom && !dateTo) return orders
+    return orders.filter((o) => {
+      const created = o.createdAt.slice(0, 10) // YYYY-MM-DD, comparável direto com <input type=date>
+      if (dateFrom && created < dateFrom) return false
+      if (dateTo && created > dateTo) return false
+      return true
+    })
+  }, [orders, dateFrom, dateTo])
+
+  useEffect(() => { setPage(1) }, [dateFrom, dateTo])
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE))
+  const pageOrders = useMemo(() => filteredOrders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredOrders, page])
 
   if (loading) return <p className="text-sm text-[#0F1E3C]/40">Carregando...</p>
 
@@ -136,10 +155,41 @@ export default function OrdersTab() {
     )
   }
 
+  const hasDateFilter = !!dateFrom || !!dateTo
+
   return (
     <div>
       <PaymentMural orders={orders} />
 
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <CalendarRange size={14} className="text-[#0F1E3C]/35 flex-shrink-0" />
+        <input
+          type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+          aria-label="Filtrar pedidos a partir desta data"
+          className="text-xs text-[#0F1E3C] bg-white border border-[#0F1E3C]/10 rounded-lg px-2.5 py-1.5"
+        />
+        <span className="text-xs text-[#0F1E3C]/30">até</span>
+        <input
+          type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+          aria-label="Filtrar pedidos até esta data"
+          className="text-xs text-[#0F1E3C] bg-white border border-[#0F1E3C]/10 rounded-lg px-2.5 py-1.5"
+        />
+        {hasDateFilter && (
+          <button
+            type="button" onClick={() => { setDateFrom(""); setDateTo("") }}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-[#0F1E3C]/40 hover:text-[#0F1E3C] px-1.5 py-1.5"
+          >
+            <X size={13} /> Limpar
+          </button>
+        )}
+      </div>
+
+      {filteredOrders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-14 border border-dashed border-[#0F1E3C]/15 rounded-2xl text-[#0F1E3C]/30">
+          <Package size={22} />
+          <p className="text-sm">Nenhum pedido nesse período.</p>
+        </div>
+      ) : (
       <div className="space-y-3">
         {pageOrders.map((o) => {
           const status = STATUS_LABEL[o.status] ?? { label: o.status, cls: "bg-[#0F1E3C]/5 text-[#0F1E3C]/60" }
@@ -217,6 +267,7 @@ export default function OrdersTab() {
           )
         })}
       </div>
+      )}
 
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-1.5 mt-5">

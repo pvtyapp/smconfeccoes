@@ -39,7 +39,7 @@ export async function GET() {
       WHERE o.contact_id = $1
       GROUP BY o.id, c.nome_cadastro, c.name, c.phone, fn.id, fn.status
       ORDER BY o.created_at DESC
-      LIMIT 100
+      LIMIT 1000
     `, [session.contactId])
 
     return NextResponse.json(rows)
