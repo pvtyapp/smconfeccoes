@@ -28,8 +28,8 @@ export async function POST(
 
     const orderRes = await client.query(`
       SELECT o.id, o.number, o.contact_id, o.status AS "currentStatus",
-             o.total_value, c.name AS "contactName",
-             c.jid AS jid
+             o.total_value, o.payment_method AS "paymentMethod", o.source,
+             c.name AS "contactName", c.jid AS jid
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.id = $1
@@ -42,7 +42,8 @@ export async function POST(
 
     const order = orderRes.rows[0] as {
       id: number; number: string; contact_id: number; currentStatus: string
-      total_value: string | null; contactName: string | null; jid: string | null
+      total_value: string | null; paymentMethod: string | null; source: string | null
+      contactName: string | null; jid: string | null
     }
 
     // ── Lógica de cada stage ──────────────────────────────────────────────────
@@ -205,7 +206,12 @@ export async function POST(
       const valor = total > 0
         ? `\n\n💰 Valor: *R$ ${total.toFixed(2).replace(".", ",")}*`
         : ""
-      const pix = cfg.pix_key_pedidos ? `\n💳 Pix: \`${cfg.pix_key_pedidos}\`` : ""
+      // Pix já foi mandado lá na hora do pedido pra quem fechou no site pagando
+      // Pix (checkout já dispara a chave separada) — não repete aqui. Pedido
+      // sem essa origem/forma de pagamento (WhatsApp, manual, prazo) nunca
+      // recebeu a chave antes, então continua vindo nessa mensagem.
+      const pixJaEnviado = order.paymentMethod === "pix" && order.source === "site"
+      const pix = (!pixJaEnviado && cfg.pix_key_pedidos) ? `\n💳 Pix: \`${cfg.pix_key_pedidos}\`` : ""
       const end = cfg.endereco_retirada ? `\n\n📍 ${cfg.endereco_retirada}` : ""
 
       sendAndSave(
