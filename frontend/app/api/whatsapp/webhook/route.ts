@@ -83,7 +83,7 @@ async function upsertContactFromMessage(jid: string, rawPushName: string, remote
   if (jid.endsWith("@s.whatsapp.net") && phone.length >= 8) {
     const { rows } = await pool.query(`
       SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
-             updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+             updated_at AS "updatedAt", last_order_at AS "lastOrderAt", nome_cadastro AS "nomeCadastro"
       FROM wa_contacts WHERE jid LIKE '%@lid' AND (phone = $1 OR phone_jid = $2) LIMIT 1
     `, [phone, jid]).catch(() => ({ rows: [] as Record<string, unknown>[] }))
     if (rows[0]) {
@@ -110,7 +110,7 @@ async function upsertContactFromMessage(jid: string, rawPushName: string, remote
   if (jid.endsWith("@lid") && phoneJid && phone.length >= 8) {
     const { rows } = await pool.query(`
       SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
-             updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+             updated_at AS "updatedAt", last_order_at AS "lastOrderAt", nome_cadastro AS "nomeCadastro"
       FROM wa_contacts WHERE jid != $3 AND (phone = $1 OR phone_jid = $2) LIMIT 1
     `, [phone, phoneJid, jid]).catch(() => ({ rows: [] as Record<string, unknown>[] }))
     if (rows[0]) {
@@ -141,7 +141,7 @@ async function upsertContactFromMessage(jid: string, rawPushName: string, remote
       phone_jid = COALESCE(EXCLUDED.phone_jid, wa_contacts.phone_jid),
       updated_at = NOW()
     RETURNING id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
-              updated_at AS "updatedAt", last_order_at AS "lastOrderAt"
+              updated_at AS "updatedAt", last_order_at AS "lastOrderAt", nome_cadastro AS "nomeCadastro"
   `, [jid, pushName, phone, phoneJid])
 
   const contact = rows[0]
@@ -344,6 +344,10 @@ type SavedInbound = {
   text: string
   hasMedia: boolean
   pushName: string | null
+  // Nome pra usar em saudação/mensagem — nome_cadastro (digitado manualmente
+  // no cadastro ou no cliente) sempre pesa mais que o pushName do WhatsApp,
+  // que pode vir com apelido, emoji, nome errado etc.
+  displayName: string | null
 }
 
 // Salva 1 mensagem recebida de contato normal (contato + wa_messages + download de
@@ -392,6 +396,7 @@ async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<Save
     const contact = await upsertContactFromMessage(jid, rawPushName, remoteJidAlt) as {
       id: number; state: string | null; stateData: Record<string, unknown> | null
       lifecycleState: string | null; updatedAt: string | null; lastOrderAt: string | null
+      nomeCadastro: string | null
     }
 
     // Extract quoted (reply) context
@@ -478,6 +483,7 @@ async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<Save
       text,
       hasMedia,
       pushName,
+      displayName: contact.nomeCadastro || pushName,
     }
   } catch (e) {
     console.error("[webhook] saveInboundMessage falhou:", jid, e instanceof Error ? e.message : e)
@@ -1119,7 +1125,7 @@ export async function POST(req: Request) {
     if (!first) return NextResponse.json({ ok: true })
 
     const { jid, msg } = first
-    const { contactId, state, lifecycle, text, hasMedia, pushName } = first.saved
+    const { contactId, state, lifecycle, text, hasMedia, displayName } = first.saved
 
     // Marketing opt-out — detect stop words before any chatbot logic
     if (text.trim() && !hasMedia) {
@@ -1196,7 +1202,7 @@ export async function POST(req: Request) {
       await handleMedia(jid, contactId, msg, state, allMsgs)
     } else {
       await handleText(
-        jid, contactId, state, text.trim(), lifecycle, pushName ?? "",
+        jid, contactId, state, text.trim(), lifecycle, displayName ?? "",
         chatbotProdutoEnabled, chatbotDtfEnabled, chatbotObs,
         produtoStatus, dtfStatus, globalSettings
       )
@@ -1211,9 +1217,11 @@ export async function POST(req: Request) {
 
 // ─── helpers gerais ──────────────────────────────────────────────────────────
 
-// ", Nome" se o pushName trouxer nome, "" se não trouxer — saudação nunca quebra
-function nameSuffix(pushName: string): string {
-  const first = pushName.trim().split(" ")[0]
+// ", Nome" se tiver nome pra usar (nome_cadastro tem prioridade sobre o
+// pushName do WhatsApp — ver SavedInbound.displayName), "" se não trouxer —
+// saudação nunca quebra.
+function nameSuffix(displayName: string): string {
+  const first = displayName.trim().split(" ")[0]
   return first ? `, ${first}` : ""
 }
 
@@ -1807,7 +1815,7 @@ async function handleText(
   state: string,
   text: string,
   lifecycle: string,
-  pushName: string,
+  displayName: string,
   chatbotProdutoEnabled = true,
   chatbotDtfEnabled = false,
   chatbotObs: string | null = null,
@@ -1817,7 +1825,7 @@ async function handleText(
 ) {
   const lower = text.toLowerCase().trim()
   const greeting = getGreeting()
-  const greetSuffix = nameSuffix(pushName)
+  const greetSuffix = nameSuffix(displayName)
 
   // Cancelamento é tratado antes, no nível do POST — sempre só acende alerta,
   // nunca chega aqui.

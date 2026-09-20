@@ -46,7 +46,7 @@ export async function payOrder(id: number, amount: number | undefined, opts: Pay
   const { rows } = await pool.query(`
     SELECT o.id, o.number, o.status, o.source, o.paid_at, o.total_value, o.amount_paid,
            o.due_date::text AS due_date, o.contact_id AS "contactId",
-           c.jid AS jid, c.name AS "contactName"
+           c.jid AS jid, COALESCE(c.nome_cadastro, c.name) AS "contactName"
     FROM orders o
     LEFT JOIN wa_contacts c ON c.id = o.contact_id
     WHERE o.id = $1
@@ -112,7 +112,7 @@ export async function payDtfPedido(id: number, amount: number | undefined, opts:
   const { rows } = await pool.query(`
     SELECT p.id, p.number, p.paid_at, p.preco_cobrado, p.amount_paid,
            p.due_date::text AS due_date, p.contact_id AS "contactId",
-           c.jid AS jid, c.name AS "contactName"
+           c.jid AS jid, COALESCE(c.nome_cadastro, c.name) AS "contactName"
     FROM dtf_pedidos p
     LEFT JOIN wa_contacts c ON c.id = p.contact_id
     WHERE p.id = $1

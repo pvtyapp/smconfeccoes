@@ -29,7 +29,7 @@ export async function POST(
     const orderRes = await client.query(`
       SELECT o.id, o.number, o.contact_id, o.status AS "currentStatus",
              o.total_value, o.payment_method AS "paymentMethod", o.source,
-             c.name AS "contactName", c.jid AS jid
+             COALESCE(c.nome_cadastro, c.name) AS "contactName", c.jid AS jid
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
       WHERE o.id = $1

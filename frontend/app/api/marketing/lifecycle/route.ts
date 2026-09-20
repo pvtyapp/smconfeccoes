@@ -84,7 +84,7 @@ export async function GET(req: Request) {
         le.stage,
         le.sent_at AS "sentAt",
         le.status,
-        c.name AS "contactName",
+        COALESCE(c.nome_cadastro, c.name) AS "contactName",
         c.phone
       FROM lifecycle_executions le
       JOIN wa_contacts c ON c.id = le.contact_id

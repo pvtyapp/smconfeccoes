@@ -66,7 +66,7 @@ export async function GET(
 
     const pedidoRes = await pool.query(`
       SELECT p.id, p.number, p.data,
-             c.name AS "contactName"
+             COALESCE(c.nome_cadastro, c.name) AS "contactName"
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1

@@ -18,7 +18,7 @@ export async function POST(
     const { rows } = await client.query(`
       SELECT p.id, p.number, p.contact_id, p.created_at AS pedido_created_at,
              p.metros_finais, p.impressora_id,
-             c.jid AS jid, c.name AS "contactName"
+             c.jid AS jid, COALESCE(c.nome_cadastro, c.name) AS "contactName"
       FROM dtf_pedidos p
       LEFT JOIN wa_contacts c ON c.id = p.contact_id
       WHERE p.id = $1

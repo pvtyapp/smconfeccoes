@@ -16,7 +16,7 @@ export async function GET(
         p.status, p.source, p.due_date AS "dueDate",
         p.impressora_id AS "impressoraId",
         p.contact_id AS "contactId", p.created_at AS "createdAt",
-        c.name AS "contactName", c.phone AS "contactPhone", c.jid AS "contactJid",
+        COALESCE(c.nome_cadastro, c.name) AS "contactName", c.phone AS "contactPhone", c.jid AS "contactJid",
         c.payment_term_enabled AS "paymentTermEnabled",
         c.payment_term_type    AS "paymentTermType",
         c.payment_term_days    AS "paymentTermDays",

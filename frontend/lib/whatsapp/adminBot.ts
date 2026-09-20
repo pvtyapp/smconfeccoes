@@ -254,13 +254,13 @@ async function startClientesReceber(jid: string, user: AdminUser): Promise<void>
   const { rows } = await pool.query(`
     SELECT o.id, 'produto' AS kind, o.number, o.total_value::float AS "totalValue",
            (o.total_value - o.amount_paid)::float AS "remaining",
-           o.due_date::text AS "dueDate", c.name AS "contactName"
+           o.due_date::text AS "dueDate", COALESCE(c.nome_cadastro, c.name) AS "contactName"
     FROM orders o JOIN wa_contacts c ON c.id = o.contact_id
     WHERE o.paid_at IS NULL AND o.status != 'cancelado' AND o.due_date IS NOT NULL
     UNION ALL
     SELECT p.id, 'dtf' AS kind, p.number, p.preco_cobrado::float AS "totalValue",
            (p.preco_cobrado - p.amount_paid)::float AS "remaining",
-           p.due_date::text AS "dueDate", COALESCE(c.name, p.cliente) AS "contactName"
+           p.due_date::text AS "dueDate", COALESCE(c.nome_cadastro, c.name, p.cliente) AS "contactName"
     FROM dtf_pedidos p LEFT JOIN wa_contacts c ON c.id = p.contact_id
     WHERE p.paid_at IS NULL AND p.status != 'cancelado' AND p.due_date IS NOT NULL
     ORDER BY "dueDate" ASC NULLS LAST
