@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react"
 import { Send, CheckCircle2 } from "lucide-react"
 
-const CHANNELS = ["Shopee", "TikTok", "Outros"]
+const CHANNELS = ["Shopee", "Mercado Livre", "TikTok", "Outros"]
 
 function maskPhone(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 11)
@@ -79,7 +79,8 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
         />
       </div>
       <div>
-        <p className="block text-xs font-semibold text-white/60 mb-2">Principais canais de venda</p>
+        <p className="block text-xs font-semibold text-white/60 mb-1">Principais canais de venda</p>
+        <p className="text-[11px] text-white/35 mb-2">Pode marcar mais de um</p>
         <div className="flex flex-wrap gap-2">
           {CHANNELS.map((c) => {
             const active = channels.includes(c)

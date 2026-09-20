@@ -60,7 +60,7 @@ export default function AccessSection() {
               <Building2 size={19} className="text-[#93A8F4]" />
             </div>
             <h3 className="text-lg font-black text-white mb-1">Quero comprar com vocês</h3>
-            <p className="text-sm text-white/50 mb-6">Conta pra gente seus canais de venda. A gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
+            <p className="text-sm text-white/50 mb-6">Esse formulário é pra gente ter controle de quem compra, pra nunca faltar estoque pra você e manter um ótimo atendimento. Conta seus canais de venda — a gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
             <FornecedorFormFields idPrefix="lp-forn" />
           </div>
         </div>
