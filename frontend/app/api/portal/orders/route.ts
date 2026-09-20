@@ -15,17 +15,20 @@ export async function GET() {
         o.paid_at        AS "paidAt",
         o.due_date       AS "dueDate",
         o.created_at     AS "createdAt",
+        COALESCE(c.nome_cadastro, c.name) AS "contactName",
+        c.phone          AS "contactPhone",
         fn.id            AS "fiscalNoteId",
         fn.status        AS "fiscalNoteStatus",
         COALESCE(
           json_agg(
             json_build_object(
-              'productName', oi.product_name, 'color', oi.color, 'size', oi.size,
+              'id', oi.id, 'productName', oi.product_name, 'color', oi.color, 'size', oi.size,
               'qty', oi.qty, 'unitPrice', oi.unit_price
             ) ORDER BY oi.id
           ) FILTER (WHERE oi.id IS NOT NULL), '[]'
         ) AS items
       FROM orders o
+      JOIN wa_contacts c ON c.id = o.contact_id
       LEFT JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN LATERAL (
         SELECT fn.id, fn.status FROM fiscal_note_orders fno
@@ -34,7 +37,7 @@ export async function GET() {
         ORDER BY fn.id DESC LIMIT 1
       ) fn ON true
       WHERE o.contact_id = $1
-      GROUP BY o.id, fn.id, fn.status
+      GROUP BY o.id, c.nome_cadastro, c.name, c.phone, fn.id, fn.status
       ORDER BY o.created_at DESC
       LIMIT 100
     `, [session.contactId])

@@ -96,9 +96,12 @@ export async function POST(req: Request) {
     const numRes = await client.query("SELECT nextval('order_number_seq') AS n")
     const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
 
+    // Nasce direto em em_separacao, não triagem — triagem existe pra pedido
+    // sem estrutura (WhatsApp), aqui o item já é real e o estoque já foi
+    // travado (FOR UPDATE acima). Só falta separar fisicamente.
     const { rows: orderRows } = await client.query(`
       INSERT INTO orders (number, contact_id, status, source, total_value, payment_method)
-      VALUES ($1, $2, 'triagem', 'site', $3, $4)
+      VALUES ($1, $2, 'em_separacao', 'site', $3, $4)
       RETURNING id
     `, [number, contact.id, total, paymentMethod])
     const orderId = orderRows[0].id
@@ -113,7 +116,7 @@ export async function POST(req: Request) {
 
     await client.query(`
       INSERT INTO order_events (order_id, status, actor, note)
-      VALUES ($1, 'triagem', 'site', 'Pedido criado pelo cliente no site')
+      VALUES ($1, 'em_separacao', 'site', 'Pedido criado pelo cliente no site — estoque já travado, direto pra separação')
     `, [orderId])
 
     await client.query(`

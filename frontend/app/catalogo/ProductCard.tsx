@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { ChevronLeft, ChevronRight, ImageIcon, ShoppingCart, Check } from "lucide-react"
+import { ImageIcon, ShoppingCart, Check } from "lucide-react"
 import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
 import type { CartItem } from "./cart"
 
@@ -14,19 +14,17 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
   const [color, setColor] = useState<string | null>(colors[0] ?? null)
   const sizesForColor = product.variants.filter((v) => v.color === color)
   const [size, setSize] = useState<string | null>(sizesForColor[0]?.size ?? null)
-  const [imgIdx, setImgIdx] = useState(0)
 
-  const images = useMemo(() => {
-    const specific = product.images.filter((i) => i.color === color)
-    const general = product.images.filter((i) => i.color === null)
-    return specific.length > 0 ? specific : general
+  const image = useMemo(() => {
+    const specific = product.images.find((i) => i.color === color)
+    const general = product.images.find((i) => i.color === null)
+    return specific ?? general ?? null
   }, [product.images, color])
 
   function changeColor(c: string) {
     setColor(c)
     const first = product.variants.find((v) => v.color === c)
     setSize(first?.size ?? null)
-    setImgIdx(0)
   }
 
   const selectedVariant = product.variants.find((v) => v.color === color && v.size === size)
@@ -44,89 +42,53 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
   }
 
   return (
-    <div className="bg-white border border-[#0F1E3C]/8 rounded-2xl overflow-hidden flex flex-col">
-      <div className="relative w-full aspect-square bg-[#F4F6FB]">
-        {images.length > 0 ? (
-          <img src={images[imgIdx]?.url} alt={product.name} className="w-full h-full object-cover" />
+    <div className="flex items-center gap-3 sm:gap-4 bg-white border border-[#0F1E3C]/8 rounded-2xl p-3 sm:p-4">
+      <div className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 rounded-xl overflow-hidden bg-[#F4F6FB] flex items-center justify-center">
+        {image ? (
+          <img src={image.url} alt={product.name} className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-[#0F1E3C]/15">
-            <ImageIcon size={36} />
-          </div>
-        )}
-        {images.length > 1 && (
-          <>
-            <button
-              type="button"
-              onClick={() => setImgIdx((i) => (i - 1 + images.length) % images.length)}
-              aria-label="Foto anterior"
-              className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/85 flex items-center justify-center text-[#0F1E3C] hover:bg-white"
-            >
-              <ChevronLeft size={15} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setImgIdx((i) => (i + 1) % images.length)}
-              aria-label="Próxima foto"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/85 flex items-center justify-center text-[#0F1E3C] hover:bg-white"
-            >
-              <ChevronRight size={15} />
-            </button>
-          </>
+          <ImageIcon size={22} className="text-[#0F1E3C]/15" />
         )}
       </div>
 
-      <div className="p-4 flex flex-col flex-1">
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <p className="text-sm font-bold text-[#0F1E3C]">{product.name}</p>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-bold text-[#0F1E3C] truncate">{product.name}</p>
           <span className="text-sm font-black text-[#4361EE] flex-shrink-0">{fmtR(selectedVariant?.price ?? product.salePrice)}</span>
         </div>
-        {product.description && <p className="text-xs text-[#0F1E3C]/45 mb-3 line-clamp-2">{product.description}</p>}
 
-        {colors.length > 0 && (
-          <div className="mb-2.5">
-            <p className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wide mb-1.5">Cor</p>
-            <div className="flex flex-wrap gap-1.5">
-              {colors.map((c) => (
-                <button
-                  key={c} type="button" onClick={() => changeColor(c)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${color === c ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#0F1E3C]/25"}`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {sizesForColor.length > 0 && (
-          <div className="mb-3">
-            <p className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wide mb-1.5">Tamanho</p>
-            <div className="flex flex-wrap gap-1.5">
-              {sizesForColor.map((v) => (
-                <button
-                  key={v.id} type="button" onClick={() => setSize(v.size)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${size === v.size ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#0F1E3C]/25"}`}
-                >
-                  {v.size ?? "Único"}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          {colors.length > 0 && (
+            <select
+              value={color ?? ""} onChange={(e) => changeColor(e.target.value)}
+              aria-label={`Cor de ${product.name}`}
+              className="text-xs font-semibold border border-[#0F1E3C]/12 rounded-lg px-2.5 py-1.5 text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+            >
+              {colors.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+          {sizesForColor.length > 0 && (
+            <select
+              value={size ?? ""} onChange={(e) => setSize(e.target.value)}
+              aria-label={`Tamanho de ${product.name}`}
+              className="text-xs font-semibold border border-[#0F1E3C]/12 rounded-lg px-2.5 py-1.5 text-[#0F1E3C] bg-white focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+            >
+              {sizesForColor.map((v) => <option key={v.id} value={v.size ?? ""}>{v.size ?? "Único"}</option>)}
+            </select>
+          )}
           <span className={`text-[11px] font-bold ${available ? "text-[#1B8F63]" : "text-[#B23B3B]"}`}>
             {available ? "Disponível" : "Indisponível"}
           </span>
-          <button
-            type="button" onClick={handleAdd} disabled={!available}
-            className="inline-flex items-center gap-1.5 bg-[#0F1E3C] hover:bg-[#1B2A4A] disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
-          >
-            {added ? <Check size={13} /> : <ShoppingCart size={13} />}
-            {added ? "Adicionado" : "Adicionar"}
-          </button>
         </div>
       </div>
+
+      <button
+        type="button" onClick={handleAdd} disabled={!available}
+        aria-label={`Adicionar ${product.name} ao carrinho`}
+        className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#0F1E3C] hover:bg-[#1B2A4A] disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors"
+      >
+        {added ? <Check size={16} /> : <ShoppingCart size={16} />}
+      </button>
     </div>
   )
 }

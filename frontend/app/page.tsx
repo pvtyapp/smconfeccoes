@@ -5,6 +5,7 @@ import Link from "next/link"
 import { MessageCircle, MapPin, Package, ChevronRight } from "lucide-react"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import AccessSection from "@/components/landing/AccessSection"
+import ClienteFixoSection from "@/components/landing/ClienteFixoSection"
 import LandingNavbar from "@/components/landing/LandingNavbar"
 import HeroBannerCarousel, { type HeroBanner } from "@/components/landing/HeroBannerCarousel"
 import { pool } from "@/lib/db"
@@ -156,6 +157,9 @@ export default async function LandingPage() {
 
       {/* ── ÁREA DO CLIENTE (login/cadastro) ── */}
       <AccessSection />
+
+      {/* ── PROGRAMA FORNECEDOR FIXO ── */}
+      <ClienteFixoSection />
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">
@@ -348,7 +352,7 @@ export default async function LandingPage() {
             Quer comprar no atacado?
           </h2>
           <p className="text-white/45 text-base sm:text-lg mb-6 leading-snug max-w-md mx-auto">
-            Sem pedido mínimo. Fale agora no WhatsApp, te respondemos rápido.
+            Sem pedido mínimo, e quem compra já entra no Fornecedor Fixo. Fale agora no WhatsApp, te respondemos rápido.
           </p>
           <a
             href={WA_LINK}
