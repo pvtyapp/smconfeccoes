@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X, Printer, Check } from "lucide-react"
+import { X, Printer, Check, Clock } from "lucide-react"
 import { fmtR } from "@/lib/format"
 import PrintShell from "@/components/print/PrintShell"
 import { printWhenReady } from "@/components/print/print-utils"
@@ -23,6 +23,10 @@ export type SaleReceipt = {
   total: number
   paymentMethod: string
   dueDate?: string
+  // Presente só quando a dívida já foi quitada depois (Clientes a Receber) —
+  // dueDate NUNCA é limpo ao pagar (payOrder só seta paid_at), então dueDate
+  // sozinho não distingue "ainda devendo" de "prazo já pago".
+  paidAt?: string | null
   notes?: string
   contact: { name: string | null; phone: string | null } | null
   items: ReceiptItem[]
@@ -97,11 +101,28 @@ export default function PdvReceiptModal({ receipt, onClose, autoPrint }: Props) 
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
           <div>
             <div className="flex items-center gap-2 mb-0.5">
-              <Check size={15} className="text-emerald-600" />
-              <h2 className="text-base font-black text-[#0F1E3C]">{receipt.number}</h2>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                Concluído
-              </span>
+              {/* dueDate só vem preenchido quando a venda foi a prazo (ver
+                  PDV, dueDate: pm === "prazo" ? dd : undefined) — nesse caso
+                  ainda tem saldo em aberto, não faz sentido rotular de
+                  "Concluído" (lia como já pago, sem dívida nenhuma). paidAt
+                  descarta esse rótulo se o prazo já foi quitado depois. */}
+              {receipt.dueDate && !receipt.paidAt ? (
+                <>
+                  <Clock size={15} className="text-amber-600" />
+                  <h2 className="text-base font-black text-[#0F1E3C]">{receipt.number}</h2>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                    A prazo
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Check size={15} className="text-emerald-600" />
+                  <h2 className="text-base font-black text-[#0F1E3C]">{receipt.number}</h2>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                    Concluído
+                  </span>
+                </>
+              )}
             </div>
             <p className="text-xs text-[#0F1E3C]/40">{clientName} · {clientPhone}</p>
           </div>

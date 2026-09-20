@@ -41,7 +41,13 @@ function buildReceipt(o: Order): SaleReceipt {
     number: o.number,
     total: Number(o.totalValue ?? 0),
     paymentMethod: o.paymentMethod ?? "pix",
-    dueDate: o.dueDate ?? undefined,
+    // SaleReceipt.dueDate é sempre "YYYY-MM-DD" puro (convenção do PDV, que
+    // nasce de <input type="date">) — o.dueDate aqui vem da API como
+    // timestamp ISO completo (Date do Postgres virou string no JSON). Sem
+    // truncar, o "T12:00:00" que o recibo concatena por cima quebra o
+    // parsing e vira Invalid Date.
+    dueDate: o.dueDate ? o.dueDate.slice(0, 10) : undefined,
+    paidAt: o.paidAt,
     contact: { name: o.contactName, phone: o.contactPhone },
     items: o.items.map((it, i) => ({
       key: `${o.id}-${i}`,
