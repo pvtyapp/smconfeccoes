@@ -1030,6 +1030,18 @@ export async function POST(req: Request) {
     // separada e mais fraca, sem log de erro, que já deixou mensagem sumir sem rastro.
     let first: { msg: Record<string, unknown>; jid: string; saved: SavedInbound } | null = null
 
+    // Linha admin (2026-09-20): o número principal virou 100% atendimento
+    // comercial, sem exceção — nem operador cadastrado recebe tratamento
+    // especial nele. Comando administrativo só é lido na instância dedicada
+    // (app_settings.admin_instance_name), que centraliza toda a leitura de
+    // permissão e o fluxo de comando.
+    const instanceName = (body?.instance as string) ?? ""
+    const { rows: adminInstRows0 } = await pool.query(
+      `SELECT value FROM app_settings WHERE key = 'admin_instance_name'`
+    ).catch(() => ({ rows: [] as { value: string }[] }))
+    const adminInstanceName0 = adminInstRows0[0]?.value ?? null
+    const isAdminInstance = !!adminInstanceName0 && instanceName === adminInstanceName0
+
     for (let i = 0; i < allMsgs.length; i++) {
       const m = allMsgs[i]
       const key = (m.key as Record<string, unknown> | undefined) ?? {}
@@ -1049,35 +1061,29 @@ export async function POST(req: Request) {
         continue
       }
 
-      // Operador cadastrado mandando do próprio número? Verifica comando
-      // administrativo primeiro. Se estiver no meio de um fluxo (op_produto,
-      // receber_escolha...) a mensagem é sempre a resposta daquele fluxo. Se
-      // estiver neutro e a mensagem não bater com nenhum comando reconhecido
-      // (ex: "boa noite"), cai no chatbot de cliente normal — híbrido, não
-      // exclusivo — em vez de ficar mudo.
-      const remoteJidAlt = (key.remoteJidAlt as string) || ""
-      const adminUser = await resolveAdminUser(jid, remoteJidAlt).catch(() => null)
+      // Linha admin dedicada: só aqui existe leitura de permissão/comando.
+      if (isAdminInstance) {
+        const remoteJidAlt = (key.remoteJidAlt as string) || ""
+        const adminUser = await resolveAdminUser(jid, remoteJidAlt).catch(() => null)
 
-      // Autocura: número que já foi vinculado como operador (linked_user_id) mas não
-      // bate mais com nenhum usuário ativo — trocou de número, foi desvinculado ou
-      // renomeado do lado de Usuários. Sem isso o contato fica "preso" pra sempre
-      // marcado como operador, mesmo depois de desfazer o vínculo no cadastro.
-      if (!adminUser) {
-        pool.query(
-          `UPDATE wa_contacts SET linked_user_id = NULL, updated_at = NOW()
-           WHERE linked_user_id IS NOT NULL AND (jid = $1 OR phone_jid = $1 OR ($2 <> '' AND phone_jid = $2))`,
-          [jid, remoteJidAlt]
-        ).catch(() => {})
-      }
+        // Autocura: número que já foi vinculado como operador (linked_user_id) mas não
+        // bate mais com nenhum usuário ativo — trocou de número, foi desvinculado ou
+        // renomeado do lado de Usuários. Sem isso o contato fica "preso" pra sempre
+        // marcado como operador, mesmo depois de desfazer o vínculo no cadastro.
+        if (!adminUser) {
+          pool.query(
+            `UPDATE wa_contacts SET linked_user_id = NULL, updated_at = NOW()
+             WHERE linked_user_id IS NOT NULL AND (jid = $1 OR phone_jid = $1 OR ($2 <> '' AND phone_jid = $2))`,
+            [jid, remoteJidAlt]
+          ).catch(() => {})
+        }
 
-      if (adminUser) {
-        const adminMsgBody = m.message as Record<string, unknown> | undefined
-        const adminText: string =
-          (adminMsgBody?.conversation as string) ||
-          ((adminMsgBody?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
-          ""
-        const midFlow = !!adminUser.waState && adminUser.waState !== "idle"
-        if (midFlow || adminText.trim()) {
+        if (adminUser) {
+          const adminMsgBody = m.message as Record<string, unknown> | undefined
+          const adminText: string =
+            (adminMsgBody?.conversation as string) ||
+            ((adminMsgBody?.extendedTextMessage as Record<string, unknown>)?.text as string) ||
+            ""
           const operatorContactId = await findOrCreateOperatorContact(adminUser.id, adminUser.name, adminUser.phone, jid)
             .catch(() => null)
           if (operatorContactId && adminText.trim()) {
@@ -1087,16 +1093,21 @@ export async function POST(req: Request) {
               [operatorContactId, (key.id as string) ?? null, adminText.trim()]
             ).catch(() => {})
           }
-          const handled = await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e => {
+          await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e => {
             console.error("[webhook] handleAdminMessage falhou:", jid, e instanceof Error ? e.message : e)
-            return true
           })
-          if (handled) continue
+          continue
         }
-        // Não é comando e não estava no meio de um fluxo — segue pro fluxo de
-        // cliente normal abaixo (não faz "continue").
+
+        // Mandou nessa linha mas não bate com nenhum admin ativo — essa linha
+        // é só administrativa, não faz atendimento de cliente. Só arquiva.
+        await saveInboundMessage(m).catch(() => {})
+        continue
       }
 
+      // Linha principal: 100% comercial/atendimento, pra todo mundo, sem
+      // exceção — nem quem é operador cadastrado recebe tratamento especial
+      // aqui. Toda leitura de permissão de admin ficou só na linha dedicada.
       const saved = await saveInboundMessage(m)
       if (!first && saved) first = { msg: m, jid, saved }
       waitUntil(reconcileRecentMessages(jid))
