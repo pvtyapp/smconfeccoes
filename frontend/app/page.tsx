@@ -11,6 +11,8 @@ import LandingNavbar from "@/components/landing/LandingNavbar"
 import HeroBannerCarousel, { type HeroBanner } from "@/components/landing/HeroBannerCarousel"
 import { pool } from "@/lib/db"
 import { getPublicCatalog } from "@/lib/catalog/getPublicCatalog"
+import { getClientSessionFromRequest } from "@/lib/clientSession"
+import ClientNavStatus from "@/components/landing/ClientNavStatus"
 
 const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
   "Olá! Gostaria de mais informações sobre a SM Confecções."
@@ -57,11 +59,13 @@ const services = [
 export default async function LandingPage() {
   const heroBanners = await getHeroBanners()
   const catalogProducts = await getPublicCatalog()
+  const clientSession = await getClientSessionFromRequest()
+  const clientName = clientSession?.name ?? null
 
   return (
     <div className="min-h-screen bg-white text-[#0F1E3C]" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
 
-      <LandingNavbar waLink={WA_LINK} />
+      <LandingNavbar waLink={WA_LINK} clientName={clientName} />
 
       {heroBanners.length > 0 ? (
         <div className="pt-12 md:pt-0">
@@ -377,7 +381,7 @@ export default async function LandingPage() {
               @smconfeccoes.franca
             </a>
             <span className="text-white/15">·</span>
-            <Link href="/portal/login" className="hover:text-white/60 transition-colors">
+            <Link href={clientName ? "/portal" : "/portal/login"} className="hover:text-white/60 transition-colors">
               Área do Cliente
             </Link>
             <span className="text-white/15">·</span>

@@ -4,6 +4,8 @@ import Image from "next/image"
 import Link from "next/link"
 import { MessageCircle, ArrowLeft } from "lucide-react"
 import { getPublicCatalog } from "@/lib/catalog/getPublicCatalog"
+import { getClientSessionFromRequest } from "@/lib/clientSession"
+import ClientNavStatus from "@/components/landing/ClientNavStatus"
 import CatalogClient from "./CatalogClient"
 
 const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
@@ -12,6 +14,7 @@ const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
 
 export default async function CatalogoPage() {
   const products = await getPublicCatalog()
+  const clientSession = await getClientSessionFromRequest()
 
   return (
     <div className="min-h-screen bg-[#F4F6FB]" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
@@ -26,9 +29,7 @@ export default async function CatalogoPage() {
           </Link>
         </div>
         <div className="flex items-center gap-4">
-          <Link href="/portal/login" className="text-xs sm:text-sm font-semibold text-white/75 hover:text-white transition-colors">
-            Área do Cliente
-          </Link>
+          <ClientNavStatus name={clientSession?.name ?? null} variant="light" />
           <a href={WA_LINK} target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 bg-[#25D366] hover:bg-[#1ebe5d] text-white text-xs sm:text-sm font-semibold px-3.5 py-2 rounded-lg transition-colors">
             <MessageCircle size={14} /> WhatsApp

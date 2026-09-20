@@ -1,15 +1,15 @@
 import Image from "next/image"
 import Link from "next/link"
 import { MessageCircle } from "lucide-react"
+import ClientNavStatus from "./ClientNavStatus"
 
 const links = [
   { href: "#servicos", label: "Serviços" },
   { href: "/catalogo", label: "Catálogo" },
   { href: "#localizacao", label: "Localização" },
-  { href: "/portal/login", label: "Entrar" },
 ]
 
-export default function LandingNavbar({ waLink }: { waLink: string }) {
+export default function LandingNavbar({ waLink, clientName }: { waLink: string; clientName: string | null }) {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-[#0F1E3C] md:bg-transparent">
       <div className="max-w-6xl mx-auto px-5 h-12 md:h-16 flex items-center justify-between">
@@ -36,6 +36,7 @@ export default function LandingNavbar({ waLink }: { waLink: string }) {
               {l.label}
             </a>
           ))}
+          <ClientNavStatus name={clientName} variant="dark" />
         </nav>
 
         {/* Right */}
