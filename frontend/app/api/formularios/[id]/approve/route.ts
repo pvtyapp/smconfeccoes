@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from "next/server"
+import bcrypt from "bcryptjs"
 import { pool } from "@/lib/db"
 import { getSessionFromRequest } from "@/lib/session"
 import { findContactByPhone } from "@/lib/portal/phone"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
+
+function generateTempPassword(): string {
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
+// "5516991234567" → "(16) 99123-4567" — o mesmo formato que o campo de
+// WhatsApp do login usa, pra bater exatamente com o que a pessoa vai digitar.
+function formatPhoneBR(phone: string): string {
+  const local = phone.startsWith("55") ? phone.slice(2) : phone
+  if (local.length === 11) return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`
+  return local
+}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -41,10 +54,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       [contact!.id, session.name, id]
     )
 
-    await sendAndSave(
-      contact!.id, contact!.jid,
-      `Oi, ${solicitacao.name.split(" ")[0]}! Seu acesso pra comprar com a *SM Confecções* foi liberado 🎉\n\nJá pode fazer seu pedido pelo site: https://smconfeccoes.com.br/catalogo`
+    // Só gera credencial nova se a pessoa ainda não tem conta — evita
+    // sobrescrever a senha de alguém que já criou a própria (ex: comprou
+    // direto e depois preencheu o formulário por engano).
+    const { rows: existingAccount } = await pool.query(
+      `SELECT id FROM client_accounts WHERE contact_id = $1`, [contact!.id]
     )
+
+    const firstName = solicitacao.name.split(" ")[0]
+
+    if (existingAccount.length === 0) {
+      const tempPassword = generateTempPassword()
+      const passwordHash = await bcrypt.hash(tempPassword, 10)
+      await pool.query(
+        `INSERT INTO client_accounts (contact_id, password_hash, must_change_password)
+         VALUES ($1, $2, true)`,
+        [contact!.id, passwordHash]
+      )
+
+      await sendAndSave(
+        contact!.id, contact!.jid,
+        `Oi, ${firstName}! Seu acesso pra comprar com a *SM Confecções* foi liberado 🎉\n\n` +
+        `Pra entrar no site (${formatPhoneBR(solicitacao.phone)}):\n` +
+        `📱 WhatsApp: *${formatPhoneBR(solicitacao.phone)}*\n` +
+        `🔑 Senha: *${tempPassword}*\n\n` +
+        `No primeiro acesso você vai precisar trocar essa senha. Entre em: https://smconfeccoes.com.br/portal/login`
+      )
+    } else {
+      await sendAndSave(
+        contact!.id, contact!.jid,
+        `Oi, ${firstName}! Seu acesso pra comprar com a *SM Confecções* foi liberado 🎉\n\nJá pode fazer seu pedido pelo site: https://smconfeccoes.com.br/catalogo`
+      )
+    }
 
     return NextResponse.json({ ok: true })
   } catch (err) {

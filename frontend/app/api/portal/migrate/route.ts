@@ -10,13 +10,15 @@ export async function POST() {
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS client_accounts (
-        id            SERIAL PRIMARY KEY,
-        contact_id    INTEGER NOT NULL UNIQUE REFERENCES wa_contacts(id),
-        password_hash TEXT NOT NULL,
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_login_at TIMESTAMPTZ
+        id                    SERIAL PRIMARY KEY,
+        contact_id            INTEGER NOT NULL UNIQUE REFERENCES wa_contacts(id),
+        password_hash         TEXT NOT NULL,
+        must_change_password  BOOLEAN NOT NULL DEFAULT false,
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_login_at         TIMESTAMPTZ
       )
     `)
+    await client.query(`ALTER TABLE client_accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false`)
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS whatsapp_otp_codes (

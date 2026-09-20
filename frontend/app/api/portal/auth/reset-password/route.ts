@@ -26,7 +26,7 @@ export async function POST(req: Request) {
 
     const passwordHash = await bcrypt.hash(password, 10)
     await pool.query(
-      `UPDATE client_accounts SET password_hash = $1, last_login_at = NOW() WHERE id = $2`,
+      `UPDATE client_accounts SET password_hash = $1, must_change_password = false, last_login_at = NOW() WHERE id = $2`,
       [passwordHash, account.id]
     )
 

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server"
 import { normalizePhone, findContactByPhone } from "@/lib/portal/phone"
 import { sendOtpCode, type OtpPurpose } from "@/lib/portal/otp"
+import { hasConcludedOrderHistory } from "@/lib/portal/history"
 import { pool } from "@/lib/db"
 
 export async function POST(req: Request) {
   try {
-    const { phone: rawPhone, purpose } = await req.json() as { phone: string; purpose: OtpPurpose }
+    const { phone: rawPhone, purpose, name } = await req.json() as { phone: string; purpose: OtpPurpose; name?: string }
     const phone = normalizePhone(rawPhone ?? "")
     if (!phone) return NextResponse.json({ error: "WhatsApp inválido" }, { status: 400 })
     if (purpose !== "signup" && purpose !== "reset_password") {
@@ -17,6 +18,32 @@ export async function POST(req: Request) {
       if (!contact) return NextResponse.json({ error: "Não encontramos conta com esse WhatsApp" }, { status: 404 })
       const { rows } = await pool.query(`SELECT 1 FROM client_accounts WHERE contact_id = $1`, [contact.id])
       if (!rows.length) return NextResponse.json({ error: "Não encontramos conta com esse WhatsApp" }, { status: 404 })
+    }
+
+    // Cadastro direto só pra quem já comprou antes (pedido concluído) — sem
+    // histórico vira solicitação pendente, revisada em /dashboard/formularios,
+    // sem passar por código/senha aqui.
+    if (purpose === "signup") {
+      const contact = await findContactByPhone(phone)
+
+      if (contact) {
+        const { rows: acct } = await pool.query(`SELECT 1 FROM client_accounts WHERE contact_id = $1`, [contact.id])
+        if (acct.length) return NextResponse.json({ error: "Você já tem uma conta com esse WhatsApp — faça login." }, { status: 409 })
+      }
+
+      const hasHistory = contact ? await hasConcludedOrderHistory(contact.id) : false
+      if (!hasHistory) {
+        const { rows: pending } = await pool.query(
+          `SELECT 1 FROM fornecedor_solicitacoes WHERE phone = $1 AND status = 'pendente'`, [phone]
+        )
+        if (!pending.length) {
+          await pool.query(
+            `INSERT INTO fornecedor_solicitacoes (name, phone) VALUES ($1, $2)`,
+            [name?.trim() || contact?.name || "Cliente", phone]
+          )
+        }
+        return NextResponse.json({ pending: true })
+      }
     }
 
     const result = await sendOtpCode(phone, purpose)

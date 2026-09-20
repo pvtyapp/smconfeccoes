@@ -2,14 +2,14 @@
 
 import { useState, type FormEvent } from "react"
 import { useRouter } from "next/navigation"
-import { UserPlus, ArrowLeft } from "lucide-react"
+import { UserPlus, ArrowLeft, Clock } from "lucide-react"
 import WhatsAppInput from "./WhatsAppInput"
 import PasswordInput from "./PasswordInput"
 import OtpInput from "./OtpInput"
 
 export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" }: { next?: string; idPrefix?: string }) {
   const router = useRouter()
-  const [step, setStep] = useState<"dados" | "confirmar">("dados")
+  const [step, setStep] = useState<"dados" | "confirmar" | "pendente">("dados")
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
   const [code, setCode] = useState("")
@@ -27,10 +27,11 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
       const res = await fetch("/api/portal/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, purpose: "signup" }),
+        body: JSON.stringify({ phone, purpose: "signup", name }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Não foi possível enviar o código"); return }
+      if (data.pending) { setStep("pendente"); return }
       setStep("confirmar")
     } catch {
       setError("Erro de rede. Tenta de novo em instantes.")
@@ -82,6 +83,20 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
           {loading ? "Enviando código..." : "Receber código no WhatsApp"}
         </button>
       </form>
+    )
+  }
+
+  if (step === "pendente") {
+    return (
+      <div className="flex flex-col items-center text-center gap-2.5 py-6" role="status" aria-live="polite">
+        <div className="w-12 h-12 rounded-full bg-[#4361EE]/10 flex items-center justify-center">
+          <Clock size={22} className="text-[#4361EE]" />
+        </div>
+        <p className="text-sm font-bold text-[#0F1E3C]">Solicitação enviada!</p>
+        <p className="text-xs text-[#0F1E3C]/50 max-w-[30ch]">
+          Ainda não identificamos pedido seu no sistema — sua solicitação de acesso entrou em análise. Em breve entramos em contato pelo WhatsApp.
+        </p>
+      </div>
     )
   }
 

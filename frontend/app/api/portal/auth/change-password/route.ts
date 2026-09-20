@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import { pool } from "@/lib/db"
-import { getClientSessionFromRequest } from "@/lib/clientSession"
+import { getClientSessionFromRequest, signClientSession, COOKIE_NAME, MAX_AGE_SECONDS } from "@/lib/clientSession"
 
 export async function POST(req: Request) {
   const session = await getClientSessionFromRequest()
@@ -21,9 +21,26 @@ export async function POST(req: Request) {
     if (!ok) return NextResponse.json({ error: "Senha atual incorreta" }, { status: 401 })
 
     const newHash = await bcrypt.hash(newPassword, 10)
-    await pool.query(`UPDATE client_accounts SET password_hash = $1 WHERE id = $2`, [newHash, session.clientAccountId])
+    await pool.query(
+      `UPDATE client_accounts SET password_hash = $1, must_change_password = false WHERE id = $2`,
+      [newHash, session.clientAccountId]
+    )
 
-    return NextResponse.json({ ok: true })
+    // Reemite o cookie já com mustChangePassword false — sem isso o portal
+    // continuaria travado na tela de troca até a sessão antiga expirar.
+    const token = await signClientSession({
+      clientAccountId: session.clientAccountId, contactId: session.contactId, name: session.name,
+      mustChangePassword: false,
+    })
+    const res = NextResponse.json({ ok: true })
+    res.cookies.set(COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: MAX_AGE_SECONDS,
+      path: "/",
+    })
+    return res
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

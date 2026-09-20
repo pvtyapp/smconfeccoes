@@ -7,6 +7,9 @@ export type ClientSessionPayload = {
   clientAccountId: number
   contactId: number
   name: string
+  // Opcional pra não quebrar sessão já emitida antes desse campo existir —
+  // ausente/inválido sempre lido como false (ver verifyClientSession).
+  mustChangePassword?: boolean
 }
 
 const COOKIE_NAME = "smc_client_session"
@@ -40,6 +43,7 @@ export async function verifyClientSession(token: string): Promise<ClientSessionP
       clientAccountId: payload.clientAccountId,
       contactId: payload.contactId,
       name: payload.name,
+      mustChangePassword: typeof payload.mustChangePassword === "boolean" ? payload.mustChangePassword : false,
     }
   } catch {
     return null
