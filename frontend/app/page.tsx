@@ -5,10 +5,12 @@ import Link from "next/link"
 import { MessageCircle, MapPin, Package, ChevronRight } from "lucide-react"
 import WhatsAppButton from "@/components/landing/WhatsAppButton"
 import AccessSection from "@/components/landing/AccessSection"
-import ClienteFixoSection from "@/components/landing/ClienteFixoSection"
+import ProductCarousel from "@/components/landing/ProductCarousel"
+import TrustCards from "@/components/landing/TrustCards"
 import LandingNavbar from "@/components/landing/LandingNavbar"
 import HeroBannerCarousel, { type HeroBanner } from "@/components/landing/HeroBannerCarousel"
 import { pool } from "@/lib/db"
+import { getPublicCatalog } from "@/lib/catalog/getPublicCatalog"
 
 const WA_LINK = `https://wa.me/5516992692363?text=${encodeURIComponent(
   "Olá! Gostaria de mais informações sobre a SM Confecções."
@@ -54,6 +56,7 @@ const services = [
 
 export default async function LandingPage() {
   const heroBanners = await getHeroBanners()
+  const catalogProducts = await getPublicCatalog()
 
   return (
     <div className="min-h-screen bg-white text-[#0F1E3C]" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
@@ -155,11 +158,14 @@ export default async function LandingPage() {
       </section>
       )}
 
-      {/* ── ÁREA DO CLIENTE (login/cadastro) ── */}
+      {/* ── ÁREA DO CLIENTE (login/cadastro + solicitar Fornecedor) ── */}
       <AccessSection />
 
-      {/* ── PROGRAMA FORNECEDOR FIXO ── */}
-      <ClienteFixoSection />
+      {/* ── VITRINE + CTA CATÁLOGO ── */}
+      <ProductCarousel products={catalogProducts} />
+
+      {/* ── CARDS DE CONFIANÇA ── */}
+      <TrustCards />
 
       {/* ── STRIP STATS ── */}
       <div className="bg-[#4361EE]">
@@ -193,54 +199,27 @@ export default async function LandingPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 max-w-md mx-auto">
-            {services.map((s, i) => (
-              <div
-                key={s.title}
-                className={`rounded-2xl p-6 border transition-all hover:shadow-md ${
-                  i === 0
-                    ? "bg-[#0F1E3C] border-[#0F1E3C]"
-                    : "bg-white border-[#0F1E3C]/8 hover:border-[#4361EE]/20"
-                }`}
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div
-                    className="w-11 h-11 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: i === 0 ? "rgba(255,255,255,0.1)" : "#4361EE15" }}
-                  >
-                    <s.icon size={20} color={i === 0 ? "#93A8F4" : "#4361EE"} />
+          <div className="max-w-2xl mx-auto">
+            {services.map((s) => (
+              <div key={s.title} className="bg-white border border-[#0F1E3C]/8 rounded-2xl p-6 sm:p-8">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-11 h-11 rounded-xl bg-[#4361EE]/10 flex items-center justify-center">
+                    <s.icon size={20} className="text-[#4361EE]" />
                   </div>
-                  <span
-                    className="text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full"
-                    style={
-                      i === 0
-                        ? { backgroundColor: "rgba(255,255,255,0.12)", color: "#93A8F4" }
-                        : { backgroundColor: "#4361EE15", color: "#4361EE" }
-                    }
-                  >
+                  <span className="text-[11px] font-black uppercase tracking-wide px-3 py-1 rounded-full bg-[#4361EE]/10 text-[#4361EE]">
                     {s.badge}
                   </span>
                 </div>
 
-                <h3
-                  className={`text-2xl font-black mb-2 ${i === 0 ? "text-white" : "text-[#0F1E3C]"}`}
-                  style={{ fontFamily: "var(--font-playfair)" }}
-                >
+                <h3 className="text-2xl font-black text-[#0F1E3C] mb-2" style={{ fontFamily: "var(--font-playfair)" }}>
                   {s.title}
                 </h3>
-                <p className={`text-sm leading-snug mb-4 ${i === 0 ? "text-white/55" : "text-[#0F1E3C]/50"}`}>
-                  {s.desc}
-                </p>
-                <ul className="space-y-2">
+                <p className="text-sm text-[#0F1E3C]/50 leading-snug mb-5">{s.desc}</p>
+
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-5">
                   {s.items.map((item) => (
-                    <li
-                      key={item}
-                      className={`flex items-center gap-2.5 text-sm ${i === 0 ? "text-white/70" : "text-[#0F1E3C]/65"}`}
-                    >
-                      <span
-                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: i === 0 ? "#93A8F4" : "#4361EE" }}
-                      />
+                    <li key={item} className="flex items-start gap-2.5 text-sm text-[#0F1E3C]/65">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#4361EE] flex-shrink-0 mt-1.5" />
                       {item}
                     </li>
                   ))}
@@ -250,11 +229,7 @@ export default async function LandingPage() {
                   href={WA_LINK}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`mt-5 flex items-center justify-center gap-2 text-sm font-bold py-3 rounded-xl transition-colors ${
-                    i === 0
-                      ? "bg-white/10 hover:bg-white/15 text-white"
-                      : "bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white"
-                  }`}
+                  className="flex items-center justify-center gap-2 text-sm font-bold py-3 rounded-xl bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white transition-colors"
                 >
                   <MessageCircle size={15} />
                   {s.cta}
@@ -352,7 +327,7 @@ export default async function LandingPage() {
             Quer comprar no atacado?
           </h2>
           <p className="text-white/45 text-base sm:text-lg mb-6 leading-snug max-w-md mx-auto">
-            Sem pedido mínimo, e quem compra já entra no Fornecedor Fixo. Fale agora no WhatsApp, te respondemos rápido.
+            Sem pedido mínimo. Fale agora no WhatsApp, te respondemos rápido.
           </p>
           <a
             href={WA_LINK}

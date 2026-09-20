@@ -6,6 +6,7 @@ const links = [
   { href: "#servicos", label: "Serviços" },
   { href: "/catalogo", label: "Catálogo" },
   { href: "#localizacao", label: "Localização" },
+  { href: "/portal/login", label: "Entrar" },
 ]
 
 export default function LandingNavbar({ waLink }: { waLink: string }) {

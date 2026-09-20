@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic"
 
 import Image from "next/image"
 import Link from "next/link"
-import { MessageCircle } from "lucide-react"
+import { MessageCircle, ArrowLeft } from "lucide-react"
 import { getPublicCatalog } from "@/lib/catalog/getPublicCatalog"
 import CatalogClient from "./CatalogClient"
 
@@ -15,11 +15,16 @@ export default async function CatalogoPage() {
 
   return (
     <div className="min-h-screen bg-[#F4F6FB]" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
-      <header className="bg-[#0F1E3C] px-5 sm:px-6 py-4 flex items-center justify-between">
-        <Link href="/" className="flex items-center">
-          <Image src="/smsemfundo.png" alt="SM Confecções" width={110} height={55}
-            className="w-[80px] h-auto brightness-0 invert" />
-        </Link>
+      <header className="bg-[#0F1E3C] px-5 sm:px-6 py-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-4 min-w-0">
+          <Link href="/" className="flex items-center flex-shrink-0">
+            <Image src="/smsemfundo.png" alt="SM Confecções" width={110} height={55}
+              className="w-[70px] sm:w-[80px] h-auto brightness-0 invert" />
+          </Link>
+          <Link href="/" className="hidden sm:inline-flex items-center gap-1.5 text-sm font-semibold text-white/60 hover:text-white transition-colors">
+            <ArrowLeft size={14} /> Voltar pro site
+          </Link>
+        </div>
         <div className="flex items-center gap-4">
           <Link href="/portal/login" className="text-xs sm:text-sm font-semibold text-white/75 hover:text-white transition-colors">
             Área do Cliente

@@ -21,7 +21,7 @@ export default function CatalogClient({ products }: { products: PublicCatalogPro
   function handleAdd(item: CartItem) {
     setCart((prev) => {
       const existing = prev.find((i) => i.variantId === item.variantId)
-      if (existing) return prev.map((i) => (i.variantId === item.variantId ? { ...i, qty: i.qty + 1 } : i))
+      if (existing) return prev.map((i) => (i.variantId === item.variantId ? { ...i, qty: i.qty + item.qty } : i))
       return [...prev, item]
     })
   }

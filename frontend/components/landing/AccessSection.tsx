@@ -1,8 +1,14 @@
-import { LogIn, UserPlus } from "lucide-react"
+"use client"
+
+import { useState } from "react"
+import { LogIn, UserPlus, Building2 } from "lucide-react"
 import LoginFormFields from "@/app/portal/components/LoginFormFields"
 import CadastroFormFields from "@/app/portal/components/CadastroFormFields"
+import FornecedorFormFields from "./FornecedorFormFields"
 
 export default function AccessSection() {
+  const [tab, setTab] = useState<"login" | "cadastro">("login")
+
   return (
     <section id="area-do-cliente" className="py-12 sm:py-16 px-5 bg-white">
       <div className="max-w-5xl mx-auto">
@@ -15,27 +21,49 @@ export default function AccessSection() {
             Monte seu pedido pelo site
           </h2>
           <p className="text-[#0F1E3C]/45 text-base sm:text-lg max-w-md mx-auto">
-            Já é cliente? Entre. Primeira vez? Cria sua conta em menos de 1 minuto.
+            Já tem conta? Entre. Primeira vez? Cria em menos de 1 minuto.
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start max-w-3xl mx-auto">
+          {/* Login / Criar conta — mesmo card, em abas */}
           <div className="bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-2xl p-6 sm:p-8">
-            <div className="w-11 h-11 rounded-xl bg-[#0F1E3C]/8 flex items-center justify-center mb-5">
-              <LogIn size={19} className="text-[#0F1E3C]" />
+            <div className="flex rounded-xl border border-[#0F1E3C]/12 overflow-hidden text-sm font-bold mb-6">
+              <button
+                type="button" onClick={() => setTab("login")}
+                className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 transition-colors ${
+                  tab === "login" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/5"
+                }`}
+              >
+                <LogIn size={14} /> Entrar
+              </button>
+              <button
+                type="button" onClick={() => setTab("cadastro")}
+                className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 transition-colors ${
+                  tab === "cadastro" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/5"
+                }`}
+              >
+                <UserPlus size={14} /> Criar conta
+              </button>
             </div>
-            <h3 className="text-lg font-black text-[#0F1E3C] mb-1">Já é cliente</h3>
-            <p className="text-sm text-[#0F1E3C]/45 mb-6">Entre com seu WhatsApp e senha.</p>
-            <LoginFormFields next="/portal" idPrefix="lp-login" />
+
+            {tab === "login" ? (
+              <LoginFormFields next="/portal" idPrefix="lp-login" />
+            ) : (
+              <CadastroFormFields next="/portal" idPrefix="lp-cad" />
+            )}
           </div>
 
-          <div className="bg-[#F4F6FB] border border-[#0F1E3C]/8 rounded-2xl p-6 sm:p-8">
-            <div className="w-11 h-11 rounded-xl bg-[#4361EE]/10 flex items-center justify-center mb-5">
-              <UserPlus size={19} className="text-[#4361EE]" />
+          {/* Solicitar acesso ao Fornecedor — formulário próprio, aprovação manual */}
+          <div className="bg-[#0F1E3C] border border-[#0F1E3C] rounded-2xl p-6 sm:p-8">
+            <div className="w-11 h-11 rounded-xl bg-white/10 flex items-center justify-center mb-5">
+              <Building2 size={19} className="text-[#93A8F4]" />
             </div>
-            <h3 className="text-lg font-black text-[#0F1E3C] mb-1">Criar conta</h3>
-            <p className="text-sm text-[#0F1E3C]/45 mb-6">Confirmamos seu WhatsApp com um código — sem burocracia.</p>
-            <CadastroFormFields next="/portal" idPrefix="lp-cad" />
+            <h3 className="text-lg font-black text-white mb-1">Quero ser Fornecedor Fixo</h3>
+            <p className="text-sm text-white/50 mb-6">Prioridade de produção, condição travada e nota fiscal em toda venda. A gente analisa e avisa pelo WhatsApp.</p>
+            <div className="[&_label]:text-white/60 [&_input]:bg-white/5 [&_input]:border-white/15 [&_input]:text-white [&_textarea]:bg-white/5 [&_textarea]:border-white/15 [&_textarea]:text-white">
+              <FornecedorFormFields idPrefix="lp-forn" />
+            </div>
           </div>
         </div>
       </div>
