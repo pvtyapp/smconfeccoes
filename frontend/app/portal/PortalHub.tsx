@@ -22,12 +22,13 @@ export default function PortalHub({ name }: { name: string }) {
       </header>
 
       <main className="max-w-3xl mx-auto px-5 sm:px-6 py-8">
-        <div className="mb-6">
+        <div className="flex items-center justify-between gap-3 mb-6">
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
             Olá, {name.split(" ")[0]}!
           </h1>
-          <Link href="/catalogo" className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#4361EE] hover:underline mt-1">
-            <ShoppingBag size={14} /> Ir pro catálogo
+          <Link href="/catalogo"
+            className="inline-flex items-center gap-2 bg-[#4361EE] hover:bg-[#3451D4] text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all hover:scale-[1.02] shadow-sm shadow-[#4361EE]/20 flex-shrink-0">
+            <ShoppingBag size={15} /> Ir pro catálogo
           </Link>
         </div>
 
