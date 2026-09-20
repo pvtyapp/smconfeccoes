@@ -182,6 +182,15 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
     const remoteJidAlt = (key?.remoteJidAlt as string) || ""
     const phoneJid: string | null = jid.endsWith("@lid") && remoteJidAlt.endsWith("@s.whatsapp.net") ? remoteJidAlt : null
     const outMsgId: string | null = (key?.id as string) ?? null
+    // A Evolution ecoa de volta toda mensagem enviada (inclusive as que o
+    // próprio sistema manda via sendWhatsApp) como um evento fromMe igual ao
+    // de quando o operador responde direto pelo celular. Sem essa checagem,
+    // toda mensagem automática (Saudação, aviso de pedido, etc.) pausava o
+    // bot por 30min pra aquele contato — o sistema se autopausava sozinho.
+    const isOwnEcho = !!outMsgId && (await pool.query(
+      `SELECT 1 FROM wa_messages WHERE message_id = $1 AND direction = 'out' LIMIT 1`,
+      [outMsgId]
+    ).catch(() => ({ rows: [] as unknown[] }))).rows.length > 0
     // key.timestamp não existe na resposta do Evolution (nem no webhook live nem no
     // findMessages) — sempre undefined, caía no fallback NOW() e mensagens antigas
     // recuperadas pelo reconcile entravam com a data de hoje. O campo real é
@@ -246,15 +255,18 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
     if (outMediaType && outMediaType !== "sticker" && outMsgId) {
       waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
     }
-    // Operator sent manual message → extend chatbot pause by configured minutes
-    pool.query(`
-      UPDATE wa_contacts
-      SET chatbot_paused_until = NOW() + (
-            COALESCE((SELECT value FROM app_settings WHERE key = 'chatbot_idle_return_minutes'), '30')
-            || ' minutes')::INTERVAL,
-          updated_at = NOW()
-      WHERE id = $1
-    `, [contactId0]).catch(() => {})
+    // Operator sent manual message → extend chatbot pause by configured minutes.
+    // Nunca pausa por causa de eco de mensagem que o próprio sistema mandou.
+    if (!isOwnEcho) {
+      pool.query(`
+        UPDATE wa_contacts
+        SET chatbot_paused_until = NOW() + (
+              COALESCE((SELECT value FROM app_settings WHERE key = 'chatbot_idle_return_minutes'), '30')
+              || ' minutes')::INTERVAL,
+            updated_at = NOW()
+        WHERE id = $1
+      `, [contactId0]).catch(() => {})
+    }
   } catch (e) {
     console.error("[webhook] handleFromMeMessage falhou:", jid, e instanceof Error ? e.message : e)
   }
