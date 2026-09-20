@@ -1,9 +1,10 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
+import Link from "next/link"
 import {
   RefreshCw, TrendingUp, Package, FileDown,
-  ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Layers,
+  ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Layers, Store, AlertTriangle,
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import RelatorioPrintSheet from "./RelatorioPrintSheet"
@@ -47,11 +48,19 @@ export type MaterialFlow = {
   saidas:   { total: number; count: number }
 }
 
+export type MarketplaceCusto = {
+  custo: number
+  pecas: number
+  separacoes: number
+  custoIncompleto: boolean
+}
+
 export type ReportData = {
   period:         { from: string; to: string; days: number }
   dre:            DRE
   summary:        Summary
   byChannel:      Record<string, number>
+  marketplace:    MarketplaceCusto
   productRanking: ProductRow[]
   materialFlow:   MaterialFlow
   diagnostico:    { semCusto: string[]; dtfSemCusto: boolean }
@@ -93,14 +102,14 @@ const PRESETS: { key: PresetKey; label: string }[] = [
 export const CHANNEL_LABEL: Record<string, string> = {
   pdv:      "PDV",
   whatsapp: "WhatsApp",
-  manual:   "Manual",
+  site:     "Site",
   dtf:      "DTF",
 }
 
 const CHANNEL_COLOR: Record<string, string> = {
   pdv:      "#4361EE",
   whatsapp: "#10B981",
-  manual:   "#F59E0B",
+  site:     "#EC4899",
   dtf:      "#7C3AED",
 }
 
@@ -335,13 +344,13 @@ export default function RelatorioFinanceiroPage() {
               </p>
             </div>
             <div className="p-6">
-              {Object.keys(data.byChannel).length === 0 ? (
+              {Object.keys(data.byChannel).length === 0 && data.marketplace.custo === 0 ? (
                 <p className="text-sm text-center text-[#0F1E3C]/30 py-4">Sem vendas concluídas no período</p>
               ) : (
                 <>
                   {/* Canal cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                    {(["pdv", "whatsapp", "manual", "dtf"] as const).map(ch => {
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                    {(["pdv", "whatsapp", "site", "dtf"] as const).map(ch => {
                       const val   = data.byChannel[ch] ?? 0
                       const share = channelTotal > 0 ? (val / channelTotal) * 100 : 0
                       const color = CHANNEL_COLOR[ch]
@@ -365,6 +374,33 @@ export default function RelatorioFinanceiroPage() {
                         </div>
                       )
                     })}
+
+                    {/* Marketplace — custo de reposição, não receita. Fora do
+                        cálculo de %/total dos canais acima de propósito: não
+                        tem receita real registrada aqui (vende fora, na
+                        Shopee/ML) — receita/lucro% simulado fica só no
+                        Financeiro Marketplace. */}
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Store size={11} className="text-amber-700/70" />
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700/70">Marketplace</p>
+                      </div>
+                      <p className="text-2xl font-black leading-none text-amber-700">
+                        {data.marketplace.custo > 0 ? `(${fmtRDRE(data.marketplace.custo)})` : "—"}
+                      </p>
+                      <p className="text-[10px] text-amber-700/60 mt-1.5 font-semibold">
+                        custo de reposição · {data.marketplace.pecas} peças
+                      </p>
+                      {data.marketplace.custoIncompleto && (
+                        <p className="text-[9px] text-amber-700 mt-1 flex items-center gap-1">
+                          <AlertTriangle size={10} /> produto sem custo cadastrado
+                        </p>
+                      )}
+                      <Link href="/dashboard/relatorio-marketplace"
+                        className="text-[10px] font-bold text-amber-700 hover:underline mt-2 inline-block">
+                        Ver Financeiro Marketplace →
+                      </Link>
+                    </div>
                   </div>
                   {/* Total */}
                   <div className="flex items-center justify-between pt-3 border-t border-[#0F1E3C]/6">

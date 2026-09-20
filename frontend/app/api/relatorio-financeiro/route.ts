@@ -138,6 +138,32 @@ export async function GET(req: Request) {
         AND DATE(exhausted_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
     `, [from, to])
 
+    // Marketplace — custo de reposição (peças separadas × material_cost),
+    // mesma fórmula do Financeiro Marketplace. Só custo: NÃO entra em
+    // receitaBruta/custoInsumos/lucroBruto/resultadoOp — marketplace não tem
+    // receita real registrada aqui (vende fora, na Shopee/ML), e o Financeiro
+    // Marketplace já cobre a simulação de receita/lucro% separadamente. Isso
+    // aqui é só visibilidade de quanto saiu do estoque pra esse canal.
+    const { rows: mktRows } = await pool.query(`
+      SELECT
+        SUM(msi.qty)::int AS pecas,
+        SUM(msi.qty * COALESCE(p.material_cost, 0))::float AS custo,
+        COUNT(DISTINCT ms.id)::int AS separacoes,
+        BOOL_OR(p.material_cost IS NULL) AS "custoIncompleto"
+      FROM marketplace_separations ms
+      JOIN marketplace_separation_items msi ON msi.separation_id = ms.id
+      JOIN product_variants pv ON pv.id = msi.variant_id
+      JOIN products p ON p.id = pv.product_id
+      WHERE ms.canceled_at IS NULL
+        AND DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+    `, [from, to])
+    const marketplace = {
+      custo:           Number(mktRows[0]?.custo ?? 0),
+      pecas:           Number(mktRows[0]?.pecas ?? 0),
+      separacoes:      Number(mktRows[0]?.separacoes ?? 0),
+      custoIncompleto: Boolean(mktRows[0]?.custoIncompleto ?? false),
+    }
+
     // DTF pedidos concluídos no período — pela data em que o pedido foi FEITO
     // (p.data), não pela data em que fechou no sistema (mesmo critério do
     // Relatório DTF/Vendas — pedido tirado à noite e concluído só de manhã
@@ -292,6 +318,7 @@ export async function GET(req: Request) {
         margemOp:    resultadoOp !== null && receitaBruta > 0 ? (resultadoOp / receitaBruta) * 100 : null,
       },
       byChannel,
+      marketplace,
       dtf: { receita: receitaDtf, count: dtfCount, metros: metrosDtf },
       productRanking,
       materialFlow: {
