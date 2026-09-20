@@ -20,9 +20,13 @@ export async function POST(req: Request) {
       if (!rows.length) return NextResponse.json({ error: "Não encontramos conta com esse WhatsApp" }, { status: 404 })
     }
 
-    // Cadastro direto só pra quem já comprou antes (pedido concluído) — sem
-    // histórico vira solicitação pendente, revisada em /dashboard/formularios,
-    // sem passar por código/senha aqui.
+    // Cadastro sempre passa por código agora — quem já comprou antes (pedido
+    // concluído) cria a conta na hora depois de confirmar; quem nunca comprou
+    // também confirma o WhatsApp primeiro, só que vira solicitação pendente
+    // em vez de conta (revisada em /dashboard/formularios). Antes, quem não
+    // tinha histórico nunca provava que o número era dela — qualquer um
+    // digitava qualquer WhatsApp e a solicitação entrava sem verificação.
+    let hasHistory = false
     if (purpose === "signup") {
       const contact = await findContactByPhone(phone)
 
@@ -31,24 +35,12 @@ export async function POST(req: Request) {
         if (acct.length) return NextResponse.json({ error: "Você já tem uma conta com esse WhatsApp — faça login." }, { status: 409 })
       }
 
-      const hasHistory = contact ? await hasConcludedOrderHistory(contact.id) : false
-      if (!hasHistory) {
-        const { rows: pending } = await pool.query(
-          `SELECT 1 FROM fornecedor_solicitacoes WHERE phone = $1 AND status = 'pendente'`, [phone]
-        )
-        if (!pending.length) {
-          await pool.query(
-            `INSERT INTO fornecedor_solicitacoes (name, phone) VALUES ($1, $2)`,
-            [name?.trim() || contact?.name || "Cliente", phone]
-          )
-        }
-        return NextResponse.json({ pending: true })
-      }
+      hasHistory = contact ? await hasConcludedOrderHistory(contact.id) : false
     }
 
     const result = await sendOtpCode(phone, purpose)
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 429 })
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, hasHistory })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

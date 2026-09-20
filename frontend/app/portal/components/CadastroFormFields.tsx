@@ -15,6 +15,10 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
   const [code, setCode] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  // Vem do request-code — decide se o passo "confirmar" pede senha (quem já
+  // comprou antes, cria conta na hora) ou só o código (quem nunca comprou,
+  // vira solicitação pendente depois de confirmar o WhatsApp).
+  const [hasHistory, setHasHistory] = useState(false)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
@@ -31,7 +35,7 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? "Não foi possível enviar o código"); return }
-      if (data.pending) { setStep("pendente"); return }
+      setHasHistory(!!data.hasHistory)
       setStep("confirmar")
     } catch {
       setError("Erro de rede. Tenta de novo em instantes.")
@@ -43,16 +47,17 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
   async function handleSignup(e: FormEvent) {
     e.preventDefault()
     setError("")
-    if (password !== confirmPassword) { setError("As senhas não coincidem"); return }
+    if (hasHistory && password !== confirmPassword) { setError("As senhas não coincidem"); return }
     setLoading(true)
     try {
       const res = await fetch("/api/portal/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, phone, code, password }),
+        body: JSON.stringify(hasHistory ? { name, phone, code, password } : { name, phone, code }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Não foi possível criar a conta"); return }
+      if (!res.ok) { setError(data.error ?? "Não foi possível confirmar"); return }
+      if (data.pending) { setStep("pendente"); return }
       router.push(next)
       router.refresh()
     } catch {
@@ -92,7 +97,7 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
         <div className="w-12 h-12 rounded-full bg-[#4361EE]/10 flex items-center justify-center">
           <Clock size={22} className="text-[#4361EE]" />
         </div>
-        <p className="text-sm font-bold text-[#0F1E3C]">Solicitação enviada!</p>
+        <p className="text-sm font-bold text-[#0F1E3C]">WhatsApp confirmado!</p>
         <p className="text-xs text-[#0F1E3C]/50 max-w-[30ch]">
           Ainda não identificamos pedido seu no sistema — sua solicitação de acesso entrou em análise. Em breve entramos em contato pelo WhatsApp.
         </p>
@@ -110,9 +115,20 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
       </button>
 
       <OtpInput value={code} onChange={setCode} />
-      <PasswordInput id={`${idPrefix}-password`} label="Senha" value={password} onChange={setPassword}
-        tooltip="Pode ser a senha que quiser, sem regra de tamanho ou caractere especial" autoComplete="new-password" />
-      <PasswordInput id={`${idPrefix}-confirm`} label="Confirmar senha" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
+
+      {!hasHistory && (
+        <p className="text-xs text-[#0F1E3C]/45 -mt-1">
+          Sem pedido anterior com a gente — depois de confirmar, sua solicitação de acesso entra em análise. Senha vem depois, junto com a aprovação.
+        </p>
+      )}
+
+      {hasHistory && (
+        <>
+          <PasswordInput id={`${idPrefix}-password`} label="Senha" value={password} onChange={setPassword}
+            tooltip="Pode ser a senha que quiser, sem regra de tamanho ou caractere especial" autoComplete="new-password" />
+          <PasswordInput id={`${idPrefix}-confirm`} label="Confirmar senha" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
+        </>
+      )}
 
       {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
 
@@ -121,7 +137,7 @@ export default function CadastroFormFields({ next = "/portal", idPrefix = "cad" 
         className="w-full inline-flex items-center justify-center gap-2 bg-[#0F1E3C] hover:bg-[#1B2A4A] text-white font-bold text-sm py-3.5 rounded-xl transition-colors disabled:opacity-50"
       >
         <UserPlus size={16} />
-        {loading ? "Criando conta..." : "Criar conta"}
+        {loading ? "Confirmando..." : hasHistory ? "Criar conta" : "Confirmar WhatsApp"}
       </button>
     </form>
   )
