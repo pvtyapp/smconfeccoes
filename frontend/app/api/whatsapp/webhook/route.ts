@@ -10,6 +10,8 @@ import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
 import { getProvider } from "@/lib/whatsapp/provider"
 import { isAutomationPaused } from "@/lib/whatsapp/automationGate"
+import { isOutsideBusinessHours } from "@/lib/portal/businessHours"
+import { hasConcludedOrderHistory } from "@/lib/portal/history"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -1373,7 +1375,32 @@ function getServiceStatus(service: "produto" | "dtf", s: Record<string, string>)
   return { available: true, reason: null }
 }
 
+const SITE_URL          = "https://smconfeccoes.com.br"
 const SITE_CATALOGO_URL = "https://smconfeccoes.com.br/catalogo"
+const SITE_LOGIN_URL    = "https://smconfeccoes.com.br/portal/login"
+const SITE_CADASTRO_URL = "https://smconfeccoes.com.br/portal/cadastro"
+
+const DTF_STAGE_LABEL: Record<string, string> = {
+  triagem: "Triagem", em_producao: "Em Produção", pronto: "Pronto",
+}
+
+const DIA_LABEL = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"]
+
+// "1,2,3,4,5" + "07:00" + "17:30" → "seg-sex, 07:00–17:30" — mesmo horário
+// (chave produto_horario_*) que o site já usa pro aviso de fora do horário
+// no checkout (lib/portal/businessHours.ts), reaproveitado aqui na Saudação.
+function formatBusinessHours(s: Record<string, string>): string {
+  const dias = s.produto_horario_dias
+  const inicio = s.produto_horario_inicio
+  const fim = s.produto_horario_fim
+  if (!dias || !inicio || !fim) return "no horário comercial"
+  const nums = dias.split(",").map(Number).sort((a, b) => a - b)
+  const isContiguous = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1)
+  const diasTxt = isContiguous && nums.length > 1
+    ? `${DIA_LABEL[nums[0]]}-${DIA_LABEL[nums[nums.length - 1]]}`
+    : nums.map(n => DIA_LABEL[n]).join(", ")
+  return `${diasTxt}, ${inicio}–${fim}`
+}
 
 function buildUnavailableMsg(
   service: "produto" | "dtf",
@@ -1783,12 +1810,13 @@ async function handleText(
   if (openOrder) {
     // Kanban 3 estágios: "confirmando" virou sub-estado de triagem
     // (confirmation_requested_at), não é mais um status próprio.
+    const dtfLine = "\n\nSe precisar mandar um DTF, é só enviar o arquivo aqui mesmo. 😊"
     const pingByStatus: Record<string, string> = {
-      triagem: openOrder.confirmationRequestedAt
-        ? `Seu pedido *${openOrder.number}* está sendo verificado pela equipe! Se precisar de alguma alteração, é só responder aqui. 😊`
-        : `Seu pedido *${openOrder.number}* está na lista! Nossa equipe já está conferindo. 😊`,
-      em_separacao: `Seu pedido *${openOrder.number}* já está em separação! ✂️ Avisamos quando estiver pronto.`,
-      pronto:       `Seu pedido *${openOrder.number}* está pronto para retirada! Pode vir buscar quando quiser. 😊`,
+      triagem: (openOrder.confirmationRequestedAt
+        ? `Seu pedido *${openOrder.number}* está sendo verificado pela equipe! Se precisar de alguma alteração, é só responder aqui.`
+        : `Seu pedido *${openOrder.number}* está na lista! Nossa equipe já está conferindo.`) + dtfLine,
+      em_separacao: `Seu pedido *${openOrder.number}* já está em separação! ✂️ Avisamos quando estiver pronto.` + dtfLine,
+      pronto:       `Seu pedido *${openOrder.number}* está pronto para retirada! Pode vir buscar quando quiser.` + dtfLine,
     }
     const ping = pingByStatus[openOrder.status]
     if (ping) {
@@ -1863,81 +1891,136 @@ async function handleText(
     return
   }
 
-  // Saudação, ruído, ou qualquer outra coisa não reconhecida — recepção varia
-  // conforme o contato (plano "Portal do Cliente SM", seção Chatbot: papel
-  // novo). DTF e desvio por palavra-chave de atendimento já rodaram antes de
-  // chegar aqui, nunca são interrompidos por nada abaixo.
+  // Saudação — recepção varia conforme a situação real do contato (replano
+  // "Saudação única", 2026-09-20). DTF e desvio por palavra-chave de
+  // atendimento já rodaram antes de chegar aqui, nunca são interrompidos.
+  //
+  // Pedido de produto em aberto já foi avisado (PED + estágio) lá em cima,
+  // no bloco getMostRecentOrder — nunca duplica aqui, só sai.
+  if (openOrder) return
 
-  const { rows: accountRows } = await pool.query(
-    `SELECT 1 FROM client_accounts WHERE contact_id = $1`, [contactId]
-  ).catch(() => ({ rows: [] as unknown[] }))
-  const hasAccount = accountRows.length > 0
+  const outsideHours = await isOutsideBusinessHours().catch(() => false)
+  const horarioTxt = formatBusinessHours(globalSettings)
+  const dtfLine = "\n\nSe precisar mandar um DTF, é só enviar o arquivo aqui mesmo. 😊"
 
-  if (hasAccount) {
-    const { rows: cRows } = await pool.query(
-      `SELECT needs_attention, attendant_wait_notice_sent_at, known_customer_greeting_sent_at
-       FROM wa_contacts WHERE id = $1`,
-      [contactId]
-    )
-    const c = cRows[0] as {
-      needs_attention: boolean
-      attendant_wait_notice_sent_at: string | null
-      known_customer_greeting_sent_at: string | null
-    } | undefined
-    const { rows: openDtf } = await pool.query(
-      `SELECT 1 FROM dtf_pedidos WHERE contact_id = $1 AND status NOT IN ('pronto', 'concluido', 'cancelado') LIMIT 1`,
-      [contactId]
-    ).catch(() => ({ rows: [] as unknown[] }))
-    const hasOpenCase = c?.needs_attention === true || openDtf.length > 0
+  async function withinCooldown(field: string): Promise<boolean> {
+    const { rows } = await pool.query(
+      `SELECT ${field} AS "lastSent" FROM wa_contacts WHERE id = $1`, [contactId]
+    ).catch(() => ({ rows: [] as { lastSent: string | null }[] }))
+    const lastSent = rows[0]?.lastSent
+    return !!lastSent && (Date.now() - new Date(lastSent).getTime()) < 6 * 60 * 60 * 1000
+  }
+  async function markSent(field: string, attentionReason?: string) {
+    await pool.query(
+      attentionReason
+        ? `UPDATE wa_contacts SET ${field} = NOW(), needs_attention = true, attention_reason = $2, updated_at = NOW() WHERE id = $1`
+        : `UPDATE wa_contacts SET ${field} = NOW(), updated_at = NOW() WHERE id = $1`,
+      attentionReason ? [contactId, attentionReason] : [contactId]
+    ).catch(() => {})
+  }
 
-    const cooldownField = hasOpenCase ? "attendant_wait_notice_sent_at" : "known_customer_greeting_sent_at"
-    const lastSent = hasOpenCase ? c?.attendant_wait_notice_sent_at : c?.known_customer_greeting_sent_at
-    const withinCooldown = !!lastSent && (Date.now() - new Date(lastSent).getTime()) < 6 * 60 * 60 * 1000
+  // ── 1 · Pedido de DTF em aberto ─────────────────────────────────────────────
+  const { rows: dtfRows } = await pool.query(
+    `SELECT number, status FROM dtf_pedidos WHERE contact_id = $1 AND status NOT IN ('pronto', 'concluido', 'cancelado')
+     ORDER BY created_at DESC LIMIT 1`,
+    [contactId]
+  ).catch(() => ({ rows: [] as { number: string; status: string }[] }))
+  if (dtfRows[0]) {
+    if (!(await withinCooldown("attendant_wait_notice_sent_at"))) {
+      await markSent("attendant_wait_notice_sent_at", "mensagem_livre")
+      const estagio = DTF_STAGE_LABEL[dtfRows[0].status] ?? dtfRows[0].status
+      const espera = outsideHours ? ` Estamos fora do horário agora (${horarioTxt}) — assim que abrir, o atendente tira sua dúvida.` : " Em breve o atendente tira sua dúvida."
+      await replyAndSave(contactId, jid, `Seu pedido de DTF *${dtfRows[0].number}* está em "${estagio}".${espera} 😊`)
+    }
+    return
+  }
 
-    if (!withinCooldown) {
-      await pool.query(
-        `UPDATE wa_contacts SET ${cooldownField} = NOW(), needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
-        [contactId]
-      ).catch(() => {})
+  // ── 2 · Sinalizado pela equipe, sem pedido concreto ─────────────────────────
+  const { rows: attnRows } = await pool.query(
+    `SELECT needs_attention FROM wa_contacts WHERE id = $1`, [contactId]
+  ).catch(() => ({ rows: [] as { needs_attention: boolean }[] }))
+  if (attnRows[0]?.needs_attention) {
+    if (!(await withinCooldown("attendant_wait_notice_sent_at"))) {
+      await markSent("attendant_wait_notice_sent_at")
       await replyAndSave(
         contactId, jid,
-        hasOpenCase
-          ? "Já te vi por aqui, em breve alguém da equipe te responde. 😊"
-          : `${greeting}${greetSuffix}! Pedido de produto é pelo site, DTF ou falar com a equipe pode ser aqui mesmo. Já aviso nossa equipe. 😊`
+        outsideHours
+          ? `Oi${greetSuffix}! Sua mensagem chegou certinha. Estamos fora do horário agora (${horarioTxt}) — assim que abrir, alguém da equipe te responde. 😊`
+          : `Oi${greetSuffix}! Sua mensagem chegou certinha. Em breve alguém da equipe te responde. 😊`
       )
     }
     return
   }
 
-  // Sem conta ainda — aviso de virada, uma vez só, nunca repete pra esse contato.
-  const { rows: noticeRows } = await pool.query(
-    `SELECT site_transition_notice_sent_at FROM wa_contacts WHERE id = $1`, [contactId]
-  ).catch(() => ({ rows: [] as { site_transition_notice_sent_at: string | null }[] }))
-  const alreadyNotified = !!noticeRows[0]?.site_transition_notice_sent_at
-
-  if (!alreadyNotified) {
-    await pool.query(`UPDATE wa_contacts SET site_transition_notice_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
-    await replyAndSave(
-      contactId, jid,
-      `Oi${greetSuffix}! Aqui é da SM Confecções 🧵\n\nPedido de produto agora é direto pelo nosso site, mais rápido pra você:\n👉 ${SITE_CATALOGO_URL}\n\nPra DTF (impressão) ou pra falar com a equipe, pode me chamar aqui mesmo.`
-    )
+  // ── 3 · Cliente ativo (já tem conta) ────────────────────────────────────────
+  const { rows: accountRows } = await pool.query(
+    `SELECT 1 FROM client_accounts WHERE contact_id = $1`, [contactId]
+  ).catch(() => ({ rows: [] as unknown[] }))
+  if (accountRows.length > 0) {
+    if (!(await withinCooldown("known_customer_greeting_sent_at"))) {
+      await markSent("known_customer_greeting_sent_at")
+      const equipe = outsideHours
+        ? `Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo — estamos fora do horário agora (${horarioTxt}), assim que abrir te respondemos.`
+        : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
+      await replyAndSave(
+        contactId, jid,
+        `Oi${greetSuffix}! Bom te ver de novo 🧵\n\nPra fazer um novo pedido, entra no site com seu WhatsApp e senha:\n👉 ${SITE_LOGIN_URL}\n\n${equipe} 😊`
+      )
+    }
     return
   }
 
-  // Já recebeu o aviso de virada antes — mesmo mecanismo diário de sempre
-  // (last_greeting_sent_at), só com o texto de pedido apontando pro site.
-  const { rows: greetRows } = await pool.query(
-    `SELECT (DATE(last_greeting_sent_at AT TIME ZONE 'America/Sao_Paulo') = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) AS "sentToday"
-     FROM wa_contacts WHERE id = $1`,
-    [contactId]
-  ).catch(() => ({ rows: [] as { sentToday: boolean }[] }))
-  const alreadyGreetedToday = greetRows[0]?.sentToday === true
+  // ── 4 · Formulário de Fornecedor pendente ───────────────────────────────────
+  const { rows: contactRow } = await pool.query(
+    `SELECT phone FROM wa_contacts WHERE id = $1`, [contactId]
+  ).catch(() => ({ rows: [] as { phone: string | null }[] }))
+  const contactPhone = contactRow[0]?.phone ?? null
+  const { rows: pendingRows } = contactPhone
+    ? await pool.query(
+        `SELECT 1 FROM fornecedor_solicitacoes WHERE phone = $1 AND status = 'pendente' LIMIT 1`,
+        [contactPhone]
+      ).catch(() => ({ rows: [] as unknown[] }))
+    : { rows: [] as unknown[] }
+  if (pendingRows.length > 0) {
+    if (!(await withinCooldown("application_pending_notice_sent_at"))) {
+      await markSent("application_pending_notice_sent_at")
+      const equipe = outsideHours
+        ? `Estamos fora do horário agora (${horarioTxt}) — a análise continua assim que abrir.\n\nPrecisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!`
+        : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
+      await replyAndSave(
+        contactId, jid,
+        `Oi${greetSuffix}! Vimos sua solicitação de acesso 📋\n\nEla ainda tá em análise — nossa equipe confirma e te avisa por aqui assim que aprovar.\n\n${equipe} 😊`
+      )
+    }
+    return
+  }
 
-  if (alreadyGreetedToday) {
-    await replyAndSave(contactId, jid, `Pedido de produto é pelo site (${SITE_CATALOGO_URL}). O *arquivo* de DTF ou *catálogo* pra ver os produtos é aqui mesmo.`)
-  } else {
-    await pool.query(`UPDATE wa_contacts SET last_greeting_sent_at = NOW() WHERE id = $1`, [contactId]).catch(() => {})
-    await replyAndSave(contactId, jid, `${greeting}${greetSuffix}! 👋 Sou o atendimento da *SM Confecções*.\n\n• Pedido de produto agora é pelo site: ${SITE_CATALOGO_URL}\n• Pra DTF, me manda o *arquivo*\n• Pra ver os produtos, diga *catálogo*`)
+  // ── 5 · Já comprou antes (migração WhatsApp→site), sem conta ainda ─────────
+  const hasHistory = await hasConcludedOrderHistory(contactId).catch(() => false)
+  if (hasHistory) {
+    if (!(await withinCooldown("has_history_notice_sent_at"))) {
+      await markSent("has_history_notice_sent_at")
+      const equipe = outsideHours
+        ? `Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo — estamos fora do horário agora (${horarioTxt}), assim que abrir te respondemos.`
+        : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
+      await replyAndSave(
+        contactId, jid,
+        `Oi${greetSuffix}! Você já é nosso cliente 🧵\n\nA gente migrou os pedidos pro site — cria sua conta rapidinho com esse mesmo WhatsApp, já libera na hora, sem espera:\n👉 ${SITE_CADASTRO_URL}\n\n${equipe} 😊`
+      )
+    }
+    return
+  }
+
+  // ── 6 · Sem histórico nenhum — primeira vez de verdade ──────────────────────
+  if (!(await withinCooldown("no_history_notice_sent_at"))) {
+    await markSent("no_history_notice_sent_at")
+    const equipe = outsideHours
+      ? `Estamos fora do horário agora (${horarioTxt}) — mas o formulário funciona 24h, e a equipe analisa assim que abrir.\n\nPrecisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!`
+      : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
+    await replyAndSave(
+      contactId, jid,
+      `Oi${greetSuffix}! Aqui é da SM Confecções 🧵\n\nPra começar a comprar com a gente, preenche o formulário de acesso, é rápido:\n👉 ${SITE_URL}\n\n${equipe} 😊`
+    )
   }
 }
 

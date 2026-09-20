@@ -3,10 +3,9 @@ import { pool } from "@/lib/db"
 
 const ALLOWED_KEYS = new Set([
   "endereco_retirada", "pix_key_pedidos", "pix_key_dtf",
-  "chatbot_ativo", "pedidos_auto", "lifecycle_ativo", "automacao_pausada",
+  "chatbot_ativo", "lifecycle_ativo", "automacao_pausada",
   "dtf_ativo", "dtf_preco_por_metro",
   "dtf_horario_dias", "dtf_horario_inicio", "dtf_horario_fim", "dtf_fechado_ate",
-  "produto_ativo",
   "produto_horario_dias", "produto_horario_inicio", "produto_horario_fim", "produto_fechado_ate",
   "novo_d2_msg",
   "ausente_d15_msg", "ausente_d30_msg", "ausente_d45_msg",

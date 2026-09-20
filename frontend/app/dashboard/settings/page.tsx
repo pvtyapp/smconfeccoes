@@ -91,7 +91,6 @@ export default function SettingsPage() {
           {/* Status do Sistema */}
           {(() => {
             const chatbotOn = settings.chatbot_ativo !== "false"
-            const autoOn    = settings.pedidos_auto  !== "false"
             const raw       = settings.debug_last_webhook
             let webhookAge: number | null = null
             let webhookEvent = "—"
@@ -135,9 +134,8 @@ export default function SettingsPage() {
             return (
               <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-3">
                 <h2 className="text-sm font-bold text-[#0F1E3C]">Status do Sistema</h2>
-                <div className="grid grid-cols-3 gap-2">
-                  {pill("Chatbot", chatbotOn ? "respondendo" : "mudo", chatbotOn ? "green" : "gray")}
-                  {pill("Auto pedidos", autoOn ? "detectando" : "desligado", autoOn ? "blue" : "gray")}
+                <div className="grid grid-cols-2 gap-2">
+                  {pill("Saudação", chatbotOn ? "ativa" : "muda", chatbotOn ? "green" : "gray")}
                   {pill(
                     "Webhook",
                     webhookSub,
