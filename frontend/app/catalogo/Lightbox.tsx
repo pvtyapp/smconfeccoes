@@ -4,13 +4,14 @@ import { useEffect, useState } from "react"
 import { X, ChevronLeft, ChevronRight } from "lucide-react"
 
 export default function Lightbox({
-  images, productName, onClose,
+  images, productName, onClose, initialIndex = 0,
 }: {
   images: { url: string; color: string | null }[]
   productName: string
   onClose: () => void
+  initialIndex?: number
 }) {
-  const [index, setIndex] = useState(0)
+  const [index, setIndex] = useState(initialIndex)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

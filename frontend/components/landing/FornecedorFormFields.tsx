@@ -2,10 +2,20 @@
 
 import { useState, type FormEvent } from "react"
 import { Send, CheckCircle2 } from "lucide-react"
-import WhatsAppInput from "@/app/portal/components/WhatsAppInput"
 
 const CHANNELS = ["Shopee", "TikTok", "Outros"]
 
+function maskPhone(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 11)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+}
+
+// Sempre vive dentro do card escuro (bg-[#0F1E3C]) do AccessSection — estilo
+// claro embutido direto aqui, sem depender de seletor CSS herdado do pai
+// (é exatamente isso que deixou o texto/checkbox invisíveis antes: <p> e
+// <button> não são pegos por um seletor `[&_label]`/`[&_input]`).
 export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?: string }) {
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
@@ -41,11 +51,11 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
   if (sent) {
     return (
       <div className="flex flex-col items-center text-center gap-2.5 py-6" role="status" aria-live="polite">
-        <div className="w-12 h-12 rounded-full bg-[#1B8F63]/10 flex items-center justify-center">
-          <CheckCircle2 size={22} className="text-[#1B8F63]" />
+        <div className="w-12 h-12 rounded-full bg-[#1B8F63]/15 flex items-center justify-center">
+          <CheckCircle2 size={22} className="text-[#4FCC97]" />
         </div>
-        <p className="text-sm font-bold text-[#0F1E3C]">Solicitação enviada!</p>
-        <p className="text-xs text-[#0F1E3C]/50 max-w-[26ch]">A gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
+        <p className="text-sm font-bold text-white">Solicitação enviada!</p>
+        <p className="text-xs text-white/50 max-w-[26ch]">A gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
       </div>
     )
   }
@@ -53,15 +63,23 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label htmlFor={`${idPrefix}-name`} className="block text-xs font-semibold text-[#0F1E3C]/60 mb-1.5">Nome</label>
+        <label htmlFor={`${idPrefix}-name`} className="block text-xs font-semibold text-white/60 mb-1.5">Nome</label>
         <input
           id={`${idPrefix}-name`} type="text" required value={name} onChange={(e) => setName(e.target.value)}
-          className="w-full border border-[#0F1E3C]/15 rounded-xl px-4 py-3 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
+          className="w-full border border-white/15 bg-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/40 focus:border-[#4361EE] transition-colors"
         />
       </div>
-      <WhatsAppInput id={`${idPrefix}-phone`} value={phone} onChange={setPhone} />
       <div>
-        <p className="block text-xs font-semibold text-[#0F1E3C]/60 mb-2">Principais canais de venda</p>
+        <label htmlFor={`${idPrefix}-phone`} className="block text-xs font-semibold text-white/60 mb-1.5">WhatsApp</label>
+        <input
+          id={`${idPrefix}-phone`} type="tel" inputMode="numeric" required value={phone}
+          onChange={(e) => setPhone(maskPhone(e.target.value))}
+          placeholder="(00) 00000-0000"
+          className="w-full border border-white/15 bg-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#4361EE]/40 focus:border-[#4361EE] transition-colors"
+        />
+      </div>
+      <div>
+        <p className="block text-xs font-semibold text-white/60 mb-2">Principais canais de venda</p>
         <div className="flex flex-wrap gap-2">
           {CHANNELS.map((c) => {
             const active = channels.includes(c)
@@ -70,7 +88,7 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
                 key={c} type="button" onClick={() => toggleChannel(c)}
                 aria-pressed={active}
                 className={`px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors ${
-                  active ? "bg-[#4361EE] border-[#4361EE] text-white" : "border-[#0F1E3C]/15 text-[#0F1E3C]/60 hover:bg-[#0F1E3C]/5"
+                  active ? "bg-[#4361EE] border-[#4361EE] text-white" : "border-white/20 text-white/70 hover:bg-white/10"
                 }`}
               >
                 {c}
@@ -80,7 +98,7 @@ export default function FornecedorFormFields({ idPrefix = "forn" }: { idPrefix?:
         </div>
       </div>
 
-      {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+      {error && <p className="text-xs text-red-300" role="alert">{error}</p>}
 
       <button
         type="submit" disabled={loading}

@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { ImageIcon, ShoppingCart, Check, Minus, Plus, Images as ImagesIcon } from "lucide-react"
+import { ImageIcon, ShoppingCart, Check, Minus, Plus, Images as ImagesIcon, Ruler } from "lucide-react"
 import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
 import type { CartItem } from "./cart"
 import { colorToHex, needsBorder } from "./colorSwatch"
@@ -17,7 +17,7 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
   const sizesForColor = product.variants.filter((v) => v.color === color)
   const [size, setSize] = useState<string | null>(sizesForColor[0]?.size ?? null)
   const [qty, setQty] = useState(1)
-  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [lightbox, setLightbox] = useState<{ open: boolean; startIndex: number }>({ open: false, startIndex: 0 })
 
   const thumb = useMemo(() => {
     const specific = product.images.find((i) => i.color === color)
@@ -58,7 +58,7 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
     <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 bg-white border border-[#0F1E3C]/8 rounded-2xl p-3 sm:p-4">
       <button
         type="button"
-        onClick={() => galleryImages.length > 0 && setLightboxOpen(true)}
+        onClick={() => galleryImages.length > 0 && setLightbox({ open: true, startIndex: 0 })}
         aria-label={galleryImages.length > 0 ? `Ver fotos de ${product.name}` : product.name}
         className="relative w-full h-40 sm:w-20 sm:h-20 flex-shrink-0 rounded-xl overflow-hidden bg-[#F4F6FB] flex items-center justify-center"
       >
@@ -76,7 +76,18 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
 
       <div className="flex-1 min-w-0">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-bold text-[#0F1E3C]">{product.name}</p>
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <p className="text-sm font-bold text-[#0F1E3C]">{product.name}</p>
+            {galleryImages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setLightbox({ open: true, startIndex: galleryImages.length - 1 })}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-[#4361EE] bg-[#4361EE]/8 hover:bg-[#4361EE]/14 px-2 py-1 rounded-lg transition-colors flex-shrink-0"
+              >
+                <Ruler size={11} /> Ver tabela de medidas
+              </button>
+            )}
+          </div>
           <span className="text-sm font-black text-[#4361EE] flex-shrink-0">{fmtR(selectedVariant?.price ?? product.salePrice)}</span>
         </div>
 
@@ -160,8 +171,11 @@ export default function ProductCard({ product, onAdd }: { product: PublicCatalog
         </button>
       </div>
 
-      {lightboxOpen && (
-        <Lightbox images={galleryImages} productName={product.name} onClose={() => setLightboxOpen(false)} />
+      {lightbox.open && (
+        <Lightbox
+          images={galleryImages} productName={product.name} initialIndex={lightbox.startIndex}
+          onClose={() => setLightbox({ open: false, startIndex: 0 })}
+        />
       )}
     </div>
   )

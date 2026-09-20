@@ -61,9 +61,7 @@ export default function AccessSection() {
             </div>
             <h3 className="text-lg font-black text-white mb-1">Quero comprar com vocês</h3>
             <p className="text-sm text-white/50 mb-6">Conta pra gente seus canais de venda. A gente analisa e avisa pelo WhatsApp assim que liberar seu acesso.</p>
-            <div className="[&_label]:text-white/60 [&_input]:bg-white/5 [&_input]:border-white/15 [&_input]:text-white [&_textarea]:bg-white/5 [&_textarea]:border-white/15 [&_textarea]:text-white">
-              <FornecedorFormFields idPrefix="lp-forn" />
-            </div>
+            <FornecedorFormFields idPrefix="lp-forn" />
           </div>
         </div>
       </div>
