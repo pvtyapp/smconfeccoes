@@ -15,10 +15,18 @@ const PERIODS = [
   { value: "hoje", label: "Hoje" },
   { value: "ontem", label: "Ontem" },
   { value: "7d", label: "7 dias" },
-  { value: "15d", label: "15 dias" },
-  { value: "30d", label: "30 dias" },
+  { value: "10d", label: "10 dias" },
   { value: "custom", label: "Calendário" },
 ]
+
+// Mesma régua de lib/fiscal/emitirNota.ts — nota fiscal só sai dentro de 10
+// dias do pedido, não adianta deixar escolher período/calendário além disso.
+const NFE_MAX_AGE_DAYS = 10
+function oldestAllowedISO(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - NFE_MAX_AGE_DAYS)
+  return d.toISOString().slice(0, 10)
+}
 
 function fmtR(v: number | null) {
   return `R$ ${Number(v ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -29,7 +37,7 @@ function fmtDate(iso: string) {
 
 export default function NotaFiscalTab() {
   const [subTab, setSubTab] = useState<"solicitar" | "emitidas">("solicitar")
-  const [period, setPeriod] = useState("7d")
+  const [period, setPeriod] = useState("10d")
   const [customFrom, setCustomFrom] = useState("")
   const [customTo, setCustomTo] = useState("")
   const [data, setData] = useState<NotasResponse | null>(null)
@@ -119,6 +127,13 @@ export default function NotaFiscalTab() {
 
       {subTab === "solicitar" ? (
         <div className="bg-white border border-[#0F1E3C]/8 rounded-2xl p-5">
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 mb-4">
+            <Info size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700">
+              Nota fiscal só pode ser emitida em até {NFE_MAX_AGE_DAYS} dias depois do pedido — por isso só aparecem aqui os pedidos desse período.
+            </p>
+          </div>
+
           <div className="flex flex-wrap gap-2 mb-4">
             {PERIODS.map((p) => (
               <button key={p.value} onClick={() => setPeriod(p.value)}
@@ -130,10 +145,10 @@ export default function NotaFiscalTab() {
 
           {period === "custom" && (
             <div className="flex items-center gap-2 mb-4">
-              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+              <input type="date" value={customFrom} min={oldestAllowedISO()} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)}
                 className="border border-[#0F1E3C]/15 rounded-lg px-3 py-2 text-xs" />
               <span className="text-xs text-[#0F1E3C]/40">até</span>
-              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+              <input type="date" value={customTo} min={customFrom || oldestAllowedISO()} onChange={(e) => setCustomTo(e.target.value)}
                 className="border border-[#0F1E3C]/15 rounded-lg px-3 py-2 text-xs" />
             </div>
           )}

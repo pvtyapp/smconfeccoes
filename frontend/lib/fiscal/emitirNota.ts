@@ -42,7 +42,7 @@ export async function emitirNotaFiscal(orderIds: number[]): Promise<EmitirNotaRe
 
   const { rows: orderRows } = await pool.query(`
     SELECT
-      o.id, o.number,
+      o.id, o.number, o.created_at AS "createdAt",
       c.id                       AS "contactId",
       COALESCE(c.nome_cadastro, c.name) AS "contactName",
       c.cpf_cnpj                 AS "cpfCnpj",
@@ -59,6 +59,21 @@ export async function emitirNotaFiscal(orderIds: number[]): Promise<EmitirNotaRe
 
   if (orderRows.length !== orderIds.length) {
     return { ok: false, httpStatus: 404, error: "Um ou mais pedidos não foram encontrados." }
+  }
+
+  // NFe só pode ser emitida dentro de 10 dias do pedido — trava aqui protege
+  // tanto o staff quanto o cliente (portal), mesma régua pros dois.
+  const NFE_MAX_AGE_DAYS = 10
+  const now = Date.now()
+  const expired = orderRows.filter((o: { createdAt: string }) =>
+    now - new Date(o.createdAt).getTime() > NFE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+  )
+  if (expired.length > 0) {
+    const nums = expired.map((o: { number: string }) => o.number).join(", ")
+    return {
+      ok: false, httpStatus: 400,
+      error: `Pedido(s) ${nums} passaram de ${NFE_MAX_AGE_DAYS} dias — nota fiscal só pode ser emitida dentro desse prazo.`,
+    }
   }
 
   const contactIds = new Set(orderRows.map((o: { contactId: number }) => o.contactId))

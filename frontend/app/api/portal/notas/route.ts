@@ -3,28 +3,38 @@ import { pool } from "@/lib/db"
 import { getClientSessionFromRequest } from "@/lib/clientSession"
 import { isNfeEligible } from "@/lib/portal/fiscalCompleteness"
 
+// NFe só pode ser emitida dentro de 10 dias do pedido (mesma régua de
+// lib/fiscal/emitirNota.ts) — essa aba nunca mostra pedido fora desse prazo,
+// pra nunca deixar o cliente selecionar algo que a emissão vai recusar.
+const NFE_MAX_AGE_DAYS = 10
+
 function periodBounds(period: string, from: string | null, to: string | null): { from: Date; to: Date } | null {
   const now = new Date()
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0)
   const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)
+  const oldestAllowed = new Date(now)
+  oldestAllowed.setDate(oldestAllowed.getDate() - NFE_MAX_AGE_DAYS)
 
+  let bounds: { from: Date; to: Date } | null
   switch (period) {
-    case "hoje": return { from: startOfDay(now), to: endOfDay(now) }
+    case "hoje": bounds = { from: startOfDay(now), to: endOfDay(now) }; break
     case "ontem": {
       const y = new Date(now); y.setDate(y.getDate() - 1)
-      return { from: startOfDay(y), to: endOfDay(y) }
+      bounds = { from: startOfDay(y), to: endOfDay(y) }; break
     }
-    case "7d": { const d = new Date(now); d.setDate(d.getDate() - 7); return { from: startOfDay(d), to: endOfDay(now) } }
-    case "15d": { const d = new Date(now); d.setDate(d.getDate() - 15); return { from: startOfDay(d), to: endOfDay(now) } }
-    case "30d": { const d = new Date(now); d.setDate(d.getDate() - 30); return { from: startOfDay(d), to: endOfDay(now) } }
+    case "7d": { const d = new Date(now); d.setDate(d.getDate() - 7); bounds = { from: startOfDay(d), to: endOfDay(now) }; break }
+    case "10d": { const d = new Date(now); d.setDate(d.getDate() - 10); bounds = { from: startOfDay(d), to: endOfDay(now) }; break }
     case "custom": {
       if (!from || !to) return null
       const f = new Date(from); const t = new Date(to)
       if (isNaN(f.getTime()) || isNaN(t.getTime())) return null
-      return { from: startOfDay(f), to: endOfDay(t) }
+      bounds = { from: startOfDay(f), to: endOfDay(t) }; break
     }
     default: return null
   }
+
+  if (bounds.from < startOfDay(oldestAllowed)) bounds.from = startOfDay(oldestAllowed)
+  return bounds
 }
 
 export async function GET(req: Request) {
