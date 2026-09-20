@@ -1,14 +1,16 @@
 "use client"
 
 import { useEffect, useState, type FormEvent } from "react"
-import { Save, KeyRound } from "lucide-react"
+import { Save, KeyRound, AlertTriangle } from "lucide-react"
 import DocumentInput from "./components/DocumentInput"
 import PasswordInput from "./components/PasswordInput"
+import { missingFiscalFields, REGIMES_TRIBUTARIOS } from "@/lib/portal/fiscalCompleteness"
 
 type Profile = {
   name: string; phone: string
   tipoPessoa: "fisica" | "juridica" | null
-  cpfCnpj: string | null; razaoSocial: string | null; inscricaoEstadual: string | null
+  cpfCnpj: string | null; razaoSocial: string | null
+  regimeTributario: string | null; inscricaoEstadual: string | null; ieIsento: boolean
   cep: string | null; logradouro: string | null; numero: string | null; complemento: string | null
   bairro: string | null; cidade: string | null; uf: string | null; codigoMunicipioIbge: string | null
 }
@@ -41,7 +43,10 @@ export default function DadosTab() {
   const [tipoPessoa, setTipoPessoa] = useState<"fisica" | "juridica">("fisica")
   const [cpfCnpj, setCpfCnpj] = useState("")
   const [razaoSocial, setRazaoSocial] = useState("")
+  const [regimeTributario, setRegimeTributario] = useState("")
   const [inscricaoEstadual, setInscricaoEstadual] = useState("")
+  const [ieIsento, setIeIsento] = useState(false)
+  const [missing, setMissing] = useState<string[]>([])
   const [cep, setCep] = useState("")
   const [logradouro, setLogradouro] = useState("")
   const [numero, setNumero] = useState("")
@@ -60,7 +65,9 @@ export default function DadosTab() {
         setTipoPessoa(p.tipoPessoa === "juridica" ? "juridica" : "fisica")
         setCpfCnpj(p.cpfCnpj ?? "")
         setRazaoSocial(p.razaoSocial ?? "")
+        setRegimeTributario(p.regimeTributario ?? "")
         setInscricaoEstadual(p.inscricaoEstadual ?? "")
+        setIeIsento(p.ieIsento ?? false)
         setCep(p.cep ?? "")
         setLogradouro(p.logradouro ?? "")
         setNumero(p.numero ?? "")
@@ -95,18 +102,39 @@ export default function DadosTab() {
     e.preventDefault()
     setError("")
     setStatus("idle")
+    setMissing([])
+
+    // Confere antes de mandar pro servidor — mesma função usada lá, então a
+    // mensagem que o cliente vê aqui é sempre a mesma que o backend valida.
+    const localMissing = missingFiscalFields({
+      tipoPessoa, cpfCnpj: cpfCnpj || null, razaoSocial: razaoSocial || null,
+      regimeTributario: regimeTributario || null, inscricaoEstadual: inscricaoEstadual || null,
+      ieIsento, cep: cep || null, logradouro: logradouro || null, numero: numero || null,
+      bairro: bairro || null, cidade: cidade || null, uf: uf || null, codigoMunicipioIbge: codigoMunicipioIbge || null,
+    })
+    if (localMissing.length > 0) {
+      setMissing(localMissing)
+      setStatus("error")
+      return
+    }
+
     setSaving(true)
     try {
       const res = await fetch("/api/portal/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name, tipoPessoa, cpfCnpj, razaoSocial, inscricaoEstadual,
+          name, tipoPessoa, cpfCnpj, razaoSocial, regimeTributario, inscricaoEstadual, ieIsento,
           cep, logradouro, numero, complemento, bairro, cidade, uf, codigoMunicipioIbge,
         }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Não foi possível salvar"); setStatus("error"); return }
+      if (!res.ok) {
+        setError(data.error ?? "Não foi possível salvar")
+        setMissing(data.missing ?? [])
+        setStatus("error")
+        return
+      }
       setStatus("saved")
       setTimeout(() => setStatus("idle"), 2500)
     } catch {
@@ -158,14 +186,41 @@ export default function DadosTab() {
         </div>
 
         {tipoPessoa === "juridica" && (
-          <Field label="Inscrição Estadual (opcional)">
-            <input className={inputCls} value={inscricaoEstadual} onChange={(e) => setInscricaoEstadual(e.target.value)}
-              title="Deixe em branco se sua empresa é isenta" placeholder="Deixe em branco se isenta" />
-          </Field>
+          <>
+            <Field label="Regime tributário">
+              <select className={inputCls} value={regimeTributario} onChange={(e) => setRegimeTributario(e.target.value)}>
+                <option value="">Selecione...</option>
+                {REGIMES_TRIBUTARIOS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              {regimeTributario === "mei" && (
+                <p className="text-[11px] text-[#0F1E3C]/40 mt-1.5">MEI não precisa de endereço fiscal completo — a gente não emite nota pra MEI.</p>
+              )}
+            </Field>
+
+            {regimeTributario && regimeTributario !== "mei" && (
+              <div>
+                <Field label="Inscrição Estadual">
+                  <input value={inscricaoEstadual} onChange={(e) => setInscricaoEstadual(e.target.value)}
+                    disabled={ieIsento}
+                    title="Obrigatória pra emitir nota fiscal, a não ser que sua empresa seja isenta"
+                    placeholder={ieIsento ? "Isento" : "Digite a Inscrição Estadual"}
+                    className={inputCls + (ieIsento ? " opacity-50 cursor-not-allowed" : "")}
+                  />
+                </Field>
+                <label className="flex items-center gap-2 mt-2 text-xs text-[#0F1E3C]/60 cursor-pointer">
+                  <input type="checkbox" checked={ieIsento} onChange={(e) => { setIeIsento(e.target.checked); if (e.target.checked) setInscricaoEstadual("") }} />
+                  Minha empresa é isenta de Inscrição Estadual
+                </label>
+              </div>
+            )}
+          </>
         )}
 
         <div className="border-t border-[#0F1E3C]/6 pt-4">
-          <p className="text-sm font-bold text-[#0F1E3C] mb-3">Endereço</p>
+          <p className="text-sm font-bold text-[#0F1E3C] mb-1">Endereço</p>
+          {tipoPessoa === "juridica" && regimeTributario && regimeTributario !== "mei" && (
+            <p className="text-[11px] text-[#0F1E3C]/40 mb-3">Obrigatório pra emitir nota fiscal.</p>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             <Field label="CEP">
               <input className={inputCls} value={cep} onChange={(e) => setCep(maskCep(e.target.value))} onBlur={handleCepBlur}
@@ -194,7 +249,18 @@ export default function DadosTab() {
           {/* Código do município (IBGE): nunca uma caixa de texto — decisão 8 do plano */}
         </div>
 
-        {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
+        {missing.length > 0 && (
+          <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3" role="alert">
+            <AlertTriangle size={15} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold text-amber-800 mb-0.5">Falta preencher pra salvar:</p>
+              <ul className="text-xs text-amber-700 list-disc list-inside">
+                {missing.map((m) => <li key={m}>{m}</li>)}
+              </ul>
+            </div>
+          </div>
+        )}
+        {error && missing.length === 0 && <p className="text-sm text-red-600" role="alert">{error}</p>}
 
         <div className="flex items-center gap-3">
           <button type="submit" disabled={saving}

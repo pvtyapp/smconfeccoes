@@ -3,6 +3,7 @@ import { pool } from "@/lib/db"
 import { getClientSessionFromRequest } from "@/lib/clientSession"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { isOutsideBusinessHours } from "@/lib/portal/businessHours"
+import { missingFiscalFields } from "@/lib/portal/fiscalCompleteness"
 
 function fmtR(v: number) {
   return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -37,7 +38,11 @@ export async function POST(req: Request) {
     const dedupedItems = [...mergedQty.entries()].map(([variantId, qty]) => ({ variantId, qty }))
 
     const { rows: contactRows } = await pool.query(
-      `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid, payment_term_enabled
+      `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid, payment_term_enabled,
+              tipo_pessoa AS "tipoPessoa", cpf_cnpj AS "cpfCnpj", razao_social AS "razaoSocial",
+              regime_tributario AS "regimeTributario", inscricao_estadual AS "inscricaoEstadual",
+              COALESCE(ie_isento, false) AS "ieIsento",
+              cep, logradouro, numero, bairro, cidade, uf, codigo_municipio_ibge AS "codigoMunicipioIbge"
        FROM wa_contacts WHERE id = $1`,
       [session.contactId]
     )
@@ -45,6 +50,17 @@ export async function POST(req: Request) {
     if (!contact) return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 })
     if (paymentMethod === "prazo" && !contact.payment_term_enabled) {
       return NextResponse.json({ error: "Sua conta não tem prazo habilitado" }, { status: 400 })
+    }
+
+    // Dado fiscal incompleto trava o pedido de saída — antes de travar
+    // estoque ou qualquer outra coisa (decisão do dono: cliente só pede se
+    // os dados fiscais estiverem completos).
+    const missing = missingFiscalFields(contact)
+    if (missing.length > 0) {
+      return NextResponse.json(
+        { error: `Complete seu cadastro antes de finalizar o pedido. Falta: ${missing.join(", ")}.`, missing },
+        { status: 400 }
+      )
     }
 
     await client.query("BEGIN")

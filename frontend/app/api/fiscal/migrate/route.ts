@@ -18,6 +18,13 @@ export async function POST() {
     // fantasia, nome de contato etc.) e nunca deve ir na NFe de pessoa jurídica.
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS razao_social TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS inscricao_estadual TEXT`)
+    // Nota fiscal não é emitida pra pessoa física nem MEI (decisão do dono,
+    // 2026-09-20) — regime decide se o resto dos dados fiscais é obrigatório.
+    await pool.query(`
+      ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS regime_tributario TEXT
+        CHECK (regime_tributario IN ('mei', 'simples_nacional', 'lucro_presumido', 'lucro_real'))
+    `)
+    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS ie_isento BOOLEAN NOT NULL DEFAULT false`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS cep TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS logradouro TEXT`)
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS numero TEXT`)

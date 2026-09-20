@@ -3,13 +3,14 @@
 import { useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { ShoppingBag, Package, UserCircle } from "lucide-react"
+import { ShoppingBag, Package, UserCircle, FileText } from "lucide-react"
 import LogoutButton from "./LogoutButton"
 import OrdersTab from "./OrdersTab"
 import DadosTab from "./DadosTab"
+import NotaFiscalTab from "./NotaFiscalTab"
 
 export default function PortalHub({ name }: { name: string }) {
-  const [tab, setTab] = useState<"pedidos" | "dados">("pedidos")
+  const [tab, setTab] = useState<"pedidos" | "dados" | "notas">("pedidos")
 
   return (
     <div className="min-h-screen bg-[#F4F6FB]" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
@@ -39,9 +40,13 @@ export default function PortalHub({ name }: { name: string }) {
             className={`flex-1 inline-flex items-center justify-center gap-2 py-3 transition-colors ${tab === "dados" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/55 hover:bg-[#0F1E3C]/5"}`}>
             <UserCircle size={15} /> Meus Dados
           </button>
+          <button onClick={() => setTab("notas")}
+            className={`flex-1 inline-flex items-center justify-center gap-2 py-3 transition-colors ${tab === "notas" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/55 hover:bg-[#0F1E3C]/5"}`}>
+            <FileText size={15} /> Nota Fiscal
+          </button>
         </div>
 
-        {tab === "pedidos" ? <OrdersTab /> : <DadosTab />}
+        {tab === "pedidos" ? <OrdersTab /> : tab === "dados" ? <DadosTab /> : <NotaFiscalTab />}
       </main>
     </div>
   )

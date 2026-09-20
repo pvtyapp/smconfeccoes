@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Minus, Plus, Trash2, ShoppingBag, CheckCircle2 } from "lucide-react"
+import Link from "next/link"
+import { Minus, Plus, Trash2, ShoppingBag, CheckCircle2, AlertTriangle } from "lucide-react"
 import type { CartItem } from "./cart"
 
 function fmtR(v: number) {
@@ -21,12 +22,14 @@ export default function CartPanel({
   const [paymentMethod, setPaymentMethod] = useState<"pix" | "prazo">("pix")
   const [sending, setSending] = useState(false)
   const [error, setError] = useState("")
+  const [missingFields, setMissingFields] = useState<string[]>([])
   const [success, setSuccess] = useState<{ number: string; outsideBusinessHours: boolean } | null>(null)
 
   const total = items.reduce((s, i) => s + i.price * i.qty, 0)
 
   async function handleFinalizar() {
     setError("")
+    setMissingFields([])
     setSending(true)
     try {
       const res = await fetch("/api/portal/checkout", {
@@ -42,7 +45,11 @@ export default function CartPanel({
         return
       }
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? "Não foi possível finalizar o pedido"); return }
+      if (!res.ok) {
+        setError(data.error ?? "Não foi possível finalizar o pedido")
+        setMissingFields(data.missing ?? [])
+        return
+      }
       setSuccess({ number: data.number, outsideBusinessHours: data.outsideBusinessHours })
       onCleared()
     } catch {
@@ -123,7 +130,19 @@ export default function CartPanel({
                 <span className="text-lg font-black text-[#0F1E3C]">{fmtR(total)}</span>
               </div>
 
-              {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+              {error && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5" role="alert">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={13} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-800">{error}</p>
+                  </div>
+                  {missingFields.length > 0 && (
+                    <Link href="/portal" className="inline-block mt-2 text-xs font-bold text-[#4361EE] hover:underline">
+                      Completar cadastro em Meus Dados →
+                    </Link>
+                  )}
+                </div>
+              )}
 
               <button
                 onClick={handleFinalizar} disabled={sending}
