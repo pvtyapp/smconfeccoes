@@ -255,9 +255,19 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
     if (outMediaType && outMediaType !== "sticker" && outMsgId) {
       waitUntil(saveMediaBackground(msg, contactId0, outMsgId, outMediaType, "idle"))
     }
+    // Evolution às vezes reentrega mensagem antiga como evento fromMe "ao vivo"
+    // (reconexão, sync de histórico, multi-device) — mesmo texto de meses atrás,
+    // message_id novo (não bate no isOwnEcho), mas messageTimestamp continua o
+    // original. Sem essa checagem, isso pausava o bot por 30min pra um contato
+    // que não recebeu resposta manual nenhuma hoje — foi exatamente o caso do
+    // Samuel (mensagem de operador de agosto reentregue, pausou a Saudação dele
+    // sem ninguém ter mandado nada de verdade).
+    const isStale = ts !== null && (Date.now() - ts.getTime()) > 10 * 60 * 1000
+
     // Operator sent manual message → extend chatbot pause by configured minutes.
-    // Nunca pausa por causa de eco de mensagem que o próprio sistema mandou.
-    if (!isOwnEcho) {
+    // Nunca pausa por causa de eco de mensagem que o próprio sistema mandou, nem
+    // de mensagem antiga reentregue fora de hora.
+    if (!isOwnEcho && !isStale) {
       pool.query(`
         UPDATE wa_contacts
         SET chatbot_paused_until = NOW() + (
