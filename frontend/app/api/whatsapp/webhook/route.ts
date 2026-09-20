@@ -575,12 +575,12 @@ function replyWA(jid: string, text: string): void {
   )
 }
 
-// Envia E salva direto no banco (não depende do fromMe callback) — único ponto por
-// onde passa toda resposta automática ao cliente. Chatbot desligado (chatbot_ativo
-// = false) vira mudo aqui: nada é enviado nem salvo. Captura de pedido continua
-// funcionando normalmente (ela roda antes de chegar numa chamada de reply), só a
-// resposta pro cliente é que some.
-async function replyAndSave(contactId: number, jid: string, text: string): Promise<void> {
+// Núcleo do envio de resposta — checa os 2 disjuntores (geral + chatbot) e o
+// silêncio por contato, manda de verdade e grava o resultado ('sent'/'failed')
+// em wa_messages. Devolve se realmente confirmou o envio — quem precisa saber
+// (ex: só marcar cooldown depois de confirmar) usa isso direto; quem só quer
+// "manda e esquece" (a maioria) usa replyAndSave, que não espera terminar.
+async function doReply(contactId: number, jid: string, text: string): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT key, value FROM app_settings WHERE key IN ('chatbot_ativo', 'automacao_pausada')`
   ).catch(() => ({ rows: [] as { key: string; value: string }[] }))
@@ -589,7 +589,7 @@ async function replyAndSave(contactId: number, jid: string, text: string): Promi
   // Disjuntor geral tem prioridade sobre chatbot_ativo — os dois calam a
   // resposta reativa, mas o disjuntor é o "sem exceção" que também cala
   // tudo mais (kanban, cobrança, lifecycle) via sendAndSave().
-  if (flags.chatbot_ativo === "false" || flags.automacao_pausada === "true") return
+  if (flags.chatbot_ativo === "false" || flags.automacao_pausada === "true") return false
 
   // Silenciado manual ou pausa automática (operador respondeu direto pelo
   // celular) — fica mudo, mas a captura de pedido (chamada antes desse ponto)
@@ -602,31 +602,37 @@ async function replyAndSave(contactId: number, jid: string, text: string): Promi
   ).catch(() => ({ rows: [] as { chatbotSilenced: boolean; chatbotPausedUntil: string | null }[] }))
   const cf = contactFlags[0]
   const isPausedTemp = cf?.chatbotPausedUntil && new Date(cf.chatbotPausedUntil) > new Date()
-  if (cf?.chatbotSilenced || isPausedTemp) return
+  if (cf?.chatbotSilenced || isPausedTemp) return false
 
-  waitUntil(
-    sendWhatsApp(jid, text)
-      .then(async (result) => {
-        const msgId = (result as { key?: { id?: string } })?.key?.id ?? null
-        await pool.query(
-          `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, created_at)
-           VALUES ($1, $2, 'out', $3, 'sent', NOW())
-           ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
-          [contactId, msgId, text]
-        ).catch(() => {})
-      })
-      .catch(async (e) => {
-        console.error("[WA-webhook] replyAndSave failed:", jid, e instanceof Error ? e.message : e)
-        // Antes essa falha só ia pro console — a resposta do bot sumia sem deixar
-        // rastro nenhum no dashboard. Agora grava como 'failed' mesmo sem message_id
-        // (Evolution nunca respondeu um key.id porque a chamada nem completou).
-        await pool.query(
-          `INSERT INTO wa_messages (contact_id, direction, content, status, created_at)
-           VALUES ($1, 'out', $2, 'failed', NOW())`,
-          [contactId, text]
-        ).catch(() => {})
-      })
-  )
+  try {
+    const result = await sendWhatsApp(jid, text)
+    const msgId = (result as { key?: { id?: string } })?.key?.id ?? null
+    await pool.query(
+      `INSERT INTO wa_messages (contact_id, message_id, direction, content, status, created_at)
+       VALUES ($1, $2, 'out', $3, 'sent', NOW())
+       ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING`,
+      [contactId, msgId, text]
+    ).catch(() => {})
+    return true
+  } catch (e) {
+    console.error("[WA-webhook] doReply failed:", jid, e instanceof Error ? e.message : e)
+    // Antes essa falha só ia pro console — a resposta do bot sumia sem deixar
+    // rastro nenhum no dashboard. Agora grava como 'failed' mesmo sem message_id
+    // (Evolution nunca respondeu um key.id porque a chamada nem completou).
+    await pool.query(
+      `INSERT INTO wa_messages (contact_id, direction, content, status, created_at)
+       VALUES ($1, 'out', $2, 'failed', NOW())`,
+      [contactId, text]
+    ).catch(() => {})
+    return false
+  }
+}
+
+// Envia E salva direto no banco (não depende do fromMe callback) — a maioria
+// das respostas automáticas usa essa, que não espera o envio terminar pra não
+// segurar a resposta do webhook pra Evolution.
+async function replyAndSave(contactId: number, jid: string, text: string): Promise<void> {
+  waitUntil(doReply(contactId, jid, text))
 }
 
 // Downloads full media from Evolution, saves base64 in media_data (PostgreSQL/Railway).
@@ -1910,6 +1916,10 @@ async function handleText(
     const lastSent = rows[0]?.lastSent
     return !!lastSent && (Date.now() - new Date(lastSent).getTime()) < 6 * 60 * 60 * 1000
   }
+  // Só marca o cooldown DEPOIS de confirmar que a mensagem realmente saiu —
+  // antes o cooldown era gravado antes do envio (que roda em segundo plano),
+  // então uma falha silenciosa de envio deixava o contato "preso" mudo pelas
+  // próximas 6h achando que já tinha respondido, sem nunca ter respondido.
   async function markSent(field: string, attentionReason?: string) {
     await pool.query(
       attentionReason
@@ -1917,6 +1927,10 @@ async function handleText(
         : `UPDATE wa_contacts SET ${field} = NOW(), updated_at = NOW() WHERE id = $1`,
       attentionReason ? [contactId, attentionReason] : [contactId]
     ).catch(() => {})
+  }
+  async function sendAndMark(field: string, text: string, attentionReason?: string) {
+    const ok = await doReply(contactId, jid, text)
+    if (ok) await markSent(field, attentionReason)
   }
 
   // ── 1 · Pedido de DTF em aberto ─────────────────────────────────────────────
@@ -1927,10 +1941,9 @@ async function handleText(
   ).catch(() => ({ rows: [] as { number: string; status: string }[] }))
   if (dtfRows[0]) {
     if (!(await withinCooldown("attendant_wait_notice_sent_at"))) {
-      await markSent("attendant_wait_notice_sent_at", "mensagem_livre")
       const estagio = DTF_STAGE_LABEL[dtfRows[0].status] ?? dtfRows[0].status
       const espera = outsideHours ? ` Estamos fora do horário agora (${horarioTxt}) — assim que abrir, o atendente tira sua dúvida.` : " Em breve o atendente tira sua dúvida."
-      await replyAndSave(contactId, jid, `Seu pedido de DTF *${dtfRows[0].number}* está em "${estagio}".${espera} 😊`)
+      await sendAndMark("attendant_wait_notice_sent_at", `Seu pedido de DTF *${dtfRows[0].number}* está em "${estagio}".${espera} 😊`, "mensagem_livre")
     }
     return
   }
@@ -1941,9 +1954,8 @@ async function handleText(
   ).catch(() => ({ rows: [] as { needs_attention: boolean }[] }))
   if (attnRows[0]?.needs_attention) {
     if (!(await withinCooldown("attendant_wait_notice_sent_at"))) {
-      await markSent("attendant_wait_notice_sent_at")
-      await replyAndSave(
-        contactId, jid,
+      await sendAndMark(
+        "attendant_wait_notice_sent_at",
         outsideHours
           ? `Oi${greetSuffix}! Sua mensagem chegou certinha. Estamos fora do horário agora (${horarioTxt}) — assim que abrir, alguém da equipe te responde. 😊`
           : `Oi${greetSuffix}! Sua mensagem chegou certinha. Em breve alguém da equipe te responde. 😊`
@@ -1958,12 +1970,11 @@ async function handleText(
   ).catch(() => ({ rows: [] as unknown[] }))
   if (accountRows.length > 0) {
     if (!(await withinCooldown("known_customer_greeting_sent_at"))) {
-      await markSent("known_customer_greeting_sent_at")
       const equipe = outsideHours
         ? `Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo — estamos fora do horário agora (${horarioTxt}), assim que abrir te respondemos.`
         : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
-      await replyAndSave(
-        contactId, jid,
+      await sendAndMark(
+        "known_customer_greeting_sent_at",
         `Oi${greetSuffix}! Bom te ver de novo 🧵\n\nPra fazer um novo pedido, entra no site com seu WhatsApp e senha:\n👉 ${SITE_LOGIN_URL}\n\n${equipe} 😊`
       )
     }
@@ -1983,12 +1994,11 @@ async function handleText(
     : { rows: [] as unknown[] }
   if (pendingRows.length > 0) {
     if (!(await withinCooldown("application_pending_notice_sent_at"))) {
-      await markSent("application_pending_notice_sent_at")
       const equipe = outsideHours
         ? `Estamos fora do horário agora (${horarioTxt}) — a análise continua assim que abrir.\n\nPrecisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!`
         : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
-      await replyAndSave(
-        contactId, jid,
+      await sendAndMark(
+        "application_pending_notice_sent_at",
         `Oi${greetSuffix}! Vimos sua solicitação de acesso 📋\n\nEla ainda tá em análise — nossa equipe confirma e te avisa por aqui assim que aprovar.\n\n${equipe} 😊`
       )
     }
@@ -1999,12 +2009,11 @@ async function handleText(
   const hasHistory = await hasConcludedOrderHistory(contactId).catch(() => false)
   if (hasHistory) {
     if (!(await withinCooldown("has_history_notice_sent_at"))) {
-      await markSent("has_history_notice_sent_at")
       const equipe = outsideHours
         ? `Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo — estamos fora do horário agora (${horarioTxt}), assim que abrir te respondemos.`
         : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
-      await replyAndSave(
-        contactId, jid,
+      await sendAndMark(
+        "has_history_notice_sent_at",
         `Oi${greetSuffix}! Você já é nosso cliente 🧵\n\nA gente migrou os pedidos pro site — cria sua conta rapidinho com esse mesmo WhatsApp, já libera na hora, sem espera:\n👉 ${SITE_CADASTRO_URL}\n\n${equipe} 😊`
       )
     }
@@ -2013,12 +2022,11 @@ async function handleText(
 
   // ── 6 · Sem histórico nenhum — primeira vez de verdade ──────────────────────
   if (!(await withinCooldown("no_history_notice_sent_at"))) {
-    await markSent("no_history_notice_sent_at")
     const equipe = outsideHours
       ? `Estamos fora do horário agora (${horarioTxt}) — mas o formulário funciona 24h, e a equipe analisa assim que abrir.\n\nPrecisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!`
       : "Precisa falar com a equipe ou mandar um DTF? Pode ser aqui mesmo!"
-    await replyAndSave(
-      contactId, jid,
+    await sendAndMark(
+      "no_history_notice_sent_at",
       `Oi${greetSuffix}! Aqui é da SM Confecções 🧵\n\nPra começar a comprar com a gente, preenche o formulário de acesso, é rápido:\n👉 ${SITE_URL}\n\n${equipe} 😊`
     )
   }
