@@ -19,7 +19,6 @@ export default function CartPanel({
   onCleared: () => void
 }) {
   const router = useRouter()
-  const [paymentMethod, setPaymentMethod] = useState<"pix" | "prazo">("pix")
   const [sending, setSending] = useState(false)
   const [error, setError] = useState("")
   const [missingFields, setMissingFields] = useState<string[]>([])
@@ -37,7 +36,6 @@ export default function CartPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: items.map((i) => ({ variantId: i.variantId, qty: i.qty })),
-          paymentMethod,
         }),
       })
       if (res.status === 401) {
@@ -111,20 +109,6 @@ export default function CartPanel({
 
           {items.length > 0 && (
             <div className="p-4 border-t border-[#0F1E3C]/8 space-y-3.5">
-              <div>
-                <p className="text-[10px] font-semibold text-[#0F1E3C]/40 uppercase tracking-wide mb-1.5">Pagamento</p>
-                <div className="flex rounded-xl border border-[#0F1E3C]/12 overflow-hidden text-xs font-semibold">
-                  <button type="button" onClick={() => setPaymentMethod("pix")}
-                    className={`flex-1 py-2 transition-colors ${paymentMethod === "pix" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/55 hover:bg-[#0F1E3C]/5"}`}>
-                    À vista
-                  </button>
-                  <button type="button" onClick={() => setPaymentMethod("prazo")}
-                    className={`flex-1 py-2 transition-colors ${paymentMethod === "prazo" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/55 hover:bg-[#0F1E3C]/5"}`}>
-                    Prazo
-                  </button>
-                </div>
-              </div>
-
               <div className="flex items-center justify-between">
                 <span className="text-sm text-[#0F1E3C]/60">Total</span>
                 <span className="text-lg font-black text-[#0F1E3C]">{fmtR(total)}</span>

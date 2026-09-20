@@ -15,16 +15,12 @@ export async function POST(req: Request) {
 
   const client = await pool.connect()
   try {
-    const { items, paymentMethod } = await req.json() as {
+    const { items } = await req.json() as {
       items: { variantId: string; qty: number }[]
-      paymentMethod: "pix" | "prazo"
     }
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: "Carrinho vazio" }, { status: 400 })
-    }
-    if (paymentMethod !== "pix" && paymentMethod !== "prazo") {
-      return NextResponse.json({ error: "Forma de pagamento inválida" }, { status: 400 })
     }
 
     // Soma qty por variantId antes de qualquer validação — um payload malicioso
@@ -38,7 +34,7 @@ export async function POST(req: Request) {
     const dedupedItems = [...mergedQty.entries()].map(([variantId, qty]) => ({ variantId, qty }))
 
     const { rows: contactRows } = await pool.query(
-      `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid, payment_term_enabled,
+      `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid,
               tipo_pessoa AS "tipoPessoa", cpf_cnpj AS "cpfCnpj", razao_social AS "razaoSocial",
               regime_tributario AS "regimeTributario", inscricao_estadual AS "inscricaoEstadual",
               COALESCE(ie_isento, false) AS "ieIsento",
@@ -48,9 +44,6 @@ export async function POST(req: Request) {
     )
     const contact = contactRows[0]
     if (!contact) return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 })
-    if (paymentMethod === "prazo" && !contact.payment_term_enabled) {
-      return NextResponse.json({ error: "Sua conta não tem prazo habilitado" }, { status: 400 })
-    }
 
     // Dado fiscal incompleto trava o pedido de saída — antes de travar
     // estoque ou qualquer outra coisa (decisão do dono: cliente só pede se
@@ -114,12 +107,14 @@ export async function POST(req: Request) {
 
     // Nasce direto em em_separacao, não triagem — triagem existe pra pedido
     // sem estrutura (WhatsApp), aqui o item já é real e o estoque já foi
-    // travado (FOR UPDATE acima). Só falta separar fisicamente.
+    // travado (FOR UPDATE acima). Só falta separar fisicamente. Forma de
+    // pagamento não é escolhida aqui — quem sinaliza é o operador, no Kanban,
+    // ao concluir a entrega (Pago/A prazo), igual pedido feito por WhatsApp.
     const { rows: orderRows } = await client.query(`
-      INSERT INTO orders (number, contact_id, status, source, total_value, payment_method)
-      VALUES ($1, $2, 'em_separacao', 'site', $3, $4)
+      INSERT INTO orders (number, contact_id, status, source, total_value)
+      VALUES ($1, $2, 'em_separacao', 'site', $3)
       RETURNING id
-    `, [number, contact.id, total, paymentMethod])
+    `, [number, contact.id, total])
     const orderId = orderRows[0].id
 
     for (const item of dedupedItems) {
@@ -155,26 +150,17 @@ export async function POST(req: Request) {
           const v = byId.get(i.variantId)!
           return `${i.qty}x ${v.productName}${[v.color, v.size].filter(Boolean).length ? ` (${[v.color, v.size].filter(Boolean).join(", ")})` : ""} — ${fmtR(Number(v.salePrice) * i.qty)}`
         })
-        const pagamento = paymentMethod === "prazo"
-          ? "Pagamento: prazo combinado com a loja."
-          : "Pagamento: PIX — a chave chega na próxima mensagem."
         // Deixa claro o estágio atual e avisa que vem uma 2ª mensagem quando
         // ficar pronto — pra não confundir "recebido" com "já pode retirar".
+        // Forma de pagamento não entra aqui — o operador combina/sinaliza no
+        // Kanban ao concluir a entrega, a chave Pix (se for o caso) vem
+        // junto do aviso de "pronto pra retirada".
         const statusLine = outsideHours
           ? "Estamos fora do horário de atendimento agora — a separação começa no próximo horário comercial."
           : "Seu pedido já está em separação!"
         const avisoPronto = "\n\nAssim que estiver pronto pra retirada, a gente avisa por aqui. 😊"
-        const resumo = `✅ Pedido *${number}* recebido!\n\n${lines.join("\n")}\n\n💰 Total: *${fmtR(total)}*\n\n${pagamento}\n\n${statusLine}${avisoPronto}`
+        const resumo = `✅ Pedido *${number}* recebido!\n\n${lines.join("\n")}\n\n💰 Total: *${fmtR(total)}*\n\n${statusLine}${avisoPronto}`
         await sendAndSave(contact.id, sendJid, resumo).catch(() => {})
-
-        if (paymentMethod === "pix") {
-          const { rows: s } = await pool.query(`SELECT value FROM app_settings WHERE key = 'pix_key_pedidos'`).catch(() => ({ rows: [] as { value: string }[] }))
-          const pixKey = s[0]?.value
-          if (pixKey) {
-            await sendAndSave(contact.id, sendJid, pixKey).catch(() => {})
-            await sendAndSave(contact.id, sendJid, "Pode nos mandar o comprovante aqui mesmo, assim que fizer o pagamento 🙏").catch(() => {})
-          }
-        }
       }
     } catch (notifyErr) {
       console.error("[checkout] pedido criado, mas aviso pelo WhatsApp falhou:", notifyErr)
