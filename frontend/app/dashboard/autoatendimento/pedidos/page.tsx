@@ -398,11 +398,6 @@ export default function PedidosPage() {
   const [prodInicio,    setProdInicio]    = useState("08:00")
   const [prodFim,       setProdFim]       = useState("18:00")
   const [prodFechadoAte,setProdFechadoAte]= useState("")
-  // DTF schedule
-  const [dtfDias,       setDtfDias]       = useState<number[]>([1,2,3,4,5,6])
-  const [dtfInicio,     setDtfInicio]     = useState("08:00")
-  const [dtfFim,        setDtfFim]        = useState("18:00")
-  const [dtfFechadoAte, setDtfFechadoAte] = useState("")
 
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const chatInputRef    = useRef<HTMLTextAreaElement>(null)
@@ -429,10 +424,6 @@ export default function PedidosPage() {
         if (s.produto_horario_inicio) setProdInicio(s.produto_horario_inicio)
         if (s.produto_horario_fim)    setProdFim(s.produto_horario_fim)
         if (s.produto_fechado_ate)    setProdFechadoAte(s.produto_fechado_ate)
-        if (s.dtf_horario_dias)       setDtfDias(s.dtf_horario_dias.split(",").map(Number))
-        if (s.dtf_horario_inicio)     setDtfInicio(s.dtf_horario_inicio)
-        if (s.dtf_horario_fim)        setDtfFim(s.dtf_horario_fim)
-        if (s.dtf_fechado_ate)        setDtfFechadoAte(s.dtf_fechado_ate)
       })
       .catch((err) => { console.error("[settings] falha ao carregar:", err) })
   }, [])
@@ -511,10 +502,6 @@ export default function PedidosPage() {
           produto_horario_inicio: prodInicio,
           produto_horario_fim:    prodFim,
           produto_fechado_ate:    prodFechadoAte,
-          dtf_horario_dias:       dtfDias.join(","),
-          dtf_horario_inicio:     dtfInicio,
-          dtf_horario_fim:        dtfFim,
-          dtf_fechado_ate:        dtfFechadoAte,
         }),
       })
       if (!r.ok) throw new Error("status " + r.status)
@@ -2028,7 +2015,7 @@ export default function PedidosPage() {
 
             {/* Horários */}
             <div className="flex items-center gap-1">
-              <Tip text="Define dias e horários de funcionamento por serviço, e permite programar um fechamento temporário com data de retorno." />
+              <Tip text="Define dias e horário de atendimento de pedidos de produto, e permite programar um fechamento temporário com data de retorno." />
               <button onClick={() => setShowSchedule(v => !v)}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[10px] font-bold transition-colors border ${
                   showSchedule
@@ -2096,84 +2083,41 @@ export default function PedidosPage() {
                 { n: 3, l: "Q" }, { n: 4, l: "Q" }, { n: 5, l: "S" }, { n: 6, l: "S" },
               ]
               return (
-                <div className="grid grid-cols-2 gap-6">
-                  {/* Produto */}
-                  <div className="space-y-3">
-                    <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest">Produto</p>
-                    <div>
-                      <p className="text-[10px] text-[#0F1E3C]/40 mb-1.5">Dias</p>
-                      <div className="flex gap-1">
-                        {DIAS.map(({ n, l }) => (
-                          <button key={n} onClick={() => toggleDia(setProdDias, prodDias, n)}
-                            className={`w-7 h-7 rounded-lg text-[10px] font-bold transition-colors ${
-                              prodDias.includes(n) ? "bg-emerald-500 text-white" : "bg-[#F4F6FB] text-[#0F1E3C]/30"
-                            }`}>{l}</button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div>
-                        <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Das</p>
-                        <input type="time" value={prodInicio} onChange={e => setProdInicio(e.target.value)}
-                          className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400/30" />
-                      </div>
-                      <div className="mt-4 text-[#0F1E3C]/30 text-xs">às</div>
-                      <div>
-                        <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Até</p>
-                        <input type="time" value={prodFim} onChange={e => setProdFim(e.target.value)}
-                          className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400/30" />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Fechado até (opcional)</p>
-                      <div className="flex items-center gap-2">
-                        <input type="datetime-local" value={prodFechadoAte} onChange={e => setProdFechadoAte(e.target.value)}
-                          className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400/30" />
-                        {prodFechadoAte && (
-                          <button onClick={() => setProdFechadoAte("")}
-                            className="text-[10px] text-[#0F1E3C]/30 hover:text-red-500">Limpar</button>
-                        )}
-                      </div>
+                <div className="max-w-xs space-y-3">
+                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest">Horário de atendimento</p>
+                  <div>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mb-1.5">Dias</p>
+                    <div className="flex gap-1">
+                      {DIAS.map(({ n, l }) => (
+                        <button key={n} onClick={() => toggleDia(setProdDias, prodDias, n)}
+                          className={`w-7 h-7 rounded-lg text-[10px] font-bold transition-colors ${
+                            prodDias.includes(n) ? "bg-emerald-500 text-white" : "bg-[#F4F6FB] text-[#0F1E3C]/30"
+                          }`}>{l}</button>
+                      ))}
                     </div>
                   </div>
-
-                  {/* DTF */}
-                  <div className="space-y-3">
-                    <p className="text-xs font-bold text-[#7C3AED] uppercase tracking-widest">DTF</p>
+                  <div className="flex items-center gap-2">
                     <div>
-                      <p className="text-[10px] text-[#0F1E3C]/40 mb-1.5">Dias</p>
-                      <div className="flex gap-1">
-                        {DIAS.map(({ n, l }) => (
-                          <button key={n} onClick={() => toggleDia(setDtfDias, dtfDias, n)}
-                            className={`w-7 h-7 rounded-lg text-[10px] font-bold transition-colors ${
-                              dtfDias.includes(n) ? "bg-[#7C3AED] text-white" : "bg-[#F4F6FB] text-[#0F1E3C]/30"
-                            }`}>{l}</button>
-                        ))}
-                      </div>
+                      <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Das</p>
+                      <input type="time" value={prodInicio} onChange={e => setProdInicio(e.target.value)}
+                        className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400/30" />
                     </div>
+                    <div className="mt-4 text-[#0F1E3C]/30 text-xs">às</div>
+                    <div>
+                      <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Até</p>
+                      <input type="time" value={prodFim} onChange={e => setProdFim(e.target.value)}
+                        className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400/30" />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Fechado até (opcional)</p>
                     <div className="flex items-center gap-2">
-                      <div>
-                        <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Das</p>
-                        <input type="time" value={dtfInicio} onChange={e => setDtfInicio(e.target.value)}
-                          className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400/30" />
-                      </div>
-                      <div className="mt-4 text-[#0F1E3C]/30 text-xs">às</div>
-                      <div>
-                        <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Até</p>
-                        <input type="time" value={dtfFim} onChange={e => setDtfFim(e.target.value)}
-                          className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400/30" />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[#0F1E3C]/40 mb-1">Fechado até (opcional)</p>
-                      <div className="flex items-center gap-2">
-                        <input type="datetime-local" value={dtfFechadoAte} onChange={e => setDtfFechadoAte(e.target.value)}
-                          className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400/30" />
-                        {dtfFechadoAte && (
-                          <button onClick={() => setDtfFechadoAte("")}
-                            className="text-[10px] text-[#0F1E3C]/30 hover:text-red-500">Limpar</button>
-                        )}
-                      </div>
+                      <input type="datetime-local" value={prodFechadoAte} onChange={e => setProdFechadoAte(e.target.value)}
+                        className="px-2 py-1.5 rounded-lg border border-[#0F1E3C]/12 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400/30" />
+                      {prodFechadoAte && (
+                        <button onClick={() => setProdFechadoAte("")}
+                          className="text-[10px] text-[#0F1E3C]/30 hover:text-red-500">Limpar</button>
+                      )}
                     </div>
                   </div>
                 </div>

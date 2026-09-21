@@ -22,9 +22,6 @@ type Contact = {
   paymentTermType: string | null
   paymentTermDays: number | null
   precoExclusivo: boolean
-  chatbotObs: string | null
-  chatbotProdutoEnabled: boolean
-  chatbotDtfEnabled: boolean
   nomeWhatsapp: string | null
   nomeCadastro: string | null
   cpfCnpj: string | null
@@ -272,7 +269,6 @@ export default function ClientesPage() {
               <tr className="border-b border-[#0F1E3C]/6">
                 <th className="text-left px-5 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Cliente</th>
                 <th className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Lifecycle</th>
-                <th className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Chatbot</th>
                 <th className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Último Pedido</th>
                 <th className="text-right px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Total Gasto</th>
                 <th className="text-center px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Pedidos</th>
@@ -282,9 +278,9 @@ export default function ClientesPage() {
             </thead>
             <tbody className="divide-y divide-[#0F1E3C]/4">
               {loading ? (
-                <tr><td colSpan={8} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td></tr>
+                <tr><td colSpan={7} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Carregando...</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhum cliente encontrado</td></tr>
+                <tr><td colSpan={7} className="py-16 text-center text-[#0F1E3C]/30 text-sm">Nenhum cliente encontrado</td></tr>
               ) : filtered.map(c => {
                 const lc = LIFECYCLE_CONFIG[c.lifecycleState] ?? LIFECYCLE_CONFIG.new
                 const isSelected = selectedId === c.id
@@ -306,16 +302,6 @@ export default function ClientesPage() {
                     </td>
                     <td className="px-4 py-3.5">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${lc.cls}`}>{lc.label}</span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-1.5">
-                        {c.chatbotProdutoEnabled && (
-                          <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Produto</span>
-                        )}
-                        {c.chatbotDtfEnabled && (
-                          <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">DTF</span>
-                        )}
-                      </div>
                     </td>
                     <td className="px-4 py-3.5 text-[#0F1E3C]/60 text-sm">{fmtDate(c.lastOrderAt)}</td>
                     <td className="px-4 py-3.5 text-right font-semibold text-[#0F1E3C]">{fmtCurrency(c.totalSpent)}</td>
@@ -457,9 +443,6 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const [termType,       setTermType]       = useState<string>(contact.paymentTermType ?? "days")
   const [termDays,       setTermDays]       = useState<string>(String(contact.paymentTermDays ?? 7))
   const [precoExclusivo, setPrecoExclusivo] = useState(contact.precoExclusivo)
-  const [chatbotObs,     setChatbotObs]     = useState(contact.chatbotObs ?? "")
-  const [chatbotProduto, setChatbotProduto] = useState(contact.chatbotProdutoEnabled)
-  const [chatbotDtf,     setChatbotDtf]     = useState(contact.chatbotDtfEnabled)
   const [cpfCnpj,        setCpfCnpj]        = useState(contact.cpfCnpj ?? "")
   const [tipoPessoa,     setTipoPessoa]     = useState(contact.tipoPessoa ?? "fisica")
   const [razaoSocial,    setRazaoSocial]    = useState(contact.razaoSocial ?? "")
@@ -504,7 +487,6 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
   const [saved,          setSaved]          = useState(false)
   const [confirmDelete,  setConfirmDelete]  = useState(false)
   const [deleting,       setDeleting]       = useState(false)
-  const [chatbotOpen,    setChatbotOpen]    = useState(false)
 
   const loadOrders = useCallback(async () => {
     setLoadingOrders(true)
@@ -574,9 +556,6 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
           type: termEnabled ? termType : null,
           days: termEnabled && termType === "days" ? parseInt(termDays) || null : null,
           precoExclusivo,
-          chatbotObs: chatbotObs.trim() || null,
-          chatbotProdutoEnabled: chatbotProduto,
-          chatbotDtfEnabled: chatbotDtf,
           cpfCnpj: cpfCnpj.trim() || null,
           tipoPessoa,
           razaoSocial: razaoSocial.trim() || null,
@@ -670,58 +649,17 @@ function ContactDrawer({ contact, onClose, onSaved }: { contact: Contact; onClos
 
       <div className="flex-1 overflow-y-auto divide-y divide-[#0F1E3C]/6">
 
-        {/* ── Chatbot (minimizado por padrão) ── */}
-        <div className="px-5 py-4">
-          <button onClick={() => setChatbotOpen(v => !v)} className="w-full flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Bot size={13} className="text-[#4361EE]" />
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40">Chatbot</p>
-              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                contact.chatbotState && contact.chatbotState !== "idle"
-                  ? "bg-blue-100 text-blue-700"
-                  : "bg-gray-100 text-gray-500"
-              }`}>
-                {chatbotStateLabel}
-              </span>
-            </div>
-            <ChevronRight size={14} className={`text-[#0F1E3C]/30 transition-transform ${chatbotOpen ? "rotate-90" : ""}`} />
-          </button>
-
-          {chatbotOpen && (
-            <div className="space-y-4 mt-4">
-              {/* Observações */}
-              <div>
-                <p className="text-xs text-[#0F1E3C]/50 font-medium mb-1.5">Observações para o chatbot</p>
-                <textarea
-                  value={chatbotObs}
-                  onChange={e => setChatbotObs(e.target.value)}
-                  rows={3}
-                  placeholder={`Ex: Prefere moletom preto, nunca oferecer bermuda, atacadista de SP...`}
-                  className="w-full px-3 py-2 rounded-xl border border-[#0F1E3C]/10 text-xs text-[#0F1E3C] resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 placeholder-[#0F1E3C]/25"
-                />
-                <p className="text-[10px] text-[#0F1E3C]/30 mt-1">O chatbot usa essas informações para personalizar o atendimento.</p>
-              </div>
-
-              {/* Canais */}
-              <div className="space-y-2.5 pt-2 border-t border-[#0F1E3C]/6">
-                <p className="text-xs text-[#0F1E3C]/50 font-medium">Canais ativos</p>
-                <div className="flex items-center gap-3">
-                  <Toggle on={chatbotProduto} onChange={() => setChatbotProduto(v => !v)} />
-                  <div>
-                    <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot Produto</p>
-                    <p className="text-[10px] text-[#0F1E3C]/40">Pedidos de roupa via WhatsApp</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Toggle on={chatbotDtf} onChange={() => setChatbotDtf(v => !v)} onColor="bg-purple-600" />
-                  <div>
-                    <p className="text-sm font-semibold text-[#0F1E3C]">Chatbot DTF</p>
-                    <p className="text-[10px] text-[#0F1E3C]/40">Pedidos de impressão via WhatsApp</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+        {/* ── Estado da conversa — bot só saúda agora, sem canais pra configurar ── */}
+        <div className="px-5 py-4 flex items-center gap-2">
+          <Bot size={13} className="text-[#4361EE]" />
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/40">Conversa</p>
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+            contact.chatbotState && contact.chatbotState !== "idle"
+              ? "bg-blue-100 text-blue-700"
+              : "bg-gray-100 text-gray-500"
+          }`}>
+            {chatbotStateLabel}
+          </span>
         </div>
 
         {/* ── Pagamento ── */}

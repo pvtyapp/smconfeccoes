@@ -25,9 +25,6 @@ export async function GET(
         payment_term_type          AS "paymentTermType",
         payment_term_days          AS "paymentTermDays",
         preco_exclusivo            AS "precoExclusivo",
-        chatbot_obs                AS "chatbotObs",
-        COALESCE(chatbot_produto_enabled, true)  AS "chatbotProdutoEnabled",
-        COALESCE(chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
         cpf_cnpj                   AS "cpfCnpj",
         tipo_pessoa                AS "tipoPessoa",
         razao_social               AS "razaoSocial",
@@ -139,7 +136,7 @@ export async function PUT(
   try {
     const { id } = await params
     const {
-      name, enabled, type, days, precoExclusivo, chatbotObs, chatbotProdutoEnabled, chatbotDtfEnabled,
+      name, enabled, type, days, precoExclusivo,
       cpfCnpj, tipoPessoa, razaoSocial, inscricaoEstadual,
       cep, logradouro, numero, complemento, bairro, cidade, uf, codigoMunicipioIbge,
     } = await req.json()
@@ -154,31 +151,25 @@ export async function PUT(
           payment_term_type         = $3,
           payment_term_days         = $4,
           preco_exclusivo           = $5,
-          chatbot_obs               = $6,
-          chatbot_produto_enabled   = COALESCE($7, chatbot_produto_enabled),
-          chatbot_dtf_enabled       = COALESCE($8, chatbot_dtf_enabled),
-          cpf_cnpj                  = COALESCE(NULLIF($9, ''), cpf_cnpj),
-          tipo_pessoa               = COALESCE(NULLIF($10, ''), tipo_pessoa),
-          razao_social              = COALESCE(NULLIF($11, ''), razao_social),
-          inscricao_estadual        = COALESCE(NULLIF($12, ''), inscricao_estadual),
-          cep                       = COALESCE(NULLIF($13, ''), cep),
-          logradouro                = COALESCE(NULLIF($14, ''), logradouro),
-          numero                    = COALESCE(NULLIF($15, ''), numero),
-          complemento               = COALESCE(NULLIF($16, ''), complemento),
-          bairro                    = COALESCE(NULLIF($17, ''), bairro),
-          cidade                    = COALESCE(NULLIF($18, ''), cidade),
-          uf                        = COALESCE(NULLIF($19, ''), uf),
-          codigo_municipio_ibge     = COALESCE(NULLIF($20, ''), codigo_municipio_ibge)
-      WHERE id = $21
+          cpf_cnpj                  = COALESCE(NULLIF($6, ''), cpf_cnpj),
+          tipo_pessoa               = COALESCE(NULLIF($7, ''), tipo_pessoa),
+          razao_social              = COALESCE(NULLIF($8, ''), razao_social),
+          inscricao_estadual        = COALESCE(NULLIF($9, ''), inscricao_estadual),
+          cep                       = COALESCE(NULLIF($10, ''), cep),
+          logradouro                = COALESCE(NULLIF($11, ''), logradouro),
+          numero                    = COALESCE(NULLIF($12, ''), numero),
+          complemento               = COALESCE(NULLIF($13, ''), complemento),
+          bairro                    = COALESCE(NULLIF($14, ''), bairro),
+          cidade                    = COALESCE(NULLIF($15, ''), cidade),
+          uf                        = COALESCE(NULLIF($16, ''), uf),
+          codigo_municipio_ibge     = COALESCE(NULLIF($17, ''), codigo_municipio_ibge)
+      WHERE id = $18
     `, [
       name?.trim() ?? null,
       Boolean(enabled),
       enabled ? (type ?? null) : null,
       enabled && type === "days" ? (days ?? null) : null,
       precoExclusivo !== undefined ? Boolean(precoExclusivo) : false,
-      chatbotObs ?? null,
-      chatbotProdutoEnabled !== undefined ? Boolean(chatbotProdutoEnabled) : null,
-      chatbotDtfEnabled !== undefined ? Boolean(chatbotDtfEnabled) : null,
       cpfCnpj?.trim() ?? null,
       tipoPessoa ?? null,
       razaoSocial?.trim() ?? null,
