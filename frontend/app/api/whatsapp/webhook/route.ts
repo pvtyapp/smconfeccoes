@@ -1,11 +1,9 @@
 ﻿import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
-import { classifyAndParse } from "@/lib/ai/classifyAndParse"
 import { downloadEvolutionMedia, classifyMediaCategory, type MediaCategory } from "@/lib/whatsapp/media"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
-import { sortSizes } from "@/lib/sizeOrder"
 import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
 import { getProvider } from "@/lib/whatsapp/provider"
@@ -618,15 +616,6 @@ function bufferToBase64(raw: unknown): string | null {
   return null
 }
 
-// Reply via Evolution — wrapped in waitUntil so Vercel keeps function alive until fetch completes
-function replyWA(jid: string, text: string): void {
-  waitUntil(
-    sendWhatsApp(jid, text).catch(e => {
-      console.error("[WA-webhook] replyWA failed:", jid, e instanceof Error ? e.message : e)
-    })
-  )
-}
-
 // Núcleo do envio de resposta — checa os 2 disjuntores (geral + chatbot) e o
 // silêncio por contato, manda de verdade e grava o resultado ('sent'/'failed')
 // em wa_messages. Devolve se realmente confirmou o envio — quem precisa saber
@@ -1169,53 +1158,23 @@ export async function POST(req: Request) {
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS chatbot_silenced BOOLEAN NOT NULL DEFAULT false`).catch(() => {})
     await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_greeting_sent_at TIMESTAMPTZ`).catch(() => {})
 
-    // Fetch chatbot flags (graceful — columns may not exist yet)
-    let chatbotProdutoEnabled = true
-    let chatbotDtfEnabled = false
-    let chatbotObs: string | null = null
-    try {
-      const flagsRes = await pool.query(`
-        SELECT
-          COALESCE(chatbot_produto_enabled, true)  AS "chatbotProdutoEnabled",
-          COALESCE(chatbot_dtf_enabled, false)     AS "chatbotDtfEnabled",
-          chatbot_obs                              AS "chatbotObs"
-        FROM wa_contacts WHERE id = $1
-      `, [contactId])
-      if (flagsRes.rows[0]) {
-        chatbotProdutoEnabled = flagsRes.rows[0].chatbotProdutoEnabled
-        chatbotDtfEnabled     = flagsRes.rows[0].chatbotDtfEnabled
-        chatbotObs            = flagsRes.rows[0].chatbotObs
-      }
-    } catch { /* use defaults if columns not migrated yet */ }
-
-    // Fetch global settings (produto/dtf disponibilidade, horários, etc.). Chatbot
-    // desligado não bloqueia mais aqui — a captura de pedido continua rodando; quem
-    // vira mudo é o replyAndSave (único ponto de resposta ao cliente), que já checa
-    // chatbot_ativo sozinho antes de responder.
+    // Fetch global settings (horário comercial pra Saudação, etc.). Chatbot
+    // desligado não bloqueia mais aqui — quem vira mudo é o replyAndSave (único
+    // ponto de resposta ao cliente), que já checa chatbot_ativo sozinho antes
+    // de responder.
     const globalSettings: Record<string, string> = {}
     try {
       const { rows: gs } = await pool.query(`SELECT key, value FROM app_settings`)
       for (const r of gs) globalSettings[r.key] = r.value
     } catch { /* use defaults */ }
 
-    const produtoDispo   = await hasProdutoDisponivel()
-    const produtoBase    = getServiceStatus("produto", globalSettings)
-    const produtoStatus: ServiceStatus = produtoDispo
-      ? produtoBase
-      : { available: false, reason: "desativado" }
-    const dtfStatus      = getServiceStatus("dtf", globalSettings)
-
     // Silenciado manual ou pausa automática não bloqueia mais aqui — mesmo
-    // princípio do chatbot_ativo acima: a captura de pedido continua rodando,
-    // quem fica mudo é o replyAndSave (checa isso sozinho antes de responder).
+    // princípio do chatbot_ativo acima: quem fica mudo é o replyAndSave (checa
+    // isso sozinho antes de responder).
     if (hasMedia) {
       await handleMedia(jid, contactId, msg, state, allMsgs)
     } else {
-      await handleText(
-        jid, contactId, state, text.trim(), lifecycle, displayName ?? "",
-        chatbotProdutoEnabled, chatbotDtfEnabled, chatbotObs,
-        produtoStatus, dtfStatus, globalSettings
-      )
+      await handleText(jid, contactId, state, text.trim(), lifecycle, displayName ?? "", globalSettings)
     }
 
     return NextResponse.json({ ok: true })
@@ -1251,133 +1210,6 @@ function getGreeting(): string {
   return "Boa noite"
 }
 
-async function tagContact(contactId: number, tag: string, value = "") {
-  try {
-    await pool.query(`
-      INSERT INTO wa_contact_tags (contact_id, tag, value, source)
-      VALUES ($1, $2, $3, 'chatbot')
-      ON CONFLICT (contact_id, tag, value) DO NOTHING
-    `, [contactId, tag, value])
-  } catch (e) { console.error("[tagContact] falhou — migration wa_contact_tags não rodou?", e) }
-}
-
-
-
-async function getCatalog(): Promise<Array<{ name: string; sale_price: number | null; isCategory: boolean }>> {
-  const { rows } = await pool.query(`
-    WITH product_root AS (
-      SELECT
-        p.name        AS product_name,
-        p.sale_price,
-        COALESCE(root.name, cat.name, p.name) AS root_name
-      FROM products p
-      LEFT JOIN categories cat  ON cat.id  = p.category_id
-      LEFT JOIN categories root ON root.id = cat.parent_id
-      WHERE p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
-        AND LOWER(p.name) NOT LIKE '%dtf%'
-    ),
-    root_counts AS (
-      SELECT root_name, COUNT(*) AS cnt FROM product_root GROUP BY root_name
-    )
-    SELECT DISTINCT
-      CASE WHEN rc.cnt > 1 THEN pr.root_name ELSE pr.product_name END AS name,
-      (rc.cnt > 1)                                                      AS "isCategory",
-      CASE WHEN rc.cnt = 1 THEN pr.sale_price ELSE NULL END             AS sale_price
-    FROM product_root pr
-    JOIN root_counts rc ON rc.root_name = pr.root_name
-    ORDER BY name
-  `)
-  return rows
-}
-
-
-async function getProductVariants(keyword: string): Promise<Array<{ color: string; size: string; productName: string; salePrice: number }>> {
-  const { rows } = await pool.query(`
-    SELECT DISTINCT pv.color, pv.size, p.name AS "productName",
-           COALESCE(pv.sale_price, p.sale_price, 0)::float AS "salePrice"
-    FROM product_variants pv
-    JOIN products p ON p.id = pv.product_id
-    WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
-      AND LOWER(p.name) LIKE $1
-    ORDER BY pv.color
-  `, [`%${keyword.toLowerCase()}%`])
-  return rows
-}
-
-async function getAllProductVariants(): Promise<Array<{ color: string; size: string; productName: string; salePrice: number }>> {
-  const { rows } = await pool.query(`
-    SELECT DISTINCT pv.color, pv.size, p.name AS "productName",
-           COALESCE(pv.sale_price, p.sale_price, 0)::float AS "salePrice"
-    FROM product_variants pv
-    JOIN products p ON p.id = pv.product_id
-    WHERE pv.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
-      AND LOWER(p.name) NOT LIKE '%dtf%'
-    ORDER BY p.name, pv.color
-  `)
-  return rows
-}
-
-async function resolveProductKeyword(text: string): Promise<string> {
-  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
-  const lower = norm(text)
-
-  const { rows } = await pool.query(`
-    SELECT p.name, COALESCE(root.name, cat.name) AS root_category, COUNT(*) OVER (
-      PARTITION BY COALESCE(root.name, cat.name)
-    ) AS siblings
-    FROM products p
-    LEFT JOIN categories cat  ON cat.id  = p.category_id
-    LEFT JOIN categories root ON root.id = cat.parent_id
-    WHERE p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
-      AND LOWER(p.name) NOT LIKE '%dtf%'
-    ORDER BY LENGTH(p.name) DESC
-  `)
-
-  // Pass 1: nome completo do produto está no texto
-  for (const row of rows) {
-    if (lower.includes(norm(row.name as string))) return (row.name as string).toLowerCase()
-  }
-
-  // Pass 1b: todas as palavras do produto aparecem no texto (trata singular/plural)
-  // Ex: "camiseta adulto" → bate em "Camisetas Adulto"
-  for (const row of rows) {
-    const pWords = norm(row.name as string).split(/\s+/).filter(Boolean)
-    if (pWords.length > 1 && pWords.every(pw => {
-      const sing = pw.endsWith("s") ? pw.slice(0, -1) : pw
-      return lower.includes(pw) || (sing !== pw && lower.includes(sing))
-    })) return (row.name as string).toLowerCase()
-  }
-
-  // Pass 2: primeira palavra do produto no texto — só se raiz tem 1 produto
-  for (const row of rows) {
-    if (Number(row.siblings) > 1) continue  // deixa pass 4 tratar raízes com múltiplos filhos
-    const firstWord = norm(row.name as string).split(/\s+/)[0]
-    const singular  = firstWord.endsWith("s") ? firstWord.slice(0, -1) : firstWord
-    if (lower.includes(firstWord) || (singular !== firstWord && lower.includes(singular))) {
-      return (row.name as string).toLowerCase()
-    }
-  }
-
-  // Pass 3: texto bate com nome de categoria raiz que tem múltiplos produtos → @CAT:
-  const roots = new Map<string, number>()
-  for (const row of rows) {
-    const rn = row.root_category as string | null
-    if (rn) roots.set(rn, (roots.get(rn) ?? 0) + 1)
-  }
-  for (const [rootName, cnt] of roots.entries()) {
-    if (cnt <= 1) continue
-    const rn = norm(rootName)
-    const rFirst = rn.split(/\s+/)[0]
-    const rSing  = rFirst.endsWith("s") ? rFirst.slice(0, -1) : rFirst
-    if (lower.includes(rn) || lower.includes(rFirst) || (rSing !== rFirst && lower.includes(rSing))) {
-      return `@CAT:${rootName}`
-    }
-  }
-
-  return ""
-}
-
-
 async function getMostRecentOrder(contactId: number) {
   const res = await pool.query(`
     SELECT id, number, status, confirmation_requested_at AS "confirmationRequestedAt"
@@ -1389,61 +1221,6 @@ async function getMostRecentOrder(contactId: number) {
     LIMIT 1
   `, [contactId])
   return res.rows[0] ?? null
-}
-
-// ─── service availability ─────────────────────────────────────────────────────
-
-type ServiceStatus = {
-  available: boolean
-  reason: "desativado" | "fechado_temp" | "fora_horario" | null
-  retornoEm?: string
-}
-
-async function hasProdutoDisponivel(): Promise<boolean> {
-  const { rows } = await pool.query(`
-    SELECT 1 FROM products
-    WHERE status = 'active' AND chatbot_enabled = true AND chatbot_disponivel = true
-      AND LOWER(name) NOT LIKE '%dtf%'
-    LIMIT 1
-  `)
-  return rows.length > 0
-}
-
-function getServiceStatus(service: "produto" | "dtf", s: Record<string, string>): ServiceStatus {
-  const p = service
-
-  if (s[`${p}_ativo`] === "false") return { available: false, reason: "desativado" }
-
-  const fechadoAte = s[`${p}_fechado_ate`]
-  if (fechadoAte) {
-    const d = new Date(fechadoAte)
-    if (d > new Date()) {
-      const retorno = d.toLocaleString("pt-BR", {
-        day: "2-digit", month: "2-digit",
-        hour: "2-digit", minute: "2-digit",
-        timeZone: "America/Sao_Paulo",
-      })
-      return { available: false, reason: "fechado_temp", retornoEm: retorno }
-    }
-  }
-
-  const dias   = s[`${p}_horario_dias`]
-  const inicio = s[`${p}_horario_inicio`]
-  const fim    = s[`${p}_horario_fim`]
-
-  if (dias && inicio && fim) {
-    const nowBR      = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }))
-    const currentDay = nowBR.getDay()
-    const hh         = String(nowBR.getHours()).padStart(2, "0")
-    const mm         = String(nowBR.getMinutes()).padStart(2, "0")
-    const currentTime = `${hh}:${mm}`
-    const allowedDays = dias.split(",").map(Number)
-    if (!allowedDays.includes(currentDay) || currentTime < inicio || currentTime > fim) {
-      return { available: false, reason: "fora_horario" }
-    }
-  }
-
-  return { available: true, reason: null }
 }
 
 const SITE_URL          = "https://smconfeccoes.com.br"
@@ -1472,214 +1249,6 @@ function formatBusinessHours(s: Record<string, string>): string {
     : nums.map(n => DIA_LABEL[n]).join(", ")
   return `${diasTxt}, ${inicio}–${fim}`
 }
-
-function buildUnavailableMsg(
-  service: "produto" | "dtf",
-  status: ServiceStatus,
-  otherStatus: ServiceStatus,
-  s: Record<string, string>
-): string {
-  const isProd = service === "produto"
-  const DIAS_LABEL = ["dom", "seg", "ter", "qua", "qui", "sex", "sab"]
-
-  let base = ""
-  if (status.reason === "fechado_temp") {
-    base = isProd
-      ? `No momento estamos sem estoque de produto.${status.retornoEm ? ` A previsão de retorno é dia ${status.retornoEm}.` : ""}`
-      : `No momento o serviço de DTF está pausado.${status.retornoEm ? ` A previsão de retorno é dia ${status.retornoEm}.` : ""}`
-  } else if (status.reason === "fora_horario") {
-    const diasStr   = (s[`${service}_horario_dias`] ?? "").split(",").map(n => DIAS_LABEL[Number(n)] ?? "").filter(Boolean).join(", ")
-    const inicio    = s[`${service}_horario_inicio`] ?? ""
-    const fim       = s[`${service}_horario_fim`] ?? ""
-    const servLabel = isProd ? "pedidos de produto" : "impressão DTF"
-    base = `Nosso atendimento de ${servLabel} funciona ${diasStr} das ${inicio} às ${fim}. No momento estamos fora do horário.`
-  } else if (isProd) {
-    // desativado (produto_ativo=false) é o gatilho oficial da virada pro site —
-    // ver plano "Portal do Cliente SM", seção Chatbot: papel novo. Só produto,
-    // DTF continua igual (ramo "else" original, abaixo).
-    base = `Nossos pedidos de produto agora são feitos direto pelo site, mais rápido pra você 🧵\n👉 ${SITE_CATALOGO_URL}`
-  } else {
-    base = "No momento o serviço de DTF está pausado."
-  }
-
-  if (otherStatus.available) {
-    base += isProd
-      ? "\n\nMas a impressão DTF ainda está disponível. Você tem interesse?"
-      : "\n\nMas ainda temos produtos disponíveis. Quer fazer um pedido?"
-  }
-
-  return base
-}
-
-// ─── catálogo ────────────────────────────────────────────────────────────────
-
-async function sendCatalog(jid: string, contactId: number, bypassRateLimit = false) {
-  await tagContact(contactId, "interessado_produto")
-
-  if (!bypassRateLimit) {
-    await pool.query(`ALTER TABLE wa_contacts ADD COLUMN IF NOT EXISTS last_catalog_sent_at TIMESTAMPTZ`).catch(() => {})
-    const { rows: rateRows } = await pool.query(
-      `SELECT last_catalog_sent_at FROM wa_contacts WHERE id = $1`, [contactId]
-    )
-    const lastSent: Date | null = rateRows[0]?.last_catalog_sent_at ? new Date(rateRows[0].last_catalog_sent_at) : null
-    if (lastSent && Date.now() - lastSent.getTime() < 24 * 60 * 60 * 1000) {
-      await replyAndSave(contactId, jid, "Já enviamos nosso catálogo hoje! Alguma dúvida sobre um produto específico?")
-      return
-    }
-  }
-
-  const catalog = await getCatalog()
-
-  if (catalog.length === 0) {
-    await replyAndSave(contactId, jid, "No momento não temos produtos disponíveis para pedido.")
-    return
-  }
-
-  const emojiMap: Record<string, string> = {
-    moletom: "🧥", camiseta: "👕", bermuda: "🩳", calca: "👖", calça: "👖",
-    conjunto: "👗", blusa: "🧣", short: "🩳",
-  }
-
-  const lines = catalog.map(p => {
-    const nameLower = p.name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
-    const emoji = Object.entries(emojiMap).find(([k]) => nameLower.includes(k))?.[1] ?? "📦"
-    const price = p.sale_price && p.sale_price > 0
-      ? ` · R$ ${Number(p.sale_price).toFixed(2).replace(".", ",")}`
-      : ""
-    return `${emoji} ${p.name}${price}`
-  })
-
-  const { rows: dtfRows } = await pool.query(
-    `SELECT sale_price FROM products WHERE LOWER(name) LIKE 'dtf%' AND status = 'active' AND chatbot_enabled = true LIMIT 1`
-  )
-  const dtfPrice = dtfRows[0]?.sale_price
-  if (dtfPrice > 0) {
-    lines.push(`🖨️ Impressão DTF · R$ ${Number(dtfPrice).toFixed(2).replace(".", ",")}/metro`)
-  }
-
-  await replyAndSave(contactId, jid, `Quer ver as cores de qual produto? 👇\n\n${lines.join("\n")}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
-  pool.query(
-    `UPDATE wa_contacts SET last_catalog_sent_at = NOW(), updated_at = NOW() WHERE id = $1`,
-    [contactId]
-  ).catch(() => {})
-}
-
-// ─── categoria com múltiplos produtos — mostra tudo de uma vez, sem drill-down ─
-
-async function sendCategoryVariants(jid: string, contactId: number, rootCategoryName: string) {
-  const { rows } = await pool.query(`
-    SELECT DISTINCT p.name
-    FROM products p
-    JOIN categories cat  ON cat.id  = p.category_id
-    JOIN categories root ON root.id = cat.parent_id
-    WHERE root.name ILIKE $1
-      AND p.status = 'active' AND p.chatbot_enabled = true AND p.chatbot_disponivel = true
-    ORDER BY p.name
-  `, [rootCategoryName])
-
-  if (!rows.length) { await sendCatalog(jid, contactId, true); return }
-
-  const blocks: string[] = []
-  for (const row of rows) {
-    const variants = await getProductVariants(row.name as string)
-    if (variants.length) blocks.push(buildVariacaoBlock(variants[0].productName, variants))
-  }
-  if (!blocks.length) { await sendCatalog(jid, contactId, true); return }
-
-  await replyAndSave(contactId, jid,
-    `${blocks.join("\n\n")}\n\nQuer fazer um pedido? Me manda assim:\n_Ex: 10 preto P_`)
-}
-
-// ─── variação ────────────────────────────────────────────────────────────────
-
-function buildVariacaoBlock(productName: string, variants: Array<{ color: string; size: string; salePrice?: number }>): string {
-  const colors = [...new Set(variants.map(v => v.color).filter(Boolean))]
-  const sizes  = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
-  const prices = variants.map(v => v.salePrice ?? 0).filter(p => p > 0)
-  const minP   = prices.length ? Math.min(...prices) : 0
-  const maxP   = prices.length ? Math.max(...prices) : 0
-  const priceStr = minP > 0
-    ? (minP === maxP
-        ? `R$ ${minP.toFixed(2).replace(".", ",")}`
-        : `R$ ${minP.toFixed(2).replace(".", ",")} – R$ ${maxP.toFixed(2).replace(".", ",")}`)
-    : null
-  let block = `*${productName}*\n`
-  if (priceStr)      block += `💰 ${priceStr}\n`
-  if (colors.length) block += `🎨 Cores: ${colors.join(", ")}\n`
-  if (sizes.length)  block += `📏 Tamanhos: ${sizes.join(", ")}`
-  return block
-}
-
-async function handleVariacao(jid: string, contactId: number, text: string) {
-  await tagContact(contactId, "interessado_produto")
-
-  const norm   = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
-  const lower  = norm(text)
-  const isTodos = ["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower.trim())
-
-  // "todos" → mostra todos os produtos
-  if (isTodos) {
-    const allVariants = await getAllProductVariants()
-    if (!allVariants.length) {
-      await replyAndSave(contactId, jid, "No momento não temos produtos disponíveis.")
-      return
-    }
-    const byProduct: Record<string, Array<{ color: string; size: string }>> = {}
-    for (const v of allVariants) {
-      if (!byProduct[v.productName]) byProduct[v.productName] = []
-      byProduct[v.productName].push({ color: v.color, size: v.size })
-    }
-    const blocks = Object.entries(byProduct).map(([name, vars]) => buildVariacaoBlock(name, vars))
-    const productNames = Object.keys(byProduct)
-    const exName = productNames[0]?.toLowerCase() ?? "produto"
-    const exName2 = productNames[1]?.toLowerCase() ?? null
-    const exLine = exName2
-      ? `_${exName.split(" ")[0]} 10 preto P 20 cinza M\n${exName2.split(" ")[0]} 5 preto G_`
-      : `_${exName.split(" ")[0]} 10 preto P 20 cinza M_`
-    await replyAndSave(contactId, jid, `${blocks.join("\n\n")}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
-    return
-  }
-
-  const keyword = await resolveProductKeyword(text)
-
-  if (keyword.startsWith("@CAT:")) {
-    await sendCategoryVariants(jid, contactId, keyword.slice(5))
-    return
-  }
-
-  if (!keyword) {
-    const catalog = await getCatalog()
-    if (catalog.length === 0) {
-      await replyAndSave(contactId, jid, "No momento não temos produtos disponíveis.")
-      return
-    }
-    const emojiMap: Record<string, string> = {
-      moletom: "🧥", camiseta: "👕", bermuda: "🩳", calca: "👖", calça: "👖", conjunto: "👗", blusa: "🧣", short: "🩳",
-    }
-    const nomes = catalog.map(p => {
-      const nl = norm(p.name); const emoji = Object.entries(emojiMap).find(([k]) => nl.includes(k))?.[1] ?? "📦"
-      return `${emoji} ${p.name}`
-    }).join("\n")
-    await replyAndSave(contactId, jid, `Quer ver as cores de qual produto? 👇\n\n${nomes}\n\nMe fala o nome (ou *todos* pra ver tudo)`)
-    return
-  }
-
-  const variants = await getProductVariants(keyword)
-
-  if (variants.length === 0) {
-    await sendCatalog(jid, contactId)
-    return
-  }
-
-  const block     = buildVariacaoBlock(variants[0].productName, variants)
-  const exColor   = variants.find(v => v.color)?.color ?? "Preto"
-  const exSizes   = sortSizes([...new Set(variants.map(v => v.size).filter(Boolean))])
-  const exSize    = exSizes[0] ?? "M"
-  const exLine    = `_${keyword.split(" ")[0]} 10 ${exColor} ${exSize} 20 ${exColor} ${exSizes[1] ?? exSize}_`
-
-  await replyAndSave(contactId, jid, `${block}\n\nQuer fazer um pedido? Me manda assim:\n${exLine}`)
-}
-
 
 // ─── media ───────────────────────────────────────────────────────────────────
 
@@ -1814,11 +1383,13 @@ async function handleMedia(
 
 // ─── text ────────────────────────────────────────────────────────────────────
 
-// Chatbot minimalista: só saúda, e interpreta se a mensagem é pedido, menção a
-// arquivo/DTF ou pergunta (preço/variação/catálogo). Sem estado de conversa
-// multi-turn — cada mensagem é interpretada do zero, olhando direto na tabela
-// orders pra saber se já existe um pedido em aberto (em vez de espelhar isso
-// num wa_contacts.state que podia desalinhar).
+// Chatbot minimalista: só saúda (Saudação única, replano 2026-09-21) — sem IA,
+// sem captura de pedido por texto. Pedido de produto é 100% site; quem chega
+// aqui pelo WhatsApp com pedido em aberto só recebe o status e fica sinalizado
+// pro operador tratar manualmente pelo Gerenciador (modo híbrido). Sem estado
+// de conversa multi-turn — cada mensagem é interpretada do zero, olhando
+// direto na tabela orders pra saber se já existe um pedido em aberto (em vez
+// de espelhar isso num wa_contacts.state que podia desalinhar).
 async function handleText(
   jid: string,
   contactId: number,
@@ -1826,11 +1397,6 @@ async function handleText(
   text: string,
   lifecycle: string,
   displayName: string,
-  chatbotProdutoEnabled = true,
-  chatbotDtfEnabled = false,
-  chatbotObs: string | null = null,
-  produtoStatus: ServiceStatus = { available: true, reason: null },
-  dtfStatus: ServiceStatus     = { available: true, reason: null },
   globalSettings: Record<string, string> = {}
 ) {
   const lower = text.toLowerCase().trim()
@@ -1875,7 +1441,11 @@ async function handleText(
     `, [contactId])
   }
 
-  // ── Já existe pedido em aberto? Avisa 1x por etapa e decide se continua ─────
+  // ── Já existe pedido em aberto? Avisa 1x por etapa e sinaliza pro operador ──
+  // Sem IA pra decidir se a mensagem nova "é pedido" ou não — qualquer coisa
+  // que o cliente mande com pedido em aberto só acende needs_attention.
+  // Quem monta item novo, pedido novo ou responde é o operador, manualmente,
+  // pelo Gerenciador (modo híbrido) — nunca mais criação automática aqui.
   const openOrder = await getMostRecentOrder(contactId)
 
   if (openOrder) {
@@ -1898,78 +1468,18 @@ async function handleText(
       if (!alreadySent.length) await replyAndSave(contactId, jid, ping)
     }
 
-    if (openOrder.status !== "triagem") {
-      // Confirmando/em separação/pronto — só continua se for claramente um pedido novo
-      const { intent } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
-      if (intent === "pedido" && chatbotProdutoEnabled && produtoStatus.available) {
-        await pool.query(
-          `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'novo_pedido', updated_at = NOW() WHERE id = $1`,
-          [contactId]
-        )
-        await createTriagemVirgem(jid, contactId, openOrder.id)
-      } else {
-        await pool.query(
-          `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
-          [contactId]
-        )
-      }
-      return
-    }
-    // status === "triagem" → não retorna, a mensagem também é interpretada abaixo
-    // (createTriagemVirgem acha essa mesma triagem sozinho e anexa a mensagem nela)
-  }
-
-  // ── Interpreta a mensagem: pedido, arquivo (menção) ou pergunta ─────────────
-  // "todos" sozinho é ambíguo demais pra IA classificar sem contexto de conversa —
-  // atalho direto pro catálogo completo (mesma lista de palavras que handleVariacao usa)
-  if (["todos", "tudo", "todos os produtos", "todos produtos", "ver tudo"].includes(lower)) {
-    await handleVariacao(jid, contactId, "todos")
-    return
-  }
-
-  const { intent } = await classifyAndParse(text, chatbotObs).catch(() => ({ intent: "outro" as const, items: [] }))
-
-  if (intent === "pedido") {
-    if (!chatbotProdutoEnabled || !produtoStatus.available) {
-      await replyAndSave(contactId, jid, buildUnavailableMsg("produto", produtoStatus, dtfStatus, globalSettings))
-      return
-    }
-    await createTriagemVirgem(jid, contactId)
-    return
-  }
-
-  if (intent === "dtf" || ["monta o arquivo", "monta arquivo", "vc monta", "voce monta", "você monta"].some(k => lower.includes(k))) {
-    if (!chatbotDtfEnabled || !dtfStatus.available) {
-      await replyAndSave(contactId, jid, buildUnavailableMsg("dtf", dtfStatus, produtoStatus, globalSettings))
-      return
-    }
-    await replyAndSave(contactId, jid, "Trabalhamos com DTF de 57cm de largura. Aqui a gente só faz a impressão — precisa do arquivo pronto pra rodar na máquina. Quando tiver, manda direto aqui! 🖨️")
-    return
-  }
-
-  if (intent === "preco") {
-    await sendCatalog(jid, contactId)
-    return
-  }
-
-  if (intent === "variacao") {
-    await handleVariacao(jid, contactId, text)
-    return
-  }
-
-  if (intent === "agradecimento") {
-    await replyAndSave(contactId, jid, `De nada${greetSuffix}! Qualquer coisa é só chamar. 😊`)
+    await pool.query(
+      `UPDATE wa_contacts SET needs_attention = true, attention_reason = 'mensagem_livre', updated_at = NOW() WHERE id = $1`,
+      [contactId]
+    )
     return
   }
 
   // Saudação — recepção varia conforme a situação real do contato (replano
   // "Saudação única", 2026-09-20). DTF e desvio por palavra-chave de
   // atendimento já rodaram antes de chegar aqui, nunca são interrompidos.
-  //
-  // Pedido de produto em aberto já foi avisado (PED + estágio) lá em cima,
-  // no bloco getMostRecentOrder — nunca duplica aqui, só sai.
-  if (openOrder) return
-
+  // Pedido de produto em aberto já retornou lá em cima (getMostRecentOrder) —
+  // daqui pra baixo, sempre sem pedido aberto.
   const outsideHours = await isOutsideBusinessHours().catch(() => false)
   const horarioTxt = formatBusinessHours(globalSettings)
   const dtfLine = "\n\nSe precisar mandar um DTF, é só enviar o arquivo aqui mesmo. 😊"
@@ -2095,81 +1605,6 @@ async function handleText(
       `Oi${greetSuffix}! Aqui é da SM Confecções 🧵\n\nPra começar a comprar com a gente, preenche o formulário de acesso, é rápido:\n👉 ${SITE_URL}\n\n${equipe} 😊`
     )
   }
-}
-
-// Pedido detectado por intenção (sem tentar advinhar produto/cor/tamanho/qty) —
-// cria (ou reaproveita) uma triagem sem itens. Operador monta manualmente pelo
-// Gerenciador de Pedidos, vendo a conversa aberta com o cliente.
-async function createTriagemVirgem(
-  jid: string,
-  contactId: number,
-  parentOrderId?: number
-) {
-  let orderId = 0
-  let orderNumber = ""
-  let isNewOrder = false
-
-  const cli = await pool.connect()
-  try {
-    await cli.query("BEGIN")
-    await cli.query("SELECT pg_advisory_xact_lock($1)", [contactId])
-
-    const { rows: openTriagem } = await cli.query(
-      `SELECT id, number FROM orders WHERE contact_id = $1 AND status = 'triagem'
-       AND created_at > NOW() - INTERVAL '2 hours' ORDER BY created_at DESC LIMIT 1`,
-      [contactId]
-    )
-
-    if (openTriagem[0]) {
-      // Mensagem de continuação — já existe triagem aberta pra esse contato,
-      // não precisa gravar nada: operador acompanha tudo pela conversa aberta.
-      orderId     = openTriagem[0].id as number
-      orderNumber = openTriagem[0].number as string
-    } else {
-      isNewOrder = true
-      const numRes = await cli.query("SELECT nextval('order_number_seq') AS n")
-      const number = `PED-${String(numRes.rows[0].n).padStart(4, "0")}`
-      const orderRes = await cli.query(`
-        INSERT INTO orders (number, contact_id, status, source, parent_order_id)
-        VALUES ($1, $2, 'triagem', 'whatsapp', $3)
-        RETURNING id, number
-      `, [number, contactId, parentOrderId ?? null])
-      orderId     = orderRes.rows[0].id as number
-      orderNumber = orderRes.rows[0].number as string
-      await cli.query(`
-        INSERT INTO order_events (order_id, status, actor, note)
-        VALUES ($1, 'triagem', 'chatbot', 'Pedido registrado via WhatsApp — montar manualmente')
-      `, [orderId])
-      await cli.query(`
-        UPDATE wa_contacts
-        SET lifecycle_state      = 'active',
-            lifecycle_updated_at = NOW(),
-            last_order_at        = NOW(),
-            ausente_seq          = 0
-        WHERE id = $1
-      `, [contactId])
-    }
-
-    await cli.query("COMMIT")
-  } catch (e) {
-    await cli.query("ROLLBACK").catch(() => {})
-    throw e
-  } finally {
-    cli.release()
-  }
-
-  await setState(contactId, "triagem", { orderId, orderNumber })
-
-  if (!isNewOrder) return
-
-  // Kanban 3 estágios: nada sai pro cliente na criação — só quando o operador
-  // clicar "Solicitar Confirmação" no dashboard, já com os itens montados.
-  pool.query(`SELECT value FROM app_settings WHERE key = 'operador_jid'`).then(({ rows }) => {
-    const opJid = rows[0]?.value
-    if (opJid && opJid !== jid) {
-      replyWA(opJid, `🛍️ *Novo pedido ${orderNumber}* — revisar mensagem do cliente e montar manualmente.`)
-    }
-  }).catch(() => {})
 }
 
 // ─── DTF media handler ───────────────────────────────────────────────────────
