@@ -38,6 +38,9 @@ async function assertEvolutionOpen(instance: string): Promise<void> {
 // na instância "sm-admin" em vez da principal).
 export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg, instanceOverride?: string) {
   const instance = instanceOverride || getCurrentInstance() || EVO_INSTANCE
+  // DIAGNÓSTICO TEMPORÁRIO (2026-09-22) — tirar depois de confirmar o roteamento
+  // de instância do grupo Administrativo. Ver [[project_smconfeccoes_admin_reply_wrong_instance_bug]].
+  console.log(`[sendWhatsApp][DIAG] jid=${jid} instance=${instance} viaOverride=${!!instanceOverride} viaContext=${!!getCurrentInstance()} EVO_INSTANCE=${EVO_INSTANCE}`)
   if (!EVO_URL || !EVO_KEY || !instance) {
     throw new Error("Evolution API não configurada (vars ausentes)")
   }
