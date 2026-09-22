@@ -1050,6 +1050,17 @@ export async function POST(req: Request) {
     const allMsgs = parseEvolutionMsgs(body?.data)
     if (allMsgs.length === 0) return NextResponse.json({ ok: true })
 
+    // DIAGNÓSTICO TEMPORÁRIO (2026-09-22) — captura isolada (chave própria, não
+    // sobrescrita pelo spam de chats.upsert/connection.update) do payload cru
+    // de uma mensagem de GRUPO, pra confirmar o valor real de instance/instanceId
+    // que a Evolution manda pro grupo Administrativo. Tirar depois.
+    if (allMsgs.some(m => ((m.key as Record<string, unknown> | undefined)?.remoteJid as string ?? "").endsWith("@g.us"))) {
+      pool.query(
+        "INSERT INTO app_settings (key, value) VALUES ('debug_last_group_webhook', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        [JSON.stringify(body).slice(0, 4000)]
+      ).catch(() => {})
+    }
+
     // Evolution pode agrupar várias mensagens numa única chamada (ex: cliente manda
     // vários arquivos quase juntos). TODA mensagem do lote passa pelo mesmo código —
     // antes só a primeira tinha tratamento completo, as demais caíam numa implementação
