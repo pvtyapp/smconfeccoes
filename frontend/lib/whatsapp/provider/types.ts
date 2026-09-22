@@ -60,12 +60,18 @@ export type CreateInstanceResult = {
   qrcodeBase64: string | null // já com prefixo data:image/png;base64,
 }
 
+export type GroupParticipant = {
+  id: string // @lid ou @s.whatsapp.net, como a Evolution identifica o participante
+  phoneNumber: string | null // sempre @s.whatsapp.net quando presente
+}
+
 export interface WhatsAppProvider {
   getConnectionState(instanceName?: string, timeoutMs?: number): Promise<ConnectionState>
   restartInstance(instanceName?: string): Promise<void>
   getQrCode(instanceName?: string): Promise<QrCodeResult>
   createInstance(instanceName: string, ownerNumber?: string): Promise<CreateInstanceResult>
   deleteInstance(instanceName: string): Promise<void>
+  getGroupParticipants(groupJid: string, instanceName?: string): Promise<GroupParticipant[]>
 
   sendText(number: string, text: string, opts?: SendTextOpts): Promise<SendResult>
   sendMedia(number: string, opts: SendMediaOpts): Promise<SendResult>

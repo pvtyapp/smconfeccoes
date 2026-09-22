@@ -1,5 +1,6 @@
 import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { getProvider } from "@/lib/whatsapp/provider"
 import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
 import { createBobinaForColor } from "@/lib/rawMaterials/createBobinaForColor"
@@ -95,7 +96,20 @@ function canUseCommand(user: AdminUser, key: string): boolean {
 // Número @lid nem sempre traz o remoteJidAlt na mensagem (só a 1ª costuma trazer) —
 // nesse caso cai pra buscar o phone_jid já resolvido antes em wa_contacts (mesmo
 // contato pode ter mandado mensagem como "cliente" antes de virar operador).
-export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promise<AdminUser | null> {
+//
+// groupContext (grupo administrativo): último fallback, só tentado se os dois
+// de cima falharem. O @lid usado DENTRO de um grupo é um id pseudônimo por
+// contexto — raramente já existe em wa_contacts (que é populado por conversa
+// 1:1, não por lista de participante de grupo). Uma sessão Evolution nova
+// (ex: sm-admin, criada em 2026-09-20) pode nunca ter resolvido esse @lid
+// ainda, mesmo pra alguém que já é operador cadastrado há muito tempo —
+// buscar direto na lista de participantes do grupo resolve isso de vez,
+// sem depender do cache de contato de nenhuma instância.
+export async function resolveAdminUser(
+  jid: string,
+  remoteJidAlt: string,
+  groupContext?: { groupJid: string; instance: string }
+): Promise<AdminUser | null> {
   let phoneJid = jid
   if (jid.endsWith("@lid")) {
     if (remoteJidAlt.endsWith("@s.whatsapp.net")) {
@@ -105,7 +119,14 @@ export async function resolveAdminUser(jid: string, remoteJidAlt: string): Promi
         `SELECT phone_jid FROM wa_contacts WHERE jid = $1 AND phone_jid IS NOT NULL LIMIT 1`,
         [jid]
       ).catch(() => ({ rows: [] as { phone_jid: string }[] }))
-      if (known[0]?.phone_jid) phoneJid = known[0].phone_jid
+      if (known[0]?.phone_jid) {
+        phoneJid = known[0].phone_jid
+      } else if (groupContext) {
+        const provider = await getProvider()
+        const participants = await provider.getGroupParticipants(groupContext.groupJid, groupContext.instance).catch(() => [])
+        const match = participants.find(p => p.id === jid)
+        if (match?.phoneNumber?.endsWith("@s.whatsapp.net")) phoneJid = match.phoneNumber
+      }
     }
   }
   const phone = phoneJid.replace("@s.whatsapp.net", "").replace(/\D/g, "")

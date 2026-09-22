@@ -1,6 +1,6 @@
 import type {
   WhatsAppProvider, ConnectionState, SendResult, SendMediaOpts, SendTextOpts,
-  ReadReceipt, DownloadedMedia, QrCodeResult, CreateInstanceResult,
+  ReadReceipt, DownloadedMedia, QrCodeResult, CreateInstanceResult, GroupParticipant,
 } from "./types"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
@@ -86,6 +86,25 @@ export const evolutionProvider: WhatsAppProvider = {
       return { ok: true, qrcodeBase64: raw ? (raw.startsWith("data:") ? raw : `data:image/png;base64,${raw}`) : null }
     } catch {
       return { ok: false, qrcodeBase64: null }
+    }
+  },
+
+  // Mapeia @lid -> telefone real de todo participante de um grupo. Fallback
+  // pra quando a mensagem de grupo não traz participantAlt (Baileys só resolve
+  // isso quando já tem o contato em cache — sessão nova, tipo sm-admin, pode
+  // não ter ainda mesmo pra gente já cadastrado como operador).
+  async getGroupParticipants(groupJid: string, instanceName): Promise<GroupParticipant[]> {
+    const instance = instanceName || EVO_INSTANCE
+    try {
+      const res = await fetch(`${EVO_URL}/group/participants/${instance}?groupJid=${encodeURIComponent(groupJid)}`, {
+        headers: { apikey: EVO_KEY },
+        signal: AbortSignal.timeout(8_000),
+      })
+      if (!res.ok) return []
+      const data = await res.json() as { participants?: { id: string; phoneNumber?: string }[] }
+      return (data.participants ?? []).map(p => ({ id: p.id, phoneNumber: p.phoneNumber ?? null }))
+    } catch {
+      return []
     }
   },
 

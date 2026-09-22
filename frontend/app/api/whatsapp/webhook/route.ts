@@ -302,12 +302,13 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
     const hasMedia = !!(msgObj?.imageMessage || msgObj?.videoMessage || msgObj?.audioMessage || msgObj?.documentMessage || msgObj?.stickerMessage)
     if (!content && !hasMedia) return
 
-    // participantAlt = real @s.whatsapp.net when participant is @lid
+    // participantAlt = real @s.whatsapp.net when participant is @lid. Mantém o
+    // @lid cru quando não tem participantAlt (em vez de descartar pra "") —
+    // resolveAdminUser sabe resolver @lid via lista de participantes do grupo
+    // como último fallback; jogar fora aqui antes disso nunca deixava chegar.
     const participantLid = key?.participant as string | undefined
     const participantAlt = key?.participantAlt as string | undefined
-    const senderJid = participantAlt ||
-      (participantLid && !participantLid.endsWith("@lid") ? participantLid : "") ||
-      ""
+    const senderJid = participantAlt || participantLid || ""
     const senderName: string = (msg.pushName as string) || senderJid
 
     // Nome real do grupo (subject) não vem nessa mensagem — só no evento
@@ -341,14 +342,14 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
     // administrativo normal abaixo (mesmo comportamento de qualquer outro
     // grupo administrativo).
     if (jid === FINANCEIRO_GROUP_JID) {
-      const consumed = await handleFinanceiroGroupMessage(content.trim(), senderJid, participantAlt ?? "").catch(e => {
+      const consumed = await handleFinanceiroGroupMessage(content.trim(), senderJid, participantAlt ?? "", { groupJid: jid, instance }).catch(e => {
         console.error("[webhook] handleFinanceiroGroupMessage falhou:", jid, e instanceof Error ? e.message : e)
         return false
       })
       if (consumed) return
     }
 
-    const adminUser = await resolveAdminUser(senderJid, participantAlt ?? "").catch(() => null)
+    const adminUser = await resolveAdminUser(senderJid, participantAlt ?? "", { groupJid: jid, instance }).catch(() => null)
     if (!adminUser) return
 
     const lower = content.trim().toLowerCase()

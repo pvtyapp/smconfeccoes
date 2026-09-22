@@ -67,7 +67,12 @@ export async function forceFechamentoIfPending(): Promise<void> {
 
 // Mensagem recebida no grupo Financeiro. Retorna true se foi consumida pelo
 // fluxo (o webhook não deve tratar como comando de menu normal nesse caso).
-export async function handleFinanceiroGroupMessage(content: string, senderJid: string, participantAlt: string): Promise<boolean> {
+export async function handleFinanceiroGroupMessage(
+  content: string,
+  senderJid: string,
+  participantAlt: string,
+  groupContext: { groupJid: string; instance: string }
+): Promise<boolean> {
   const { state, data } = await getFlowState()
   if (state === null) return false
 
@@ -76,7 +81,7 @@ export async function handleFinanceiroGroupMessage(content: string, senderJid: s
 
   // Só admin cadastrado interage com o fluxo — sem isso qualquer um no grupo
   // lançaria despesa fake ou responderia por outra pessoa.
-  const adminUser = await resolveAdminUser(senderJid, participantAlt).catch(() => null)
+  const adminUser = await resolveAdminUser(senderJid, participantAlt, groupContext).catch(() => null)
   if (!adminUser) return false
 
   const text = content.trim()
