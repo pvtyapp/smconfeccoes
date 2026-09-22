@@ -48,7 +48,15 @@ async function runFechamento(expense: FechamentoExpense): Promise<void> {
 export async function askDespesaQuestion(): Promise<void> {
   const { state, data } = await getFlowState()
   const today = todayBR()
-  if (state !== null && data.date === today) return
+  if (state !== null && data.date === today) {
+    // Fluxo de hoje ficou travado (nunca respondido, ou resposta perdida por
+    // algum motivo) — sem esse aviso o pulo era 100% silencioso e só se
+    // percebia às 20h vendo o fechamento sair sem despesa.
+    await sendFinanceiro(
+      `⚠️ Não perguntei de novo porque o fluxo de hoje ainda tá parado em "${state}" — alguém não respondeu ou a resposta não foi processada. Se ainda quiser lançar despesa, responde agora; senão o fechamento das 20h sai sem despesa.`
+    )
+    return
+  }
   await setFlowState("aguardando_sim_nao", { date: today })
   await sendFinanceiro("Teve despesa variável hoje?\n\n1 - Sim\n2 - Não")
 }
