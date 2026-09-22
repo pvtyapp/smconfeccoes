@@ -354,7 +354,14 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
 
     const lower = content.trim().toLowerCase()
     const midFlow = !!adminUser.waState && adminUser.waState !== "idle"
-    if (lower === "menu" || midFlow) {
+    // Responder só com o número (ex: "4") pra escolher um item do último menu
+    // mostrado também precisa disparar o bot — sem isso, depois de "menu"
+    // aparecer, a escolha numérica ficava muda (waState continua "idle" nesse
+    // momento, só o menuMap guarda que tem uma pergunta em aberto).
+    const menuMap = (adminUser.waStateData?.menuMap as string[] | undefined) ?? []
+    const n = parseInt(lower, 10)
+    const isMenuPick = !midFlow && menuMap.length > 0 && !isNaN(n) && n >= 1 && n <= menuMap.length
+    if (lower === "menu" || lower === "cancelar" || lower === "sair" || midFlow || isMenuPick) {
       await handleAdminMessage(jid, content.trim(), adminUser)
     }
   } catch (e) {
