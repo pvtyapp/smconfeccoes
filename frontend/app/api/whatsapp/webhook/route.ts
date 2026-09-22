@@ -1045,6 +1045,23 @@ export async function POST(req: Request) {
     const allMsgs = parseEvolutionMsgs(body?.data)
     if (allMsgs.length === 0) return NextResponse.json({ ok: true })
 
+    // DIAGNÓSTICO TEMPORÁRIO (2026-09-22) — INSERT (nunca sobrescreve, diferente
+    // da tentativa anterior) de todo webhook de mensagem dos grupos admin, pra
+    // ver se a Evolution manda 1 ou 2 chamadas (uma por instância que é membro
+    // do grupo) pra mesma mensagem. Tirar depois.
+    const ADMIN_GROUP_JIDS_DEBUG = new Set([
+      "120363411610426060@g.us", "120363430722628180@g.us", "120363429813396969@g.us",
+    ])
+    if (allMsgs.some(m => ADMIN_GROUP_JIDS_DEBUG.has((m.key as Record<string, unknown> | undefined)?.remoteJid as string ?? ""))) {
+      pool.query(`
+        CREATE TABLE IF NOT EXISTS wa_webhook_debug_log (
+          id SERIAL PRIMARY KEY, raw JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `).then(() =>
+        pool.query(`INSERT INTO wa_webhook_debug_log (raw) VALUES ($1)`, [JSON.stringify(body).slice(0, 4000)])
+      ).catch(() => {})
+    }
+
     // Evolution pode agrupar várias mensagens numa única chamada (ex: cliente manda
     // vários arquivos quase juntos). TODA mensagem do lote passa pelo mesmo código —
     // antes só a primeira tinha tratamento completo, as demais caíam numa implementação
