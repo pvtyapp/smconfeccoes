@@ -16,7 +16,14 @@ export type MatchedContact = {
   phone_jid: string | null
 }
 
-// Casa contra a base existente — nunca contra linha de operador (linked_user_id).
+// Casa contra a base existente — INCLUI linha de operador (linked_user_id):
+// um admin (Pedro, Mario, Mari, Samuel) que também compra como cliente no
+// próprio WhatsApp precisa logar/cadastrar no portal reconhecendo o histórico
+// de pedidos dele normalmente, sem ser tratado como cliente novo. A exclusão
+// de operador que existe em marketing/lifecycle/contatos (pra não confundir
+// staff com lead) é um filtro à parte, feito na própria query de cada um
+// desses lugares — não tem relação com login/cadastro do portal. Decidido
+// com o PIV em 2026-09-22, achado durante auditoria do bot administrativo.
 // Ver seção "Base existente" do plano: 677/707 contatos casam direto por aqui.
 // name já vem como COALESCE(nome_cadastro, name) — mesmo padrão usado no resto
 // do sistema (ex: emissão de nota fiscal), a correção manual do operador nunca
@@ -24,7 +31,7 @@ export type MatchedContact = {
 export async function findContactByPhone(phone: string): Promise<MatchedContact | null> {
   const { rows } = await pool.query(
     `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid FROM wa_contacts
-     WHERE linked_user_id IS NULL AND (phone = $1 OR phone_jid LIKE $1 || '@%')
+     WHERE phone = $1 OR phone_jid LIKE $1 || '@%'
      LIMIT 1`,
     [phone]
   )

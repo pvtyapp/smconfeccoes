@@ -20,6 +20,15 @@ const STATUS_COLOR: Record<string, string> = {
   cancelado:     "bg-red-50 text-red-600 border-red-200",
 }
 
+// Selo de origem — WhatsApp é o canal padrão/implícito (maioria dos pedidos),
+// por isso não ganha selo próprio; só os canais "especiais" (fácil confundir
+// um COB- manual com um pedido de verdade, por exemplo) aparecem marcados.
+const SOURCE_LABEL: Record<string, string> = {
+  site:   "🌐 Site",
+  manual: "📝 Cobrança manual",
+  pdv:    "🏬 Balcão",
+}
+
 // Mesmo hash usado no OrderModal — precisa bater exatamente, senão reimprimir
 // por aqui deixa o modal achando (por engano) que o pedido mudou depois.
 function itemsHash(list: Order["items"]) {
@@ -124,7 +133,14 @@ export default function OrderCard({ order, onClick, onSetPaidLabel, onPrint }: P
       {/* Header row */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div>
-          <p className="text-sm font-bold text-[#0F1E3C]">{order.number}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-bold text-[#0F1E3C]">{order.number}</p>
+            {SOURCE_LABEL[order.source] && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#0F1E3C]/5 text-[#0F1E3C]/50">
+                {SOURCE_LABEL[order.source]}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-1 mt-0.5 text-[#0F1E3C]/45 text-xs">
             <Phone size={10} />
             <span>{order.contactName}</span>
