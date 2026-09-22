@@ -335,7 +335,7 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
   // só de manhã continua contando no dia em que foi impresso de verdade.
   const { rows: ordRows } = await pool.query(`
     SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp')
+    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp','site')
       AND number NOT LIKE 'COB-%' AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
@@ -351,7 +351,7 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
            SUM(oi.qty)::int AS pecas, SUM(oi.qty * COALESCE(oi.unit_price, 0))::float AS receita
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
-    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp')
+    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp','site')
       AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
     GROUP BY oi.product_name
   `, [desde])
@@ -393,7 +393,7 @@ async function buildFinanceiroMsg(desde: Date, label: string): Promise<string> {
   // Mesmo critério do buildVendasMsg — só concluído, DTF pela data do pedido.
   const { rows } = await pool.query(`
     SELECT COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp')
+    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp','site')
       AND number NOT LIKE 'COB-%' AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
@@ -405,7 +405,7 @@ async function buildFinanceiroMsg(desde: Date, label: string): Promise<string> {
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
     LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name) AND p.status = 'active'
-    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp')
+    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp','site')
       AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
   `, [desde])
   const { rows: despesaRows } = await pool.query(`
