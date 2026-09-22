@@ -293,7 +293,6 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
 // de um fluxo de várias etapas). Fora isso, fica mudo — não atrapalha a
 // conversa entre os administradores.
 async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key: Record<string, unknown>, instance: string): Promise<void> {
-  console.error(`[handleGroupMessage][DIAG] entrou jid=${jid} instance=${instance}`)
   try {
     const msgObj = msg.message as Record<string, unknown> | undefined
     const content: string =
@@ -334,7 +333,6 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
       `SELECT value FROM app_settings WHERE key = 'admin_instance_name'`
     ).catch(() => ({ rows: [] as { value: string }[] }))
     const adminInstanceName = adminInstRows[0]?.value
-    console.error(`[handleGroupMessage][DIAG] adminInstanceName=${adminInstanceName} instanceRecebida=${instance} match=${instance === adminInstanceName}`)
     if (!adminInstanceName || instance !== adminInstanceName) return
 
     // Grupo Financeiro: canal de avisos automáticos com estado por GRUPO (não
@@ -351,15 +349,12 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
     }
 
     const adminUser = await resolveAdminUser(senderJid, participantAlt ?? "").catch(() => null)
-    console.error(`[handleGroupMessage][DIAG] senderJid=${senderJid} adminUser=${adminUser?.name ?? "null"} waState=${adminUser?.waState ?? "n/a"}`)
     if (!adminUser) return
 
     const lower = content.trim().toLowerCase()
     const midFlow = !!adminUser.waState && adminUser.waState !== "idle"
-    console.error(`[handleGroupMessage][DIAG] lower=${lower} midFlow=${midFlow} vaiChamarHandleAdminMessage=${lower === "menu" || midFlow}`)
     if (lower === "menu" || midFlow) {
       await handleAdminMessage(jid, content.trim(), adminUser)
-      console.error(`[handleGroupMessage][DIAG] handleAdminMessage retornou sem throw`)
     }
   } catch (e) {
     console.error("[webhook] handleGroupMessage falhou:", jid, e instanceof Error ? e.message : e)
@@ -1049,24 +1044,6 @@ export async function POST(req: Request) {
 
     const allMsgs = parseEvolutionMsgs(body?.data)
     if (allMsgs.length === 0) return NextResponse.json({ ok: true })
-
-    // DIAGNÓSTICO TEMPORÁRIO (2026-09-22) — captura isolada (chave própria, não
-    // sobrescrita pelo spam de chats.upsert/connection.update) do payload cru
-    // de uma mensagem dos grupos ADMINISTRATIVOS especificamente (grupo de
-    // cliente na instância principal dispara toda hora e sobrescreveria antes
-    // de eu conseguir olhar). Pra confirmar o valor real de instance/instanceId
-    // que a Evolution manda pro grupo Administrativo. Tirar depois.
-    const ADMIN_GROUP_JIDS_DEBUG = new Set([
-      "120363411610426060@g.us", // SM Administrativo
-      "120363430722628180@g.us", // SM Financeiro
-      "120363429813396969@g.us", // SM Marketplaces
-    ])
-    if (allMsgs.some(m => ADMIN_GROUP_JIDS_DEBUG.has((m.key as Record<string, unknown> | undefined)?.remoteJid as string ?? ""))) {
-      pool.query(
-        "INSERT INTO app_settings (key, value) VALUES ('debug_last_group_webhook', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-        [JSON.stringify(body).slice(0, 4000)]
-      ).catch(() => {})
-    }
 
     // Evolution pode agrupar várias mensagens numa única chamada (ex: cliente manda
     // vários arquivos quase juntos). TODA mensagem do lote passa pelo mesmo código —
