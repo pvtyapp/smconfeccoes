@@ -1,18 +1,11 @@
-import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
+import { getAdminInstanceName } from "@/lib/whatsapp/adminInstance"
 
 // Grupo "SM Financeiro" no WhatsApp (criado em 2026-09-22, roda na instância
 // dedicada sm-admin) — canal de AVISOS AUTOMÁTICOS, sem menu de comando. Não
 // confundir com "SM Administrativo" (bot completo de comandos, adminBot.ts),
 // que continua exatamente como está.
 export const FINANCEIRO_GROUP_JID = "120363430722628180@g.us"
-
-export async function getAdminInstanceName(): Promise<string | null> {
-  const { rows } = await pool.query(
-    `SELECT value FROM app_settings WHERE key = 'admin_instance_name'`
-  ).catch(() => ({ rows: [] as { value: string }[] }))
-  return rows[0]?.value ?? null
-}
 
 // Manda pro grupo Financeiro sempre pela instância admin dedicada (nunca a
 // principal, que não participa desse grupo) — ver instanceContext.ts pro

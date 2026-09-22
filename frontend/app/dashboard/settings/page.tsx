@@ -200,6 +200,22 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Avisos */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Avisos</h2>
+            <div className="flex items-start gap-3 bg-[#F4F6FB] rounded-xl px-4 py-3">
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-[#0F1E3C]/70">Grupo SM Marketplaces</p>
+                <p className="text-[11px] text-[#0F1E3C]/40 mt-0.5">
+                  Cola um texto pronto e manda pro grupo, pela instância administrativa.
+                </p>
+              </div>
+              <a href="/dashboard/settings/avisos" className="flex-shrink-0 text-[10px] font-bold text-[#4361EE] hover:underline mt-0.5">
+                Abrir →
+              </a>
+            </div>
+          </section>
+
           {/* DTF */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Impressão DTF</h2>
