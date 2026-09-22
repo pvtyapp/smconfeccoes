@@ -293,6 +293,7 @@ async function handleFromMeMessage(msg: Record<string, unknown>, jid: string, ke
 // de um fluxo de várias etapas). Fora isso, fica mudo — não atrapalha a
 // conversa entre os administradores.
 async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key: Record<string, unknown>, instance: string): Promise<void> {
+  console.error(`[handleGroupMessage][DIAG] entrou jid=${jid} instance=${instance}`)
   try {
     const msgObj = msg.message as Record<string, unknown> | undefined
     const content: string =
@@ -333,6 +334,7 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
       `SELECT value FROM app_settings WHERE key = 'admin_instance_name'`
     ).catch(() => ({ rows: [] as { value: string }[] }))
     const adminInstanceName = adminInstRows[0]?.value
+    console.error(`[handleGroupMessage][DIAG] adminInstanceName=${adminInstanceName} instanceRecebida=${instance} match=${instance === adminInstanceName}`)
     if (!adminInstanceName || instance !== adminInstanceName) return
 
     // Grupo Financeiro: canal de avisos automáticos com estado por GRUPO (não
@@ -349,12 +351,15 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
     }
 
     const adminUser = await resolveAdminUser(senderJid, participantAlt ?? "").catch(() => null)
+    console.error(`[handleGroupMessage][DIAG] senderJid=${senderJid} adminUser=${adminUser?.name ?? "null"} waState=${adminUser?.waState ?? "n/a"}`)
     if (!adminUser) return
 
     const lower = content.trim().toLowerCase()
     const midFlow = !!adminUser.waState && adminUser.waState !== "idle"
+    console.error(`[handleGroupMessage][DIAG] lower=${lower} midFlow=${midFlow} vaiChamarHandleAdminMessage=${lower === "menu" || midFlow}`)
     if (lower === "menu" || midFlow) {
       await handleAdminMessage(jid, content.trim(), adminUser)
+      console.error(`[handleGroupMessage][DIAG] handleAdminMessage retornou sem throw`)
     }
   } catch (e) {
     console.error("[webhook] handleGroupMessage falhou:", jid, e instanceof Error ? e.message : e)
