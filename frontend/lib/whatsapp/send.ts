@@ -1,4 +1,5 @@
 import { getProvider } from "@/lib/whatsapp/provider"
+import { getCurrentInstance } from "@/lib/whatsapp/instanceContext"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
 const EVO_KEY      = (process.env.EVOLUTION_API_KEY  ?? "").trim()
@@ -20,11 +21,11 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 // bem maior que o normal, e uma única checagem que pega esse piscar momentâneo
 // não significa que a conexão está de fato quebrada — sem isso a mensagem
 // morria ali sem nunca ser tentada de novo.
-async function assertEvolutionOpen(): Promise<void> {
+async function assertEvolutionOpen(instance: string): Promise<void> {
   const provider = await getProvider()
   let lastError = "unknown"
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const { state, ok, httpStatus } = await provider.getConnectionState(EVO_INSTANCE, 4_000)
+    const { state, ok, httpStatus } = await provider.getConnectionState(instance, 4_000)
     if (ok && state === "open") return
     lastError = ok ? `state=${state ?? "unknown"}` : `check falhou (${httpStatus ?? "network_error"})`
     if (attempt < 3) await sleep(800 * attempt)
@@ -32,12 +33,16 @@ async function assertEvolutionOpen(): Promise<void> {
   throw new Error(`WhatsApp desconectado (${lastError}) — tente novamente em instantes`)
 }
 
-export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg) {
-  if (!EVO_URL || !EVO_KEY || !EVO_INSTANCE) {
+// instanceOverride: uso fora do webhook (cron), que não tem instanceContext pra herdar
+// e precisa dizer explicitamente qual instância usar (ex: mandar pro grupo Financeiro
+// na instância "sm-admin" em vez da principal).
+export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg, instanceOverride?: string) {
+  const instance = instanceOverride || getCurrentInstance() || EVO_INSTANCE
+  if (!EVO_URL || !EVO_KEY || !instance) {
     throw new Error("Evolution API não configurada (vars ausentes)")
   }
 
-  await assertEvolutionOpen()
+  await assertEvolutionOpen(instance)
 
   // Contato @lid: manda o jid completo com sufixo — a Evolution espera o LID inteiro
   // pra contas migradas, tirar o sufixo vira um "número" inválido e o envio falha.
@@ -59,7 +64,7 @@ export async function sendWhatsApp(jid: string, text: string, quoted?: QuotedMsg
     try {
       const result = await provider.sendText(number, text, {
         quoted,
-        instanceName: EVO_INSTANCE,
+        instanceName: instance,
         timeoutMs: 9_000,
       })
       return result.raw

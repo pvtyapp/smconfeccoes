@@ -28,7 +28,7 @@ type AdminUser = {
   waStateData: Record<string, unknown>
 }
 
-const VARIABLE_COST_CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
+export const VARIABLE_COST_CATEGORIES = ["Linhas", "Lanche", "Frete", "Gasolina", "Embalagem", "Material", "Manutenção", "Outros"]
 const PAYABLE_CATEGORIES = ["Fornecedor", "Aluguel", "Imposto", "Salário", "Serviço", "Outros"]
 
 // Aceita "dd/mm" (assume ano atual, rola pro ano seguinte se a data já passou)

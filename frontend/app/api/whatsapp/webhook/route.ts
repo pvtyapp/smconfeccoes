@@ -5,6 +5,9 @@ import { downloadEvolutionMedia, classifyMediaCategory, type MediaCategory } fro
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { todayBR } from "@/lib/tz"
 import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
+import { withInstance } from "@/lib/whatsapp/instanceContext"
+import { FINANCEIRO_GROUP_JID } from "@/lib/whatsapp/financeiroGroup"
+import { handleFinanceiroGroupMessage } from "@/lib/whatsapp/financeiroFlow"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
 import { getProvider } from "@/lib/whatsapp/provider"
 import { isAutomationPaused } from "@/lib/whatsapp/automationGate"
@@ -331,6 +334,19 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
     ).catch(() => ({ rows: [] as { value: string }[] }))
     const adminInstanceName = adminInstRows[0]?.value
     if (!adminInstanceName || instance !== adminInstanceName) return
+
+    // Grupo Financeiro: canal de avisos automáticos com estado por GRUPO (não
+    // por pessoa) — pergunta de despesa variável do fim do dia + fechamento.
+    // Só intercepta quando o fluxo está ativo; se estiver ocioso, cai pro menu
+    // administrativo normal abaixo (mesmo comportamento de qualquer outro
+    // grupo administrativo).
+    if (jid === FINANCEIRO_GROUP_JID) {
+      const consumed = await handleFinanceiroGroupMessage(content.trim(), senderJid, participantAlt ?? "").catch(e => {
+        console.error("[webhook] handleFinanceiroGroupMessage falhou:", jid, e instanceof Error ? e.message : e)
+        return false
+      })
+      if (consumed) return
+    }
 
     const adminUser = await resolveAdminUser(senderJid, participantAlt ?? "").catch(() => null)
     if (!adminUser) return
@@ -1062,7 +1078,7 @@ export async function POST(req: Request) {
       }
 
       if (jid.endsWith("@g.us")) {
-        await handleGroupMessage(m, jid, key, (body?.instance as string) ?? "")
+        await withInstance(instanceName, () => handleGroupMessage(m, jid, key, instanceName))
         continue
       }
 
@@ -1098,7 +1114,7 @@ export async function POST(req: Request) {
               [operatorContactId, (key.id as string) ?? null, adminText.trim()]
             ).catch(() => {})
           }
-          await handleAdminMessage(jid, adminText.trim(), adminUser).catch(e => {
+          await withInstance(instanceName, () => handleAdminMessage(jid, adminText.trim(), adminUser)).catch(e => {
             console.error("[webhook] handleAdminMessage falhou:", jid, e instanceof Error ? e.message : e)
           })
           continue
