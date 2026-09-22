@@ -11,7 +11,6 @@ export default function AvisosPage() {
 
   async function send() {
     if (!text.trim()) return
-    if (!confirm("Enviar essa mensagem pro grupo SM Marketplaces agora?")) return
     setSending(true)
     setFeedback(null)
     try {
