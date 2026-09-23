@@ -4,7 +4,7 @@ import { pool } from "@/lib/db"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { todayBR, fmtDateOnlyBR, isWeekendBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
-import { notifySubscribers } from "@/lib/notifications/notifySubscribers"
+import { sendAdministrativo } from "@/lib/whatsapp/administrativoGroup"
 import { getProvider } from "@/lib/whatsapp/provider"
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -282,7 +282,7 @@ export async function GET(req: Request) {
   // era só 1x/dia, o que fazia qualquer horário marcado depois das 9h nunca
   // disparar e campanha agendada pra data futura nunca sair de "scheduled".
 
-  // ── 13. Contas a Pagar — lembrete no dia do vencimento ───────────────────────
+  // ── 13. Contas a Pagar — lembrete no dia do vencimento (grupo SM Administrativo) ─
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS payables (
@@ -310,7 +310,7 @@ export async function GET(req: Request) {
       const total = due.reduce((s, p) => s + Number(p.amount), 0)
       const linhas = due.map(p => `• ${p.description}${p.category ? ` (${p.category})` : ""}: R$ ${Number(p.amount).toFixed(2).replace(".", ",")}`)
       const msg = `📅 *Contas a Pagar — vencem hoje*\n\n${linhas.join("\n")}\n\nTotal: *R$ ${total.toFixed(2).replace(".", ",")}*`
-      await notifySubscribers("contas_pagar", msg)
+      await sendAdministrativo(msg)
       results.payablesDue = due.length
     }
   } catch { results.errors++ }
