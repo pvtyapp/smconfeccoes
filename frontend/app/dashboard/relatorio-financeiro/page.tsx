@@ -378,8 +378,8 @@ export default function RelatorioFinanceiroPage() {
                     {/* Marketplace — custo de reposição, não receita. Fora do
                         cálculo de %/total dos canais acima de propósito: não
                         tem receita real registrada aqui (vende fora, na
-                        Shopee/ML) — receita/lucro% simulado fica só no
-                        Financeiro Marketplace. */}
+                        Shopee/ML). Detalhe por loja/período fica no
+                        Relatório de baixas da aba Marketplace. */}
                     <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
                       <div className="flex items-center gap-1.5 mb-2">
                         <Store size={11} className="text-amber-700/70" />
@@ -396,9 +396,9 @@ export default function RelatorioFinanceiroPage() {
                           <AlertTriangle size={10} /> produto sem custo cadastrado
                         </p>
                       )}
-                      <Link href="/dashboard/relatorio-marketplace"
+                      <Link href="/dashboard/marketplace"
                         className="text-[10px] font-bold text-amber-700 hover:underline mt-2 inline-block">
-                        Ver Financeiro Marketplace →
+                        Ver baixas do marketplace →
                       </Link>
                     </div>
                   </div>

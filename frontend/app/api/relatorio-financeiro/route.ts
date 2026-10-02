@@ -139,10 +139,10 @@ export async function GET(req: Request) {
     `, [from, to])
 
     // Marketplace — custo de reposição (peças separadas × material_cost),
-    // mesma fórmula do Financeiro Marketplace. Só custo: NÃO entra em
-    // receitaBruta/custoInsumos/lucroBruto/resultadoOp — marketplace não tem
-    // receita real registrada aqui (vende fora, na Shopee/ML), e o Financeiro
-    // Marketplace já cobre a simulação de receita/lucro% separadamente. Isso
+    // Só custo: NÃO entra em receitaBruta/custoInsumos/lucroBruto/resultadoOp —
+    // marketplace não tem receita real registrada aqui (vende fora, na
+    // Shopee/ML). A aba Financeiro Marketplace (receita simulada por markup)
+    // foi removida em 2026-10-02: a receita digitada nunca foi usada. Isso
     // aqui é só visibilidade de quanto saiu do estoque pra esse canal.
     const { rows: mktRows } = await pool.query(`
       SELECT

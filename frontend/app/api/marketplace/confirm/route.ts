@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     // `origin` guarda o nome da loja como estava no momento da confirmação —
     // se a loja for renomeada depois, separações antigas mantêm o nome de
     // então (histórico não reescreve). `loja_id` é o vínculo de verdade,
-    // usado pro detalhamento por loja no Financeiro Marketplace.
+    // usado pro filtro por loja do Relatório de baixas.
     const lojaNomeSnapshot = lojaRows[0].nome as string
 
     await client.query("BEGIN")
