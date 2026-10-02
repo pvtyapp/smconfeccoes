@@ -1,60 +1,53 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { Printer, Trash2, Loader2, CheckCircle2, History, Ban, Pencil, Check, X, ShoppingCart, Layers } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Printer, Trash2, Loader2, CheckCircle2, History, Ban, Pencil, Check, X, ShoppingCart, Layers, Search, Minus, Plus, Store } from "lucide-react"
 import { fmtDateBR } from "@/lib/tz"
-import { colorSwatch } from "@/lib/colorSwatch"
-import { sizeCompare } from "@/lib/sizeOrder"
 import { printWhenReady } from "@/components/print/print-utils"
 import MarketplacePrintSheet from "./MarketplacePrintSheet"
+import { ProdutoCard, KitCard, type CatalogVariant, type KitTemplate } from "./Cards"
+import RelatorioBaixas, { lojaLabel, type Loja } from "./RelatorioBaixas"
+import { flyToCart } from "./flyToCart"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type CatalogVariant = {
-  variantId: string; productId: string; productName: string
-  color: string; size: string; sku: string; availableStock: number
-}
-
-// Modelo de kit — só guarda quais produtos compõem (ex: Camisetas Infantil +
-// Bermuda Infantil Moletinho). Cor/tamanho são resolvidos contra o catálogo
-// de verdade na hora de montar o carrinho, nunca fixados aqui.
-type KitTemplateItem = { templateId: number; productId: string; productName: string }
-type KitTemplate = { id: number; nome: string; createdAt: string; items: KitTemplateItem[] }
 
 // "Carrinho" — cada linha já é uma escolha real de produto/cor/tamanho,
 // vira baixa de estoque de verdade ao confirmar.
 type ManualRow = {
   id: string; variantId: string; productName: string; color: string; size: string
   sku: string; stock: number; qty: number
-  kitGroupId?: string // peças que vieram do mesmo clique em "Adicionar kit" — editam quantidade juntas
+  kitGroupId?: string // peças que vieram do mesmo kit — editam quantidade juntas
 }
 
-type HistoryRow = {
-  id: number; number: string; origin: string; totalItems: number; totalPieces: number
-  createdAt: string; canceledAt: string | null
-}
 type SeparationDetailItem = { id: number; variantId: string; productName: string; color: string; size: string; sku: string; qty: number }
-type SeparationDetail = HistoryRow & { items: SeparationDetailItem[] }
-
-// Legado: separações de antes da tela de Lojas gravaram um desses 3 valores
-// fixos em `origin` — mantém o rótulo bonito pra elas. Separações novas
-// gravam o nome da loja escolhida (snapshot, ver /api/marketplace/confirm).
-const ORIGIN_LABEL: Record<string, string> = { shopee: "Shopee", mercado_livre: "Mercado Livre", manual: "Manual" }
-
-type Loja = { id: number; nome: string; createdAt: string }
+type SeparationDetail = {
+  id: number; number: string; origin: string; totalItems: number; totalPieces: number
+  createdAt: string; canceledAt: string | null; items: SeparationDetailItem[]
+}
 
 let rowSeq = 0
 const newRowId = () => `row-${Date.now()}-${rowSeq++}`
+const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
 
 const inputCls = "w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20"
+
+function CartStepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <div className="flex items-center gap-0.5 bg-white border border-[#0F1E3C]/12 rounded-lg px-1 py-0.5 flex-shrink-0">
+      <button type="button" aria-label="Menos" onClick={() => onChange(Math.max(1, value - 1))} className="p-0.5 text-[#0F1E3C]/40 hover:text-[#0F1E3C]"><Minus size={12} /></button>
+      <input type="number" min={1} value={value} onChange={e => onChange(Math.max(1, parseInt(e.target.value) || 1))}
+        className="w-8 bg-transparent text-center text-xs font-black text-[#0F1E3C] tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
+      <button type="button" aria-label="Mais" onClick={() => onChange(value + 1)} className="p-0.5 text-[#0F1E3C]/40 hover:text-[#0F1E3C]"><Plus size={12} /></button>
+    </div>
+  )
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MarketplacePage() {
   const [tab, setTab] = useState<"lancar" | "relatorio">("lancar")
 
-  // ── Lojas — dropdown editável (renomear) + "+ Adicionar loja" inline.
-  // Substituiu o campo de origem em texto livre. ──────────────────────────
+  // ── Lojas — dropdown editável (renomear) + "+ Adicionar loja" inline ──
   const [lojas, setLojas] = useState<Loja[]>([])
   const [lojaId, setLojaId] = useState<number | null>(null)
   const [addingLoja, setAddingLoja] = useState(false)
@@ -62,6 +55,7 @@ export default function MarketplacePage() {
   const [renamingLoja, setRenamingLoja] = useState(false)
   const [renameLojaNome, setRenameLojaNome] = useState("")
   const [savingLoja, setSavingLoja] = useState(false)
+  const [lojaError, setLojaError] = useState("")
 
   const loadLojas = useCallback(async () => {
     const res = await fetch("/api/marketplace/lojas")
@@ -75,40 +69,40 @@ export default function MarketplacePage() {
 
   async function createLoja() {
     if (!newLojaNome.trim()) return
-    setSavingLoja(true)
+    setSavingLoja(true); setLojaError("")
     try {
       const res = await fetch("/api/marketplace/lojas", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nome: newLojaNome.trim() }),
       })
       const data = await res.json()
-      if (res.ok) {
-        setNewLojaNome(""); setAddingLoja(false)
-        setLojas(prev => [...prev, data].sort((a, b) => a.nome.localeCompare(b.nome)))
-        setLojaId(data.id)
-      }
+      if (!res.ok) { setLojaError(data.error ?? "Não deu pra criar a loja"); return }
+      setNewLojaNome(""); setAddingLoja(false)
+      setLojas(prev => [...prev, data].sort((a, b) => a.nome.localeCompare(b.nome)))
+      setLojaId(data.id)
     } finally { setSavingLoja(false) }
   }
   function startRenameLoja() {
     const l = lojas.find(l => l.id === lojaId)
     if (!l) return
-    setRenameLojaNome(l.nome); setRenamingLoja(true)
+    setRenameLojaNome(l.nome); setRenamingLoja(true); setLojaError("")
   }
   async function saveRenameLoja() {
     if (!lojaId || !renameLojaNome.trim()) return
-    setSavingLoja(true)
+    setSavingLoja(true); setLojaError("")
     try {
       const res = await fetch(`/api/marketplace/lojas/${lojaId}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nome: renameLojaNome.trim() }),
       })
-      if (res.ok) { setRenamingLoja(false); await loadLojas() }
+      if (!res.ok) { setLojaError((await res.json().catch(() => ({}))).error ?? "Não deu pra renomear"); return }
+      setRenamingLoja(false); await loadLojas()
     } finally { setSavingLoja(false) }
   }
 
+  // ── Catálogo ──
   const [catalog, setCatalog] = useState<CatalogVariant[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
-
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true)
     try {
@@ -117,7 +111,20 @@ export default function MarketplacePage() {
     } finally { setCatalogLoading(false) }
   }, [])
   useEffect(() => { loadCatalog() }, [loadCatalog])
-  const productNames = useMemo(() => [...new Set(catalog.map(c => c.productName))].sort(), [catalog])
+
+  const [busca, setBusca] = useState("")
+  const produtos = useMemo(() => {
+    const byProd = new Map<string, CatalogVariant[]>()
+    for (const v of catalog) {
+      if (!byProd.has(v.productId)) byProd.set(v.productId, [])
+      byProd.get(v.productId)!.push(v)
+    }
+    const termos = semAcento(busca).split(/\s+/).filter(Boolean)
+    return [...byProd.entries()]
+      .map(([productId, variants]) => ({ productId, productName: variants[0].productName, variants }))
+      .filter(p => !termos.length || termos.every(t => semAcento(`${p.productName} ${p.variants.map(v => `${v.color} ${v.size}`).join(" ")}`).includes(t)))
+      .sort((a, b) => a.productName.localeCompare(b.productName))
+  }, [catalog, busca])
   const productList = useMemo(() => {
     const map = new Map<string, string>()
     for (const c of catalog) map.set(c.productId, c.productName)
@@ -139,7 +146,6 @@ export default function MarketplacePage() {
     } finally { setKitTemplateLoading(false) }
   }
   useEffect(() => { loadKitTemplates() }, [])
-  function openKitTemplateModal() { setKitTemplateOpen(true); loadKitTemplates() }
   function toggleNewKitProduct(productId: string) {
     setNewKitProductIds(prev => {
       const next = new Set(prev)
@@ -159,113 +165,54 @@ export default function MarketplacePage() {
     setKitTemplates(prev => prev.filter(t => t.id !== id))
     await fetch(`/api/marketplace/kit-templates/${id}`, { method: "DELETE" })
   }
+  const kitsVisiveis = useMemo(() => {
+    const termos = semAcento(busca).split(/\s+/).filter(Boolean)
+    return kitTemplates.filter(t => !termos.length || termos.every(x => semAcento(`kit ${t.nome} ${t.items.map(i => i.productName).join(" ")}`).includes(x)))
+  }, [kitTemplates, busca])
 
-  // ── Carrinho — cada linha é uma baixa real, confirmar desconta estoque.
-  // Seleção guiada em 3 passos (Produto → Cor → Tamanho), igual o PDV. ──────
+  // ── Carrinho ──
   const [manualRows, setManualRows] = useState<ManualRow[]>([])
-  const [cartProductName, setCartProductName] = useState("")
-  const [cartSelectedColor, setCartSelectedColor] = useState("")
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState("")
-  const [result, setResult] = useState<{ number: string; totalItems: number; totalPieces: number; items: { productName: string; color: string; size: string; sku: string; qty: number }[] } | null>(null)
+  const [result, setResult] = useState<{ number: string; totalItems: number; totalPieces: number; items: { productName: string; color: string; size: string; sku: string; qty: number }[]; lojaNome: string } | null>(null)
   const [showResultPrint, setShowResultPrint] = useState(false)
+  const cartIconRef = useRef<HTMLDivElement>(null)
+  const cartBadgeRef = useRef<HTMLSpanElement>(null)
 
-  const effCartProduct = productNames.includes(cartProductName) ? cartProductName : (productNames[0] ?? "")
-  const cartColorGroups = useMemo(() => {
-    const variants = catalog.filter(c => c.productName === effCartProduct)
-    const byColor = new Map<string, CatalogVariant[]>()
-    for (const v of variants) {
-      if (!byColor.has(v.color)) byColor.set(v.color, [])
-      byColor.get(v.color)!.push(v)
-    }
-    const groupsArr = [...byColor.entries()].sort(([a], [b]) => a.localeCompare(b))
-    groupsArr.forEach(([, vs]) => vs.sort((a, b) => sizeCompare(a.size, b.size)))
-    return groupsArr
-  }, [catalog, effCartProduct])
-  const effCartColor = cartColorGroups.some(([c]) => c === cartSelectedColor) ? cartSelectedColor : (cartColorGroups[0]?.[0] ?? "")
-  const cartSizeVariants = cartColorGroups.find(([c]) => c === effCartColor)?.[1] ?? []
-
-  // `kitGroupId` mantém peça avulsa (sem grupo) e peça de kit sempre em linhas
-  // separadas, mesmo que seja a mesma variante — clicar de novo no mesmo kit
-  // soma na linha do grupo certo, não mistura com uma peça solta igual.
-  function addToCart(variant: CatalogVariant, kitGroupId?: string) {
+  // Peça avulsa NUNCA toca num grupo de kit (regra fechada em 14/09): soma só
+  // numa linha avulsa da mesma variante. Kit soma no grupo do mesmo kit.
+  function addToCart(variant: CatalogVariant, qty: number, kitGroupId?: string) {
     setManualRows(prev => {
       const existing = prev.find(r => r.variantId === variant.variantId && r.kitGroupId === kitGroupId)
-      if (existing) return prev.map(r => r === existing ? { ...r, qty: r.qty + 1 } : r)
-      // Item novo entra no topo — o último lançado sempre aparece primeiro.
-      // Incrementar um que já existe não move ele de lugar (só soma).
+      if (existing) return prev.map(r => r === existing ? { ...r, qty: r.qty + qty } : r)
+      // Item novo entra no topo — o último lançado aparece primeiro.
       return [{
         id: newRowId(), variantId: variant.variantId, productName: variant.productName,
-        color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty: 1, kitGroupId,
+        color: variant.color, size: variant.size, sku: variant.sku, stock: variant.availableStock, qty, kitGroupId,
       }, ...prev]
     })
+    setConfirmError("")
   }
-  function cartQtyFor(variantId: string) {
-    return manualRows.find(r => r.variantId === variantId)?.qty ?? 0
+  function addProduto(v: CatalogVariant, qty: number, origem: DOMRect) {
+    if (result) setResult(null)
+    addToCart(v, qty)
+    flyToCart(qty, origem, cartIconRef.current, () => cartBadgeRef.current)
   }
-  function variantChipCls(v: CatalogVariant): string {
-    const base = "relative flex flex-col items-center px-4 py-2.5 rounded-xl border text-sm font-bold transition-all min-w-[56px]"
-    const inCart = cartQtyFor(v.variantId) > 0
-    if (v.availableStock < 0) return `${base} border-red-300 bg-red-50 text-red-500`
-    if (v.availableStock === 0) return `${base} border-orange-300 bg-orange-50 text-orange-500`
-    if (inCart) return `${base} border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]`
-    return `${base} border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:bg-[#4361EE]/6`
+  function addKit(pieces: CatalogVariant[], qty: number, groupId: string, origem: DOMRect) {
+    if (result) setResult(null)
+    for (const p of pieces) addToCart(p, qty, groupId)
+    flyToCart(qty * pieces.length, origem, cartIconRef.current, () => cartBadgeRef.current)
   }
-  // ── Sub-aba "Kit" do carrinho — escolhe modelo → cor de cada peça (cor só
-  // aparece pra peça que tem mais de 1 cor no catálogo; a Bermuda, por ex,
-  // resolve sozinha porque só existe em Preto) → tamanho, já filtrado pelas
-  // cores escolhidas. "Adicionar kit" solta cada peça resolvida no carrinho
-  // de uma vez, reaproveitando addToCart. ──────────────────────────────────
-  const [cartMode, setCartMode] = useState<"peca" | "kit">("peca")
-  const [kitTemplateId, setKitTemplateId] = useState<number | null>(null)
-  const [kitSize, setKitSize] = useState("")
-  const [kitColors, setKitColors] = useState<Record<string, string>>({})
 
-  const selectedKitTemplate = kitTemplates.find(t => t.id === kitTemplateId) ?? kitTemplates[0] ?? null
-
-  // Cor de cada peça — não depende de tamanho nenhum, olha o catálogo inteiro
-  // do produto.
-  const kitComponentColors = useMemo(() => {
-    if (!selectedKitTemplate) return []
-    return selectedKitTemplate.items.map(it => {
-      const colors = [...new Set(catalog.filter(c => c.productId === it.productId).map(c => c.color))]
-      const resolvedColor = colors.length === 1 ? colors[0] : (kitColors[it.productId] ?? null)
-      return { productId: it.productId, productName: it.productName, colors, resolvedColor }
-    })
-  }, [selectedKitTemplate, catalog, kitColors])
-  const kitColorsReady = kitComponentColors.length > 0 && kitComponentColors.every(c => c.resolvedColor != null)
-
-  // Tamanhos em comum entre as peças, já restritos às cores escolhidas acima.
-  const kitSizeOptions = useMemo(() => {
-    if (!selectedKitTemplate || !kitColorsReady) return []
-    const sizeSets = kitComponentColors.map(c => new Set(catalog.filter(v => v.productId === c.productId && v.color === c.resolvedColor).map(v => v.size)))
-    if (sizeSets.length === 0) return []
-    const [first, ...rest] = sizeSets
-    return [...first].filter(s => rest.every(set => set.has(s))).sort(sizeCompare)
-  }, [selectedKitTemplate, kitColorsReady, kitComponentColors, catalog])
-  const effKitSize = kitSizeOptions.includes(kitSize) ? kitSize : (kitSizeOptions[0] ?? "")
-
-  const kitComponents = useMemo(() => {
-    if (!kitColorsReady || !effKitSize) return []
-    return kitComponentColors.map(c => ({
-      ...c,
-      variant: catalog.find(v => v.productId === c.productId && v.color === c.resolvedColor && v.size === effKitSize) ?? null,
-    }))
-  }, [kitComponentColors, kitColorsReady, effKitSize, catalog])
-
-  const kitReady = kitComponents.length > 0 && kitComponents.every(c => c.variant != null)
-
-  function setKitColor(productId: string, color: string) {
-    setKitColors(prev => ({ ...prev, [productId]: color }))
-    setKitSize("") // cor mudou — o conjunto de tamanhos em comum pode ter mudado
-  }
-  function addKitToCart() {
-    if (!kitReady || !selectedKitTemplate) return
-    // Determinístico (template+tamanho+cores), não aleatório — clicar de novo
-    // no mesmo kit incrementa o grupo já existente em vez de duplicar linha.
-    const groupId = `kit-${selectedKitTemplate.id}-${effKitSize}-${kitComponents.map(c => c.resolvedColor).join("-")}`
-    for (const c of kitComponents) if (c.variant) addToCart(c.variant, groupId)
-  }
+  // Total no carrinho por variante (avulsa + kits) — usado no selo do chip de
+  // tamanho e no aviso de estoque, que olham a peça física, não a linha.
+  const qtyByVariant = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of manualRows) m.set(r.variantId, (m.get(r.variantId) ?? 0) + r.qty)
+    return m
+  }, [manualRows])
+  const cartQtyFor = useCallback((variantId: string) => qtyByVariant.get(variantId) ?? 0, [qtyByVariant])
+  const falta = (r: ManualRow) => (qtyByVariant.get(r.variantId) ?? 0) > r.stock
 
   function updateManualQty(id: string, qty: number) {
     setManualRows(prev => prev.map(r => r.id === id ? { ...r, qty: Math.max(1, qty || 1) } : r))
@@ -273,8 +220,7 @@ export default function MarketplacePage() {
   function removeManualRow(id: string) {
     setManualRows(prev => prev.filter(r => r.id !== id))
   }
-  // Peças do mesmo grupo de kit editam quantidade juntas — sempre a mesma
-  // proporção (1 camiseta pra 1 bermuda), então 1 número só controla as duas.
+  // Peças do mesmo kit editam quantidade juntas — sempre 1 de cada por kit.
   function updateKitGroupQty(groupId: string, qty: number) {
     const q = Math.max(1, qty || 1)
     setManualRows(prev => prev.map(r => r.kitGroupId === groupId ? { ...r, qty: q } : r))
@@ -293,15 +239,17 @@ export default function MarketplacePage() {
     }
     return { kitGroups: [...byKit.entries()], solo }
   }, [manualRows])
+  const kitNomeDe = (groupId: string) => kitTemplates.find(t => groupId.startsWith(`kit-${t.id}-`))?.nome ?? "Kit"
 
-  const manualTotals = useMemo(() => ({
-    produtos: manualRows.length,
+  const totals = useMemo(() => ({
+    linhas: manualRows.length,
     pecas: manualRows.reduce((s, r) => s + r.qty, 0),
   }), [manualRows])
+  const algumaFalta = manualRows.some(falta)
 
   async function confirmSeparation() {
     if (manualRows.length === 0) return
-    if (!lojaId) { setConfirmError("Escolhe a loja antes de confirmar"); return }
+    if (!lojaId) { setConfirmError("Escolha a loja antes de confirmar"); return }
     setConfirming(true); setConfirmError("")
     try {
       const res = await fetch("/api/marketplace/confirm", {
@@ -311,9 +259,9 @@ export default function MarketplacePage() {
       })
       const data = await res.json()
       if (!res.ok) { setConfirmError(data.error ?? "Erro ao confirmar"); return }
-      setResult(data)
+      setResult({ ...data, lojaNome: lojas.find(l => l.id === lojaId)?.nome ?? "" })
       setManualRows([])
-      loadHistory()
+      setReloadKey(k => k + 1)
       loadCatalog()
     } catch {
       setConfirmError("Falha de rede ao confirmar")
@@ -321,33 +269,21 @@ export default function MarketplacePage() {
       setConfirming(false)
     }
   }
-  function resetResult() {
-    setResult(null); setConfirmError("")
-  }
 
-  // ── Relatório de baixas ──
-  const [history, setHistory] = useState<HistoryRow[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const loadHistory = useCallback(async () => {
-    setHistoryLoading(true)
-    try {
-      const res = await fetch("/api/marketplace/history")
-      if (res.ok) setHistory(await res.json())
-    } finally { setHistoryLoading(false) }
-  }, [])
-  useEffect(() => { if (tab === "relatorio") loadHistory() }, [tab, loadHistory])
-
+  // ── Relatório de baixas + detalhe ──
+  const [reloadKey, setReloadKey] = useState(0)
   const [detail, setDetail] = useState<SeparationDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState("")
   const [canceling, setCanceling] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
   const [editingQty, setEditingQty] = useState(1)
   const [savingQty, setSavingQty] = useState(false)
   const [showDetailPrint, setShowDetailPrint] = useState(false)
 
   async function openDetail(id: number) {
-    setDetail(null); setDetailError(""); setDetailLoading(true)
+    setDetail(null); setDetailError(""); setDetailLoading(true); setConfirmCancel(false)
     try {
       const res = await fetch(`/api/marketplace/separations/${id}`)
       const data = await res.json()
@@ -360,7 +296,7 @@ export default function MarketplacePage() {
     }
   }
   function closeDetail() {
-    setDetail(null); setDetailError(""); setEditingItemId(null)
+    setDetail(null); setDetailError(""); setEditingItemId(null); setConfirmCancel(false)
   }
   async function cancelDetail() {
     if (!detail) return
@@ -369,14 +305,12 @@ export default function MarketplacePage() {
       const res = await fetch(`/api/marketplace/separations/${detail.id}/cancel`, { method: "POST" })
       const data = await res.json()
       if (!res.ok) { setDetailError(data.error ?? "Erro ao cancelar"); return }
+      setConfirmCancel(false)
       await openDetail(detail.id)
-      loadHistory(); loadCatalog()
+      setReloadKey(k => k + 1); loadCatalog()
     } finally {
       setCanceling(false)
     }
-  }
-  function startEditQty(item: SeparationDetailItem) {
-    setEditingItemId(item.id); setEditingQty(item.qty)
   }
   async function saveEditQty(itemId: number) {
     if (!detail || editingQty <= 0) return
@@ -389,386 +323,238 @@ export default function MarketplacePage() {
       if (!res.ok) { setDetailError(data.error ?? "Erro ao salvar"); return }
       setEditingItemId(null)
       await openDetail(detail.id)
-      loadHistory(); loadCatalog()
+      setReloadKey(k => k + 1); loadCatalog()
     } finally {
       setSavingQty(false)
     }
   }
 
   return (
-    <div className="max-w-6xl space-y-6">
+    <div className="max-w-[1500px] space-y-6">
 
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Separação · Marketplace</h1>
-        <p className="text-sm text-[#0F1E3C]/45 mt-0.5 max-w-2xl">
-          Monta o carrinho igual o PDV — produto, cor e tamanho — pra descontar o estoque de verdade.
-        </p>
-      </div>
-
-      {/* Tabs principais */}
-      <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-sm font-semibold bg-white w-fit shadow-sm">
-        <button onClick={() => setTab("lancar")}
-          className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "lancar" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
-          <ShoppingCart size={14} /> Lançar
-        </button>
-        <button onClick={() => setTab("relatorio")}
-          className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "relatorio" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
-          <History size={14} /> Relatório de baixas
-        </button>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Marketplace</h1>
+          <p className="text-sm text-[#0F1E3C]/45 mt-0.5 max-w-2xl">
+            {tab === "lancar"
+              ? "Escolha cor, tamanho e quantidade em cada produto e confirme o carrinho pra dar baixa no estoque."
+              : "Filtre por loja e período: as quantidades aparecem somadas por produto e as baixas logo abaixo."}
+          </p>
+        </div>
+        <div className="flex rounded-xl border border-[#0F1E3C]/10 overflow-hidden text-sm font-semibold bg-white shadow-sm">
+          <button onClick={() => setTab("lancar")} data-testid="mkt-tab-lancar"
+            className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "lancar" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
+            <ShoppingCart size={14} /> Lançar
+          </button>
+          <button onClick={() => setTab("relatorio")} data-testid="mkt-tab-relatorio"
+            className={`px-4 py-2.5 flex items-center gap-2 transition-colors ${tab === "relatorio" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>
+            <History size={14} /> Relatório de baixas
+          </button>
+        </div>
       </div>
 
       {tab === "lancar" && (
-        <div className="flex gap-5 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
 
-          {/* ── Esquerda: seleção guiada Produto → Cor → Tamanho ── */}
-          <div className="flex-1 min-w-0">
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex rounded-lg border border-[#0F1E3C]/10 overflow-hidden text-xs font-bold">
-                  <button onClick={() => setCartMode("peca")} className={`px-3 py-1.5 transition-colors ${cartMode === "peca" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Peça a peça</button>
-                  <button onClick={() => setCartMode("kit")} className={`px-3 py-1.5 transition-colors ${cartMode === "kit" ? "bg-[#0F1E3C] text-white" : "text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6"}`}>Kit</button>
-                </div>
-                <button onClick={openKitTemplateModal} className="flex items-center gap-1.5 text-[11px] font-bold text-[#0F1E3C]/45 hover:text-[#4361EE] border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-lg px-2.5 py-1.5 transition-colors">
-                  <Layers size={12} /> Modelos de kit
-                </button>
+          {/* ── Catálogo em cards ── */}
+          <div className="space-y-4 min-w-0">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0F1E3C]/30" />
+                <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Filtrar por produto, cor ou tamanho"
+                  className="w-full bg-white border border-[#0F1E3C]/10 rounded-xl pl-10 pr-9 py-2.5 text-sm text-[#0F1E3C] placeholder:text-[#0F1E3C]/30 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+                {busca && (
+                  <button onClick={() => setBusca("")} aria-label="Limpar filtro" className="absolute right-3 top-1/2 -translate-y-1/2 text-[#0F1E3C]/30 hover:text-[#0F1E3C]"><X size={14} /></button>
+                )}
               </div>
-
-              {catalogLoading ? (
-                <p className="text-xs text-[#0F1E3C]/40">Carregando catálogo…</p>
-              ) : cartMode === "peca" ? (
-                <>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Produto</p>
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    {productNames.map(n => (
-                      <button key={n} type="button" onClick={() => { setCartProductName(n); setCartSelectedColor("") }}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors ${
-                          n === effCartProduct ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
-                        }`}>
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Cor</p>
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {cartColorGroups.map(([color]) => (
-                      <button key={color} type="button" onClick={() => setCartSelectedColor(color)}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-bold transition-colors ${
-                          color === effCartColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/70 hover:border-[#4361EE]/40"
-                        }`}>
-                        <span className="w-3 h-3 rounded-[4px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
-                        {color}
-                      </button>
-                    ))}
-                  </div>
-
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
-                  <div className="flex flex-wrap gap-2">
-                    {cartSizeVariants.map(v => {
-                      const qtyIn = cartQtyFor(v.variantId)
-                      return (
-                        <button key={v.variantId} type="button" onClick={() => addToCart(v)} className={variantChipCls(v)}
-                          title={v.availableStock < 0 ? `Estoque negativo: ${v.availableStock}` : v.availableStock === 0 ? "Sem estoque" : `${v.availableStock} em estoque`}>
-                          <span>{v.size || "U"}</span>
-                          {qtyIn > 0 && (
-                            <span className="absolute -top-2 -right-2 w-5 h-5 bg-[#4361EE] text-white rounded-full text-[10px] font-black flex items-center justify-center leading-none">
-                              {qtyIn}
-                            </span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </>
-              ) : kitTemplates.length === 0 ? (
-                <p className="text-xs text-[#0F1E3C]/40 py-3">Nenhum modelo de kit cadastrado ainda. Clica em "Modelos de kit" pra criar um.</p>
-              ) : (
-                <div>
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    {kitTemplates.map(t => (
-                      <button key={t.id} type="button" onClick={() => { setKitTemplateId(t.id); setKitColors({}); setKitSize("") }}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                          t.id === (selectedKitTemplate?.id ?? -1) ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
-                        }`}>
-                        {t.nome}
-                      </button>
-                    ))}
-                  </div>
-
-                  {selectedKitTemplate && (
-                    <>
-                      <div className="space-y-3 mb-3">
-                        {kitComponentColors.map(c => (
-                          <div key={c.productId}>
-                            <p className="text-[11px] font-bold text-[#0F1E3C] mb-1">{c.productName}</p>
-                            {c.colors.length <= 1 ? (
-                              <p className="text-[11px] text-[#0F1E3C]/40">automático: {c.colors[0] ?? "sem estoque"}</p>
-                            ) : (
-                              <div className="flex flex-wrap gap-1.5">
-                                {c.colors.map(color => (
-                                  <button key={color} type="button" onClick={() => setKitColor(c.productId, color)}
-                                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold transition-colors ${
-                                      color === c.resolvedColor ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
-                                    }`}>
-                                    <span className="w-2.5 h-2.5 rounded-[3px] shadow-[inset_0_0_0_1px_rgba(0,0,0,.1)] flex-shrink-0" style={{ background: colorSwatch(color) }} />
-                                    {color}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      {!kitColorsReady ? (
-                        <p className="text-xs text-[#0F1E3C]/40 py-2">Escolhe a cor de cada peça pra ver os tamanhos disponíveis.</p>
-                      ) : kitSizeOptions.length === 0 ? (
-                        <p className="text-xs text-red-500 py-2">Essas cores não têm nenhum tamanho em comum entre as peças no catálogo.</p>
-                      ) : (
-                        <>
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1.5">Tamanho</p>
-                          <div className="flex flex-wrap gap-1.5 mb-3">
-                            {kitSizeOptions.map(s => (
-                              <button key={s} type="button" onClick={() => setKitSize(s)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                                  s === effKitSize ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/55 hover:border-[#4361EE]/40"
-                                }`}>
-                                {s}
-                              </button>
-                            ))}
-                          </div>
-
-                          <button onClick={addKitToCart} disabled={!kitReady}
-                            className="w-full mt-3 py-2 rounded-xl bg-[#4361EE] disabled:opacity-40 text-white text-xs font-bold">
-                            Adicionar kit ao carrinho
-                          </button>
-                        </>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
+              <button onClick={() => { setKitTemplateOpen(true); loadKitTemplates() }}
+                className="flex items-center justify-center gap-1.5 text-xs font-bold text-[#0F1E3C]/60 hover:text-[#4361EE] bg-white border border-[#0F1E3C]/10 hover:border-[#4361EE]/30 rounded-xl px-3.5 py-2.5 shadow-sm transition-colors">
+                <Layers size={13} /> Modelos de kit
+              </button>
             </div>
+
+            {catalogLoading && catalog.length === 0 ? (
+              <div className="grid grid-cols-1 min-[1360px]:grid-cols-2 min-[1760px]:grid-cols-3 gap-4">
+                {[0, 1, 2, 3].map(i => <div key={i} className="h-64 rounded-2xl bg-white border border-[#0F1E3C]/6 animate-pulse" />)}
+              </div>
+            ) : produtos.length === 0 && kitsVisiveis.length === 0 ? (
+              <p className="text-sm text-[#0F1E3C]/40 bg-white rounded-2xl border border-[#0F1E3C]/8 px-5 py-10 text-center">Nenhum produto com esse filtro.</p>
+            ) : (
+              <div className="grid grid-cols-1 min-[1360px]:grid-cols-2 min-[1760px]:grid-cols-3 gap-4 items-stretch">
+                {kitsVisiveis.map(t => (
+                  <KitCard key={`kit-${t.id}`} template={t} catalog={catalog} onAdd={addKit} />
+                ))}
+                {produtos.map(p => (
+                  <ProdutoCard key={p.productId} productName={p.productName} variants={p.variants} cartQtyFor={cartQtyFor} onAdd={addProduto} />
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* ── Direita: carrinho, igual o PDV — vira baixa real de estoque ── */}
-          <div className="w-[340px] flex-shrink-0">
-            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 flex flex-col overflow-hidden">
+          {/* ── Carrinho fixo na lateral ── */}
+          <aside data-testid="mkt-carrinho" className="lg:sticky lg:top-4 bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm flex flex-col overflow-hidden lg:max-h-[calc(100vh-2rem)]">
 
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#0F1E3C]/8 flex-shrink-0">
-                <div className="flex items-center gap-2">
-                  <ShoppingCart size={15} className="text-[#0F1E3C]/40" />
-                  <span className="text-sm font-bold text-[#0F1E3C]">Carrinho</span>
-                  {manualRows.length > 0 && (
-                    <span className="text-[10px] font-black bg-[#4361EE] text-white px-1.5 py-0.5 rounded-full leading-none">
-                      {manualTotals.pecas}
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#0F1E3C]/8 flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div ref={cartIconRef} className="relative w-9 h-9 rounded-xl bg-[#4361EE]/10 text-[#4361EE] flex items-center justify-center">
+                  <ShoppingCart size={17} />
+                  {totals.pecas > 0 && (
+                    <span ref={cartBadgeRef} data-testid="mkt-carrinho-qtd"
+                      className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 bg-[#4361EE] text-white rounded-full text-[10px] font-black flex items-center justify-center tabular-nums">
+                      {totals.pecas}
                     </span>
                   )}
                 </div>
-                {!result && manualRows.length > 0 && (
-                  <button onClick={() => setManualRows([])} className="text-xs text-red-400 hover:text-red-600 font-semibold transition-colors">
-                    Limpar
-                  </button>
-                )}
-              </div>
-
-              {!result ? (
-                <>
-                  {/* Loja — obrigatória pra confirmar, editável e dá pra criar nova aqui mesmo */}
-                  <div className="px-4 pt-3 flex-shrink-0">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Loja *</p>
-                    {addingLoja ? (
-                      <div className="flex items-center gap-1.5">
-                        <input value={newLojaNome} onChange={e => setNewLojaNome(e.target.value)} placeholder="Nome da loja" autoFocus
-                          onKeyDown={e => e.key === "Enter" && createLoja()}
-                          className={`${inputCls} text-xs font-semibold`} />
-                        <button onClick={createLoja} disabled={!newLojaNome.trim() || savingLoja}
-                          className="p-2 rounded-lg bg-[#4361EE] text-white disabled:opacity-40 flex-shrink-0"><Check size={14} /></button>
-                        <button onClick={() => { setAddingLoja(false); setNewLojaNome("") }}
-                          className="p-2 rounded-lg text-[#0F1E3C]/40 hover:text-red-500 flex-shrink-0"><X size={14} /></button>
-                      </div>
-                    ) : renamingLoja ? (
-                      <div className="flex items-center gap-1.5">
-                        <input value={renameLojaNome} onChange={e => setRenameLojaNome(e.target.value)} autoFocus
-                          onKeyDown={e => e.key === "Enter" && saveRenameLoja()}
-                          className={`${inputCls} text-xs font-semibold`} />
-                        <button onClick={saveRenameLoja} disabled={!renameLojaNome.trim() || savingLoja}
-                          className="p-2 rounded-lg bg-[#4361EE] text-white disabled:opacity-40 flex-shrink-0"><Check size={14} /></button>
-                        <button onClick={() => setRenamingLoja(false)}
-                          className="p-2 rounded-lg text-[#0F1E3C]/40 hover:text-red-500 flex-shrink-0"><X size={14} /></button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        <select value={lojaId ?? ""} onChange={e => e.target.value === "__new__" ? setAddingLoja(true) : setLojaId(Number(e.target.value))}
-                          className={`${inputCls} text-xs font-semibold ${!lojaId ? "border-amber-300" : ""}`}>
-                          {lojas.length === 0 && <option value="">Nenhuma loja cadastrada</option>}
-                          {lojas.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                          <option value="__new__">+ Adicionar loja</option>
-                        </select>
-                        {lojaId != null && (
-                          <button onClick={startRenameLoja} title="Renomear loja"
-                            className="p-2 rounded-lg text-[#0F1E3C]/30 hover:text-[#4361EE] hover:bg-[#4361EE]/8 flex-shrink-0"><Pencil size={13} /></button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Itens */}
-                  <div className="px-4 py-3">
-                    {manualRows.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-12 gap-2 text-[#0F1E3C]/20">
-                        <ShoppingCart size={28} strokeWidth={1.2} />
-                        <p className="text-xs text-center">Clica em produto → cor → tamanho pra lançar</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {cartGroups.kitGroups.map(([groupId, rows]) => {
-                          const qty = rows[0]?.qty ?? 1
-                          // Cor/tamanho já viram o título ("Kit (Cor · Tamanho)") — o tamanho é
-                          // sempre igual em todas as peças do grupo (faz parte do groupId), a cor
-                          // pode variar peça a peça, por isso junta as únicas com "/".
-                          const groupColors = [...new Set(rows.map(r => r.color))].join("/")
-                          const groupSize = rows[0]?.size ?? ""
-                          return (
-                            <div key={groupId} className="bg-[#4361EE]/[0.04] border border-[#4361EE]/15 rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-center gap-1.5 mb-1.5">
-                                <Layers size={11} className="text-[#4361EE] flex-shrink-0" />
-                                <span className="text-[11px] font-bold text-[#4361EE] truncate">Kit ({groupColors} · {groupSize})</span>
-                              </div>
-                              <div className="space-y-1 mb-2">
-                                {rows.map(r => {
-                                  const low = r.stock - qty < 0
-                                  return (
-                                    <div key={r.id} className="flex items-center gap-2 min-w-0">
-                                      <span className={`inline-block w-[6px] h-[6px] rounded-full flex-shrink-0 ${low ? "bg-red-500" : "bg-emerald-500"}`} />
-                                      <span className="text-[#0F1E3C]/70 truncate">{r.productName}</span>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-[#0F1E3C]/40">quantos kits</span>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                  <input type="number" min={1} value={qty} onChange={e => updateKitGroupQty(groupId, parseInt(e.target.value))}
-                                    className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
-                                  <button onClick={() => removeKitGroup(groupId)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                        {cartGroups.solo.map(r => {
-                          const after = r.stock - r.qty
-                          const low = after < 0
-                          return (
-                            <div key={r.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                              <div className="flex items-start gap-2 min-w-0">
-                                <span className={`inline-block w-[7px] h-[7px] rounded-full flex-shrink-0 mt-1 ${low ? "bg-red-500" : "bg-emerald-500"}`} title={low ? "Estoque baixo: vai ficar negativo" : "Tem estoque"} />
-                                <div className="min-w-0">
-                                  <p className="font-semibold text-[#0F1E3C] truncate">{r.productName}</p>
-                                  <p className="text-[#0F1E3C]/50 text-[11px]">{r.color} · {r.size}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                <input type="number" min={1} value={r.qty} onChange={e => updateManualQty(r.id, parseInt(e.target.value))}
-                                  className="w-14 text-center border border-[#0F1E3C]/12 rounded-lg py-1 text-xs tabular-nums" />
-                                <button onClick={() => removeManualRow(r.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                    {confirmError && <p className="text-xs text-red-600 mt-3">{confirmError}</p>}
-                  </div>
-
-                  {/* Footer */}
-                  <div className="flex items-center justify-between gap-4 flex-wrap px-4 py-3.5 bg-[#F4F6FB] border-t border-[#0F1E3C]/8 flex-shrink-0">
-                    <div className="flex gap-5">
-                      <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.produtos}</p></div>
-                      <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{manualTotals.pecas} pç</p></div>
-                    </div>
-                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || !lojaId || confirming}
-                      className="bg-[#4361EE] disabled:opacity-40 text-white text-sm font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5">
-                      {confirming && <Loader2 size={14} className="animate-spin" />} Confirmar
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="p-5">
-                  <div className="text-center py-6">
-                    <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
-                      <CheckCircle2 size={26} />
-                    </div>
-                    <h2 className="text-lg font-bold text-[#0F1E3C]">Separação confirmada</h2>
-                    <p className="text-sm text-[#0F1E3C]/45 mt-0.5">{result.number} · Estoque descontado · {result.totalItems} produtos · {result.totalPieces} peças</p>
-                  </div>
-                  <div className="flex justify-center gap-2 py-2">
-                    <button onClick={() => { setShowResultPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-sm font-bold px-4 py-2.5 rounded-xl">
-                      <Printer size={14} /> Imprimir ficha
-                    </button>
-                    <button onClick={resetResult} className="bg-[#4361EE] text-white text-sm font-bold px-4 py-2.5 rounded-xl">Nova separação</button>
-                  </div>
+                <div>
+                  <p className="text-sm font-black text-[#0F1E3C] leading-tight">Carrinho</p>
+                  <p className="text-[11px] text-[#0F1E3C]/40 leading-tight">{totals.linhas ? `${totals.linhas} ${totals.linhas === 1 ? "linha" : "linhas"} · ${totals.pecas} pç` : "vazio"}</p>
                 </div>
+              </div>
+              {!result && manualRows.length > 0 && (
+                <button onClick={() => setManualRows([])} className="text-xs text-red-400 hover:text-red-600 font-semibold transition-colors">Limpar</button>
               )}
             </div>
-          </div>
+
+            {!result ? (
+              <>
+                {/* Loja — obrigatória pra confirmar */}
+                <div className="px-4 pt-3 pb-1 flex-shrink-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35 mb-1 flex items-center gap-1"><Store size={11} /> Loja *</p>
+                  {addingLoja ? (
+                    <div className="flex items-center gap-1.5">
+                      <input value={newLojaNome} onChange={e => setNewLojaNome(e.target.value)} placeholder="Nome da loja" autoFocus
+                        onKeyDown={e => e.key === "Enter" && createLoja()} className={`${inputCls} text-xs font-semibold`} />
+                      <button onClick={createLoja} disabled={!newLojaNome.trim() || savingLoja} className="p-2 rounded-lg bg-[#4361EE] text-white disabled:opacity-40 flex-shrink-0"><Check size={14} /></button>
+                      <button onClick={() => { setAddingLoja(false); setNewLojaNome(""); setLojaError("") }} className="p-2 rounded-lg text-[#0F1E3C]/40 hover:text-red-500 flex-shrink-0"><X size={14} /></button>
+                    </div>
+                  ) : renamingLoja ? (
+                    <div className="flex items-center gap-1.5">
+                      <input value={renameLojaNome} onChange={e => setRenameLojaNome(e.target.value)} autoFocus
+                        onKeyDown={e => e.key === "Enter" && saveRenameLoja()} className={`${inputCls} text-xs font-semibold`} />
+                      <button onClick={saveRenameLoja} disabled={!renameLojaNome.trim() || savingLoja} className="p-2 rounded-lg bg-[#4361EE] text-white disabled:opacity-40 flex-shrink-0"><Check size={14} /></button>
+                      <button onClick={() => { setRenamingLoja(false); setLojaError("") }} className="p-2 rounded-lg text-[#0F1E3C]/40 hover:text-red-500 flex-shrink-0"><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <select value={lojaId ?? ""} onChange={e => e.target.value === "__new__" ? setAddingLoja(true) : setLojaId(Number(e.target.value))}
+                        className={`${inputCls} text-xs font-bold ${!lojaId ? "border-amber-300" : ""}`}>
+                        {lojas.length === 0 && <option value="">Nenhuma loja cadastrada</option>}
+                        {lojas.map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
+                        <option value="__new__">+ Adicionar loja</option>
+                      </select>
+                      {lojaId != null && (
+                        <button onClick={startRenameLoja} title="Renomear loja" className="p-2 rounded-lg text-[#0F1E3C]/30 hover:text-[#4361EE] hover:bg-[#4361EE]/8 flex-shrink-0"><Pencil size={13} /></button>
+                      )}
+                    </div>
+                  )}
+                  {lojaError && <p className="text-[11px] text-red-600 mt-1">{lojaError}</p>}
+                </div>
+
+                {/* Itens */}
+                <div className="px-4 py-3 overflow-y-auto flex-1 min-h-[120px]">
+                  {manualRows.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#0F1E3C]/20">
+                      <ShoppingCart size={28} strokeWidth={1.2} />
+                      <p className="text-xs text-center text-[#0F1E3C]/35 max-w-[22ch]">Escolha cor, tamanho e quantidade nos cards e clique em Adicionar</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {cartGroups.kitGroups.map(([groupId, rows]) => {
+                        const qty = rows[0]?.qty ?? 1
+                        const groupColors = [...new Set(rows.map(r => r.color))].join("/")
+                        return (
+                          <div key={groupId} className="bg-[#4361EE]/[0.04] border border-[#4361EE]/15 rounded-xl px-3 py-2.5 text-xs">
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <Layers size={12} className="text-[#4361EE] flex-shrink-0" />
+                                <span className="text-[11px] font-black text-[#4361EE] truncate">{kitNomeDe(groupId)} · {groupColors} · {rows[0]?.size}</span>
+                              </div>
+                              <button onClick={() => removeKitGroup(groupId)} aria-label="Remover kit" className="text-[#0F1E3C]/25 hover:text-red-500 flex-shrink-0"><Trash2 size={13} /></button>
+                            </div>
+                            <div className="space-y-1 mb-2">
+                              {rows.map(r => (
+                                <div key={r.id} className="flex items-center gap-2 min-w-0">
+                                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${falta(r) ? "bg-red-500" : "bg-emerald-500"}`} />
+                                  <span className="text-[#0F1E3C]/70 truncate">{r.productName}</span>
+                                  {falta(r) && <span className="text-[10px] font-bold text-red-500 flex-shrink-0">estoque {r.stock}</span>}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-[#0F1E3C]/40">kits</span>
+                              <CartStepper value={qty} onChange={n => updateKitGroupQty(groupId, n)} />
+                            </div>
+                          </div>
+                        )
+                      })}
+                      {cartGroups.solo.map(r => (
+                        <div key={r.id} className="flex items-center justify-between gap-2 bg-[#F6F7FB] rounded-xl px-3 py-2.5 text-xs">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1 ${falta(r) ? "bg-red-500" : "bg-emerald-500"}`} title={falta(r) ? "Vai deixar o estoque negativo" : "Tem estoque"} />
+                            <div className="min-w-0">
+                              <p className="font-bold text-[#0F1E3C] truncate">{r.productName}</p>
+                              <p className="text-[#0F1E3C]/50 text-[11px]">{r.color} · {r.size}{falta(r) && <span className="text-red-500 font-bold"> · estoque {r.stock}</span>}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <CartStepper value={r.qty} onChange={n => updateManualQty(r.id, n)} />
+                            <button onClick={() => removeManualRow(r.id)} aria-label="Remover" className="text-[#0F1E3C]/25 hover:text-red-500"><Trash2 size={13} /></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Rodapé */}
+                <div className="px-4 py-3.5 bg-[#F4F6FB] border-t border-[#0F1E3C]/8 flex-shrink-0 space-y-2.5">
+                  {algumaFalta && <p className="text-[11px] font-semibold text-orange-600">Tem peça acima do estoque do sistema (marcada em vermelho). Dá pra confirmar, o estoque fica negativo.</p>}
+                  {confirmError && <p className="text-xs text-red-600">{confirmError}</p>}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex gap-5">
+                      <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Linhas</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{totals.linhas}</p></div>
+                      <div><p className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Peças</p><p className="text-base font-black text-[#0F1E3C] tabular-nums">{totals.pecas} pç</p></div>
+                    </div>
+                    <button onClick={confirmSeparation} disabled={manualRows.length === 0 || !lojaId || confirming} data-testid="mkt-confirmar"
+                      className="bg-[#4361EE] hover:bg-[#3651d4] disabled:opacity-40 text-white text-sm font-bold px-5 py-2.5 rounded-xl flex items-center gap-1.5 transition-colors">
+                      {confirming && <Loader2 size={14} className="animate-spin" />} {!lojaId ? "Escolha a loja" : "Confirmar baixa"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="p-5">
+                <div className="text-center py-6">
+                  <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3"><CheckCircle2 size={26} /></div>
+                  <h2 className="text-lg font-black text-[#0F1E3C]">Baixa confirmada</h2>
+                  <p className="text-sm text-[#0F1E3C]/45 mt-0.5">{result.number} · {result.lojaNome} · {result.totalPieces} peças</p>
+                  <p className="text-xs text-[#0F1E3C]/35 mt-0.5">Estoque descontado</p>
+                </div>
+                <div className="flex justify-center gap-2">
+                  <button onClick={() => { setShowResultPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-[#F4F6FB]">
+                    <Printer size={14} /> Imprimir ficha
+                  </button>
+                  <button onClick={() => { setResult(null); setConfirmError("") }} className="bg-[#4361EE] text-white text-sm font-bold px-4 py-2.5 rounded-xl">Nova baixa</button>
+                </div>
+              </div>
+            )}
+          </aside>
         </div>
       )}
 
-      {tab === "relatorio" && (
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
-          {historyLoading ? (
-            <p className="text-xs text-[#0F1E3C]/40 px-5 py-6 text-center">Carregando…</p>
-          ) : history.length === 0 ? (
-            <p className="text-xs text-[#0F1E3C]/40 px-5 py-6 text-center">Nenhuma separação registrada ainda.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[9px] font-bold uppercase tracking-wider text-[#0F1E3C]/30 bg-[#F9FAFB]">
-                  <th className="text-left px-5 py-2.5">Número</th>
-                  <th className="text-left px-5 py-2.5">Data</th>
-                  <th className="text-left px-5 py-2.5">Loja</th>
-                  <th className="text-left px-5 py-2.5">Produtos</th>
-                  <th className="text-left px-5 py-2.5">Peças</th>
-                  <th className="text-left px-5 py-2.5">Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map(h => (
-                  <tr key={h.id} className={`border-t border-[#0F1E3C]/5 cursor-pointer hover:bg-[#F9FAFB] ${h.canceledAt ? "opacity-50" : ""}`} onClick={() => openDetail(h.id)}>
-                    <td className="px-5 py-2.5 font-semibold text-[#0F1E3C]">{h.number}</td>
-                    <td className="px-5 py-2.5 text-[#0F1E3C]/50 tabular-nums">{fmtDateBR(h.createdAt)}</td>
-                    <td className="px-5 py-2.5"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#0F1E3C]/6 text-[#0F1E3C]/50">{ORIGIN_LABEL[h.origin] ?? h.origin}</span></td>
-                    <td className="px-5 py-2.5 tabular-nums">{h.totalItems}</td>
-                    <td className="px-5 py-2.5 tabular-nums">{h.totalPieces} pç</td>
-                    <td className="px-5 py-2.5">
-                      {h.canceledAt
-                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-500">cancelada</span>
-                        : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">ativa</span>}
-                    </td>
-                    <td className="px-5 py-2.5 text-right text-[#0F1E3C]/30">›</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
+      {tab === "relatorio" && <RelatorioBaixas lojas={lojas} reloadKey={reloadKey} onOpenDetail={openDetail} />}
 
-      {/* Modal de detalhe da separação — cancelar / editar / reimprimir */}
+      {/* Modal de detalhe da baixa — editar / cancelar / reimprimir */}
       {(detailLoading || detail || detailError) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeDetail}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8 flex-shrink-0">
               <div>
-                <h2 className="font-bold text-[#0F1E3C]">{detail?.number ?? "Separação"}</h2>
+                <h2 className="font-black text-[#0F1E3C]">{detail?.number ?? "Baixa"}</h2>
                 {detail && (
                   <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-                    {fmtDateBR(detail.createdAt)} · {ORIGIN_LABEL[detail.origin] ?? detail.origin}
+                    {fmtDateBR(detail.createdAt)} · {lojaLabel(detail.origin)} · {detail.totalPieces} peças
                     {detail.canceledAt && <span className="text-red-500 font-bold"> · Cancelada</span>}
                   </p>
                 )}
@@ -778,24 +564,27 @@ export default function MarketplacePage() {
 
             <div className="px-6 py-4 overflow-y-auto flex-1">
               {detailLoading && <p className="text-xs text-[#0F1E3C]/40 text-center py-6">Carregando…</p>}
-              {detailError && <p className="text-xs text-red-600 text-center py-6">{detailError}</p>}
+              {detailError && <p className="text-xs text-red-600 text-center py-3">{detailError}</p>}
               {detail && (
                 <div className="space-y-1.5">
                   {detail.items.map(it => (
-                    <div key={it.id} className="flex items-center justify-between bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
-                      <span className="font-semibold text-[#0F1E3C]">{it.productName} · {it.color} · {it.size}</span>
+                    <div key={it.id} className="flex items-center justify-between gap-3 bg-[#F9FAFB] rounded-lg px-3 py-2 text-xs">
+                      <div className="min-w-0">
+                        <p className="font-bold text-[#0F1E3C] truncate">{it.productName}</p>
+                        <p className="text-[11px] text-[#0F1E3C]/50">{it.color} · {it.size}</p>
+                      </div>
                       {editingItemId === it.id ? (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
                           <input type="number" min={1} value={editingQty} onChange={e => setEditingQty(parseInt(e.target.value) || 1)}
                             className="w-14 text-center border border-[#4361EE]/40 rounded-lg py-1 text-xs tabular-nums" autoFocus />
                           <button onClick={() => saveEditQty(it.id)} disabled={savingQty} className="text-emerald-600 hover:text-emerald-700"><Check size={15} /></button>
                           <button onClick={() => setEditingItemId(null)} className="text-[#0F1E3C]/30 hover:text-red-500"><X size={15} /></button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="tabular-nums font-bold text-[#0F1E3C]">{it.qty} pç</span>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="tabular-nums font-black text-[#0F1E3C]">{it.qty} pç</span>
                           {!detail.canceledAt && (
-                            <button onClick={() => startEditQty(it)} className="text-[#0F1E3C]/30 hover:text-[#4361EE]"><Pencil size={13} /></button>
+                            <button onClick={() => { setEditingItemId(it.id); setEditingQty(it.qty) }} className="text-[#0F1E3C]/30 hover:text-[#4361EE]"><Pencil size={13} /></button>
                           )}
                         </div>
                       )}
@@ -807,28 +596,36 @@ export default function MarketplacePage() {
 
             {detail && (
               <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-[#0F1E3C]/8 flex-shrink-0">
-                <button onClick={() => { setShowDetailPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-xs font-bold px-3 py-2 rounded-xl">
+                <button onClick={() => { setShowDetailPrint(true); printWhenReady() }} className="flex items-center gap-1.5 border border-[#0F1E3C]/10 text-[#0F1E3C] text-xs font-bold px-3 py-2 rounded-xl hover:bg-[#F4F6FB]">
                   <Printer size={13} /> Reimprimir
                 </button>
-                {!detail.canceledAt && (
-                  <button onClick={cancelDetail} disabled={canceling} className="flex items-center gap-1.5 text-red-500 hover:text-red-600 text-xs font-bold px-3 py-2 rounded-xl border border-red-200">
-                    {canceling ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} Cancelar e estornar estoque
+                {!detail.canceledAt && (confirmCancel ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-[#0F1E3C]/50">Estornar o estoque?</span>
+                    <button onClick={cancelDetail} disabled={canceling} className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-xl">
+                      {canceling ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} Sim, cancelar
+                    </button>
+                    <button onClick={() => setConfirmCancel(false)} className="text-xs font-bold text-[#0F1E3C]/50 px-2 py-2">Não</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmCancel(true)} className="flex items-center gap-1.5 text-red-500 hover:text-red-600 text-xs font-bold px-3 py-2 rounded-xl border border-red-200">
+                    <Ban size={13} /> Cancelar e estornar estoque
                   </button>
-                )}
+                ))}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Modal de modelos de kit — nome + produtos que compõem, cor/tamanho vêm do catálogo na hora de usar */}
+      {/* Modal de modelos de kit */}
       {kitTemplateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setKitTemplateOpen(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#0F1E3C]/8">
               <div>
-                <h2 className="font-bold text-[#0F1E3C]">Modelos de kit</h2>
-                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Nome do kit + quais produtos compõem ele. Cor e tamanho de cada peça vêm do catálogo na hora de montar o carrinho.</p>
+                <h2 className="font-black text-[#0F1E3C]">Modelos de kit</h2>
+                <p className="text-xs text-[#0F1E3C]/40 mt-0.5 max-w-[38ch]">Nome do kit e quais produtos compõem ele. Cor e tamanho de cada peça são escolhidos no card do kit.</p>
               </div>
               <button onClick={() => setKitTemplateOpen(false)} className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"><X size={16} /></button>
             </div>
@@ -852,12 +649,11 @@ export default function MarketplacePage() {
               )}
               <div className="pt-3 border-t border-dashed border-[#0F1E3C]/10 space-y-2">
                 <input value={newKitNome} onChange={e => setNewKitNome(e.target.value)} placeholder="Ex: Kit Infantil" className={inputCls} />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos do kit (marca 2 ou mais)</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#0F1E3C]/35">Produtos do kit (marque 2 ou mais)</p>
                 <div className="space-y-1 max-h-[160px] overflow-y-auto">
                   {productList.map(p => (
                     <label key={p.productId} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg hover:bg-[#F9FAFB] cursor-pointer">
-                      <input type="checkbox" checked={newKitProductIds.has(p.productId)} onChange={() => toggleNewKitProduct(p.productId)}
-                        className="w-3.5 h-3.5 rounded accent-[#4361EE]" />
+                      <input type="checkbox" checked={newKitProductIds.has(p.productId)} onChange={() => toggleNewKitProduct(p.productId)} className="w-3.5 h-3.5 rounded accent-[#4361EE]" />
                       <span className="text-[#0F1E3C]">{p.productName}</span>
                     </label>
                   ))}
@@ -873,7 +669,7 @@ export default function MarketplacePage() {
       )}
 
       {showResultPrint && result && (
-        <MarketplacePrintSheet result={result} origin={lojas.find(l => l.id === lojaId)?.nome ?? ""} onDone={() => setShowResultPrint(false)} />
+        <MarketplacePrintSheet result={result} origin={result.lojaNome} onDone={() => setShowResultPrint(false)} />
       )}
       {showDetailPrint && detail && (
         <MarketplacePrintSheet
