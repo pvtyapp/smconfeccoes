@@ -214,6 +214,17 @@ export default function SettingsPage() {
                 Abrir →
               </a>
             </div>
+            <div className="flex items-start gap-3 bg-[#F4F6FB] rounded-xl px-4 py-3">
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-[#0F1E3C]/70">Grupo SM Financeiro</p>
+                <p className="text-[11px] text-[#0F1E3C]/40 mt-0.5">
+                  Cola um texto pronto e manda pro grupo, pela instância administrativa.
+                </p>
+              </div>
+              <a href="/dashboard/settings/avisos-financeiro" className="flex-shrink-0 text-[10px] font-bold text-[#4361EE] hover:underline mt-0.5">
+                Abrir →
+              </a>
+            </div>
           </section>
 
           {/* DTF */}
