@@ -4,18 +4,39 @@ import { useRef, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Send, Loader2, Paperclip, X, FileArchive } from "lucide-react"
 
-const MAX_BYTES = 4 * 1024 * 1024   // a Vercel recusa corpo acima de ~4,5 MB
+const MAX_BYTES = 150 * 1024 * 1024   // por arquivo; vai direto pro smconfeccoes-backend (Railway), não pela Vercel
 const fmtTam = (b: number) => b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`
+
+// Sobe 1 arquivo pro backend com o token do painel; XHR pra ter a porcentagem do upload.
+function subirArquivo(url: string, token: string, f: File, onPct: (p: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open("POST", url)
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`)
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onPct(Math.round((e.loaded / e.total) * 100)) }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve()
+      let msg = `erro ${xhr.status}`
+      try { const d = JSON.parse(xhr.responseText); msg = d.detail || d.error || msg } catch {}
+      reject(new Error(msg))
+    }
+    xhr.onerror = () => reject(new Error("falha de conexão com o servidor de arquivos"))
+    const fd = new FormData()
+    fd.append("file", f)
+    xhr.send(fd)
+  })
+}
 
 export default function AvisosPage() {
   const [text, setText] = useState("")
   const [files, setFiles] = useState<File[]>([])
   const [sending, setSending] = useState(false)
+  const [progresso, setProgresso] = useState<{ i: number; n: number; nome: string; pct: number } | null>(null)
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const total = files.reduce((s, f) => s + f.size, 0)
-  const grandeDemais = total > MAX_BYTES
+  const grandeDemais = files.some(f => f.size > MAX_BYTES)
 
   function addFiles(list: FileList | null) {
     if (!list?.length) return
@@ -32,32 +53,44 @@ export default function AvisosPage() {
     if ((!text.trim() && !files.length) || grandeDemais) return
     setSending(true)
     setFeedback(null)
+    let textoFoi = false
+    const foram: string[] = []
     try {
-      let r: Response
-      if (files.length) {
-        const fd = new FormData()
-        fd.append("text", text)
-        for (const f of files) fd.append("file", f)
-        r = await fetch("/api/whatsapp/aviso-marketplace", { method: "POST", body: fd })
-      } else {
-        r = await fetch("/api/whatsapp/aviso-marketplace", {
+      // 1) a mensagem (caminho de sempre, pela Vercel)
+      if (text.trim()) {
+        const r = await fetch("/api/whatsapp/aviso-marketplace", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
         })
+        const d = await r.json().catch(() => ({})) as { error?: string }
+        if (!r.ok) { setFeedback({ ok: false, msg: d.error ?? "Erro ao enviar a mensagem" }); return }
+        textoFoi = true
       }
-      const d = await r.json().catch(() => ({ error: r.status === 413 ? "Arquivo grande demais (limite 4 MB)" : `Erro ${r.status}` })) as { ok?: boolean; error?: string }
-      if (!r.ok) {
-        setFeedback({ ok: false, msg: d.error ?? "Erro ao enviar" })
-        return
+      // 2) os arquivos, um por um, direto pro backend
+      if (files.length) {
+        const rt = await fetch("/api/whatsapp/aviso-marketplace/token", { method: "POST" })
+        const t = await rt.json().catch(() => ({})) as { token?: string; url?: string; error?: string }
+        if (!rt.ok || !t.token || !t.url) throw new Error(t.error ?? "não consegui liberar o envio de arquivo")
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i]
+          setProgresso({ i: i + 1, n: files.length, nome: f.name, pct: 0 })
+          await subirArquivo(t.url, t.token, f, pct => setProgresso({ i: i + 1, n: files.length, nome: f.name, pct }))
+          foram.push(f.name)
+        }
       }
       setFeedback({ ok: true, msg: files.length ? `Enviado com ${files.length} arquivo${files.length > 1 ? "s" : ""}!` : "Enviado!" })
       setText("")
       setFiles([])
-    } catch {
-      setFeedback({ ok: false, msg: "Erro de conexão ao enviar" })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const ja = [textoFoi ? "a mensagem" : "", ...foram].filter(Boolean)
+      setFeedback({ ok: false, msg: `${ja.length ? `Já foi: ${ja.join(", ")}. ` : ""}Falhou: ${msg}` })
+      if (textoFoi) setText("")
+      if (foram.length) setFiles(prev => prev.filter(f => !foram.includes(f.name)))
     } finally {
       setSending(false)
+      setProgresso(null)
     }
   }
 
@@ -106,10 +139,21 @@ export default function AvisosPage() {
           </div>
           <p className={`text-[10px] mt-1 ${grandeDemais ? "text-red-600 font-semibold" : "text-[#0F1E3C]/30"}`}>
             {grandeDemais
-              ? `Total ${fmtTam(total)}: passa do limite de 4 MB. Tira algum arquivo ou compacta mais.`
-              : `A mensagem vai primeiro e os arquivos logo depois, como documento. Limite: 4 MB no total${files.length ? ` (agora ${fmtTam(total)})` : ""}.`}
+              ? `Tem arquivo com mais de 150 MB. Divide em partes ou compacta mais.`
+              : `A mensagem vai primeiro e os arquivos logo depois, como documento. Até 150 MB por arquivo${files.length ? ` (agora ${fmtTam(total)} no total)` : ""}.`}
           </p>
         </div>
+
+        {progresso && (
+          <div className="space-y-1" data-testid="aviso-progresso">
+            <p className="text-[11px] font-semibold text-[#0F1E3C]/60 truncate">
+              Enviando {progresso.n > 1 ? `${progresso.i} de ${progresso.n}: ` : ""}{progresso.nome} · {progresso.pct < 100 ? `${progresso.pct}%` : "mandando pro WhatsApp…"}
+            </p>
+            <div className="h-1.5 rounded-full bg-[#0F1E3C]/8 overflow-hidden">
+              <div className="h-full bg-[#4361EE] transition-all" style={{ width: `${progresso.pct}%` }} />
+            </div>
+          </div>
+        )}
 
         {feedback && (
           <p className={`text-xs font-semibold ${feedback.ok ? "text-emerald-600" : "text-red-600"}`}>
