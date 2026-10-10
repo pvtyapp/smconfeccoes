@@ -107,7 +107,9 @@ export default function MarketplacePage() {
     setCatalogLoading(true)
     try {
       const res = await fetch("/api/stock/balance")
-      if (res.ok) setCatalog(await res.json())
+      // saldo real (pode ser negativo): saída sem estoque é liberada e o card mostra o número de verdade
+      if (res.ok) setCatalog((await res.json() as (CatalogVariant & { availableStockReal?: number })[])
+        .map(v => ({ ...v, availableStock: v.availableStockReal ?? v.availableStock })))
     } finally { setCatalogLoading(false) }
   }, [])
   useEffect(() => { loadCatalog() }, [loadCatalog])

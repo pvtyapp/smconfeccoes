@@ -22,7 +22,9 @@ export async function GET() {
         COALESCE(s30.qty, 0)::int                                                         AS "salesLast30Days",
         COALESCE(rsvd.qty_pending, 0)::int                                                AS "qtyReservedPending",
         COALESCE(rsvd.qty_notified, 0)::int                                               AS "qtyReservedNotified",
-        GREATEST(0, COALESCE(bal.qty, 0) - COALESCE(locked.locked_qty, 0))::int          AS "availableStock"
+        GREATEST(0, COALESCE(bal.qty, 0) - COALESCE(locked.locked_qty, 0))::int          AS "availableStock",
+        -- mesmo saldo SEM travar no zero: o Marketplace mostra o negativo de verdade (PIV 10/10)
+        (COALESCE(bal.qty, 0) - COALESCE(locked.locked_qty, 0))::int                     AS "availableStockReal"
       FROM product_variants pv
       JOIN products p ON p.id = pv.product_id
       LEFT JOIN categories cat ON cat.id = p.category_id

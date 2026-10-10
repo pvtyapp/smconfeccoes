@@ -62,7 +62,7 @@ export function ProdutoCard({ productName, variants, cartQtyFor, onAdd }: {
 }) {
   const cores = useMemo(() => {
     const m = new Map<string, number>()
-    for (const v of variants) m.set(v.color, (m.get(v.color) ?? 0) + v.availableStock)
+    for (const v of variants) m.set(v.color, (m.get(v.color) ?? 0) + Math.max(0, v.availableStock))   // total da cor só soma o que tem
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b))
   }, [variants])
   const [cor, setCor] = useState(cores.length === 1 ? cores[0][0] : "")
@@ -71,7 +71,7 @@ export function ProdutoCard({ productName, variants, cartQtyFor, onAdd }: {
   const [qtd, setQtd] = useState(1)
   const [done, flash] = useFlash()
   const variante = tamanhos.find(v => v.variantId === tamId)
-  const estoqueTotal = variants.reduce((s, v) => s + v.availableStock, 0)
+  const estoqueTotal = variants.reduce((s, v) => s + Math.max(0, v.availableStock), 0)
   const faltaEstoque = variante && variante.availableStock < qtd + cartQtyFor(variante.variantId)
 
   function adicionar(e: ReactMouseEvent<HTMLButtonElement>) {
@@ -108,13 +108,13 @@ export function ProdutoCard({ productName, variants, cartQtyFor, onAdd }: {
           <div className="flex flex-wrap gap-1.5">
             {tamanhos.map(v => {
               const noCarrinho = cartQtyFor(v.variantId)
-              const sem = v.availableStock === 0
+              const sem = v.availableStock <= 0, negativo = v.availableStock < 0
               return (
                 <button key={v.variantId} type="button" onClick={() => { setTamId(v.variantId); setQtd(1) }}
-                  title={sem ? "Sem estoque disponível no sistema" : `${v.availableStock} disponíveis`}
-                  className={`relative flex flex-col items-center justify-center min-w-[50px] px-2.5 py-1 rounded-lg border transition-colors ${tamId === v.variantId ? chipOn : sem ? "border-orange-200 bg-orange-50/60 text-orange-500 hover:border-orange-300" : chipOff}`}>
+                  title={negativo ? `Estoque negativo no sistema: ${v.availableStock}` : sem ? "Sem estoque disponível no sistema" : `${v.availableStock} disponíveis`}
+                  className={`relative flex flex-col items-center justify-center min-w-[50px] px-2.5 py-1 rounded-lg border transition-colors ${tamId === v.variantId ? chipOn : negativo ? "border-red-200 bg-red-50/70 text-red-600 hover:border-red-300" : sem ? "border-orange-200 bg-orange-50/60 text-orange-500 hover:border-orange-300" : chipOff}`}>
                   <span className="text-[13px] font-black leading-tight">{v.size || "U"}</span>
-                  <span className="text-[9px] font-semibold opacity-55 tabular-nums leading-tight">{sem ? "sem estoque" : `${v.availableStock} un`}</span>
+                  <span className="text-[9px] font-semibold opacity-55 tabular-nums leading-tight">{negativo ? `${v.availableStock} un` : sem ? "sem estoque" : `${v.availableStock} un`}</span>
                   {noCarrinho > 0 && (
                     <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 bg-[#0F1E3C] text-white rounded-full text-[9px] font-black flex items-center justify-center tabular-nums">{noCarrinho}</span>
                   )}
@@ -127,7 +127,7 @@ export function ProdutoCard({ productName, variants, cartQtyFor, onAdd }: {
 
       {faltaEstoque && (
         <p className="text-[11px] font-semibold text-orange-600 flex items-center gap-1 mb-2">
-          <AlertTriangle size={12} /> Só {variante!.availableStock} no sistema, o estoque vai ficar negativo
+          <AlertTriangle size={12} /> {variante!.availableStock < 0 ? `Estoque já está em ${variante!.availableStock}, vai ficar mais negativo` : `Só ${variante!.availableStock} no sistema, o estoque vai ficar negativo`}
         </p>
       )}
 
