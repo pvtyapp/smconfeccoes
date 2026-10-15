@@ -15,6 +15,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/whatsapp/financeiro-fechamento-cron",
   "/api/marketing/cron",
   "/api/fiscal/fechamento-mensal-cron",
+  "/api/fiscal/verificar-cron",
   "/api/orders/expire",
   "/api/lifecycle/migrate",
   "/api/chat/migrate",

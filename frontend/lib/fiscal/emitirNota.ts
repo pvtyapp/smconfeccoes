@@ -1,5 +1,7 @@
 import { pool } from "@/lib/db"
 import { isNfeEligible } from "@/lib/portal/fiscalCompleteness"
+import { waitUntil } from "@vercel/functions"
+import { acompanharNota } from "@/lib/fiscal/verificarNota"
 
 // Motor de emissão — extraído de app/api/fiscal/emitir (rota do staff) pra
 // ser chamado também pela rota do portal (cliente pedindo a própria nota).
@@ -42,7 +44,7 @@ export async function emitirNotaFiscal(orderIds: number[]): Promise<EmitirNotaRe
 
   const { rows: orderRows } = await pool.query(`
     SELECT
-      o.id, o.number, o.created_at AS "createdAt",
+      o.id, o.number, o.status, o.created_at AS "createdAt",
       c.id                       AS "contactId",
       COALESCE(c.nome_cadastro, c.name) AS "contactName",
       c.cpf_cnpj                 AS "cpfCnpj",
@@ -59,6 +61,17 @@ export async function emitirNotaFiscal(orderIds: number[]): Promise<EmitirNotaRe
 
   if (orderRows.length !== orderIds.length) {
     return { ok: false, httpStatus: 404, error: "Um ou mais pedidos não foram encontrados." }
+  }
+
+  // Nota só de pedido concluído (PIV 15/10) — vale pro staff e pro portal. Antes o
+  // portal deixava pedir nota de pedido ainda em separação/pronto.
+  const naoConcluidos = orderRows.filter((o: { status: string }) => o.status !== "concluido")
+  if (naoConcluidos.length > 0) {
+    const nums = naoConcluidos.map((o: { number: string }) => o.number).join(", ")
+    return {
+      ok: false, httpStatus: 400,
+      error: `Nota fiscal só pode ser emitida de pedido concluído. Ainda não concluído(s): ${nums}.`,
+    }
   }
 
   // NFe só pode ser emitida dentro de 10 dias do pedido — trava aqui protege
@@ -247,6 +260,10 @@ export async function emitirNotaFiscal(orderIds: number[]): Promise<EmitirNotaRe
     )
     return { ok: false, httpStatus: 422, error: focusData.mensagem || "Focus NFe recusou a requisição.", detail: focusData }
   }
+
+  // Acompanha a autorização em segundo plano (salva PDF/XML e manda no WhatsApp),
+  // sem depender de tela aberta. O que passar desse tempo o cron pega.
+  waitUntil(acompanharNota(noteId).catch(() => {}))
 
   return { ok: true, ref, status: "processando" }
 }

@@ -59,7 +59,7 @@ export async function GET(req: Request) {
       (
         SELECT fn.status FROM fiscal_note_orders fno
         JOIN fiscal_notes fn ON fn.id = fno.fiscal_note_id
-        WHERE fno.order_id = o.id AND fn.status != 'rejeitada'
+        WHERE fno.order_id = o.id AND fn.status NOT IN ('rejeitada', 'cancelada')
         ORDER BY fn.id DESC LIMIT 1
       ) AS "fiscalNoteStatus"
     FROM orders o

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
+import { tratarNotaAoCancelarPedido } from "@/lib/fiscal/verificarNota"
 
 const VALID_STATUSES = ["triagem", "em_separacao", "pronto", "concluido", "cancelado"]
 
@@ -11,13 +12,24 @@ export async function POST(
   const client = await pool.connect()
   try {
     const { id } = await params
-    const { status, actor, note, notifyClient, cancelMessage, dueDate, paid } = await req.json()
+    const { status, actor, note, notifyClient, cancelMessage, dueDate, paid, confirmarNota } = await req.json()
 
     if (!VALID_STATUSES.includes(status)) {
       return NextResponse.json(
         { error: `Status inválido. Use: ${VALID_STATUSES.join(", ")}` },
         { status: 400 }
       )
+    }
+
+    // Cancelar pedido com nota fiscal: cancela a nota na Sefaz antes (PIV 15/10).
+    let avisoNota: string | undefined
+    if (status === "cancelado") {
+      const { rows: num } = await pool.query(`SELECT number, status FROM orders WHERE id = $1`, [id])
+      if (num[0] && num[0].status !== "cancelado") {
+        const r = await tratarNotaAoCancelarPedido(Number(id), num[0].number, confirmarNota === true)
+        if (!r.ok) return NextResponse.json({ error: r.error, code: r.code }, { status: r.httpStatus })
+        avisoNota = r.aviso
+      }
     }
 
     await client.query("BEGIN")
@@ -244,7 +256,7 @@ export async function POST(
       sendAndSave(order.contact_id, order.jid, msg).catch(() => {})
     }
 
-    return NextResponse.json({ success: true, status })
+    return NextResponse.json({ success: true, status, avisoNota })
   } catch (err) {
     await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)

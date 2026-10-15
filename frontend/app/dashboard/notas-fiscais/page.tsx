@@ -9,7 +9,7 @@ import { todayBR, subDaysBR, fmtDateBR } from "@/lib/tz"
 
 type Nota = {
   id: number
-  status: "pendente" | "processando" | "autorizada" | "rejeitada"
+  status: "pendente" | "processando" | "autorizada" | "rejeitada" | "cancelada"
   numero: string | null
   serie: string | null
   chaveAcesso: string | null
@@ -25,13 +25,14 @@ type Nota = {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  pendente: "Pendente", processando: "Processando", autorizada: "Autorizada", rejeitada: "Rejeitada",
+  pendente: "Pendente", processando: "Processando", autorizada: "Autorizada", rejeitada: "Rejeitada", cancelada: "Cancelada",
 }
 const STATUS_COLOR: Record<string, string> = {
   pendente:    "bg-gray-100 text-gray-500",
   processando: "bg-blue-100 text-blue-700",
   autorizada:  "bg-emerald-100 text-emerald-700",
   rejeitada:   "bg-red-100 text-red-600",
+  cancelada:   "bg-gray-200 text-gray-600 line-through",
 }
 
 export default function NotasFiscaisPage() {

@@ -10,6 +10,7 @@ import { todayBR } from "@/lib/tz"
 import { colorSwatch } from "@/lib/colorSwatch"
 import Toggle from "@/components/Toggle"
 import ConfirmDialog from "@/components/ConfirmDialog"
+import { cancelarPedido } from "@/lib/fiscal/cancelarPedidoClient"
 
 type Props = {
   order: Order
@@ -359,7 +360,8 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
   async function confirmCancel() {
     setSaving(true)
     try {
-      await postStatus("cancelado", { note: "Cancelado pelo operador", notifyClient, cancelMessage: notifyClient ? cancelMsg : undefined })
+      const ok = await cancelarPedido(`/api/orders/${order.id}/status`, { note: "Cancelado pelo operador", notifyClient, cancelMessage: notifyClient ? cancelMsg : undefined })
+      if (!ok) return
       setShowCancel(false)
       onRefresh()
     } finally { setSaving(false) }

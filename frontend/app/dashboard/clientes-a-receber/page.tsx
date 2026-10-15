@@ -10,6 +10,7 @@ import {
 import { todayBR, subDaysBR, fmtDateOnlyBR } from "@/lib/tz"
 import Toggle from "@/components/Toggle"
 import ClienteExtratoModal from "./ClienteExtratoModal"
+import { cancelarPedido } from "@/lib/fiscal/cancelarPedidoClient"
 
 type Contact = { id: number; name: string | null; phone: string; paymentTermEnabled: boolean }
 
@@ -241,11 +242,7 @@ export default function ClientesAReceberPage() {
   }
 
   async function handleCancelConfirm(order: PendingOrder) {
-    await fetch(statusUrl(order), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "cancelado", actor: "dashboard" }),
-    })
+    await cancelarPedido(statusUrl(order), { actor: "dashboard" })
     setCanceling(null)
     await load()
   }

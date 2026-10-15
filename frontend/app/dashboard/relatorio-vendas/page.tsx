@@ -8,6 +8,7 @@ import Toggle from "@/components/Toggle"
 import PdvReceiptModal, { type SaleReceipt } from "@/app/dashboard/pdv/PdvReceiptModal"
 import { printWhenReady } from "@/components/print/print-utils"
 import VendasRelatorioPrintSheet from "./VendasRelatorioPrintSheet"
+import { cancelarPedido } from "@/lib/fiscal/cancelarPedidoClient"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -421,11 +422,7 @@ export default function RelatorioVendasPage() {
   }
 
   async function handleCancelConfirm(order: OrderRecord, notify: boolean) {
-    await fetch(`/api/orders/${order.id}/status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "cancelado", actor: "dashboard", notifyClient: notify }),
-    })
+    await cancelarPedido(`/api/orders/${order.id}/status`, { actor: "dashboard", notifyClient: notify })
     setCanceling(null)
     await load()
   }

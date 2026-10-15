@@ -159,16 +159,24 @@ export default function NotaFiscalTab() {
             <div className="space-y-2">
               {data.orders.map((o) => {
                 const hasNote = !!o.fiscalNoteStatus
+                // Nota só de pedido concluído (entregue) — o servidor também trava.
+                const aguardando = !hasNote && o.status !== "concluido"
+                const bloqueado = hasNote || aguardando
                 return (
                   <label key={o.id}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${hasNote ? "bg-[#F4F6FB] border-[#0F1E3C]/6 opacity-60" : "border-[#0F1E3C]/8 hover:bg-[#F4F6FB] cursor-pointer"}`}>
-                    <input type="checkbox" disabled={hasNote} checked={selected.has(o.id)} onChange={() => toggle(o.id)} />
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${bloqueado ? "bg-[#F4F6FB] border-[#0F1E3C]/6 opacity-60" : "border-[#0F1E3C]/8 hover:bg-[#F4F6FB] cursor-pointer"}`}>
+                    <input type="checkbox" disabled={bloqueado} checked={selected.has(o.id)} onChange={() => toggle(o.id)} />
                     <span className="flex-1 text-sm text-[#0F1E3C]">Pedido {o.number}</span>
                     <span className="text-xs text-[#0F1E3C]/40">{fmtDate(o.createdAt)}</span>
                     <span className="text-sm font-bold text-[#0F1E3C]">{fmtR(o.totalValue)}</span>
                     {hasNote && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">
                         {o.fiscalNoteStatus === "autorizada" ? "Nota emitida" : "Nota em análise"}
+                      </span>
+                    )}
+                    {aguardando && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 whitespace-nowrap">
+                        Disponível após a entrega
                       </span>
                     )}
                   </label>

@@ -20,12 +20,23 @@ export async function processarResultadoNota(
   note: { id: number; ambiente: string },
   data: FocusNfeResultado
 ) {
-  if (data.status !== "autorizado") {
+  // Webhook de cancelamento (a Focus avisa quando cancelamos uma nota).
+  if (data.status === "cancelado") {
     await pool.query(
-      `UPDATE fiscal_notes SET status = 'rejeitada', motivo_rejeicao = $1 WHERE id = $2`,
+      `UPDATE fiscal_notes SET status = 'cancelada', cancelada_em = COALESCE(cancelada_em, NOW()) WHERE id = $1`,
+      [note.id]
+    )
+    return { status: "cancelada" as const }
+  }
+
+  // Só mexe em nota ainda "processando": verificação ativa, cron e webhook podem
+  // chegar juntos, e só o primeiro grava (e manda o WhatsApp).
+  if (data.status !== "autorizado") {
+    const { rowCount } = await pool.query(
+      `UPDATE fiscal_notes SET status = 'rejeitada', motivo_rejeicao = $1 WHERE id = $2 AND status = 'processando'`,
       [`${data.status_sefaz ?? ""}: ${data.mensagem_sefaz ?? data.status}`, note.id]
     )
-    return { status: "rejeitada" as const }
+    return { status: rowCount ? "rejeitada" as const : "ja_processada" as const }
   }
 
   const { rows: settingsRows } = await pool.query(
@@ -47,7 +58,7 @@ export async function processarResultadoNota(
   const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer())
   const pdfBase64 = pdfBuffer.toString("base64")
 
-  await pool.query(`
+  const { rowCount: gravou } = await pool.query(`
     UPDATE fiscal_notes SET
       status = 'autorizada',
       chave_acesso = $1,
@@ -58,8 +69,9 @@ export async function processarResultadoNota(
       pdf = $6,
       autorizado_em = NOW(),
       enviado_email_em = NOW()
-    WHERE id = $7
+    WHERE id = $7 AND status = 'processando'
   `, [data.chave_nfe, data.numero, data.serie, data.protocolo, xml, pdfBase64, note.id])
+  if (!gravou) return { status: "ja_processada" as const }
 
   // Nota pode cobrir vários pedidos consolidados — todos garantidamente do
   // mesmo cliente (validado na emissão), então qualquer um serve pra achar

@@ -93,6 +93,15 @@ export async function montarFechamento(mes: string) {
   `, [mes])
   const pendentes = Object.fromEntries(pendRows.map(r => [r.status, Number(r.qtd)]))
 
+  // Canceladas na Sefaz (pedido cancelado, PIV 15/10) — não vão no zip, mas o
+  // contador precisa saber o número, senão parece buraco na sequência.
+  const { rows: cancRows } = await pool.query<{ numero: string }>(`
+    SELECT numero FROM fiscal_notes
+    WHERE ambiente = 'producao' AND status = 'cancelada' AND numero IS NOT NULL
+      AND to_char(autorizado_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM') = $1
+    ORDER BY numero::int
+  `, [mes])
+
   const zip = new JSZip()
   const faltando: string[] = []
   const linhas = ["Numero;Serie;Autorizada em;Cliente;Valor;Chave de acesso"]
@@ -132,6 +141,7 @@ export async function montarFechamento(mes: string) {
     faltando,
     rejeitadas: pendentes.rejeitada ?? 0,
     processando: pendentes.processando ?? 0,
+    canceladas: cancRows.map(r => r.numero),
     zipBase64,
   }
 }
@@ -157,6 +167,7 @@ export async function enviarFechamentoMensal(mes: string, aviso?: string) {
   const alertas: string[] = []
   if (f.faltando.length) alertas.push(`⚠️ Arquivo faltando nas notas: ${f.faltando.join(", ")}`)
   if (f.rejeitadas) alertas.push(`⚠️ ${f.rejeitadas} tentativa${f.rejeitadas > 1 ? "s" : ""} rejeitada${f.rejeitadas > 1 ? "s" : ""} no mês (não entram no zip)`)
+  if (f.canceladas.length) alertas.push(`🚫 Nota${f.canceladas.length > 1 ? "s" : ""} cancelada${f.canceladas.length > 1 ? "s" : ""} na Sefaz (não entram no zip, avisar o contador): nº ${f.canceladas.join(", ")}`)
   if (f.processando) alertas.push(`⚠️ ${f.processando} nota${f.processando > 1 ? "s" : ""} ainda em "processando" (conferir na aba Notas Fiscais)`)
   if (alertas.length) partes.push(alertas.join("\n"))
 

@@ -25,6 +25,10 @@
       "schedule": "0 23 * * *"
     },
     {
+      "path": "/api/fiscal/verificar-cron",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/fiscal/fechamento-mensal-cron",
       "schedule": "30 3 1 * *"
     }
