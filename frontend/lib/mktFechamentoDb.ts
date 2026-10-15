@@ -54,12 +54,14 @@ export async function carregarRegras(db: Db = pool): Promise<RegraCusto[]> {
 export async function recalcularCustos(db: Db, filtro?: { dia: string; loja: string }) {
   const regras = await carregarRegras(db)
   const { rows: itens } = await db.query(
-    `SELECT id, sku, qtd FROM marketplace_vendas_itens ${filtro ? "WHERE dia = $1 AND loja = $2" : ""}`,
+    `SELECT id, sku, qtd, titulo, variacao FROM marketplace_vendas_itens ${filtro ? "WHERE dia = $1 AND loja = $2" : ""}`,
     filtro ? [filtro.dia, filtro.loja] : [])
+  const semSku = itens.some(it => !it.sku?.trim())
+  const acharSku = semSku ? await skuPorSemelhanca(db, regras) : null
   // agrupa por custo pra mandar poucos UPDATEs
   const porCusto = new Map<string, number[]>()
   for (const it of itens) {
-    const c = custoDoSku(regras, it.sku)
+    const c = custoDoSku(regras, it.sku?.trim() ? it.sku : acharSku?.(it.titulo, it.variacao))
     const k = c ? String(arred(c.unitario * it.qtd)) : "null"
     const l = porCusto.get(k) ?? []
     l.push(it.id)
@@ -77,6 +79,38 @@ export async function recalcularCustos(db: Db, filtro?: { dia: string; loja: str
       GROUP BY dia, loja
     ) s
     WHERE f.dia = s.dia AND f.loja = s.loja`, filtro ? [filtro.dia, filtro.loja] : [])
+}
+
+// Item que chegou sem SKU (o extrato do TikTok às vezes não traz): usa o SKU de outra venda do
+// mesmo anúncio com o mesmo tipo de variação ("KIT ..." x "Camiseta ..."); se não houver, o
+// prefixo de regra que domina esse tipo de variação (>= 90% das vendas com SKU).
+async function skuPorSemelhanca(db: Db, regras: RegraCusto[]) {
+  const tipo = (v: string | null) => (v ?? "").trim().split(/[\s,]+/)[0].toLowerCase()
+  const { rows } = await db.query(`
+    SELECT titulo, variacao, sku FROM marketplace_vendas_itens WHERE sku IS NOT NULL AND trim(sku) <> ''`)
+  const porAnuncio = new Map<string, string>()
+  const porTipo = new Map<string, Map<string, number>>()
+  for (const r of rows) {
+    const t = tipo(r.variacao)
+    if (!t) continue
+    const regra = custoDoSku(regras, r.sku)?.regra
+    if (!regra) continue
+    porAnuncio.set(`${r.titulo}\u0000${t}`, r.sku)
+    const m = porTipo.get(t) ?? new Map<string, number>()
+    m.set(regra.prefixo, (m.get(regra.prefixo) ?? 0) + 1)
+    porTipo.set(t, m)
+  }
+  const dominante = new Map<string, string>()
+  for (const [t, m] of porTipo) {
+    const total = [...m.values()].reduce((a, b) => a + b, 0)
+    const [prefixo, n] = [...m.entries()].sort((a, b) => b[1] - a[1])[0]
+    if (n / total >= 0.9) dominante.set(t, prefixo)
+  }
+  return (titulo: string | null, variacao: string | null): string | null => {
+    const t = tipo(variacao)
+    if (!t) return null
+    return porAnuncio.get(`${titulo}\u0000${t}`) ?? dominante.get(t) ?? null
+  }
 }
 
 // SKUs vendidos que não caem em nenhuma regra (pra tela de custos).
