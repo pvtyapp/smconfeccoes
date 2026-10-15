@@ -310,6 +310,9 @@ function Custos() {
               O SKU vendido que começar com o prefixo usa a soma do custo dos produtos escolhidos (o mesmo custo do cadastro de produtos) mais o extra.
               Se dois prefixos servirem, vale o mais comprido. Mudou o custo no cadastro de produtos? Clique em Recalcular.
             </p>
+            <p className="text-xs text-[#0F1E3C]/45 mt-1 max-w-2xl">
+              Kits são contados sozinhos: SKU com cores somadas por &quot;+&quot; (ex.: Preto + Bege + Marrom) vale 1 peça por cor, e variação KIT num SKU de peça avulsa (ex.: inf-...-KIT) usa a regra do kit.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => enviar("/api/marketplace/custos", "POST", { acao: "recalcular" })} disabled={ocupado}

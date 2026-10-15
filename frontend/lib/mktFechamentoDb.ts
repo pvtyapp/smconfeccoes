@@ -3,7 +3,7 @@ import type { PoolClient } from "pg"
 import { cookies } from "next/headers"
 import { pool } from "@/lib/db"
 import { verifySession, COOKIE_NAME } from "@/lib/session"
-import { regraDoSku, arred, lucroDe, type FechamentoMkt, type RegraCusto } from "@/lib/mktFechamento"
+import { custoDoSku, arred, lucroDe, type FechamentoMkt, type RegraCusto } from "@/lib/mktFechamento"
 
 type Db = Pick<PoolClient, "query">
 
@@ -59,8 +59,8 @@ export async function recalcularCustos(db: Db, filtro?: { dia: string; loja: str
   // agrupa por custo pra mandar poucos UPDATEs
   const porCusto = new Map<string, number[]>()
   for (const it of itens) {
-    const r = regraDoSku(regras, it.sku)
-    const k = r ? String(arred(r.custoUnitario * it.qtd)) : "null"
+    const c = custoDoSku(regras, it.sku)
+    const k = c ? String(arred(c.unitario * it.qtd)) : "null"
     const l = porCusto.get(k) ?? []
     l.push(it.id)
     porCusto.set(k, l)

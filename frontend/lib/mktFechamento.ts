@@ -96,6 +96,23 @@ export function regraDoSku(regras: RegraCusto[], sku: string | null | undefined)
   return melhor
 }
 
+// Custo de 1 unidade vendida do SKU (PIV 15/10), já contando os kits:
+// - kit de cores ("cropped-liso-Preto + Bege + Marrom-M") = 1 peça por cor, custo × nº de cores;
+// - variação KIT num anúncio de peça avulsa ("inf-naruto4per-KIT Azul Royal-TAM.16") usa a regra
+//   do kit ("kit-inf-"), se existir uma que case com "kit-" + SKU.
+export function custoDoSku(regras: RegraCusto[], sku: string | null | undefined): { regra: RegraCusto; pecas: number; unitario: number } | null {
+  if (!sku) return null
+  const s = sku.trim().toLowerCase()
+  let regra = regraDoSku(regras, s)
+  if (/-kit\b/.test(s) && !s.startsWith("kit")) {
+    const doKit = regraDoSku(regras, `kit-${s}`)
+    if (doKit && (!regra || doKit.prefixo.length > regra.prefixo.length)) regra = doKit
+  }
+  if (!regra) return null
+  const pecas = (s.match(/\+/g)?.length ?? 0) + 1
+  return { regra, pecas, unitario: r2(regra.custoUnitario * pecas) }
+}
+
 export const fmtBRL = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 export const ddmm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
 
