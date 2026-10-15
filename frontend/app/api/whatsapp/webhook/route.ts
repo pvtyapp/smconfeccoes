@@ -9,6 +9,7 @@ import { withInstance } from "@/lib/whatsapp/instanceContext"
 import { FINANCEIRO_GROUP_JID } from "@/lib/whatsapp/financeiroGroup"
 import { handleFinanceiroGroupMessage } from "@/lib/whatsapp/financeiroFlow"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
+import { variantesDo9 } from "@/lib/whatsapp/resolveContact"
 import { getProvider } from "@/lib/whatsapp/provider"
 import { isAutomationPaused } from "@/lib/whatsapp/automationGate"
 import { isOutsideBusinessHours } from "@/lib/portal/businessHours"
@@ -98,6 +99,32 @@ async function upsertContactFromMessage(jid: string, rawPushName: string, remote
           updated_at = NOW()
         WHERE id = $3
       `, [jid, phone, rows[0].id, pushName]).catch(() => {})
+      return rows[0]
+    }
+  }
+
+  // @s.whatsapp.net sem contato nesse jid, mas o mesmo celular já existe com/sem o 9º
+  // dígito (cadastro feito no portal/PDV com o 9, WhatsApp registrado sem). Adota esse
+  // contato e passa o jid pro endereço real, em vez de criar um 2º cadastro (PIV 15/10).
+  if (jid.endsWith("@s.whatsapp.net") && variantesDo9(phone).length > 1) {
+    const fones = variantesDo9(phone)
+    const { rows } = await pool.query(`
+      SELECT id, state, state_data AS "stateData", lifecycle_state AS "lifecycleState",
+             updated_at AS "updatedAt", last_order_at AS "lastOrderAt", nome_cadastro AS "nomeCadastro"
+      FROM wa_contacts
+      WHERE NOT EXISTS (SELECT 1 FROM wa_contacts j WHERE j.jid = $1)
+        AND jid NOT LIKE '%@lid'
+        AND (phone = ANY($2::text[]) OR phone_jid = ANY($3::text[]))
+      ORDER BY id LIMIT 1
+    `, [jid, fones, fones.map(f => `${f}@s.whatsapp.net`)]).catch(() => ({ rows: [] as Record<string, unknown>[] }))
+    if (rows[0]) {
+      await pool.query(`
+        UPDATE wa_contacts SET
+          jid = $1, phone_jid = $1,
+          name = CASE WHEN name IS NOT NULL THEN name WHEN $3::text IS NULL THEN name ELSE $3 END,
+          updated_at = NOW()
+        WHERE id = $2
+      `, [jid, rows[0].id, pushName]).catch(() => {})
       return rows[0]
     }
   }
