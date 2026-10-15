@@ -8,6 +8,7 @@ import { Factory, Package, Receipt, DollarSign, AlertCircle, Clock, TrendingUp, 
 import Link from "next/link"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
+import FaturamentoChart from "@/components/dashboard/FaturamentoChart"
 
 type PendingOrder = { id: number; totalValue: number | null; dueDate: string | null }
 
@@ -179,6 +180,7 @@ export default function DashboardPage() {
   const toProduced = metrics.filter(m => m.suggestedProduction > 0).slice(0, 6)
 
   const pLabel = periodLabel(period, rangeStart, rangeEnd)
+  const [pStart, pEnd] = getPeriodDates(period, rangeStart, rangeEnd)
 
   return (
     <div className="space-y-8">
@@ -259,6 +261,10 @@ export default function DashboardPage() {
               ))
           }
         </div>
+
+        {/* Faturamento por dia: venda direta × marketplace (lançamentos do outro PC) */}
+        <FaturamentoChart start={pStart} end={pEnd}
+          resultadoDireto={financeiroLoading ? null : (financeiro?.dre.resultadoOp ?? null)} />
 
         {/* Recebimentos pendentes — sempre "hoje", não segue o filtro de período */}
         <div className="space-y-2">

@@ -4,7 +4,7 @@ import {
   TrendingUp, CalendarClock, UserRound, Users, Images, ShoppingBag,
   Receipt, ClipboardCheck, Layers, AlertTriangle, Store, TrendingDown,
   BarChart2, Printer, FlaskConical, FileBarChart, Megaphone, PieChart,
-  Settings, Signal, CalendarDays, ShoppingCart, FileText, ClipboardList, Undo2,
+  Settings, Signal, CalendarDays, ShoppingCart, FileText, ClipboardList, Undo2, LineChart, ClipboardPen,
 } from "lucide-react"
 
 // Lista única das páginas do menu — usada pela Sidebar (renderizar/filtrar), pela tela
@@ -21,9 +21,11 @@ export const navTop: NavItem[] = [
   { href: "/dashboard/mapa-operacao",           label: "Mapa da Operação", icon: Signal         },
 ]
 
-// Marketplace (Lançar + Relatório de baixas) e Devoluções (peças devolvidas pra reaproveitar) — grupo próprio, acima de Gestão.
+// Marketplace (Lançar + Relatório de baixas), Painel e Lançamentos (fechamento diário das lojas) e Devoluções (peças devolvidas pra reaproveitar) — grupo próprio, acima de Gestão.
 export const navMarketplace: NavItem[] = [
   { href: "/dashboard/marketplace",             label: "Marketplace",            icon: ShoppingCart },
+  { href: "/dashboard/marketplace-painel",      label: "Painel Marketplace",     icon: LineChart    },
+  { href: "/dashboard/marketplace-lancamentos", label: "Lançamentos",            icon: ClipboardPen },
   { href: "/dashboard/devolucoes",              label: "Devoluções",             icon: Undo2        },
 ]
 
