@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { waitUntil } from "@vercel/functions"
 import { pool } from "@/lib/db"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
-import { todayBR, fmtDateOnlyBR, isWeekendBR } from "@/lib/tz"
+import { todayBR, subDaysBR, fmtDateOnlyBR, isWeekendBR } from "@/lib/tz"
 import { runMediaCleanup } from "@/lib/blob-cleanup"
 import { sendAdministrativo } from "@/lib/whatsapp/administrativoGroup"
 import { getProvider } from "@/lib/whatsapp/provider"
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { cobranca: number; cobrancaVencida: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evoRestarted?: boolean; payablesDue?: number } = { cobranca: 0, cobrancaVencida: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0 }
+  const results: { cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evoRestarted?: boolean; payablesDue?: number } = { cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -74,128 +74,83 @@ export async function GET(req: Request) {
   // cliente perderia o aviso pra sempre quando o disjuntor for religado.
   const automacaoPausada = s.automacao_pausada === "true"
 
-  // Cobrança de cliente (seções 7, 8, 8b) só dispara em dia útil (seg-sex).
-  // Pedido vencido no fim de semana não fica sem aviso: cai pra seção 8b
-  // (due_date < hoje) assim que o cron rodar na segunda-feira seguinte.
+  // Cobrança de cliente (seção 7) só dispara em dia útil (seg-sex).
+  // Na segunda, também cobre o que venceu no sábado/domingo.
   const cobrancaHabilitada = !isWeekendBR() && !automacaoPausada
+  const cobrancaDesde = isWeekendBR(new Date(Date.now() - 86_400_000)) ? subDaysBR(2) : today
 
   // Nota: lifecycle (novo D2, ausente D15/30/45 + transições pra frio)
   // migrou pro /api/whatsapp/lifecycle-cron (roda de hora em hora, 08h-20h)
   // — antes tudo saía junto às 9h aqui, em menos de 1 minuto.
 
   if (cobrancaHabilitada) {
-  // ── 7. Cobrança dias corridos ─────────────────────────────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT o.id, o.number, o.total_value, c.id AS "contactId", c.jid, c.name, c.jid AS send_jid
-      FROM orders o
-      JOIN wa_contacts c ON c.id = o.contact_id
-      WHERE o.due_date = $1
-        AND o.paid_at IS NULL
-        AND o.status != 'cancelado'
-        AND c.payment_term_enabled = true
-        AND c.payment_term_type = 'days'
-    `, [today])
-    for (const row of rows.rows) {
-      try {
-        const firstName = (row.name as string).split(" ")[0]
-        const total = row.total_value ? `R$ ${Number(row.total_value).toFixed(2)}` : "o valor do pedido"
-        await sendAndSave(row.contactId as number, row.send_jid as string, `Oi ${firstName}, o pagamento do pedido *${row.number}* vence hoje — *${total}*. Qualquer dúvida é só chamar!`)
-        results.cobranca++
-      } catch { results.errors++ }
-      await randDelayClient()
-    }
-  } catch { results.errors++ }
-
-  // ── 8. Cobrança data fixa ─────────────────────────────────────────────────────
-  try {
-    const rows = await pool.query(`
-      SELECT c.id AS "contactId", c.jid, c.name, c.jid AS send_jid,
-             array_agg(o.number ORDER BY o.created_at) AS numbers,
-             SUM(o.total_value) AS total_sum
-      FROM orders o
-      JOIN wa_contacts c ON c.id = o.contact_id
-      WHERE o.due_date = $1
-        AND o.paid_at IS NULL
-        AND o.status != 'cancelado'
-        AND c.payment_term_enabled = true
-        AND c.payment_term_type = 'fixed_date'
-      GROUP BY c.id, c.jid, c.name, c.phone_jid
-    `, [today])
-    for (const row of rows.rows) {
-      try {
-        const firstName = (row.name as string).split(" ")[0]
-        const nums = (row.numbers as string[]).join(", ")
-        const total = row.total_sum ? `R$ ${Number(row.total_sum).toFixed(2)}` : "o valor total"
-        await sendAndSave(row.contactId as number, row.send_jid as string, `Oi ${firstName}! Os pedidos *${nums}* vencem hoje — total: *${total}*. Pode efetuar o pagamento quando puder!`)
-        results.cobranca++
-      } catch { results.errors++ }
-      await randDelayClient()
-    }
-  } catch { results.errors++ }
-
-  // ── 8b. Cobrança de vencido — produto + DTF, um único aviso ─────────────────
-  // Diferente das seções 7/8 (aviso só no dia do vencimento, e só pra contato com
-  // prazo automático configurado): esta cobre TUDO que já venceu e continua em
-  // aberto — inclusive cobrança manual (Nova Cobrança) e pedido DTF, que antes
-  // nunca recebiam lembrete nenhum. Dispara uma única vez, no primeiro dia útil
-  // após o vencimento (last_reminder_at IS NULL) — nunca repete depois disso.
+  // ── 7. Cobrança no dia do vencimento — produto + DTF, 1 mensagem por cliente ──
+  // Só no dia do vencimento (PIV 19/10: aviso diário de vencido virava spam —
+  // o antigo 8b deveria avisar 1x, mas o cron estourava o tempo antes de gravar
+  // last_reminder_at e repetia todo dia, uma mensagem por pedido). Depois do
+  // vencimento não sai mais nada automático. last_reminder_at é gravado logo
+  // após cada envio, então rodar de novo no mesmo dia não duplica.
   try {
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0`).catch(() => {})
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMPTZ`).catch(() => {})
     await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) NOT NULL DEFAULT 0`).catch(() => {})
     await pool.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMPTZ`).catch(() => {})
 
-    const { rows: overdueOrders } = await pool.query(`
-      SELECT o.id, o.number, o.total_value, o.amount_paid, o.due_date::text AS due_date,
+    const { rows } = await pool.query(`
+      SELECT 'order' AS kind, o.id, o.number, o.total_value, o.amount_paid, o.due_date::text AS due_date,
              o.contact_id AS "contactId", c.jid, c.name
       FROM orders o
       JOIN wa_contacts c ON c.id = o.contact_id
-      WHERE o.due_date < $1
+      WHERE o.due_date BETWEEN $2 AND $1
         AND o.paid_at IS NULL
         AND o.status != 'cancelado'
-        AND o.last_reminder_at IS NULL
-    `, [today])
-
-    const { rows: overdueDtf } = await pool.query(`
-      SELECT p.id, p.number, p.preco_cobrado AS total_value, p.amount_paid, p.due_date::text AS due_date,
+        AND (o.last_reminder_at IS NULL OR o.last_reminder_at < $2::date)
+      UNION ALL
+      SELECT 'dtf' AS kind, p.id, p.number, p.preco_cobrado AS total_value, p.amount_paid, p.due_date::text AS due_date,
              p.contact_id AS "contactId", c.jid, COALESCE(c.name, p.cliente) AS name
       FROM dtf_pedidos p
-      LEFT JOIN wa_contacts c ON c.id = p.contact_id
-      WHERE p.due_date < $1
+      JOIN wa_contacts c ON c.id = p.contact_id
+      WHERE p.due_date BETWEEN $2 AND $1
         AND p.paid_at IS NULL
         AND p.status != 'cancelado'
-        AND p.last_reminder_at IS NULL
-    `, [today])
+        AND (p.last_reminder_at IS NULL OR p.last_reminder_at < $2::date)
+      ORDER BY 7, 6, 3
+    `, [today, cobrancaDesde])
 
-    for (const row of [...overdueOrders, ...overdueDtf]) {
+    const byContact = new Map<number, typeof rows>()
+    for (const row of rows) {
       if (!row.jid || !row.name) continue
+      const total = row.total_value != null ? Number(row.total_value) : null
+      if (total != null && total - Number(row.amount_paid ?? 0) <= 0) continue
+      const list = byContact.get(row.contactId) ?? []
+      list.push(row)
+      byContact.set(row.contactId, list)
+    }
+
+    const fmtMoney = (v: number) => `R$ ${v.toFixed(2).replace(".", ",")}`
+    for (const [contactId, list] of byContact) {
       try {
-        const total     = row.total_value != null ? Number(row.total_value) : null
-        const paid      = Number(row.amount_paid ?? 0)
-        const remaining = total != null ? Math.max(0, total - paid) : null
-        const restanteTxt = remaining != null ? `R$ ${remaining.toFixed(2).replace(".", ",")}` : "o valor combinado"
-        const firstName = (row.name as string).split(" ")[0]
-        const vencTxt = row.due_date ? fmtDateOnlyBR(row.due_date) : ""
-        const msg = `⚠️ Oi ${firstName}, o pagamento do pedido *${row.number}* venceu em *${vencTxt}* e continua em aberto — restam *${restanteTxt}*. Qualquer dúvida é só chamar!`
-        await sendAndSave(row.contactId as number, row.jid as string, msg)
+        const firstName = (list[0].name as string).split(" ")[0]
+        let sum = 0
+        const linhas = list.map(r => {
+          const remaining = r.total_value != null ? Math.max(0, Number(r.total_value) - Number(r.amount_paid ?? 0)) : null
+          if (remaining != null) sum += remaining
+          const quando = r.due_date === today ? "" : ` (venceu ${fmtDateOnlyBR(r.due_date)})`
+          return `• *${r.number}*${remaining != null ? ` — ${fmtMoney(remaining)}` : ""}${quando}`
+        })
+        const quandoUnico = list[0].due_date === today ? "vence hoje" : `venceu em ${fmtDateOnlyBR(list[0].due_date)}`
+        const msg = list.length === 1
+          ? `Oi ${firstName}, o pagamento do pedido *${list[0].number}* ${quandoUnico}${sum > 0 ? ` — *${fmtMoney(sum)}*` : ""}. Qualquer dúvida é só chamar!`
+          : `Oi ${firstName}! Pagamentos com vencimento hoje:\n${linhas.join("\n")}\n\nTotal: *${fmtMoney(sum)}*. Qualquer dúvida é só chamar!`
+        await sendAndSave(contactId, list[0].jid as string, msg)
+        const orderIds = list.filter(r => r.kind === "order").map(r => r.id)
+        const dtfIds   = list.filter(r => r.kind === "dtf").map(r => r.id)
+        if (orderIds.length) await pool.query(`UPDATE orders SET last_reminder_at = NOW() WHERE id = ANY($1::int[])`, [orderIds])
+        if (dtfIds.length)   await pool.query(`UPDATE dtf_pedidos SET last_reminder_at = NOW() WHERE id = ANY($1::int[])`, [dtfIds])
+        results.cobranca++
       } catch { results.errors++ }
       await randDelayClient()
     }
-
-    if (overdueOrders.length > 0) {
-      await pool.query(`
-        UPDATE orders SET last_reminder_at = NOW()
-        WHERE id = ANY($1::int[])
-      `, [overdueOrders.filter(r => r.jid && r.name).map(r => r.id)])
-    }
-    if (overdueDtf.length > 0) {
-      await pool.query(`
-        UPDATE dtf_pedidos SET last_reminder_at = NOW()
-        WHERE id = ANY($1::int[])
-      `, [overdueDtf.filter(r => r.jid && r.name).map(r => r.id)])
-    }
-    results.cobrancaVencida = overdueOrders.filter(r => r.jid && r.name).length + overdueDtf.filter(r => r.jid && r.name).length
   } catch { results.errors++ }
   } // cobrancaHabilitada
 
