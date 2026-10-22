@@ -13,10 +13,6 @@
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/whatsapp/financeiro-pagamento-cron",
-      "schedule": "*/3 * * * *"
-    },
-    {
       "path": "/api/whatsapp/financeiro-pergunta-cron",
       "schedule": "0 22 * * *"
     },
