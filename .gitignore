@@ -12,3 +12,12 @@ dist/
 .railway/
 
 .vercel
+
+# diagnóstico local / dado de cliente: nunca no GitHub (23/10)
+chats_check*.json
+chats_debug*.json
+evo_logs*.txt
+vercel_live.txt
+frontend/vercel_watch.log
+db/backup_*.json
+frontend/scripts/tmp_*.mjs
