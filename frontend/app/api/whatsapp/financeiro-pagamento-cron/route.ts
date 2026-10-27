@@ -31,14 +31,18 @@ export async function GET(req: Request) {
   // da coluna existir) e disparia um flood de centenas de avisos retroativos
   // no grupo. Marca tudo que já é pagamento antigo como "já visto" sem
   // notificar — só pagamento a partir de agora gera aviso.
+  // Religado em 27/10/2026 (PIV), depois de ficar desligado desde 22/10: chave
+  // nova pra marcar como visto o que foi pago nesse meio tempo, sem despejar
+  // no grupo.
+  const BACKFILL_KEY = "financeiro_pagamento_backfill_2710"
   const { rows: backfillDone } = await pool.query(
-    `SELECT value FROM app_settings WHERE key = 'financeiro_pagamento_backfill_done'`
+    `SELECT value FROM app_settings WHERE key = $1`, [BACKFILL_KEY]
   ).catch(() => ({ rows: [] as { value: string }[] }))
   if (!backfillDone[0]) {
     await pool.query(`UPDATE orders SET financeiro_notified_at = NOW() WHERE paid_at IS NOT NULL AND financeiro_notified_at IS NULL`)
     await pool.query(`UPDATE dtf_pedidos SET financeiro_notified_at = NOW() WHERE paid_at IS NOT NULL AND financeiro_notified_at IS NULL`)
     await pool.query(
-      `INSERT INTO app_settings (key, value) VALUES ('financeiro_pagamento_backfill_done', 'true') ON CONFLICT (key) DO NOTHING`
+      `INSERT INTO app_settings (key, value) VALUES ($1, 'true') ON CONFLICT (key) DO NOTHING`, [BACKFILL_KEY]
     )
     return NextResponse.json({ ok: true, backfilled: true, notified: 0 })
   }
