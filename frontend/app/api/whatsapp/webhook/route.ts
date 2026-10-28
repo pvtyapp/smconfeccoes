@@ -667,6 +667,11 @@ function bufferToBase64(raw: unknown): string | null {
   return null
 }
 
+// Trava anti-ban (PIV 27/10, depois da queda de 26/10): resposta instantânea a toda
+// mensagem é padrão de robô pro WhatsApp. Espera 2-5s, variando, antes de responder.
+// Roda dentro do waitUntil, então não segura a resposta do webhook pra Evolution.
+const pausaHumana = () => new Promise(r => setTimeout(r, 2000 + Math.random() * 3000))
+
 // Núcleo do envio de resposta — checa os 2 disjuntores (geral + chatbot) e o
 // silêncio por contato, manda de verdade e grava o resultado ('sent'/'failed')
 // em wa_messages. Devolve se realmente confirmou o envio — quem precisa saber
@@ -697,6 +702,7 @@ async function doReply(contactId: number, jid: string, text: string): Promise<bo
   if (cf?.chatbotSilenced || isPausedTemp) return false
 
   try {
+    await pausaHumana()
     const result = await sendWhatsApp(jid, text)
     const msgId = (result as { key?: { id?: string } })?.key?.id ?? null
     await pool.query(
@@ -1418,7 +1424,8 @@ async function handleMedia(
   if (ackSent && ackRowId) {
     const rowId = ackRowId
     waitUntil(
-      sendWhatsApp(jid, "Recebi seu arquivo! Já vou te atender. 😊")
+      pausaHumana()
+        .then(() => sendWhatsApp(jid, "Recebi seu arquivo! Já vou te atender. 😊"))
         .then(result => {
           const msgId = (result as { key?: { id?: string } })?.key?.id
           if (!msgId) return
