@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifySession, COOKIE_NAME } from "@/lib/session"
-import { firstAllowedPage } from "@/lib/navPages"
+import { firstAllowedPage, FINANCE_PAGES } from "@/lib/navPages"
 
 // Paths that do NOT require authentication
 const PUBLIC_API_PREFIXES = [
@@ -35,9 +35,11 @@ const PUBLIC_API_PREFIXES = [
   "/api/products/migrate-images",
 ]
 
-function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[]): boolean {
+function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[], verFinanceiro = true): boolean {
   if (isAdmin) return true
-  return allowedPages.some(p => pathname === p || pathname.startsWith(p + "/"))
+  const dentro = (p: string) => pathname === p || pathname.startsWith(p + "/")
+  if (!verFinanceiro && FINANCE_PAGES.some(dentro)) return false
+  return allowedPages.some(dentro)
 }
 
 export async function middleware(request: NextRequest) {
@@ -77,8 +79,8 @@ export async function middleware(request: NextRequest) {
   // Manda pra primeira página que o usuário realmente tem liberada (nunca mais um
   // /dashboard fixo que pode não ser acessível pra ele) — ou pra /sem-acesso se não
   // sobrar nenhuma.
-  if (pathname.startsWith("/dashboard") && !hasPagePermission(pathname, session.isAdmin, session.allowedPages)) {
-    const dest = firstAllowedPage(session.isAdmin, session.allowedPages)
+  if (pathname.startsWith("/dashboard") && !hasPagePermission(pathname, session.isAdmin, session.allowedPages, session.verFinanceiro ?? true)) {
+    const dest = firstAllowedPage(session.isAdmin, session.allowedPages, session.verFinanceiro ?? true)
     return NextResponse.redirect(new URL(dest ?? "/sem-acesso", request.url))
   }
 

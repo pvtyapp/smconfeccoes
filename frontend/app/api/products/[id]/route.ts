@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { syncVariants } from "@/lib/products/syncVariants"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["costPrice"], preco: ["salePrice"] }
 
 export async function PUT(
   req: Request,
@@ -9,7 +13,8 @@ export async function PUT(
   const client = await pool.connect()
   try {
     const { id } = await params
-    const body = await req.json()
+    // Valor que o usuário não vê também não é gravado por ele (chega null e o banco mantém).
+    const body = ocultarValores(await req.json(), await getAcesso(), CAMPOS_VALOR)
     const {
       name, categoryId, description, salePrice, costPrice, sizes, colors, status, chatbotEnabled, stockEnabled, precoPorMetro, pesoCostura,
       ncm, cest, origem, csosn, unidadeTributavel, cfopDentroEstado, cfopForaEstado,
@@ -99,7 +104,7 @@ export async function PUT(
     }
 
     await client.query("COMMIT")
-    return NextResponse.json(product)
+    return NextResponse.json(ocultarValores(product, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)

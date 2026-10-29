@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { validarRegra } from "@/lib/mktFechamento"
 import { carregarRegras, recalcularCustos, skusSemCusto } from "@/lib/mktFechamentoDb"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // Regras de custo do marketplace: prefixo do SKU → produtos da SM (soma do material_cost) + extra.
 // Toda mudança recalcula o custo de todos os itens já lançados.
@@ -10,6 +11,9 @@ const erro = (msg: string, status = 400) => NextResponse.json({ error: msg }, { 
 
 // GET → { regras, produtos (pra escolher), semCusto (SKUs vendidos sem regra) }
 export async function GET() {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const [regras, produtos, semCusto] = await Promise.all([
       carregarRegras(),

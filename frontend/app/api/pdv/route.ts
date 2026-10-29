@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { findOrCreateManualContact } from "@/lib/whatsapp/resolveContact"
+import { getAcesso } from "@/lib/acesso"
 
 // GET /api/pdv — last 5 PDV orders
 export async function GET() {
@@ -22,6 +23,11 @@ export async function GET() {
 
 // POST /api/pdv — atomic sale: create order + pay + stock movements
 export async function POST(req: Request) {
+  // A venda no balcão usa o preço que a tela mostra: sem "ver preço" a tela fica sem preço e
+  // a venda sairia zerada. Bloqueia aqui (a tela já avisa).
+  const acesso = await getAcesso()
+  if (!acesso?.verPreco) return NextResponse.json({ error: "Seu usuário não tem permissão pra ver preço, e o PDV precisa. Peça pro administrador liberar." }, { status: 403 })
+
   const client = await pool.connect()
   try {
     const { contactId, newContact, items, paymentMethod, dueDate, notes } = await req.json()

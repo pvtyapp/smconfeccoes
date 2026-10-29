@@ -11,6 +11,7 @@ import { colorSwatch } from "@/lib/colorSwatch"
 import Toggle from "@/components/Toggle"
 import ConfirmDialog from "@/components/ConfirmDialog"
 import { cancelarPedido } from "@/lib/fiscal/cancelarPedidoClient"
+import { useAcesso } from "@/lib/acessoClient"
 
 type Props = {
   order: Order
@@ -55,6 +56,8 @@ type ProductOption = {
 type VariantOption = { id: string; color: string; size: string; salePrice: number | null }
 
 export default function OrderModal({ order, onClose, onRefresh }: Props) {
+  // Sem "ver preço": não mostra nem edita preço (o servidor ignora preço vindo desse usuário).
+  const { verPreco } = useAcesso()
   const [items,         setItems]         = useState<OrderItem[]>(order.items.map(i => ({ ...i })))
   const [saving,        setSaving]        = useState(false)
   const [printFormat,   setPrintFormat]   = useState<"a4" | "thermal">("a4")
@@ -508,7 +511,7 @@ export default function OrderModal({ order, onClose, onRefresh }: Props) {
                       )}
 
                       {/* Preço — só cliente com Preço Exclusivo, triagem e em_separacao */}
-                      {order.precoExclusivo && (isTriagem || isSeparacao) && (
+                      {verPreco && order.precoExclusivo && (isTriagem || isSeparacao) && (
                         <div className="flex items-center gap-1 flex-shrink-0 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
                           <span className="text-[10px] text-amber-600 font-bold">R$</span>
                           <input

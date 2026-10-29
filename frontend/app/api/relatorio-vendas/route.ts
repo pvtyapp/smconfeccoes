@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { searchParams } = new URL(req.url)
     const from = searchParams.get("from")

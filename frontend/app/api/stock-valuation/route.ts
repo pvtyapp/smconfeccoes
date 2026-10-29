@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // GET /api/stock-valuation
 // Snapshot de capital em estoque — independente de período
 export async function GET() {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     // Produtos: agrupado por produto (soma todas as variações)
     const { rows: products } = await pool.query(`

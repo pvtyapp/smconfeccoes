@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["averageCost"], preco: ["salePrice"] }
 
 export async function GET(req: Request) {
   try {
@@ -26,7 +30,7 @@ export async function GET(req: Request) {
       ORDER BY p.name ASC, pv.color ASC, pv.size ASC
     `, productId ? [productId] : [])
 
-    return NextResponse.json(rows)
+    return NextResponse.json(ocultarValores(rows, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("GET /api/variants:", msg)
@@ -36,7 +40,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json()
+    // Valor que o usuário não vê também não é gravado por ele (chega null e o banco mantém).
+    const body = ocultarValores(await req.json(), await getAcesso(), CAMPOS_VALOR)
     const { productId, color, size, sku, salePrice, averageCost, minStock, targetStock } = body
 
     if (!productId || !color?.trim() || !size?.trim() || !sku?.trim()) {
@@ -61,7 +66,7 @@ export async function POST(req: Request) {
 
     // Fetch productName for response
     const { rows: pRows } = await pool.query("SELECT name FROM products WHERE id = $1", [productId])
-    return NextResponse.json({ ...rows[0], productName: pRows[0]?.name ?? "" }, { status: 201 })
+    return NextResponse.json(ocultarValores({ ...rows[0], productName: pRows[0]?.name ?? "" }, await getAcesso(), CAMPOS_VALOR), { status: 201 })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("POST /api/variants:", msg)

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["custo", "custoPorMetro", "custoPorMetroAtual", "custoCombinado", "custoTotalInsumos", "custoUnitario", "custoTotal", "custo_total", "custo_unitario", "custo_por_metro", "totalReceita", "receita"] }
 
 export async function GET() {
   try {
@@ -51,7 +55,7 @@ export async function GET() {
       }
     })
 
-    return NextResponse.json(result)
+    return NextResponse.json(ocultarValores(result, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
@@ -146,7 +150,7 @@ export async function POST(req: Request) {
     `, [impressoraId, insumoId, quantidade, custoTotal ?? null, obs ?? null, saidaId])
 
     await client.query("COMMIT")
-    return NextResponse.json(rows[0], { status: 201 })
+    return NextResponse.json(ocultarValores(rows[0], await getAcesso(), CAMPOS_VALOR), { status: 201 })
   } catch (err) {
     await client.query("ROLLBACK")
     return NextResponse.json({ error: String(err) }, { status: 500 })

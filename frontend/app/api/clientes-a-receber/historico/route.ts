@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // GET /api/clientes-a-receber/historico?from=&to=&contactId=&q=
 // Lista os pagamentos já registrados em receivable_payments (quitação de prazo
 // e parcelas) — venda à vista nunca passa por aqui, fica só no relatório de
 // vendas normal (decisão do usuário: histórico é só prazo/parcelado).
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { searchParams } = new URL(req.url)
     const from      = searchParams.get("from")

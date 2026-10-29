@@ -9,6 +9,7 @@ import Link from "next/link"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 import FaturamentoChart from "@/components/dashboard/FaturamentoChart"
+import { useAcesso } from "@/lib/acessoClient"
 
 type PendingOrder = { id: number; totalValue: number | null; dueDate: string | null }
 
@@ -87,6 +88,9 @@ const CHANNEL_LABEL: Record<string, string> = {
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
+  // Sem "ver financeiro": some tudo que é R$ (as rotas de financeiro já respondem 403) e fica a operação.
+  const { verFinanceiro: fin } = useAcesso()
+
   // Period filter
   const [period,     setPeriod]     = useState<PeriodKey>("hoje")
   const [rangeStart, setRangeStart] = useState("")
@@ -221,6 +225,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── FINANCEIRO ── */}
+      {fin && (<>
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -359,6 +364,7 @@ export default function DashboardPage() {
           )}
         </div>
       </section>
+      </>)}
 
       {/* ── PRODUÇÃO ── */}
       <section className="space-y-4">
@@ -377,9 +383,11 @@ export default function DashboardPage() {
             : [
                 { title: "Ordens",            value: String(prodData?.summary.orderCount ?? 0) },
                 { title: "Peças produzidas",  value: `${prodData?.summary.totalPieces ?? 0} pç` },
-                { title: "Custo material",    value: fmtR(prodData?.summary.materialCost    ?? 0) },
-                { title: "Custo operacional", value: fmtR(prodData?.summary.operationalCost ?? 0) },
-                { title: "Custo total",       value: fmtR(prodData?.summary.totalCost       ?? 0) },
+                ...(fin ? [
+                  { title: "Custo material",    value: fmtR(prodData?.summary.materialCost    ?? 0) },
+                  { title: "Custo operacional", value: fmtR(prodData?.summary.operationalCost ?? 0) },
+                  { title: "Custo total",       value: fmtR(prodData?.summary.totalCost       ?? 0) },
+                ] : []),
               ].map(({ title, value }) => (
                 <MetricCard key={title} title={title} value={value} color="blue"/>
               ))
@@ -388,6 +396,7 @@ export default function DashboardPage() {
       </section>
 
       {/* ── CUSTOS DE PRODUTO ── */}
+      {fin && (
       <section className="space-y-4">
         <div className="flex items-center gap-2">
           <TrendingUp size={14} className="text-[#0F1E3C]/35"/>
@@ -452,6 +461,7 @@ export default function DashboardPage() {
           )}
         </div>
       </section>
+      )}
 
       {/* ── ESTOQUE (sempre atual) ── */}
       <section className="space-y-4">
@@ -462,10 +472,12 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           <MetricCard title="Total em estoque"     value={`${totalStock} peças`} />
+          {fin && (<>
           <MetricCard title="Custo op./mês"        value={formatCurrency(opCost)} color="blue" />
           <MetricCard title="Capital em produtos"  value={formatCurrency(capitalProdutos)} color="blue" />
           <MetricCard title="Capital em insumos"   value={rawMatCost !== null ? formatCurrency(rawMatCost) : "—"} />
           <MetricCard title="Receita potencial"    value={formatCurrency(receitaPotencial)} color="yellow" />
+          </>)}
           <MetricCard title="Variações críticas"   value={critical.length} color={critical.length > 0 ? "red" : "default"} />
           <Link href="/dashboard/estoque-avarias" className="block">
             <div className={`rounded-2xl border p-5 shadow-sm h-full hover:shadow-md transition-shadow ${
@@ -525,7 +537,7 @@ export default function DashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#0F1E3C]/5">
-                  {["Variação","Produzir","Lucro/un."].map(h => (
+                  {["Variação","Produzir", ...(fin ? ["Lucro/un."] : [])].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -539,7 +551,7 @@ export default function DashboardPage() {
                   <tr key={m.variantId} className="hover:bg-[#F4F6FB] transition-colors">
                     <td className="px-5 py-3 font-medium text-[#0F1E3C]">{m.productName} {m.color} {m.size}</td>
                     <td className="px-5 py-3 font-bold text-[#4361EE]">+{m.suggestedProduction}</td>
-                    <td className="px-5 py-3 text-emerald-600 font-semibold">{formatCurrency(m.unitProfit)}</td>
+                    {fin && <td className="px-5 py-3 text-emerald-600 font-semibold">{formatCurrency(m.unitProfit)}</td>}
                   </tr>
                 ))}
               </tbody>

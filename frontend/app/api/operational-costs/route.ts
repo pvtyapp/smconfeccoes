@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 export async function GET() {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -25,6 +29,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const body = await req.json()
     const { name, category, type, monthlyValue, notes } = body

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["materialCost", "operationalCost", "totalCost", "costPerPiece", "margin"], preco: ["avgSalePrice"] }
 
 // GET /api/dashboard/production?start=YYYY-MM-DD&end=YYYY-MM-DD
 // Returns production cost breakdown for the selected period
@@ -118,7 +122,7 @@ export async function GET(req: Request) {
       totalCost:        Math.round(byProduct.reduce((s, p) => s + p.totalCost, 0) * 100) / 100,
     }
 
-    return NextResponse.json({ period: { start, end, days }, summary, byProduct })
+    return NextResponse.json(ocultarValores({ period: { start, end, days }, summary, byProduct }, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

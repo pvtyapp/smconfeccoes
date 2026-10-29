@@ -7,6 +7,7 @@ import Toggle from "@/components/Toggle"
 import TwoViaPrintSheet from "./TwoViaPrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
 import DocLetterhead from "@/components/print/DocLetterhead"
+import { OCULTO } from "@/lib/acessoClient"
 
 type Props = {
   order: DtfOrder
@@ -37,6 +38,8 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   const [metrosFinais,   setMetrosFinais]   = useState(order.metrosFinais ? String(order.metrosFinais) : "")
   const [precoPorMetro,  setPrecoPorMetro]  = useState<number | null>(null)
   const [precoCarregado, setPrecoCarregado] = useState(false)
+  // Usuário sem "ver preço": o produto existe mas o valor não vem; o servidor calcula ao concluir.
+  const [precoOculto,    setPrecoOculto]    = useState(false)
   // null = ainda não escolheu — mesmo padrão do Kanban de Produto, não deixa
   // concluir sem marcar Sim ou Não explicitamente.
   const [paymentChoice,  setPaymentChoice]  = useState<boolean | null>(null)
@@ -64,7 +67,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
   useEffect(() => {
     fetch("/api/dtf/preco")
       .then(r => r.ok ? r.json() : null)
-      .then(d => { setPrecoPorMetro(d?.precoMetro ?? null); setPrecoCarregado(true) })
+      .then(d => { setPrecoPorMetro(d?.precoMetro ?? null); setPrecoOculto(!!d?.oculto); setPrecoCarregado(true) })
       .catch(() => setPrecoCarregado(true))
   }, [])
 
@@ -147,7 +150,7 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
         setError("Informe os metros finais antes de marcar como pronto.")
         return
       }
-      if (!precoPorMetro) {
+      if (!precoPorMetro && !precoOculto) {
         setError("Produto DTF não cadastrado. Configure em Produtos antes de continuar.")
         return
       }
@@ -342,6 +345,8 @@ export default function DtfOrderModal({ order, onClose, onRefresh, numImpressora
                   <span className="text-xs text-[#0F1E3C]/50">Valor calculado</span>
                   {!precoCarregado ? (
                     <span className="text-xs text-[#0F1E3C]/40">Carregando...</span>
+                  ) : precoOculto ? (
+                    <span className="text-xs text-[#0F1E3C]/40">{OCULTO} (calculado ao salvar)</span>
                   ) : !precoPorMetro ? (
                     <span className="text-xs text-amber-600 font-medium">Produto DTF não cadastrado</span>
                   ) : valorCalculado ? (

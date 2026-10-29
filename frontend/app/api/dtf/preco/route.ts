@@ -1,18 +1,16 @@
 import { NextResponse } from "next/server"
-import { pool } from "@/lib/db"
+import { getAcesso } from "@/lib/acesso"
+import { precoMetroDtf } from "@/lib/dtfPreco"
 
-// GET /api/dtf/preco — returns sale_price from the DTF product (single source of truth)
+// GET /api/dtf/preco — returns sale_price from the DTF product (single source of truth).
+// Sem "ver preço": diz só se o produto existe (oculto: true); o servidor calcula o valor ao concluir.
 export async function GET() {
   try {
-    const { rows } = await pool.query(`
-      SELECT id, name, sale_price AS "precoMetro"
-      FROM products
-      WHERE LOWER(name) LIKE 'dtf%' AND status = 'active'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `)
-    if (!rows[0]) return NextResponse.json({ precoMetro: null }, { status: 200 })
-    return NextResponse.json({ precoMetro: Number(rows[0].precoMetro), productName: rows[0].name })
+    const dtf = await precoMetroDtf()
+    if (!dtf) return NextResponse.json({ precoMetro: null }, { status: 200 })
+    const acesso = await getAcesso()
+    if (!acesso?.verPreco) return NextResponse.json({ precoMetro: null, oculto: true, productName: dtf.productName })
+    return NextResponse.json(dtf)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

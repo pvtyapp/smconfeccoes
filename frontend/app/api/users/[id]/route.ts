@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import { pool } from "@/lib/db"
 import { getSessionFromRequest } from "@/lib/session"
+import { garantirColunasAcesso } from "@/lib/acesso"
 
 export async function PUT(
   req: Request,
@@ -14,13 +15,14 @@ export async function PUT(
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_admin_enabled BOOLEAN NOT NULL DEFAULT true`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chatbot_commands TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_subscriptions TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {})
+  await garantirColunasAcesso()
 
   try {
     const { id } = await params
-    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled, chatbotCommands, notificationSubscriptions } = await req.json() as {
+    const { name, login, password, phone, funcao, isAdmin, allowedPages, active, chatbotAdminEnabled, chatbotCommands, notificationSubscriptions, verPreco, verFinanceiro } = await req.json() as {
       name: string; login: string; password?: string; phone?: string; funcao?: string
       isAdmin?: boolean; allowedPages?: string[]; active?: boolean; chatbotAdminEnabled?: boolean; chatbotCommands?: string[]
-      notificationSubscriptions?: string[]
+      notificationSubscriptions?: string[]; verPreco?: boolean; verFinanceiro?: boolean
     }
 
     if (!name?.trim() || !login?.trim()) {
@@ -45,11 +47,14 @@ export async function PUT(
         chatbot_admin_enabled      = $9,
         chatbot_commands           = $10,
         notification_subscriptions = $11,
+        ver_preco                  = COALESCE($13, ver_preco),
+        ver_financeiro             = COALESCE($14, ver_financeiro),
         updated_at                 = NOW()
       WHERE id = $12
       RETURNING id, name, login, phone, funcao, is_admin AS "isAdmin", allowed_pages AS "allowedPages",
                 chatbot_admin_enabled AS "chatbotAdminEnabled", chatbot_commands AS "chatbotCommands",
-                notification_subscriptions AS "notificationSubscriptions", active
+                notification_subscriptions AS "notificationSubscriptions",
+                ver_preco AS "verPreco", ver_financeiro AS "verFinanceiro", active
     `, [
       name.trim(),
       login.trim(),
@@ -63,6 +68,8 @@ export async function PUT(
       isAdmin ? [] : (chatbotCommands ?? []),
       notificationSubscriptions ?? [],
       id,
+      typeof verPreco === "boolean" ? verPreco : null,
+      typeof verFinanceiro === "boolean" ? verFinanceiro : null,
     ])
 
     if (!rows[0]) return NextResponse.json({ error: "Usuário não encontrado" }, { status: 404 })

@@ -5,6 +5,7 @@ import { Printer, FlaskConical, AlertTriangle, Info, ChevronDown, ChevronUp, Rot
 import MetricCard from "@/components/cards/MetricCard"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import { fmtR, fmtQtd } from "@/lib/format"
+import { useAcesso } from "@/lib/acessoClient"
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 type PeriodKey = "hoje" | "7d" | "30d" | "90d" | "range"
@@ -109,6 +110,8 @@ const INSUMO_COLOR: Record<string, { bg: string; text: string; border: string }>
 
 // ─── Page ────────────────────────────────────────────────────────────────────────
 export default function DTFDashboardPage() {
+  // Sem "ver financeiro" o servidor manda receita e custos vazios: esconde os cartões e textos de R$.
+  const { verFinanceiro: fin } = useAcesso()
   const [period,     setPeriod]     = useState<PeriodKey>("30d")
   const [rangeStart, setRangeStart] = useState("")
   const [rangeEnd,   setRangeEnd]   = useState("")
@@ -353,7 +356,7 @@ export default function DTFDashboardPage() {
             : [
                 { title: "Pedidos", value: String(relatorio?.pedidos.length ?? 0)                },
                 { title: "Metros",  value: `${Number(relatorio?.totalMetros ?? 0).toFixed(2)} m` },
-                { title: "Receita", value: fmtR(relatorio?.totalReceita ?? 0)                     },
+                ...(fin ? [{ title: "Receita", value: fmtR(relatorio?.totalReceita ?? 0) }] : []),
               ].map(c => (
                 <MetricCard key={c.title} title={c.title} value={c.value} color="blue"/>
               ))
@@ -828,7 +831,7 @@ export default function DTFDashboardPage() {
                           {(() => {
                             const ins = insumos.find(i => String(i.id) === refilForm.insumoId)
                             const qtd = parseFloat(refilForm.quantidade)
-                            if (!ins || !refilForm.insumoId) return null
+                            if (!ins || !refilForm.insumoId || !fin) return null
                             if (ins.custoUnitario == null) return (
                               <p className="text-[10px] text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">
                                 Sem compras cadastradas para este insumo — custo não calculado

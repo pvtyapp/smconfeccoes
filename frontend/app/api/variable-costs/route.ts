@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // GET /api/variable-costs?month=YYYY-MM
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { searchParams } = new URL(req.url)
     const month = searchParams.get("month") // YYYY-MM
@@ -33,6 +37,9 @@ export async function GET(req: Request) {
 // POST /api/variable-costs
 // body: { description, category, amount, costDate, notes? }
 export async function POST(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { description, category, amount, costDate, notes } = await req.json()
     if (!description || !category || !amount || !costDate) {

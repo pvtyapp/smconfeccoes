@@ -7,6 +7,7 @@ import {
 } from "lucide-react"
 import { todayBR, dateBR } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
+import { useAcesso } from "@/lib/acessoClient"
 import { sizeCompare } from "@/lib/sizeOrder"
 import { colorSwatch } from "@/lib/colorSwatch"
 import PdvReceiptModal, { type SaleReceipt } from "./PdvReceiptModal"
@@ -120,6 +121,7 @@ function variantStockClass(v: Variant, inCart: CartItem | undefined): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PDVPage() {
+  const acesso = useAcesso()
   const [balance,  setBalance]  = useState<Variant[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -585,6 +587,16 @@ export default function PDVPage() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  // Venda no balcão depende do preço na tela: sem "ver preço" não abre (o servidor também recusa).
+  if (acesso.carregado && !acesso.verPreco) {
+    return (
+      <div className="max-w-md mx-auto mt-16 bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 text-center">
+        <p className="text-base font-bold text-[#0F1E3C]">PDV precisa ver preço</p>
+        <p className="text-sm text-[#0F1E3C]/50 mt-2">Seu usuário não tem permissão pra ver preço de venda. Peça pro administrador liberar em Usuários.</p>
+      </div>
+    )
+  }
 
   return (
     <>

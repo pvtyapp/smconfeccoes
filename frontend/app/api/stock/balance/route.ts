@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["costPrice", "averageCost"], preco: ["salePrice"] }
 
 // Retorna saldo atual + vendas 30d por variação — usado em Estoque, Metas e Dashboard
 export async function GET() {
@@ -62,7 +66,7 @@ export async function GET() {
       WHERE pv.status = 'active' AND p.status = 'active'
       ORDER BY p.name ASC, pv.color ASC, array_position(p.size_list, pv.size) ASC
     `)
-    return NextResponse.json(rows)
+    return NextResponse.json(ocultarValores(rows, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("GET /api/stock/balance:", msg)

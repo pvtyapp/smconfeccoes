@@ -5,6 +5,7 @@ import { Plus, Pencil, Power, Loader2, ChevronRight, ChevronDown, X, Trash2 } fr
 import type { Category, Product } from "@/lib/types"
 import Toggle from "@/components/Toggle"
 import ProductImagesManager from "./ProductImagesManager"
+import { useAcesso, OCULTO } from "@/lib/acessoClient"
 
 const inputCls = "w-full border border-[#0F1E3C]/15 rounded-xl px-3 py-2.5 text-sm text-[#0F1E3C] focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 focus:border-[#4361EE] transition-colors"
 
@@ -124,6 +125,9 @@ function catName(cats: Category[], id?: string | null) {
 }
 
 export default function ProdutosPage() {
+  // Custo só com "ver financeiro", preço de venda só com "ver preço". O servidor manda vazio e
+  // ignora o que esse usuário mandar nesses campos (o valor que já estava fica).
+  const { verPreco, verFinanceiro } = useAcesso()
   const [products, setProducts]   = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading]     = useState(true)
@@ -281,10 +285,14 @@ export default function ProdutosPage() {
               <p className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-3">Preços</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Preço de custo (R$)">
-                  <input className={inputCls} type="number" step="0.01" min="0" value={form.costPrice} onChange={(e) => set("costPrice", e.target.value)} placeholder="0,00" />
+                  {verFinanceiro
+                    ? <input className={inputCls} type="number" step="0.01" min="0" value={form.costPrice} onChange={(e) => set("costPrice", e.target.value)} placeholder="0,00" />
+                    : <p className="text-sm text-[#0F1E3C]/40 py-2.5">{OCULTO}</p>}
                 </Field>
                 <Field label="Preço de venda (R$)">
-                  <input className={inputCls} type="number" step="0.01" min="0" value={form.salePrice} onChange={(e) => set("salePrice", e.target.value)} placeholder="0,00" />
+                  {verPreco
+                    ? <input className={inputCls} type="number" step="0.01" min="0" value={form.salePrice} onChange={(e) => set("salePrice", e.target.value)} placeholder="0,00" />
+                    : <p className="text-sm text-[#0F1E3C]/40 py-2.5">{OCULTO}</p>}
                 </Field>
               </div>
             </div>
@@ -432,8 +440,8 @@ export default function ProdutosPage() {
                 <tr key={p.id} className="hover:bg-[#F4F6FB] transition-colors">
                   <td className="px-4 py-3 font-semibold text-[#0F1E3C]">{p.name}</td>
                   <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{catName(categories, p.categoryId)}</td>
-                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {Number(p.costPrice).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">R$ {Number(p.salePrice).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{verFinanceiro ? `R$ ${Number(p.costPrice).toFixed(2)}` : OCULTO}</td>
+                  <td className="px-4 py-3 text-[#0F1E3C]/60 text-xs">{verPreco ? `R$ ${Number(p.salePrice).toFixed(2)}` : OCULTO}</td>
                   <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.sizes?.join(", ") || "—"}</td>
                   <td className="px-4 py-3 text-[#0F1E3C]/50 text-xs max-w-[100px] truncate">{p.colors?.join(", ") || "—"}</td>
                   <td className="px-4 py-3">

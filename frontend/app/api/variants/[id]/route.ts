@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["averageCost"], preco: ["salePrice"] }
 
 export async function PUT(
   req: Request,
@@ -7,7 +11,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params
-    const body = await req.json()
+    // Valor que o usuário não vê também não é gravado por ele (chega null e o banco mantém).
+    const body = ocultarValores(await req.json(), await getAcesso(), CAMPOS_VALOR)
     const { color, size, sku, salePrice, averageCost, minStock, targetStock, status } = body
 
     const { rows } = await pool.query(`
@@ -35,7 +40,7 @@ export async function PUT(
     `, [color ?? null, size ?? null, sku ?? null, salePrice ?? null, averageCost ?? null, minStock ?? null, targetStock ?? null, status ?? null, id])
 
     if (rows.length === 0) return NextResponse.json({ error: "Não encontrado" }, { status: 404 })
-    return NextResponse.json(rows[0])
+    return NextResponse.json(ocultarValores(rows[0], await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("PUT /api/variants/[id]:", msg)

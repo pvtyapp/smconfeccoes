@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // PUT /api/variable-costs/:id
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { id } = await params
     const { description, category, amount, costDate, notes } = await req.json()
@@ -26,6 +30,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
 // DELETE /api/variable-costs/:id
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { id } = await params
     await pool.query("DELETE FROM variable_costs WHERE id = $1", [id])

@@ -3,6 +3,7 @@ import { pool } from "@/lib/db"
 import { todayBR } from "@/lib/tz"
 import { LOJAS_MKT, paraNumero, arred, avisosDe, type LojaMkt } from "@/lib/mktFechamento"
 import { SELECT_FECHAMENTO, FROM_FECHAMENTO, comLucro, lerFechamento, recalcularCustos, quemEsta } from "@/lib/mktFechamentoDb"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // Fechamento diário do marketplace (SHP_MARI, SHP_SAMU, TKTK_SAMU). Mesma sessão do painel:
 // o agente do outro PC chama de dentro do navegador logado, igual às devoluções.
@@ -13,6 +14,9 @@ const erro = (msg: string, status = 400) => NextResponse.json({ error: msg }, { 
 
 // GET /api/marketplace/fechamento?from=YYYY-MM-DD&to=YYYY-MM-DD&loja= → lista com lucro e avisos
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   const p = new URL(req.url).searchParams
   const from = p.get("from") ?? ""
   const to = p.get("to") ?? ""

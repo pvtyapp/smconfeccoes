@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+const CAMPOS_VALOR = { preco: ["unitPrice", "totalValue"] }
 
 async function getOrder(id: string) {
   const { rows } = await pool.query(`
@@ -51,7 +54,7 @@ export async function GET(
     const { id } = await params
     const order = await getOrder(id)
     if (!order) return NextResponse.json({ error: "Não encontrado" }, { status: 404 })
-    return NextResponse.json(order)
+    return NextResponse.json(ocultarValores(order, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
@@ -90,18 +93,43 @@ export async function PUT(
     }
 
     if (Array.isArray(items)) {
+      // Quem não vê preço recebe os itens com unitPrice apagado e devolve assim: o preço
+      // nunca vem da tela, sai do item que já estava no pedido ou do cadastro do produto.
+      const acesso = await getAcesso()
+      const precoDaTela = !!acesso?.verPreco
+      const chave = (x: { variantId?: unknown; productId?: unknown; color?: unknown; size?: unknown }) =>
+        x.variantId ? `v${x.variantId}` : `p${x.productId}|${x.color ?? ""}|${x.size ?? ""}`
+      const precoAntigo = new Map<string, number | null>()
+      if (!precoDaTela) {
+        const { rows: antigos } = await client.query(
+          `SELECT id, product_id AS "productId", variant_id AS "variantId", color, size, unit_price::float AS "unitPrice"
+           FROM order_items WHERE order_id = $1`, [id])
+        for (const a of antigos) { precoAntigo.set(`i${a.id}`, a.unitPrice); precoAntigo.set(chave(a), a.unitPrice) }
+      }
+      const precoDoItem = async (item: { id?: unknown; variantId?: unknown; productId?: unknown; color?: unknown; size?: unknown; unitPrice?: number | null }) => {
+        if (precoDaTela) return item.unitPrice ?? null
+        for (const k of [item.id ? `i${item.id}` : "", chave(item)]) if (k && precoAntigo.has(k)) return precoAntigo.get(k) ?? null
+        if (!item.productId) return null
+        const { rows: pr } = await client.query(
+          `SELECT COALESCE(pv.sale_price, p.sale_price)::float AS preco
+           FROM products p LEFT JOIN product_variants pv ON pv.id = $2 AND pv.product_id = p.id
+           WHERE p.id = $1`, [item.productId, item.variantId ?? null])
+        return pr[0]?.preco ?? null
+      }
+
       // Kanban 3 estágios: estoque não mexe mais aqui em nenhum estágio — só
       // sai de verdade no Concluir Entrega (status=concluido). Editar item em
       // Triagem ou Separação é só dado do pedido, sem efeito colateral no
       // estoque físico até a entrega ser confirmada.
       await client.query("DELETE FROM order_items WHERE order_id = $1", [id])
       for (const item of items) {
+        const unitPrice = await precoDoItem(item)
         await client.query(`
           INSERT INTO order_items (order_id, product_id, product_name, color, size, qty, qty_confirmed, variant_id, unit_price, is_service, variant_note)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         `, [
           id, item.productId ?? null, item.productName, item.color ?? null, item.size ?? null, item.qty, item.qtyConfirmed ?? null,
-          item.variantId ?? null, item.unitPrice ?? null, item.isService ?? false, item.variantNote ?? null,
+          item.variantId ?? null, unitPrice, item.isService ?? false, item.variantNote ?? null,
         ])
       }
       await client.query(
@@ -114,7 +142,7 @@ export async function PUT(
 
     await client.query("COMMIT")
     const order = await getOrder(id)
-    return NextResponse.json(order)
+    return NextResponse.json(ocultarValores(order, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)

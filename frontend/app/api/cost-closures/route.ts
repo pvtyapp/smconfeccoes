@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // GET /api/cost-closures — list all closures
 export async function GET() {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -30,6 +34,9 @@ export async function GET() {
 // POST /api/cost-closures — create and apply a closure
 // body: { periodStart: "YYYY-MM-DD", periodEnd: "YYYY-MM-DD", notes?: string }
 export async function POST(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { periodStart, periodEnd, notes } = await req.json()
     if (!periodStart || !periodEnd) {

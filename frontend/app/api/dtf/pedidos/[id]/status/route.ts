@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
 import { cleanDtfBlobsOnConclude } from "@/lib/blob-cleanup"
+import { precoMetroDtf } from "@/lib/dtfPreco"
 
 const VALID = ["triagem", "em_producao", "pronto", "concluido", "cancelado"]
 
@@ -22,7 +23,8 @@ export async function POST(
       cancelMessage?: string
       impressoraId?: number
     }
-    const { status, metrosFinais, precoCobrado, dueDate, notifyClient, cancelMessage, impressoraId } = body
+    const { status, metrosFinais, dueDate, notifyClient, cancelMessage, impressoraId } = body
+    let { precoCobrado } = body
 
     if (!VALID.includes(status))
       return NextResponse.json({ error: `Status inválido. Use: ${VALID.join(", ")}` }, { status: 400 })
@@ -46,6 +48,13 @@ export async function POST(
     }
 
     const pedido = rows[0]
+
+    // Quem não pode ver preço conclui sem a tela calcular o valor: calcula aqui, igual à tela
+    // (metros finais × preço do metro do produto DTF).
+    if (precoCobrado == null && metrosFinais && Number(metrosFinais) > 0) {
+      const dtf = await precoMetroDtf(client)
+      if (dtf?.precoMetro) precoCobrado = Math.round(Number(metrosFinais) * dtf.precoMetro * 100) / 100
+    }
 
     if (status === "pronto") {
       await client.query(`ALTER TABLE dtf_pedidos ADD COLUMN IF NOT EXISTS is_paid BOOLEAN`).catch(() => {})

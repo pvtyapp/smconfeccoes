@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { preco: ["totalValue", "unitPrice"] }
 
 // GET /api/orders/reservations — lista reservas pendentes/notificadas
 export async function GET() {
@@ -25,7 +29,7 @@ export async function GET() {
       WHERE pr.status IN ('pending', 'notified')
       ORDER BY pr.created_at ASC
     `)
-    return NextResponse.json(rows)
+    return NextResponse.json(ocultarValores(rows, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

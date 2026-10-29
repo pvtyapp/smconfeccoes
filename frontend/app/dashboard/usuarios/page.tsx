@@ -5,7 +5,7 @@ import { Plus, X, Loader2, Check, ShieldCheck, UserX, Pencil } from "lucide-reac
 import Toggle from "@/components/Toggle"
 import {
   navTop, navMarketplace, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
-  type NavItem,
+  FINANCE_PAGES, type NavItem,
 } from "@/lib/navPages"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 import { NOTIFICATION_SUBSCRIPTIONS } from "@/lib/notificationSubscriptions"
@@ -21,6 +21,8 @@ type User = {
   chatbotAdminEnabled: boolean
   chatbotCommands: string[]
   notificationSubscriptions: string[]
+  verPreco: boolean
+  verFinanceiro: boolean
   active: boolean
   createdAt: string
 }
@@ -107,8 +109,15 @@ export default function UsuariosPage() {
                       <ShieldCheck size={11} /> Admin
                     </span>
                   ) : (
-                    <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-[#0F1E3C]/6 text-[#0F1E3C]/50">
-                      {u.allowedPages.length} {u.allowedPages.length === 1 ? "página" : "páginas"}
+                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-[#0F1E3C]/6 text-[#0F1E3C]/50">
+                        {u.allowedPages.length} {u.allowedPages.length === 1 ? "página" : "páginas"}
+                      </span>
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                        u.verFinanceiro ? "bg-emerald-100 text-emerald-700" : u.verPreco ? "bg-amber-100 text-amber-700" : "bg-[#0F1E3C]/6 text-[#0F1E3C]/40"
+                      }`}>
+                        {u.verFinanceiro ? "R$ tudo" : u.verPreco ? "R$ só preço" : "sem R$"}
+                      </span>
                     </span>
                   )}
                 </td>
@@ -156,6 +165,8 @@ function UserModal({ user, onClose, onSaved }: {
   const [chatbotAdminEnabled, setChatbotAdminEnabled] = useState(user?.chatbotAdminEnabled ?? true)
   const [chatbotCommands, setChatbotCommands] = useState<string[]>(user?.chatbotCommands ?? [])
   const [notificationSubscriptions, setNotificationSubscriptions] = useState<string[]>(user?.notificationSubscriptions ?? [])
+  const [verPreco,      setVerPreco]      = useState(user?.verPreco ?? false)
+  const [verFinanceiro, setVerFinanceiro] = useState(user?.verFinanceiro ?? false)
   const [active,       setActive]       = useState(user?.active ?? true)
   const [saving,        setSaving]      = useState(false)
   const [error,         setError]       = useState("")
@@ -198,6 +209,8 @@ function UserModal({ user, onClose, onSaved }: {
         chatbotAdminEnabled,
         chatbotCommands,
         notificationSubscriptions,
+        verPreco,
+        verFinanceiro,
       }
       if (password) body.password = password
       if (!isNew) body.active = active
@@ -332,6 +345,34 @@ function UserModal({ user, onClose, onSaved }: {
 
             {!isAdmin && (
               <div>
+                <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-2">Valores em R$</label>
+                <div className="space-y-2">
+                  <div
+                    className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6 cursor-pointer select-none"
+                    onClick={() => setVerPreco(v => !v)}
+                  >
+                    <Toggle on={verPreco} onChange={() => {}} />
+                    <div>
+                      <p className="text-sm font-semibold text-[#0F1E3C]">Ver preço de venda</p>
+                      <p className="text-[10px] text-[#0F1E3C]/40">Preço dos produtos e valor dos pedidos (PDV, autoatendimento, DTF). Quem atende cliente precisa</p>
+                    </div>
+                  </div>
+                  <div
+                    className="flex items-center gap-3 py-3 px-4 rounded-xl bg-[#F4F6FB] border border-[#0F1E3C]/6 cursor-pointer select-none"
+                    onClick={() => setVerFinanceiro(v => !v)}
+                  >
+                    <Toggle on={verFinanceiro} onChange={() => {}} />
+                    <div>
+                      <p className="text-sm font-semibold text-[#0F1E3C]">Ver financeiro</p>
+                      <p className="text-[10px] text-[#0F1E3C]/40">Custo, lucro, faturamento, contas a pagar e a receber, valor do estoque. Sem isso, as abas de Financeiro, Custos de Produção e os painéis de marketplace ficam fechadas</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!isAdmin && (
+              <div>
                 <label className="block text-xs font-bold text-[#0F1E3C]/40 uppercase tracking-wider mb-2">Abas liberadas</label>
                 <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                   {PERMISSION_GROUPS.map(group => {
@@ -356,6 +397,9 @@ function UserModal({ user, onClose, onSaved }: {
                                 </span>
                                 <input type="checkbox" checked={checked} onChange={() => togglePage(item.href)} className="hidden" />
                                 {item.label}
+                                {!verFinanceiro && FINANCE_PAGES.includes(item.href) && (
+                                  <span className="text-[9px] text-amber-600 font-semibold">(precisa ver financeiro)</span>
+                                )}
                               </label>
                             )
                           })}

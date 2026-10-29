@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import { pool } from "@/lib/db"
 import { signSession, COOKIE_NAME, MAX_AGE_SECONDS } from "@/lib/session"
+import { garantirColunasAcesso } from "@/lib/acesso"
 
 export async function POST(req: Request) {
   try {
@@ -11,8 +12,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Login e senha são obrigatórios" }, { status: 400 })
     }
 
+    await garantirColunasAcesso()
     const { rows } = await pool.query(
-      `SELECT id, name, login, password_hash, funcao, is_admin, allowed_pages, active
+      `SELECT id, name, login, password_hash, funcao, is_admin, allowed_pages, active, ver_preco, ver_financeiro
        FROM users WHERE login = $1`,
       [login]
     )
@@ -34,11 +36,15 @@ export async function POST(req: Request) {
       funcao: user.funcao ?? null,
       isAdmin: user.is_admin,
       allowedPages: user.allowed_pages ?? [],
+      verFinanceiro: user.is_admin || !!user.ver_financeiro,
     })
 
     const res = NextResponse.json({
       ok: true,
-      user: { name: user.name, login: user.login, isAdmin: user.is_admin, allowedPages: user.allowed_pages ?? [] },
+      user: {
+        name: user.name, login: user.login, isAdmin: user.is_admin, allowedPages: user.allowed_pages ?? [],
+        verPreco: user.is_admin || !!user.ver_preco, verFinanceiro: user.is_admin || !!user.ver_financeiro,
+      },
     })
     res.cookies.set(COOKIE_NAME, token, {
       httpOnly: true,

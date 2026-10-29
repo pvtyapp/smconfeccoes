@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { todayBR } from "@/lib/tz"
 import { MKT_INICIO, diasEntre, lucroDe, plataformaDaLoja } from "@/lib/mktFechamento"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // Painel do marketplace (estilo Metrizap, igual à aba da Vision): GET ?from&to&loja=<LOJA|todas>
 // Totais e gráfico vêm de marketplace_fechamentos; curva ABC e lista de vendas, dos itens.
@@ -19,6 +20,9 @@ function voltar(dia: string, n: number) {
 }
 
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   const p = new URL(req.url).searchParams
   const from = p.get("from") ?? ""
   const to = p.get("to") ?? ""

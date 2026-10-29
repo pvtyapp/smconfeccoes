@@ -8,6 +8,9 @@ export type SessionPayload = {
   funcao: string | null
   isAdmin: boolean
   allowedPages: string[]
+  // Cópia do login (pode estar velha, o cookie dura 30 dias): o middleware usa só pra
+  // esconder as abas de financeiro; quem manda de verdade é o banco (lib/acesso.ts).
+  verFinanceiro?: boolean
 }
 
 const COOKIE_NAME = "smc_session"
@@ -46,6 +49,7 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
       funcao: (payload.funcao as string | null | undefined) ?? null,
       isAdmin: payload.isAdmin,
       allowedPages: payload.allowedPages as string[],
+      verFinanceiro: typeof payload.verFinanceiro === "boolean" ? payload.verFinanceiro : undefined,
     }
   } catch {
     return null

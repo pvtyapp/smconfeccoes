@@ -5,6 +5,7 @@ import { X, Loader2, Trash2, Search } from "lucide-react"
 import { todayBR } from "@/lib/tz"
 import { sizeCompare } from "@/lib/sizeOrder"
 import { colorSwatch } from "@/lib/colorSwatch"
+import { useAcesso, OCULTO } from "@/lib/acessoClient"
 
 type Variant = {
   variantId: string
@@ -29,6 +30,9 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
   onClose: () => void
   onCreated: () => void
 }) {
+  // Sem "ver preço" o servidor manda o preço vazio; o pedido é cobrado pelo cadastro do produto do mesmo jeito.
+  const { verPreco } = useAcesso()
+  const brl = (v: number) => verPreco ? `R$ ${v.toFixed(2).replace(".", ",")}` : OCULTO
   const [variants, setVariants] = useState<Variant[]>([])
   const [loading,  setLoading]  = useState(true)
   const [items,    setItems]    = useState<Item[]>([])
@@ -233,13 +237,13 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
                           <button onClick={() => setQty(idx, it.qty + 1)}
                             className="w-6 h-6 rounded-lg bg-white border border-[#0F1E3C]/10 text-[#0F1E3C]/50 hover:bg-[#0F1E3C]/6 text-xs font-bold flex items-center justify-center">+</button>
                         </div>
-                        <span className="text-xs font-bold text-[#0F1E3C] flex-shrink-0 w-16 text-right">R$ {(it.qty * it.salePrice).toFixed(2).replace(".", ",")}</span>
+                        <span className="text-xs font-bold text-[#0F1E3C] flex-shrink-0 w-16 text-right">{brl(it.qty * it.salePrice)}</span>
                         <button onClick={() => removeItem(idx)} className="text-[#0F1E3C]/25 hover:text-red-400 flex-shrink-0"><Trash2 size={13} /></button>
                       </div>
                     ))}
                     <div className="flex justify-between px-3 pt-1">
                       <span className="text-xs text-[#0F1E3C]/40">Total</span>
-                      <span className="text-sm font-black text-[#0F1E3C]">R$ {total.toFixed(2).replace(".", ",")}</span>
+                      <span className="text-sm font-black text-[#0F1E3C]">{brl(total)}</span>
                     </div>
                   </div>
                 )}
@@ -268,7 +272,7 @@ export default function NewManualOrderForm({ contactId, onClose, onCreated }: {
                               {p.colors.length > 5 && <span className="text-[9px] font-bold text-[#0F1E3C]/35">+{p.colors.length - 5}</span>}
                             </div>
                             <span className="text-xs font-bold text-[#0F1E3C] leading-tight">{p.name}</span>
-                            <span className="text-xs font-black text-[#4361EE]">R$ {p.price.toFixed(2).replace(".", ",")}</span>
+                            <span className="text-xs font-black text-[#4361EE]">{brl(p.price)}</span>
                           </button>
                         ))}
                         {filteredBlocks.length === 0 && (

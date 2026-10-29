@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // Returns accumulated average costs per SKU (product + color + size)
 // Falls back to raw cost_per_piece from raw_material_entries if product_variant_costs is empty
 export async function GET() {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     // Try product_variant_costs first (populated by calculate_sku_costs function)
     const { rows: pvc } = await pool.query(`

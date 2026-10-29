@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { syncVariants } from "@/lib/products/syncVariants"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { financeiro: ["costPrice"], preco: ["salePrice"] }
 
 export async function GET() {
   try {
@@ -28,7 +32,7 @@ export async function GET() {
       FROM products
       ORDER BY name ASC
     `)
-    return NextResponse.json(rows)
+    return NextResponse.json(ocultarValores(rows, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
@@ -38,7 +42,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const client = await pool.connect()
   try {
-    const body = await req.json()
+    // Valor que o usuário não vê também não é gravado por ele (chega null e o banco mantém).
+    const body = ocultarValores(await req.json(), await getAcesso(), CAMPOS_VALOR)
     const { name, categoryId, description, salePrice, costPrice, sizes, colors, chatbotEnabled, stockEnabled, precoPorMetro } = body
 
     if (!name?.trim())  return NextResponse.json({ error: "Nome é obrigatório" },       { status: 400 })
@@ -77,7 +82,7 @@ export async function POST(req: Request) {
     }
 
     await client.query("COMMIT")
-    return NextResponse.json(product, { status: 201 })
+    return NextResponse.json(ocultarValores(product, await getAcesso(), CAMPOS_VALOR), { status: 201 })
   } catch (err) {
     await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)

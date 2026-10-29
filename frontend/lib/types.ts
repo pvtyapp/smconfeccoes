@@ -105,4 +105,7 @@ export type AuthSession = {
   name: string
   isAdmin: boolean
   allowedPages: string[]
+  // Ausente em sessão salva antes de 28/10: escondido até o /api/auth/me responder (useAcesso).
+  verPreco?: boolean
+  verFinanceiro?: boolean
 }

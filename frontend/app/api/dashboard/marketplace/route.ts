@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { todayBR } from "@/lib/tz"
 import { MKT_INICIO, diasEntre, lucroDe } from "@/lib/mktFechamento"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // Gráfico do Dashboard: faturamento por dia, venda direta × marketplace. GET ?from&to
 // Venda direta = o mesmo critério da Receita bruta do Relatório Financeiro: pedidos concluídos
@@ -11,6 +12,9 @@ import { MKT_INICIO, diasEntre, lucroDe } from "@/lib/mktFechamento"
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   const p = new URL(req.url).searchParams
   const from = p.get("from") ?? ""
   const to = p.get("to") ?? ""

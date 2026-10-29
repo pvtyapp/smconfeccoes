@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { preco: ["totalValue", "unitPrice"] }
 
 export async function GET(req: Request) {
   try {
@@ -99,7 +103,7 @@ export async function GET(req: Request) {
       ORDER BY o.created_at DESC
     `, params)
 
-    return NextResponse.json(rows)
+    return NextResponse.json(ocultarValores(rows, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("GET /api/orders:", msg)
@@ -151,7 +155,7 @@ export async function POST(req: Request) {
     `, [order.id])
 
     await client.query("COMMIT")
-    return NextResponse.json(order, { status: 201 })
+    return NextResponse.json(ocultarValores(order, await getAcesso(), CAMPOS_VALOR), { status: 201 })
   } catch (err) {
     await client.query("ROLLBACK")
     const msg = err instanceof Error ? err.message : String(err)

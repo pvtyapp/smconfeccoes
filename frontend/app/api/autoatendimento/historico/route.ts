@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { preco: ["valor"] }
 
 export async function GET(req: Request) {
   try {
@@ -58,11 +62,11 @@ export async function GET(req: Request) {
       ORDER BY p.created_at DESC
     `, [from, to])
 
-    return NextResponse.json({
+    return NextResponse.json(ocultarValores({
       produto,
       dtf,
       total: produto.length + dtf.length,
-    })
+    }, await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

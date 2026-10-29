@@ -6,6 +6,7 @@ import type { BalanceRow } from "@/lib/calculations"
 import { effectiveCost } from "@/lib/calculations"
 import { todayBR } from "@/lib/tz"
 import { sizeCompare } from "@/lib/sizeOrder"
+import { useAcesso, OCULTO } from "@/lib/acessoClient"
 
 type Movement = {
   id: string
@@ -167,6 +168,8 @@ function isActive(f: FilterMode, active: FilterMode) {
 }
 
 export default function EstoquePage() {
+  // Valor do estoque é custo: só com "ver financeiro" (o servidor já manda o custo vazio).
+  const { verFinanceiro } = useAcesso()
   const [balance, setBalance]     = useState<BalanceRow[]>([])
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
@@ -368,7 +371,7 @@ export default function EstoquePage() {
 
       {/* Stats */}
       <div className="grid grid-cols-5 gap-3">
-        <StatCard label="Valor em estoque"  value={fmtCurrency(stats.totalValue)} sub="preço de custo" />
+        <StatCard label="Valor em estoque"  value={verFinanceiro ? fmtCurrency(stats.totalValue) : OCULTO} sub="preço de custo" />
         <StatCard label="Peças em estoque"  value={`${stats.totalQty}`}  sub="total geral" />
         <StatCard label="Entradas período" value={`+${stats.inPeriod}`}  accent="text-emerald-600" sub={periodTag} />
         <StatCard label="Saídas período"   value={`−${stats.outPeriod}`} accent="text-red-500"     sub={periodTag} />
@@ -415,7 +418,7 @@ export default function EstoquePage() {
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-[#0F1E3C]">{group.productName}</p>
                       <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
-                        {colorGroups.length} {colorGroups.length === 1 ? "cor" : "cores"} · {group.totalQty} peças · {fmtCurrency(group.totalValue)}
+                        {colorGroups.length} {colorGroups.length === 1 ? "cor" : "cores"} · {group.totalQty} peças{verFinanceiro && ` · ${fmtCurrency(group.totalValue)}`}
                       </p>
                     </div>
                     {group.hasCritical && <AlertTriangle size={14} className="text-orange-500 flex-shrink-0" />}

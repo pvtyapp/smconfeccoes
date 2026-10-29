@@ -9,7 +9,9 @@ import { ChevronLeft, ChevronRight, LogOut } from "lucide-react"
 import {
   navTop, navMarketplace, navGestao, navFinanceiro, navDTF, navProducao, navCadastros, navLP, navSistema,
 } from "@/lib/navPages"
+import { FINANCE_PAGES } from "@/lib/navPages"
 import type { NavItem } from "@/lib/navPages"
+import { useAcesso } from "@/lib/acessoClient"
 
 type Props = { collapsed: boolean; onToggle: () => void }
 
@@ -54,7 +56,9 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
   const session      = getSession()
   const isAdmin      = session?.isAdmin ?? false
   const allowedPages = session?.allowedPages ?? []
-  const canSee       = (href: string) => isAdmin || allowedPages.includes(href)
+  const acesso       = useAcesso()
+  const canSee       = (href: string) =>
+    isAdmin || (allowedPages.includes(href) && (acesso.verFinanceiro || !FINANCE_PAGES.includes(href)))
   const filterNav    = (items: NavItem[]) => items.filter(i => canSee(i.href))
   const [totalUnread, setTotalUnread] = useState(0)
 

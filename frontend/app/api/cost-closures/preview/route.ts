@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { sizeCompare } from "@/lib/sizeOrder"
+import { exigirFinanceiro } from "@/lib/acesso"
 
 // GET /api/cost-closures/preview?start=YYYY-MM-DD&end=YYYY-MM-DD
 // Returns what a closure would look like — without applying it
 export async function GET(req: Request) {
+  const semPermissao = await exigirFinanceiro()
+  if (semPermissao) return semPermissao
+
   try {
     const { searchParams } = new URL(req.url)
     const start = searchParams.get("start")

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { deleteBlobs } from "@/lib/blob-cleanup"
+import { getAcesso, ocultarValores } from "@/lib/acesso"
+
+// Valores que só vão pra quem tem a permissão (lib/acesso.ts).
+const CAMPOS_VALOR = { preco: ["precoCobrado"] }
 
 export async function GET(
   _req: Request,
@@ -39,7 +43,7 @@ export async function GET(
       GROUP BY p.id, c.id
     `, [id])
     if (!rows[0]) return NextResponse.json({ error: "Não encontrado" }, { status: 404 })
-    return NextResponse.json(rows[0])
+    return NextResponse.json(ocultarValores(rows[0], await getAcesso(), CAMPOS_VALOR))
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

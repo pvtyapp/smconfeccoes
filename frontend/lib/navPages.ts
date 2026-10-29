@@ -74,6 +74,15 @@ export const navSistema: NavItem[] = [
   { href: "/dashboard/settings", label: "Configurações", icon: Settings },
 ]
 
+// Abas que são só valor em R$: sem a permissão "Ver financeiro" somem do menu e o
+// middleware não deixa abrir, mesmo marcadas na tela de Usuários.
+export const FINANCE_PAGES: string[] = [
+  ...navFinanceiro.map(i => i.href),
+  "/dashboard/custo-producao",
+  "/dashboard/marketplace-painel",
+  "/dashboard/marketplace-lancamentos",
+]
+
 // Ordem canônica de todas as páginas — usada pra achar a "primeira" liberada de um
 // usuário, na mesma ordem em que elas aparecem na barra lateral.
 export const ALL_NAV_ITEMS: NavItem[] = [
@@ -83,8 +92,8 @@ export const ALL_NAV_ITEMS: NavItem[] = [
 
 // Primeira página (na ordem do menu) que o usuário pode acessar — admin sempre cai
 // no Dashboard. Retorna null se não sobrar nenhuma (usuário sem nada liberado).
-export function firstAllowedPage(isAdmin: boolean, allowedPages: string[]): string | null {
+export function firstAllowedPage(isAdmin: boolean, allowedPages: string[], verFinanceiro = true): string | null {
   if (isAdmin) return "/dashboard"
-  const match = ALL_NAV_ITEMS.find(item => allowedPages.includes(item.href))
+  const match = ALL_NAV_ITEMS.find(item => allowedPages.includes(item.href) && (verFinanceiro || !FINANCE_PAGES.includes(item.href)))
   return match?.href ?? null
 }
