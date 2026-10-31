@@ -17,7 +17,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results: { cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evoRestarted?: boolean; payablesDue?: number } = { cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0 }
+  const results: { cobranca: number; stuck: number; errors: number; mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evolutionDeleted: number; evoRestarted?: boolean; payablesDue?: number } = { cobranca: 0, stuck: 0, errors: 0, mediaCleared: 0, messagesDeleted: 0, dtfAttachmentsCleared: 0, evolutionDeleted: 0 }
 
   // ── 0. Evolution health watchdog ────────────────────────────────────────────────
   // Only restarts on recoverable states ("close"). Skips "connecting" (reconnection
@@ -224,12 +224,13 @@ export async function GET(req: Request) {
     }
   } } catch (e) { console.error("[cron] reserva expiry falhou:", e instanceof Error ? e.message : e); results.errors++ }
 
-  // ── 10. Mídia TTL 48h + evicção 500MB + delete mensagens > 14 dias ────────────
+  // ── 10. Histórico de WhatsApp só 48h (SM + Evolution) + evicção 500MB ─────────
   try {
-    const { mediaCleared, messagesDeleted, dtfAttachmentsCleared } = await runMediaCleanup()
+    const { mediaCleared, messagesDeleted, dtfAttachmentsCleared, evolutionDeleted } = await runMediaCleanup()
     results.mediaCleared           = mediaCleared
     results.messagesDeleted        = messagesDeleted
     results.dtfAttachmentsCleared  = dtfAttachmentsCleared
+    results.evolutionDeleted       = evolutionDeleted
   } catch { results.errors++ }
 
   // Nota: campanhas avulsas ("enviar agora"/agendadas) e schedules recorrentes

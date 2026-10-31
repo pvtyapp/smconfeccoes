@@ -1,3 +1,4 @@
+import { Pool } from "pg"
 import { pool } from "@/lib/db"
 
 // Legacy stub — Vercel Blob removed. Kept for callers in delete-message and dtf/pedidos routes.
@@ -48,24 +49,27 @@ export async function cleanDtfAttachments(): Promise<number> {
 }
 
 /**
- * Called by the hourly cron.
- * 1. NULLs media_data older than 3 days (TTL)
+ * Called by the daily cron. PIV 31/10/2026: histórico de WhatsApp só das últimas 48h
+ * ("se quiser mais, abre o WhatsApp") — corta o consumo do Postgres da SM no Railway.
+ * 1. NULLs media_data older than 48h (TTL)
  * 2. Marks stuck media as failed (media_type set, media_data never arrived, > 2h old)
  * 3. Evicts oldest media_data if total > 500MB
- * 4. Deletes wa_messages older than 7 days
+ * 4. Deletes wa_messages, wa_group_messages and wa_ack_events older than 48h
+ * 5. DTF attachments of concluded pedidos > 48h
+ * 6. Evolution's own database (Message/MessageUpdate) older than 48h — o Evolution não apaga nada sozinho
  */
-export async function runMediaCleanup(): Promise<{ mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number }> {
+export async function runMediaCleanup(): Promise<{ mediaCleared: number; messagesDeleted: number; dtfAttachmentsCleared: number; evolutionDeleted: number }> {
   let mediaCleared  = 0
   let messagesDeleted = 0
   let dtfAttachmentsCleared = 0
 
-  // 1. TTL 3 dias — NULL media_data, mark as failed
+  // 1. TTL 48h — NULL media_data, mark as failed
   try {
     const { rowCount } = await pool.query(`
       UPDATE wa_messages
       SET media_data = NULL, media_failed = true
       WHERE media_data IS NOT NULL
-        AND created_at < NOW() - INTERVAL '3 days'
+        AND created_at < NOW() - INTERVAL '48 hours'
     `)
     mediaCleared += rowCount ?? 0
   } catch (e) { console.error("[mediaCleanup] TTL 48h:", e) }
@@ -103,22 +107,67 @@ export async function runMediaCleanup(): Promise<{ mediaCleared: number; message
     }
   } catch (e) { console.error("[mediaCleanup] evicção tamanho:", e) }
 
-  // 4. Delete messages older than 7 days (unlink DTF attachments first)
+  // 4. Delete messages older than 48h (unlink DTF attachments first)
   try {
     await pool.query(`
       UPDATE dtf_order_attachments SET wa_message_id = NULL
       WHERE wa_message_id IN (
-        SELECT id FROM wa_messages WHERE created_at < NOW() - INTERVAL '7 days'
+        SELECT id FROM wa_messages WHERE created_at < NOW() - INTERVAL '48 hours'
       )
     `)
     const { rowCount } = await pool.query(`
-      DELETE FROM wa_messages WHERE created_at < NOW() - INTERVAL '7 days'
+      DELETE FROM wa_messages WHERE created_at < NOW() - INTERVAL '48 hours'
     `)
     messagesDeleted = rowCount ?? 0
   } catch (e) { console.error("[mediaCleanup] delete mensagens antigas:", e) }
 
+  // 4b. Grupos e confirmações de leitura nunca eram limpos (94 mil e 153 mil linhas em 31/10)
+  for (const tabela of ["wa_group_messages", "wa_ack_events"]) {
+    try {
+      const { rowCount } = await pool.query(`DELETE FROM ${tabela} WHERE created_at < NOW() - INTERVAL '48 hours'`)
+      messagesDeleted += rowCount ?? 0
+    } catch (e) { console.error(`[mediaCleanup] delete ${tabela}:`, e) }
+  }
+
   // 5. DTF attachments (dtf_order_attachments.blob_url) — pedidos concluídos/cancelados > 48h
   dtfAttachmentsCleared = await cleanDtfAttachments()
 
-  return { mediaCleared, messagesDeleted, dtfAttachmentsCleared }
+  // 6. Banco do Evolution
+  const evolutionDeleted = await cleanEvolutionMessages()
+
+  return { mediaCleared, messagesDeleted, dtfAttachmentsCleared, evolutionDeleted }
+}
+
+/**
+ * O Evolution grava toda mensagem no banco próprio (`evolutiondb`, mesmo servidor Postgres da SM)
+ * e nunca apaga: 384 mil mensagens desde maio, 870 MB em 31/10. A tela de Chat lê conversa e
+ * grupo direto dele (findMessages), então isso também é o histórico da tela — 48h (PIV 31/10).
+ * Apaga em lotes (a 1ª vez são ~380 mil) e as atualizações de status antes das mensagens.
+ */
+export async function cleanEvolutionMessages(): Promise<number> {
+  const base = process.env.EVOLUTION_DATABASE_URL || process.env.DATABASE_URL
+  if (!base) return 0
+  const url = new URL(base)
+  if (!process.env.EVOLUTION_DATABASE_URL) url.pathname = "/" + (process.env.EVOLUTION_DB_NAME || "evolutiondb")
+  const evo = new Pool({ connectionString: url.toString(), ssl: base.includes("railway") ? { rejectUnauthorized: false } : false, max: 1 })
+  let apagadas = 0
+  try {
+    const corte = Math.floor(Date.now() / 1000) - 48 * 3600
+    await evo.query(`
+      DELETE FROM "MessageUpdate" u
+      WHERE NOT EXISTS (SELECT 1 FROM "Message" m WHERE m.id = u."messageId" AND m."messageTimestamp" >= $1)
+    `, [corte])
+    for (let lote = 0; lote < 100; lote++) {
+      const { rowCount } = await evo.query(`
+        DELETE FROM "Message" WHERE id IN (SELECT id FROM "Message" WHERE "messageTimestamp" < $1 LIMIT 20000)
+      `, [corte])
+      apagadas += rowCount ?? 0
+      if (!rowCount || rowCount < 20000) break
+    }
+  } catch (e) {
+    console.error("[evolutionCleanup]:", e instanceof Error ? e.message : e)
+  } finally {
+    await evo.end().catch(() => {})
+  }
+  return apagadas
 }

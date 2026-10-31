@@ -729,6 +729,19 @@ async function doReply(contactId: number, jid: string, text: string): Promise<bo
 // Envia E salva direto no banco (não depende do fromMe callback) — a maioria
 // das respostas automáticas usa essa, que não espera o envio terminar pra não
 // segurar a resposta do webhook pra Evolution.
+// Avisos de etapa do pedido já mandados (1x por etapa), independente do histórico de 48h.
+let pingsTableReady: Promise<unknown> | null = null
+function ensurePingsTable(): Promise<unknown> {
+  pingsTableReady ??= pool.query(`
+    CREATE TABLE IF NOT EXISTS wa_pings_enviados (
+      contact_id INTEGER NOT NULL,
+      ping       TEXT NOT NULL,
+      sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (contact_id, ping)
+    )`).catch(e => { pingsTableReady = null; throw e })
+  return pingsTableReady
+}
+
 async function replyAndSave(contactId: number, jid: string, text: string): Promise<void> {
   waitUntil(doReply(contactId, jid, text))
 }
@@ -1519,11 +1532,20 @@ async function handleText(
     }
     const ping = pingByStatus[openOrder.status]
     if (ping) {
-      const { rows: alreadySent } = await pool.query(
-        `SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out' AND content = $2 LIMIT 1`,
-        [contactId, ping]
-      )
-      if (!alreadySent.length) await replyAndSave(contactId, jid, ping)
+      // "1x por etapa" fica registrado em wa_pings_enviados: o histórico de wa_messages
+      // só guarda 48h (PIV 31/10), então procurar a mensagem lá deixaria o aviso repetir.
+      // O NOT EXISTS cobre quem já recebeu antes desta tabela existir.
+      try {
+        await ensurePingsTable()
+        const { rowCount } = await pool.query(
+          `INSERT INTO wa_pings_enviados (contact_id, ping)
+           SELECT $1, $2
+           WHERE NOT EXISTS (SELECT 1 FROM wa_messages WHERE contact_id = $1 AND direction = 'out' AND content = $2)
+           ON CONFLICT DO NOTHING`,
+          [contactId, ping]
+        )
+        if (rowCount) await replyAndSave(contactId, jid, ping)
+      } catch (e) { console.error("[webhook] aviso de etapa do pedido:", e instanceof Error ? e.message : e) }
     }
 
     await pool.query(
