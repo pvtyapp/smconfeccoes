@@ -36,6 +36,11 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
   const aPagar = abertos.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const venc = abertos.filter((o) => { const d = new Date(o.dueDate!); d.setHours(0, 0, 0, 0); const h = new Date(); h.setHours(0, 0, 0, 0); return d < h })
   const vencidoValor = venc.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+  const mesAtual = new Date().toISOString().slice(0, 7)
+  const doMes = lista.filter((o) => o.status !== "cancelado" && o.createdAt.slice(0, 7) === mesAtual).reduce(
+    (acc, o) => ({ pedidos: acc.pedidos + 1, valor: acc.valor + Number(o.totalValue ?? 0), pecas: acc.pecas + o.items.reduce((n, i) => n + Number(i.qty), 0) }),
+    { pedidos: 0, valor: 0, pecas: 0 }
+  )
 
   async function sair() {
     await fetch("/api/portal/auth/logout", { method: "POST" }).catch(() => {})
@@ -65,11 +70,20 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
             <b>{pedidos === null ? "…" : andando}</b>
             <span>{prontos ? `${prontos} pronto${prontos > 1 ? "s" : ""} pra retirar` : "em análise ou separação"}</span>
           </div>
-          <div className={`pt-card ${vencidoValor > 0 ? "alerta" : ""}`}>
-            <small>A pagar</small>
-            <b>{pedidos === null ? "…" : brl(aPagar)}</b>
-            <span>{vencidoValor > 0 ? `${brl(vencidoValor)} vencido` : abertos.length ? "nada vencido" : "nada em aberto"}</span>
-          </div>
+          {/* Sem nada a prazo (PIV 05/11): o card vira "tudo em dia" + o que comprou no mês */}
+          {pedidos !== null && abertos.length === 0 ? (
+            <div className="pt-card ok">
+              <small>Pagamentos</small>
+              <b>✓ Tudo em dia</b>
+              <span>{doMes.pedidos ? `Este mês: ${doMes.pecas} ${doMes.pecas === 1 ? "peça" : "peças"} · ${brl(doMes.valor)}` : "Nenhum pedido este mês ainda"}</span>
+            </div>
+          ) : (
+            <div className={`pt-card ${vencidoValor > 0 ? "alerta" : ""}`}>
+              <small>A pagar</small>
+              <b>{pedidos === null ? "…" : brl(aPagar)}</b>
+              <span>{vencidoValor > 0 ? `${brl(vencidoValor)} vencido` : "nada vencido"}</span>
+            </div>
+          )}
           <a className="pt-card novo" href="/catalogo">
             <small>Repor estoque</small>
             <b>Fazer pedido →</b>

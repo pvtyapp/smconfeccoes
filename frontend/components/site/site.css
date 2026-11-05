@@ -391,3 +391,4 @@
 @keyframes sm-luz{0%,100%{opacity:.55;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
 @media (max-width:640px){.smsite .ilu-in{grid-template-columns:minmax(0,1fr) 120px;min-height:220px}.smsite .ilu-masc{width:120px}.smsite .ilu-luz{width:96px;height:96px;margin-left:-40px}.smsite .ilu-logo{height:40px}}
 @media (max-width:640px){.smsite .ilu-btn{white-space:nowrap;font-size:11px;padding:12px 16px;letter-spacing:.05em}}
+.smsite .pt-card.ok b{color:#1D7A45}
