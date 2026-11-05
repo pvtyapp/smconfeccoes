@@ -1,9 +1,10 @@
 "use client"
 
-import { Suspense } from "react"
-import Image from "next/image"
-import Link from "next/link"
+import "@/components/site/site.css"
+import { Suspense, useState } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
+import EntrarFlow from "@/components/site/EntrarFlow"
 import LoginFormFields from "../components/LoginFormFields"
 
 export default function PortalLoginPage() {
@@ -14,34 +15,36 @@ export default function PortalLoginPage() {
   )
 }
 
+// Entrar só com WhatsApp + código (PIV 05/11). A senha antiga continua
+// funcionando pra quem prefere, escondida num link pequeno.
 function LoginPageContent() {
   const searchParams = useSearchParams()
   const next = searchParams.get("next") || "/portal"
+  const [comSenha, setComSenha] = useState(false)
+  const [novo, setNovo] = useState(false)
 
   return (
-    <div className="min-h-screen bg-[#F4F6FB] flex items-center justify-center px-5 py-12" style={{ fontFamily: "var(--font-dm-sans), sans-serif" }}>
-      <div className="w-full max-w-sm">
-        <div className="flex justify-center mb-8">
-          <Image src="/smsemfundo.png" alt="SM Confecções" width={160} height={80} className="w-[140px] h-auto" />
-        </div>
-
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-8">
-          <h1 className="text-xl font-black text-[#0F1E3C] mb-1" style={{ fontFamily: "var(--font-playfair)" }}>
-            Área do Cliente
-          </h1>
-          <p className="text-sm text-[#0F1E3C]/50 mb-6">Entre com seu WhatsApp e senha</p>
-
-          <LoginFormFields next={next} idPrefix="login" />
-
-          <div className="flex items-center justify-between mt-5 text-xs">
-            <Link href={`/portal/esqueci-senha?next=${encodeURIComponent(next)}`} className="text-[#4361EE] font-semibold hover:underline">Esqueci minha senha</Link>
-            <Link href={`/portal/cadastro?next=${encodeURIComponent(next)}`} className="text-[#4361EE] font-semibold hover:underline">Criar conta</Link>
-          </div>
-        </div>
-
-        <p className="text-center text-xs text-[#0F1E3C]/30 mt-6">
-          <Link href="/" className="hover:text-[#0F1E3C]/60">← Voltar pro site</Link>
-        </p>
+    <div className="smsite entrar-pg">
+      <div className="entrar-box">
+        <Link href="/" aria-label="Voltar pro site"><img src="/smsemfundo.png" alt="SM Confecções" style={{ width: 120, height: "auto" }} /></Link>
+        {novo ? (
+          <>
+            <p className="tit">Você ainda não tem cadastro</p>
+            <p className="obs">É só escolher as peças no site e mandar o pedido: a gente faz seu cadastro junto, no mesmo passo.</p>
+            <Link className="btn azul grande" href="/#pecas">Ver peças</Link>
+          </>
+        ) : comSenha ? (
+          <>
+            <p className="tit">Entrar com senha</p>
+            <LoginFormFields next={next} idPrefix="login" />
+            <button className="link" type="button" onClick={() => setComSenha(false)}>← Entrar com código no WhatsApp</button>
+          </>
+        ) : (
+          <>
+            <EntrarFlow onFim={(r) => { if (r.tipo === "logado") window.location.href = next; else setNovo(true) }} />
+            <button className="link" type="button" onClick={() => setComSenha(true)}>Prefiro usar minha senha</button>
+          </>
+        )}
       </div>
     </div>
   )

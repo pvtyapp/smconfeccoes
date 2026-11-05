@@ -8,6 +8,8 @@ type Solicitacao = {
   name: string
   phone: string
   salesChannels: string[] | null
+  // Pedido feito no site antes da aprovação (site novo, 05/11): ao aprovar, vira pedido sozinho.
+  carrinho: { itens: { productName: string; color: string | null; size: string | null; qty: number; unitPrice: number }[]; dtfMetros: number; total: number } | null
   status: "pendente" | "aprovado" | "recusado"
   reviewedBy: string | null
   reviewedAt: string | null
@@ -116,6 +118,19 @@ export default function FormulariosPage() {
                       {s.salesChannels.map((c) => (
                         <span key={c} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#4361EE]/10 text-[#4361EE]">{c}</span>
                       ))}
+                    </div>
+                  )}
+                  {s.carrinho && (s.carrinho.itens.length > 0 || s.carrinho.dtfMetros > 0) && (
+                    <div className="mt-2 rounded-xl bg-[#F4F6FB] px-3 py-2 text-xs text-[#0F1E3C]/70">
+                      <p className="font-bold text-[#0F1E3C]">
+                        Pedido junto: {s.carrinho.itens.reduce((n, i) => n + i.qty, 0)} peças
+                        {s.carrinho.dtfMetros > 0 && ` + ${s.carrinho.dtfMetros} m de DTF`}
+                        {" · "}R$ {Number(s.carrinho.total).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </p>
+                      <p className="mt-0.5">
+                        {s.carrinho.itens.map((i) => `${i.qty}x ${i.productName}${i.color ? ` ${i.color}` : ""}${i.size ? ` ${i.size}` : ""}`).join(" · ")}
+                      </p>
+                      {s.status === "pendente" && <p className="mt-1 text-[10px] text-[#0F1E3C]/45">Ao aprovar, vira pedido na triagem.</p>}
                     </div>
                   )}
                   <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">

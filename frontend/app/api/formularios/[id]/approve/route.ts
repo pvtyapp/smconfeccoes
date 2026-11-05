@@ -4,10 +4,8 @@ import { pool } from "@/lib/db"
 import { getSessionFromRequest } from "@/lib/session"
 import { findContactByPhone } from "@/lib/portal/phone"
 import { sendAndSave } from "@/lib/whatsapp/sendAndSave"
-
-function generateTempPassword(): string {
-  return String(Math.floor(100000 + Math.random() * 900000))
-}
+import { randomBytes } from "crypto"
+import { garantirColunaCarrinho, criarPedidoDoCarrinho, criarPedidoDtfSite, type CarrinhoSite } from "@/lib/portal/pedidoSite"
 
 // "5516991234567" → "(16) 99123-4567" — o mesmo formato que o campo de
 // WhatsApp do login usa, pra bater exatamente com o que a pessoa vai digitar.
@@ -23,8 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!session) return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
 
     const { id } = await params
+    await garantirColunaCarrinho()
     const { rows } = await pool.query(
-      `SELECT id, name, phone, status FROM fornecedor_solicitacoes WHERE id = $1`, [id]
+      `SELECT id, name, phone, status, carrinho FROM fornecedor_solicitacoes WHERE id = $1`, [id]
     )
     const solicitacao = rows[0]
     if (!solicitacao) return NextResponse.json({ error: "Solicitação não encontrada" }, { status: 404 })
@@ -54,38 +53,44 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       [contact!.id, session.name, id]
     )
 
-    // Só gera credencial nova se a pessoa ainda não tem conta — evita
-    // sobrescrever a senha de alguém que já criou a própria (ex: comprou
-    // direto e depois preencheu o formulário por engano).
+    // Só cria conta se a pessoa ainda não tem. Sem senha temporária desde o site
+    // novo (PIV 05/11): o acesso é pelo WhatsApp + código (/api/portal/auth/entrar),
+    // a senha aleatória só cumpre o NOT NULL.
     const { rows: existingAccount } = await pool.query(
       `SELECT id FROM client_accounts WHERE contact_id = $1`, [contact!.id]
     )
-
-    const firstName = solicitacao.name.split(" ")[0]
-
     if (existingAccount.length === 0) {
-      const tempPassword = generateTempPassword()
-      const passwordHash = await bcrypt.hash(tempPassword, 10)
+      const passwordHash = await bcrypt.hash(randomBytes(24).toString("hex"), 10)
       await pool.query(
-        `INSERT INTO client_accounts (contact_id, password_hash, must_change_password)
-         VALUES ($1, $2, true)`,
+        `INSERT INTO client_accounts (contact_id, password_hash, must_change_password) VALUES ($1, $2, false)`,
         [contact!.id, passwordHash]
       )
-
-      await sendAndSave(
-        contact!.id, contact!.jid,
-        `Oi, ${firstName}! Seu acesso pra comprar com a *SM Confecções* foi liberado 🎉\n\n` +
-        `Pra entrar no site (${formatPhoneBR(solicitacao.phone)}):\n` +
-        `📱 WhatsApp: *${formatPhoneBR(solicitacao.phone)}*\n` +
-        `🔑 Senha: *${tempPassword}*\n\n` +
-        `No primeiro acesso você vai precisar trocar essa senha. Entre em: https://smconfeccoes.com.br/portal/login`
-      )
-    } else {
-      await sendAndSave(
-        contact!.id, contact!.jid,
-        `Oi, ${firstName}! Seu acesso pra comprar com a *SM Confecções* foi liberado 🎉\n\nJá pode fazer seu pedido pelo site: https://smconfeccoes.com.br/catalogo`
-      )
     }
+
+    // Pedido guardado junto da solicitação (feito no site antes da aprovação) nasce agora.
+    const carrinho = solicitacao.carrinho as CarrinhoSite | null
+    const numeros: string[] = []
+    if (carrinho) {
+      const ped = await criarPedidoDoCarrinho(pool, contact!.id, carrinho.itens ?? [],
+        `Pedido feito no site antes da aprovação do cadastro (aprovado por ${session.name}). Conferir estoque antes de separar.`)
+      if (ped) numeros.push(ped)
+      if (carrinho.dtfMetros > 0) numeros.push(await criarPedidoDtfSite(pool, contact!.id, carrinho.dtfMetros))
+    }
+
+    const firstName = solicitacao.name.split(" ")[0]
+    const comoEntrar = `Pra entrar no site é só colocar seu WhatsApp (${formatPhoneBR(solicitacao.phone)}) e o código que chega aqui: https://smconfeccoes.com.br`
+    await sendAndSave(
+      contact!.id, contact!.phone_jid || contact!.jid,
+      numeros.length
+        ? `Oi, ${firstName}! Seu cadastro na *SM Confecções* foi aprovado 🎉
+
+Seu pedido já entrou na fila (${numeros.join(", ")}). Já já a gente te chama aqui pra combinar pagamento e frete.
+
+${comoEntrar}`
+        : `Oi, ${firstName}! Seu cadastro na *SM Confecções* foi aprovado 🎉
+
+${comoEntrar}`
+    )
 
     return NextResponse.json({ ok: true })
   } catch (err) {
