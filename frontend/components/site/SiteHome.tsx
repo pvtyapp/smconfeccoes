@@ -78,11 +78,41 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
     const svg = fitaSvg.current, root = raiz.current!
     const q = <T extends Element>(s: string) => svg!.querySelector(s) as T
 
+    // A ponta da fita acompanha o meio da tela (PIV 05/11): desceu, ela estica pelo
+    // caminho; subiu, recolhe. Tabela comprimento → altura montada no monta().
+    let tabela: [number, number][] = []
+    let alvo = 0, atual = 0, raf = 0, offLetreiro = 0, ultimoY = scrollY, larguraFita = 34
     function desenha() {
+      if (!svg || !fitaLen.current || !tabela.length) return
+      if (red) { alvo = fitaLen.current; return }
+      const topo = root.getBoundingClientRect().top + scrollY
+      const yAlvo = scrollY - topo + innerHeight * 0.6
+      let lo = 0, hi = tabela.length - 1
+      while (lo < hi) { const m = (lo + hi) >> 1; if (tabela[m][1] < yAlvo) lo = m + 1; else hi = m }
+      alvo = tabela[lo][0]
+    }
+    function aplicaFita(len: number) {
       if (!svg || !fitaLen.current) return
-      const H = root.scrollHeight
-      const k = red ? 1 : Math.min(1, Math.max(0.08, (scrollY + innerHeight * 0.85) / H))
-      q<SVGPathElement>(".rev").style.strokeDashoffset = String(fitaLen.current * (1 - k))
+      q<SVGPathElement>(".rev").style.strokeDashoffset = String(fitaLen.current - len)
+      const corpo = q<SVGPathElement>(".corpo")
+      const p = corpo.getPointAtLength(Math.max(0, len)), pa = corpo.getPointAtLength(Math.max(0, len - 1))
+      const ang = Math.atan2(p.y - pa.y, p.x - pa.x) * 180 / Math.PI
+      const ponta = q<SVGGElement>(".ponta")
+      ponta.setAttribute("transform", `translate(${p.x} ${p.y}) rotate(${ang})`)
+      ponta.style.opacity = len > 4 ? "1" : "0"
+    }
+    function quadro() {
+      atual += (alvo - atual) * 0.12
+      if (Math.abs(alvo - atual) < 0.5) atual = alvo
+      aplicaFita(atual)
+      // letreiro roda sozinho e acelera com a rolagem
+      const l = letreiro.current
+      if (l && !red) {
+        const dy = Math.abs(scrollY - ultimoY); ultimoY = scrollY
+        offLetreiro = (offLetreiro + 0.6 + Math.min(dy, 80) * 0.35) % (l.scrollWidth / 3 || 1)
+        l.style.transform = `translateX(${-offLetreiro}px)`
+      }
+      raf = requestAnimationFrame(quadro)
     }
 
     function monta() {
@@ -122,6 +152,13 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       }
       g.innerHTML = html
       const rev = q<SVGPathElement>(".rev"); rev.style.strokeWidth = String(TW * 3); rev.style.strokeDasharray = String(fitaLen.current)
+      tabela = []
+      let maxY = -Infinity
+      for (let l = 0; l <= fitaLen.current; l += 16) { const pt = corpo.getPointAtLength(l); maxY = Math.max(maxY, pt.y); tabela.push([l, maxY]) }
+      tabela.push([fitaLen.current, Number.POSITIVE_INFINITY])
+      larguraFita = TW
+      const ponta = q<SVGGElement>(".ponta")
+      ponta.innerHTML = `<rect x="-3" y="${-larguraFita / 2 - 4}" width="9" height="${larguraFita + 8}" rx="2" fill="#8E97A3"/><rect x="-3" y="${-larguraFita / 2 - 4}" width="3" height="${larguraFita + 8}" rx="1" fill="#5D6672"/>`
       desenha()
     }
 
@@ -129,8 +166,6 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       setSolid(scrollY > 30)
       desenha()
       if (red) return
-      const l = letreiro.current
-      if (l) l.style.transform = `translateX(${-((scrollY * 0.45) % (l.scrollWidth / 3))}px)`
       if (video.current) video.current.style.transform = `scale(${1 + Math.min(scrollY, 800) * 0.00025})`
     }
 
@@ -156,7 +191,8 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
     if (document.fonts) document.fonts.ready.then(refaz)
     refaz()
     if (video.current) { video.current.muted = true; if (red) video.current.pause(); else video.current.play().catch(() => {}) }
-    return () => { removeEventListener("scroll", rola); ro.disconnect(); io?.disconnect(); window.clearTimeout(t) }
+    raf = requestAnimationFrame(quadro)
+    return () => { removeEventListener("scroll", rola); ro.disconnect(); io?.disconnect(); window.clearTimeout(t); cancelAnimationFrame(raf) }
   }, [])
 
   const abrirPeca = (id: string) => setPainel({ tipo: "peca", id })
@@ -168,6 +204,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       {home && <svg className="fita" ref={fitaSvg} aria-hidden="true">
         <defs><mask id="smFitaMask" maskUnits="userSpaceOnUse"><path className="rev" fill="none" stroke="#fff" strokeLinecap="round" /></mask></defs>
         <g mask="url(#smFitaMask)"><path className="corpo" /><path className="tick t1" /><path className="tick t2" /><g className="nums" /></g>
+        <g className="ponta" />
       </svg>}
 
       <nav className={`nav ${solid || !home ? "solid" : ""}`}>
