@@ -74,6 +74,9 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
   const fitaLen = useRef(0)
 
   useEffect(() => {
+    // "Reduzir movimento" vem ligado em muito PC de loja (Windows com animações desligadas
+    // pra desempenho, era o caso do PC do PIV em 05/11): o vídeo, o letreiro e a fita
+    // continuam rodando; nesse modo só o "aparecer subindo" das seções sai.
     const red = matchMedia("(prefers-reduced-motion: reduce)").matches
     const svg = fitaSvg.current, root = raiz.current!
     const q = <T extends Element>(s: string) => svg!.querySelector(s) as T
@@ -84,7 +87,6 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
     let alvo = 0, atual = 0, raf = 0, offLetreiro = 0, ultimoY = scrollY, larguraFita = 34
     function desenha() {
       if (!svg || !fitaLen.current || !tabela.length) return
-      if (red) { alvo = fitaLen.current; return }
       const topo = root.getBoundingClientRect().top + scrollY
       const yAlvo = scrollY - topo + innerHeight * 0.6
       let lo = 0, hi = tabela.length - 1
@@ -107,7 +109,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       aplicaFita(atual)
       // letreiro roda sozinho e acelera com a rolagem
       const l = letreiro.current
-      if (l && !red) {
+      if (l) {
         const dy = Math.abs(scrollY - ultimoY); ultimoY = scrollY
         offLetreiro = (offLetreiro + 0.6 + Math.min(dy, 80) * 0.35) % (l.scrollWidth / 3 || 1)
         l.style.transform = `translateX(${-offLetreiro}px)`
@@ -190,7 +192,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
     addEventListener("scroll", rola, { passive: true })
     if (document.fonts) document.fonts.ready.then(refaz)
     refaz()
-    if (video.current) { video.current.muted = true; if (red) video.current.pause(); else video.current.play().catch(() => {}) }
+    if (video.current) { video.current.muted = true; video.current.play().catch(() => {}) }
     raf = requestAnimationFrame(quadro)
     return () => { removeEventListener("scroll", rola); ro.disconnect(); io?.disconnect(); window.clearTimeout(t); cancelAnimationFrame(raf) }
   }, [])
