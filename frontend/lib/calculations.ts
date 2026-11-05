@@ -1,15 +1,12 @@
 import type { InventoryMetric } from "./types"
 
-// `average_cost` da variante vem 0.00 do banco (nunca NULL) até a 1ª entrada
-// de custo real ser calculada — 0 aqui significa "sem custo médio calculado
-// ainda", não que a peça não tem custo. Como o Postgres devolve NUMERIC como
-// string via pg, um `averageCost || costPrice` ingênuo nunca cai no fallback
-// nesse caso ("0.00" é truthy em JS) — silenciosamente zera o valor de
-// produtos que nunca tiveram entrada de custo lançada (achado real: Bermuda
-// Infantil Moletinho e os 2 Cropped, 112 variantes no total).
-export function effectiveCost(averageCost: number | string, costPrice: number | string): number {
-  const avg = Number(averageCost)
-  return avg > 0 ? avg : Number(costPrice)
+// Custo único (PIV 05/11): vale sempre o "Custo" cadastrado em Produtos
+// (products.material_cost) — o mesmo que o Relatório Financeiro já usava. O
+// average_cost da variante era alimentado pela Produção (parada desde 03/09, saiu
+// do painel) e misturava custo de costura e fechamentos antigos, então o "valor em
+// estoque" não batia com o financeiro. O parâmetro fica só pra não mexer nas chamadas.
+export function effectiveCost(_averageCost: number | string, costPrice: number | string): number {
+  return Number(costPrice) || 0
 }
 
 export type BalanceRow = {

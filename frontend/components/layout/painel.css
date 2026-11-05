@@ -1,0 +1,113 @@
+/* Painel interno da SM, cara nova (PIV 05/11). Duas partes:
+   1) o menu lateral novo (pn-*);
+   2) uma camada que moderniza as telas antigas sem reescrever cada uma: títulos na
+      letra do site novo, cards, tabelas, campos e botões com o mesmo acabamento.
+   Tudo escopado em .painel. */
+
+.painel{
+  --pn-navy:#0F1E3C; --pn-navy2:#16284D; --pn-royal:#4361EE; --pn-tape:#F4C430; --pn-fundo:#EEF1F6;
+  --pn-linha:#E3E7EF; --pn-mut:#6B7891;
+  /* títulos que usavam a serifada antiga passam pra letra do site novo */
+  --font-playfair: var(--font-anton);
+  background:var(--pn-fundo);
+}
+
+/* ── menu lateral ─────────────────────────────────────────── */
+.pn-side{width:258px;flex:none;height:100vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#0F1E3C 0%,#0B1730 100%);color:#fff;transition:width .28s cubic-bezier(.2,.8,.2,1);position:relative;z-index:20}
+.pn-side.mini{width:68px}
+.pn-marca{display:flex;align-items:center;gap:10px;padding:20px 18px 14px}
+.pn-side.mini .pn-marca{justify-content:center;padding:18px 0 12px}
+.pn-marca img{height:30px;width:auto;filter:brightness(0) invert(1)}
+.pn-side.mini .pn-marca img{height:22px}
+.pn-marca span{font:400 15px/1 var(--font-anton);letter-spacing:.12em;text-transform:uppercase;color:var(--pn-tape);padding:4px 8px;border:1px solid rgba(244,196,48,.35);border-radius:999px}
+.pn-busca{margin:4px 14px 10px;display:flex;align-items:center;gap:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:rgba(255,255,255,.6);border-radius:12px;padding:9px 12px;font:600 13px var(--font-dm-sans),sans-serif;cursor:pointer;transition:background .2s,color .2s}
+.pn-busca:hover{background:rgba(255,255,255,.1);color:#fff}
+.pn-busca.mini{margin:4px auto 10px;padding:9px;justify-content:center}
+.pn-busca kbd{margin-left:auto;font:700 10px var(--font-dm-sans),sans-serif;background:rgba(255,255,255,.1);border-radius:6px;padding:3px 6px;color:rgba(255,255,255,.55)}
+.pn-nav{position:relative;flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 12px 12px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+.pn-side.mini .pn-nav{padding:4px 10px 12px}
+.pn-ind{position:absolute;left:12px;right:12px;top:0;border-radius:12px;background:linear-gradient(90deg,#4361EE,#5B75F2);box-shadow:0 10px 24px -12px rgba(67,97,238,.9);transition:transform .38s cubic-bezier(.3,1.25,.4,1),height .3s;z-index:0;pointer-events:none}
+.pn-side.mini .pn-ind{left:10px;right:10px}
+.pn-ind::before{content:"";position:absolute;left:-12px;top:22%;bottom:22%;width:4px;border-radius:0 4px 4px 0;background:var(--pn-tape)}
+.pn-side.mini .pn-ind::before{left:-10px}
+.pn-grupo{margin-top:10px}
+.pn-gtit{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:none;color:rgba(255,255,255,.32);font:800 10px var(--font-dm-sans),sans-serif;letter-spacing:.18em;text-transform:uppercase;padding:6px 10px;cursor:pointer}
+.pn-gtit:hover{color:rgba(255,255,255,.6)}
+.pn-gtit svg{transition:transform .25s}
+.pn-gtit svg.fechado{transform:rotate(-90deg)}
+.pn-itens{display:grid;gap:2px;animation:pnAbre .25s ease both}
+@keyframes pnAbre{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.pn-link{position:relative;z-index:1;display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:12px;color:rgba(255,255,255,.58);font:600 14px var(--font-dm-sans),sans-serif;text-decoration:none;transition:color .2s,background .2s}
+.pn-link:hover{color:#fff;background:rgba(255,255,255,.06)}
+.pn-link.on{color:#fff;background:transparent}
+.pn-link.mini{justify-content:center;padding:10px}
+.pn-ico{flex:none;opacity:.75;transition:transform .2s,opacity .2s}
+.pn-link:hover .pn-ico{transform:translateX(1px);opacity:1}
+.pn-link.on .pn-ico{opacity:1}
+.pn-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pn-badge{margin-left:auto;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:#00A884;color:#fff;font:800 10px/20px var(--font-dm-sans),sans-serif;text-align:center;animation:pnPulso 2s ease-in-out infinite}
+.pn-dot{position:absolute;top:7px;right:9px;width:8px;height:8px;border-radius:50%;background:#00A884}
+@keyframes pnPulso{0%,100%{box-shadow:0 0 0 0 rgba(0,168,132,.5)}50%{box-shadow:0 0 0 5px rgba(0,168,132,0)}}
+.pn-esq{display:block;height:34px;margin:8px 0;border-radius:12px;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:200% 100%;animation:pnBrilho 1.2s linear infinite}
+@keyframes pnBrilho{to{background-position:-200% 0}}
+.pn-pe{border-top:1px solid rgba(255,255,255,.08);padding:10px 12px 12px;display:grid;gap:4px}
+.pn-user{display:flex;align-items:center;gap:10px;padding:6px 8px}
+.pn-avatar{width:30px;height:30px;border-radius:50%;background:var(--pn-tape);color:var(--pn-navy);display:grid;place-items:center;font:400 15px var(--font-anton)}
+.pn-nome{font:700 13px var(--font-dm-sans),sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pn-sair,.pn-recolhe{display:flex;align-items:center;justify-content:center;gap:8px;border:0;background:none;color:rgba(255,255,255,.4);font:600 12px var(--font-dm-sans),sans-serif;padding:8px;border-radius:10px;cursor:pointer;transition:background .2s,color .2s}
+.pn-sair:hover{color:#ff8a8a;background:rgba(255,80,80,.1)}
+.pn-recolhe:hover{color:#fff;background:rgba(255,255,255,.06)}
+
+/* Ctrl+K */
+.pn-busca-ov{position:fixed;inset:0;z-index:200;background:rgba(15,30,60,.42);backdrop-filter:blur(6px);display:grid;justify-items:center;align-items:start;padding-top:12vh;animation:pnFade .18s both}
+.pn-busca-box{width:min(560px,92vw);background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 40px 80px -30px rgba(0,0,0,.55);animation:pnSobe .25s cubic-bezier(.2,.8,.2,1) both}
+.pn-busca-box input{width:100%;border:0;border-bottom:1px solid var(--pn-linha);padding:18px 20px;font:600 17px var(--font-dm-sans),sans-serif;color:var(--pn-navy);outline:none}
+.pn-busca-lista{max-height:52vh;overflow:auto;padding:8px}
+.pn-busca-lista button{width:100%;display:flex;align-items:center;gap:12px;border:0;background:none;border-radius:12px;padding:11px 12px;font:600 14px var(--font-dm-sans),sans-serif;color:var(--pn-navy);cursor:pointer;text-align:left}
+.pn-busca-lista button small{margin-left:auto;color:var(--pn-mut);font-weight:600;font-size:12px}
+.pn-busca-lista button.sel{background:#EEF2FF;color:var(--pn-royal)}
+.pn-busca-vazio{padding:18px;color:var(--pn-mut);font:500 14px var(--font-dm-sans),sans-serif}
+@keyframes pnFade{from{opacity:0}to{opacity:1}}
+@keyframes pnSobe{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
+
+/* ── transição entre telas ───────────────────────────────── */
+.pn-tela{animation:pnTela .45s cubic-bezier(.2,.8,.2,1) both}
+@keyframes pnTela{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* ── camada que moderniza as telas antigas ───────────────── */
+/* títulos: letra do site novo (Anton), caixa alta */
+.painel [style*="font-playfair"]{text-transform:uppercase;font-weight:400!important;letter-spacing:.01em}
+.pn-tela h1[style*="font-playfair"],.pn-tela h1.text-2xl{font-size:34px!important;line-height:1}
+
+/* cards brancos: canto maior, borda mais leve e sombra suave */
+.pn-tela .bg-white.rounded-2xl,.pn-tela .bg-white.rounded-xl{border-color:var(--pn-linha)!important;box-shadow:0 1px 0 rgba(15,30,60,.04),0 18px 40px -32px rgba(15,30,60,.35)}
+.pn-tela .bg-white.rounded-2xl{border-radius:20px}
+.pn-tela a.bg-white.rounded-2xl,.pn-tela button.bg-white.rounded-2xl{transition:transform .25s cubic-bezier(.3,1.5,.5,1),box-shadow .25s}
+.pn-tela a.bg-white.rounded-2xl:hover,.pn-tela button.bg-white.rounded-2xl:hover{transform:translateY(-2px);box-shadow:0 22px 44px -28px rgba(15,30,60,.45)}
+
+/* tabelas: cabeçalho discreto, linha ativa e entrada em sequência */
+.pn-tela table thead th{font-size:11px!important;letter-spacing:.08em;text-transform:uppercase;color:var(--pn-mut)!important;font-weight:800!important}
+.pn-tela table tbody tr{transition:background .15s}
+.pn-tela table tbody tr:hover{background:#F6F8FD}
+.pn-tela table tbody tr{animation:pnLinha .4s cubic-bezier(.2,.8,.2,1) both}
+.pn-tela table tbody tr:nth-child(2){animation-delay:.03s}.pn-tela table tbody tr:nth-child(3){animation-delay:.06s}
+.pn-tela table tbody tr:nth-child(4){animation-delay:.09s}.pn-tela table tbody tr:nth-child(5){animation-delay:.12s}
+.pn-tela table tbody tr:nth-child(6){animation-delay:.15s}.pn-tela table tbody tr:nth-child(7){animation-delay:.18s}
+.pn-tela table tbody tr:nth-child(8){animation-delay:.21s}.pn-tela table tbody tr:nth-child(n+9){animation-delay:.24s}
+@keyframes pnLinha{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* botões principais: leve subida no hover */
+.pn-tela button[class*="bg-[#4361EE]"],.pn-tela button[class*="bg-[#0F1E3C]"],.pn-tela a[class*="bg-[#4361EE]"],.pn-tela a[class*="bg-[#0F1E3C]"]{transition:transform .2s cubic-bezier(.3,1.6,.5,1),box-shadow .2s,background .2s}
+.pn-tela button[class*="bg-[#4361EE]"]:not(:disabled):hover,.pn-tela a[class*="bg-[#4361EE]"]:hover{transform:translateY(-1px);box-shadow:0 10px 22px -12px rgba(67,97,238,.9)}
+.pn-tela button[class*="bg-[#0F1E3C]"]:not(:disabled):hover,.pn-tela a[class*="bg-[#0F1E3C]"]:hover{transform:translateY(-1px);box-shadow:0 10px 22px -12px rgba(15,30,60,.7)}
+
+/* campos: foco no azul royal */
+.pn-tela input:focus,.pn-tela select:focus,.pn-tela textarea:focus{outline:none;border-color:var(--pn-royal)!important;box-shadow:0 0 0 3px rgba(67,97,238,.15)}
+
+/* "Carregando..." genérico vira um brilho de esqueleto */
+.pn-tela .animate-pulse{animation:pnBrilhoClaro 1.2s linear infinite!important;background:linear-gradient(90deg,#E9EDF5,#F5F7FB,#E9EDF5);background-size:200% 100%}
+@keyframes pnBrilhoClaro{to{background-position:-200% 0}}
+
+/* rolagem fina */
+.pn-main{scrollbar-width:thin;scrollbar-color:#C9D1E0 transparent}
+

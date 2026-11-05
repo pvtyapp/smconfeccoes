@@ -762,11 +762,11 @@ export default function RelatorioFinanceiroPage() {
               {stockOpen && (
                 <div className="p-6 space-y-5">
                   {/* KPI totais */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                     <KPICard
                       label="Capital Total Imobilizado"
                       value={fmtRDRE(stockVal.grandTotalCost)}
-                      sub="produtos + insumos ao custo"
+                      sub="peças em estoque, ao custo cadastrado"
                       icon={Layers} color="blue"
                     />
                     <KPICard
@@ -774,12 +774,6 @@ export default function RelatorioFinanceiroPage() {
                       value={fmtRDRE(stockVal.products.totalCost)}
                       sub={`${stockVal.products.items.length} produtos em estoque`}
                       icon={Package}
-                    />
-                    <KPICard
-                      label="Capital em Insumos"
-                      value={fmtRDRE(stockVal.rawMaterials.totalCost)}
-                      sub={`${stockVal.rawMaterials.items.length} lotes disponíveis`}
-                      icon={Layers}
                     />
                     <KPICard
                       label="Receita Potencial (venda)"

@@ -30,21 +30,9 @@ export async function GET() {
       ORDER BY p.name ASC
     `)
 
-    // Insumos: entradas disponíveis — total_qty × unit_price
-    const { rows: rawMaterials } = await pool.query(`
-      SELECT
-        rm.name                                   AS "materialName",
-        COALESCE(rmv.name, '')                    AS "variantName",
-        rm.unit,
-        rme.total_qty::float                      AS qty,
-        rme.unit_price::float                     AS "unitPrice",
-        (rme.total_qty * rme.unit_price)::float   AS "totalCost"
-      FROM raw_material_entries rme
-      JOIN raw_materials rm        ON rm.id  = rme.material_id
-      LEFT JOIN raw_material_variants rmv ON rmv.id = rme.variant_id
-      WHERE rme.status = 'disponivel'
-      ORDER BY rm.name ASC, rmv.name ASC
-    `)
+    // Matéria-prima da Produção saiu do painel (PIV 05/11): o valor do estoque é só
+    // das peças, ao "Custo" de Produtos. Mantém o formato da resposta.
+    const rawMaterials: { totalCost: number }[] = []
 
     const productItems = products.map(r => ({
       ...r,
