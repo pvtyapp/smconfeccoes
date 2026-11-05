@@ -4,8 +4,7 @@ import "../site.css"
 import { useCallback, useEffect, useState } from "react"
 import DadosTab from "@/app/portal/DadosTab"
 import NotaFiscalTab from "@/app/portal/NotaFiscalTab"
-import PedidosCliente, { emAberto, type Pedido } from "./PedidosCliente"
-import { brl } from "../util"
+import PedidosCliente, { type Pedido } from "./PedidosCliente"
 import CreditoIluminado from "../CreditoIluminado"
 import { CardGrafico, ModalGrafico } from "./GraficoPedidos"
 import SiteHome from "../SiteHome"
@@ -39,10 +38,6 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
   const lista = pedidos ?? []
   const andando = lista.filter((o) => ["triagem", "em_separacao", "pronto"].includes(o.status)).length
   const prontos = lista.filter((o) => o.status === "pronto").length
-  const abertos = emAberto(lista)
-  const aPagar = abertos.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
-  const venc = abertos.filter((o) => { const d = new Date(o.dueDate!); d.setHours(0, 0, 0, 0); const h = new Date(); h.setHours(0, 0, 0, 0); return d < h })
-  const vencidoValor = venc.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
 
   async function sair() {
     await fetch("/api/portal/auth/logout", { method: "POST" }).catch(() => {})
@@ -54,10 +49,9 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
       <nav className="nav solid">
         <div className="in">
           <a href="/" aria-label="SM Confecções, início"><img className="logo" src="/smsemfundo.png" alt="SM Confecções" /></a>
-          <div className="links"><a href="/">Início</a><button type="button" className="lnk" onClick={irCatalogo}>Catálogo</button></div>
-          <div className="direita">
+          {/* topo enxuto (PIV 05/11): as abas já levam pro catálogo e pros pedidos */}
+          <div className="direita" style={{ marginLeft: "auto" }}>
             <button className="conta" type="button" onClick={sair}>Sair</button>
-            <button className="bag" type="button" onClick={irCatalogo}>Fazer pedido</button>
           </div>
         </div>
       </nav>
@@ -75,15 +69,10 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
             <span>{prontos ? `${prontos} pronto${prontos > 1 ? "s" : ""} pra retirar` : "em análise ou separação"}</span>
           </div>
           {/* Sem nada a prazo (PIV 05/11): o card vira o mini gráfico de 30 dias; clicando abre o grande */}
-          {pedidos !== null && abertos.length === 0 ? (
-            <CardGrafico pedidos={lista} onAbrir={() => setGrafico(true)} />
-          ) : (
-            <div className={`pt-card ${vencidoValor > 0 ? "alerta" : ""}`}>
-              <small>A pagar</small>
-              <b>{pedidos === null ? "…" : brl(aPagar)}</b>
-              <span>{vencidoValor > 0 ? `${brl(vencidoValor)} vencido` : "nada vencido"}</span>
-            </div>
-          )}
+          {/* gráfico sempre (PIV 05/11); a prazo e vencido ficam no mural de Meus pedidos */}
+          {pedidos === null
+            ? <div className="pt-card"><small>Seus pedidos · 30 dias</small><b>…</b></div>
+            : <CardGrafico pedidos={lista} onAbrir={() => setGrafico(true)} />}
           <button type="button" className="pt-card novo" onClick={irCatalogo}>
             <small>Repor estoque</small>
             <b>Fazer pedido →</b>

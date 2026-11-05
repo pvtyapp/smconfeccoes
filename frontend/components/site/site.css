@@ -455,3 +455,11 @@
 @media (max-width:980px){.smsite.pt:has(.embut) .zapflut{display:none}}
 .smsite .carrinho-lado .vazio .btn{display:none}
 @media (max-width:980px){.smsite .embut .barra-pedido b{font-size:19px}}
+/* faixa Iluminado minimalista (PIV 05/11) */
+.smsite .ilu-in{min-height:170px}
+.smsite .ilu-txt{gap:8px;padding-block:24px}
+.smsite .ilu-logo{height:46px}
+.smsite .ilu-btn{text-transform:none;letter-spacing:.02em;font-size:14px}
+.smsite .ilu-masc{width:150px}
+.smsite .ilu-luz{width:110px;height:110px;margin-left:-46px}
+@media (max-width:640px){.smsite .ilu-in{min-height:150px}.smsite .ilu-masc{width:100px}.smsite .ilu-luz{width:76px;height:76px;margin-left:-32px}.smsite .ilu-btn{font-size:12px}}

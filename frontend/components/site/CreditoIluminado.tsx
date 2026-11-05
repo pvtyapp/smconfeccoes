@@ -11,8 +11,7 @@ export default function CreditoIluminado() {
         <span className="ilu-txt">
           <small>Site desenvolvido por</small>
           <img className="ilu-logo" src="/site/iluminado/logo.png" alt="Iluminado Seller" />
-          <b>Quer um site assim pra sua marca?</b>
-          <span className="ilu-btn">Conhecer a Iluminado →</span>
+          <span className="ilu-btn">www.iluminadoseller.com.br →</span>
         </span>
         <span className="ilu-masc" aria-hidden="true">
           <span className="ilu-luz" />
