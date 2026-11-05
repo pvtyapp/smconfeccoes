@@ -392,3 +392,29 @@
 @media (max-width:640px){.smsite .ilu-in{grid-template-columns:minmax(0,1fr) 120px;min-height:220px}.smsite .ilu-masc{width:120px}.smsite .ilu-luz{width:96px;height:96px;margin-left:-40px}.smsite .ilu-logo{height:40px}}
 @media (max-width:640px){.smsite .ilu-btn{white-space:nowrap;font-size:11px;padding:12px 16px;letter-spacing:.05em}}
 .smsite .pt-card.ok b{color:#1D7A45}
+
+/* gráfico de volume de pedidos (card + modal) */
+.smsite .gf-card{border:0;text-align:left;cursor:pointer;transition:transform .25s cubic-bezier(.3,1.6,.5,1),box-shadow .25s}
+.smsite .gf-card:hover{transform:translateY(-4px);box-shadow:0 20px 40px -28px rgba(15,30,60,.45)}
+.smsite .gf-card em{font-style:normal;font-weight:800;color:var(--royal);margin-left:6px}
+.smsite .gf-plot{position:relative;width:100%}
+.smsite .gf-plot svg{display:block;width:100%}
+.smsite .gf-barra{fill:var(--royal);transition:opacity .15s}
+.smsite .gf-barra.apagada{opacity:.35}
+.smsite .gf-barra.foco{fill:var(--navy)}
+.smsite .gf-grade{stroke:#E6E9F0;stroke-width:1;vector-effect:non-scaling-stroke}
+.smsite .gf-eixo{font:600 11px var(--f-body);fill:var(--mut)}
+.smsite .gf-rotulo{font:800 12px var(--f-body);fill:var(--navy)}
+.smsite .gf-tip{position:absolute;top:0;transform:translateX(-50%);background:var(--navy);color:#fff;border-radius:12px;padding:8px 12px;display:grid;gap:1px;font-size:12px;white-space:nowrap;pointer-events:none;box-shadow:0 12px 24px -12px rgba(0,0,0,.5)}
+.smsite .gf-tip b{font-size:13px}
+.smsite .gf-ov{position:fixed;inset:0;z-index:95;background:rgba(15,30,60,.45);backdrop-filter:blur(5px);display:grid;place-items:center;padding:16px;animation:sm-fade .25s both}
+.smsite .gf-modal{width:min(980px,100%);max-height:calc(100vh - 32px);overflow:auto;background:#fff;border-radius:26px;padding:22px;display:grid;gap:18px;box-shadow:0 40px 80px -40px rgba(0,0,0,.6)}
+.smsite .gf-topo{display:flex;justify-content:space-between;align-items:start;gap:12px}
+.smsite .gf-filtros{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center}
+.smsite .gf-filtros label{display:inline-flex;align-items:center;gap:8px;font:700 13px var(--f-body);color:var(--mut)}
+.smsite .gf-filtros input{height:40px;border:1px solid var(--line);border-radius:12px;padding:0 10px;font:600 14px var(--f-body);color:var(--navy);background:#fff}
+.smsite .gf-totais{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.smsite .gf-totais div{background:var(--soft);border-radius:16px;padding:12px 14px;display:grid;gap:2px}
+.smsite .gf-totais small{font:800 10px var(--f-body);letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+.smsite .gf-totais b{font:400 28px/1 var(--f-head);color:var(--navy)}
+@media (max-width:640px){.smsite .gf-totais{grid-template-columns:1fr 1fr}.smsite .gf-modal{padding:16px}}

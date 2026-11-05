@@ -7,6 +7,7 @@ import NotaFiscalTab from "@/app/portal/NotaFiscalTab"
 import PedidosCliente, { emAberto, type Pedido } from "./PedidosCliente"
 import { brl } from "../util"
 import CreditoIluminado from "../CreditoIluminado"
+import { CardGrafico, ModalGrafico } from "./GraficoPedidos"
 
 type Aba = "pedidos" | "dados" | "notas"
 
@@ -17,6 +18,7 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
   const [aba, setAba] = useState<Aba>("pedidos")
   const [pedidos, setPedidos] = useState<Pedido[] | null>(null)
   const [erro, setErro] = useState(false)
+  const [grafico, setGrafico] = useState(false)
 
   const carregar = useCallback(() => {
     fetch("/api/portal/orders")
@@ -36,11 +38,6 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
   const aPagar = abertos.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
   const venc = abertos.filter((o) => { const d = new Date(o.dueDate!); d.setHours(0, 0, 0, 0); const h = new Date(); h.setHours(0, 0, 0, 0); return d < h })
   const vencidoValor = venc.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
-  const mesAtual = new Date().toISOString().slice(0, 7)
-  const doMes = lista.filter((o) => o.status !== "cancelado" && o.createdAt.slice(0, 7) === mesAtual).reduce(
-    (acc, o) => ({ pedidos: acc.pedidos + 1, valor: acc.valor + Number(o.totalValue ?? 0), pecas: acc.pecas + o.items.reduce((n, i) => n + Number(i.qty), 0) }),
-    { pedidos: 0, valor: 0, pecas: 0 }
-  )
 
   async function sair() {
     await fetch("/api/portal/auth/logout", { method: "POST" }).catch(() => {})
@@ -70,13 +67,9 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
             <b>{pedidos === null ? "…" : andando}</b>
             <span>{prontos ? `${prontos} pronto${prontos > 1 ? "s" : ""} pra retirar` : "em análise ou separação"}</span>
           </div>
-          {/* Sem nada a prazo (PIV 05/11): o card vira "tudo em dia" + o que comprou no mês */}
+          {/* Sem nada a prazo (PIV 05/11): o card vira o mini gráfico de 30 dias; clicando abre o grande */}
           {pedidos !== null && abertos.length === 0 ? (
-            <div className="pt-card ok">
-              <small>Pagamentos</small>
-              <b>✓ Tudo em dia</b>
-              <span>{doMes.pedidos ? `Este mês: ${doMes.pecas} ${doMes.pecas === 1 ? "peça" : "peças"} · ${brl(doMes.valor)}` : "Nenhum pedido este mês ainda"}</span>
-            </div>
+            <CardGrafico pedidos={lista} onAbrir={() => setGrafico(true)} />
           ) : (
             <div className={`pt-card ${vencidoValor > 0 ? "alerta" : ""}`}>
               <small>A pagar</small>
@@ -107,6 +100,8 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
           {aba === "notas" && <div className="pt-legado"><NotaFiscalTab /></div>}
         </section>
       </main>
+
+      {grafico && <ModalGrafico pedidos={lista} onFechar={() => setGrafico(false)} />}
 
       <CreditoIluminado />
 
