@@ -12,15 +12,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "WhatsApp ou senha incorretos" }, { status: 401 })
     }
 
+    // Número sem conta (nunca criou senha, ex.: só comprou pelo WhatsApp) avisa
+    // isso em vez de "senha incorreta" (PIV 05/11): a tela leva direto pro
+    // "Criar conta" com o número preenchido, e a conta nasce no contato que já existe.
+    const SEM_CONTA = { error: "Esse WhatsApp ainda não tem senha. Cria sua conta agora.", semConta: true }
     const contact = await findContactByPhone(phone)
-    if (!contact) return NextResponse.json({ error: "WhatsApp ou senha incorretos" }, { status: 401 })
+    if (!contact) return NextResponse.json(SEM_CONTA, { status: 401 })
 
     const { rows } = await pool.query(
       `SELECT id, password_hash, must_change_password AS "mustChangePassword" FROM client_accounts WHERE contact_id = $1`,
       [contact.id]
     )
     const account = rows[0]
-    if (!account) return NextResponse.json({ error: "WhatsApp ou senha incorretos" }, { status: 401 })
+    if (!account) return NextResponse.json(SEM_CONTA, { status: 401 })
 
     const ok = await bcrypt.compare(password, account.password_hash)
     if (!ok) return NextResponse.json({ error: "WhatsApp ou senha incorretos" }, { status: 401 })

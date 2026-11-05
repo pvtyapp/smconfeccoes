@@ -51,6 +51,7 @@ export default function AcessoFlow({ inicio = "entrar", carrinho, onFim }: {
     setBusy(true)
     try {
       const { res, data } = await post("/api/portal/auth/login", { phone: fone, password: senha })
+      if (data.semConta) { setModo("criar"); setSenha(""); setErro("Esse WhatsApp ainda não tem senha. Coloca seu nome e cria uma senha aqui:"); return }
       if (!res.ok) { setErro(data.error ?? "WhatsApp ou senha errados."); return }
       onFim({ tipo: "logado", name: data.name })
     } catch { setErro("Sem internet? Tenta de novo.") } finally { setBusy(false) }

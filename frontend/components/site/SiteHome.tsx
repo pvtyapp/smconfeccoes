@@ -19,11 +19,15 @@ type Painel = { tipo: "peca"; id: string } | { tipo: "dtf" } | { tipo: "pedido" 
 // Home nova da SM (PIV 05/11): estúdio claro com o vídeo da torre de camisetas,
 // letreiro, fita métrica que desce costurando as seções, peças com grade e o
 // pedido que fecha no WhatsApp.
-export default function SiteHome({ products, dtfPreco, clientName }: {
+// variante "catalogo" (/catalogo, usado também por quem está logado): mesmas peças,
+// mesma grade e mesmo pedido, sem o vídeo e as seções de apresentação.
+export default function SiteHome({ products, dtfPreco, clientName, variante = "home" }: {
   products: PublicCatalogProduct[]
   dtfPreco: number | null
   clientName: string | null
+  variante?: "home" | "catalogo"
 }) {
+  const home = variante === "home"
   const [cart, setCart] = useState<CartItem[]>([])
   const [dtfMetros, setDtfMetros] = useState(0)
   const [painel, setPainel] = useState<Painel>(null)
@@ -66,17 +70,18 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
 
   useEffect(() => {
     const red = matchMedia("(prefers-reduced-motion: reduce)").matches
-    const svg = fitaSvg.current!, root = raiz.current!
-    const q = <T extends Element>(s: string) => svg.querySelector(s) as T
+    const svg = fitaSvg.current, root = raiz.current!
+    const q = <T extends Element>(s: string) => svg!.querySelector(s) as T
 
     function desenha() {
-      if (!fitaLen.current) return
+      if (!svg || !fitaLen.current) return
       const H = root.scrollHeight
       const k = red ? 1 : Math.min(1, Math.max(0.08, (scrollY + innerHeight * 0.85) / H))
       q<SVGPathElement>(".rev").style.strokeDashoffset = String(fitaLen.current * (1 - k))
     }
 
     function monta() {
+      if (!svg) return
       const W = root.clientWidth, H = root.scrollHeight, mob = W < 700, TW = mob ? 14 : 34
       svg.setAttribute("width", String(W)); svg.setAttribute("height", String(H)); svg.setAttribute("viewBox", `0 0 ${W} ${H}`)
       svg.style.height = H + "px"
@@ -157,18 +162,20 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
 
   return (
     <div className="smsite" ref={raiz}>
-      <svg className="fita" ref={fitaSvg} aria-hidden="true">
+      {home && <svg className="fita" ref={fitaSvg} aria-hidden="true">
         <defs><mask id="smFitaMask" maskUnits="userSpaceOnUse"><path className="rev" fill="none" stroke="#fff" strokeLinecap="round" /></mask></defs>
         <g mask="url(#smFitaMask)"><path className="corpo" /><path className="tick t1" /><path className="tick t2" /><g className="nums" /></g>
-      </svg>
+      </svg>}
 
-      <nav className={`nav ${solid ? "solid" : ""}`}>
+      <nav className={`nav ${solid || !home ? "solid" : ""}`}>
         <div className="in">
-          <a href="#topo" aria-label="SM Confecções, início"><img className="logo" src="/smsemfundo.png" alt="SM Confecções" /></a>
-          <div className="links"><a href="#pecas">Peças</a><a href="#cores">Cores</a>{dtfPreco !== null && <a href="#dtf">DTF</a>}<a href="#como">Como funciona</a></div>
+          <a href={home ? "#topo" : "/"} aria-label="SM Confecções, início"><img className="logo" src="/smsemfundo.png" alt="SM Confecções" /></a>
+          {home
+            ? <div className="links"><a href="#pecas">Peças</a><a href="#cores">Cores</a>{dtfPreco !== null && <a href="#dtf">DTF</a>}<a href="#como">Como funciona</a></div>
+            : <div className="links"><a href="/">Início</a>{logado && <a href="/portal">Meus pedidos</a>}</div>}
           <div className="direita">
             {logado
-              ? <a className="conta" href="/portal">Minha conta</a>
+              ? <a className="conta" href="/portal"><span className="so-grande">Minha </span>conta</a>
               : <button className="conta" type="button" onClick={() => setPainel({ tipo: "entrar" })}>Entrar</button>}
             <button className={`bag ${bump ? "bump" : ""}`} type="button" onClick={() => setPainel({ tipo: "pedido" })} aria-label="Abrir seu pedido">
               Pedido <b>{pecasNoPedido}{dtfMetros ? ` + ${dtfMetros}m` : ""}</b>
@@ -177,6 +184,7 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
         </div>
       </nav>
 
+      {home && (<>
       <header className="hero" id="topo">
         <div className="media" aria-hidden="true">
           <img className="poster" src="/site/torre.jpg" alt="" />
@@ -205,16 +213,23 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
         </div>
       </div>
 
+      </>)}
+
       <main>
-        <section className="sec" id="pecas">
+        <section className={`sec ${home ? "" : "catalogo"}`} id="pecas">
           <div className="in">
-            <span className="eye rv">Peças · preço por peça</span>
-            <h2 className="rv" style={{ marginTop: 14 }}>Escolhe a peça.<br /><span>Monta a grade.</span></h2>
+            {home ? (<>
+              <span className="eye rv">Peças · preço por peça</span>
+              <h2 className="rv" style={{ marginTop: 14 }}>Escolhe a peça.<br /><span>Monta a grade.</span></h2>
+            </>) : (<>
+              <span className="eye">{logado ? `Oi, ${logado.split(" ")[0]}! · ` : ""}Preço por peça · sem pedido mínimo</span>
+              <h2 style={{ marginTop: 14 }}>Catálogo.<br /><span>Toca na peça e monta a grade.</span></h2>
+            </>)}
             <div className="pecas">
               {products.map((p, idx) => {
                 const tams = tamanhosDo(p), cores = coresDo(p), disponivel = p.variants.some((v) => v.available)
                 return (
-                  <button key={p.id} className={`card rv ${idx < 2 ? "lg" : ""}`} type="button" onClick={() => abrirPeca(p.id)}>
+                  <button key={p.id} className={`card ${home ? "rv" : ""} ${idx < 2 ? "lg" : ""}`} type="button" onClick={() => abrirPeca(p.id)}>
                     <div className="ph">
                       {capas[p.id] && <img src={capas[p.id]!} alt={p.name} loading="lazy" />}
                       {!disponivel && <span className="off">Sem estoque agora</span>}
@@ -228,7 +243,7 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
                 )
               })}
               {dtfPreco !== null && (
-                <button className="card rv" type="button" onClick={() => setPainel({ tipo: "dtf" })}>
+                <button className={`card ${home ? "rv" : ""}`} type="button" onClick={() => setPainel({ tipo: "dtf" })}>
                   <div className="ph"><img src="/site/dtf.jpg" alt="DTF Têxtil" loading="lazy" /><span className="mais">Pedir metros</span></div>
                   <div className="bd"><div><h3>DTF Têxtil 60 cm</h3><div className="info">60 cm de largura</div></div><div className="pr">{brl(dtfPreco)}<small>o metro</small></div></div>
                 </button>
@@ -237,6 +252,7 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
           </div>
         </section>
 
+        {home && (<>
         {maisCores && totalCores > 1 && (
           <section className="sec cores" id="cores">
             <div className="in grid">
@@ -320,6 +336,7 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
             </div>
           </div>
         </section>
+        </>)}
       </main>
 
       <footer>

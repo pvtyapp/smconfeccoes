@@ -248,6 +248,7 @@
 .smsite .erro{color:var(--warn);font-size:15px;font-weight:600}
 .smsite .link{border:0;background:none;padding:0;color:var(--mut);font:600 14px var(--f-body);text-decoration:underline;justify-self:start}
 .smsite .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:100;transform:translate(-50%,160%);background:var(--navy);color:#fff;padding:13px 20px;border-radius:999px;font:700 14px var(--f-body);transition:transform .45s cubic-bezier(.3,1.5,.5,1);pointer-events:none}
+.smsite .toast:not(.on){visibility:hidden}
 .smsite .toast.on{transform:translate(-50%,0)}
 .smsite .zapflut{position:fixed;right:max(18px,env(safe-area-inset-right,0px));bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:60;width:58px;height:58px;border-radius:50%;background:var(--wa);display:grid;place-items:center;box-shadow:0 14px 30px -12px rgba(0,0,0,.45);transition:transform .25s}
 .smsite .zapflut:hover{transform:scale(1.08)}
@@ -265,3 +266,9 @@
 .smsite .senha{position:relative}
 .smsite .senha input{width:100%;padding-right:96px}
 .smsite .senha button{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;background:var(--soft);border-radius:999px;padding:8px 12px;font:700 12px var(--f-body);text-transform:uppercase;color:var(--mut)}
+
+/* /catalogo: sem abertura, o topo já é sólido */
+.smsite .sec.catalogo{padding-top:clamp(110px,12vw,150px);background:var(--studio);min-height:100vh}
+.smsite .sec.catalogo .card{box-shadow:0 1px 0 var(--line), 0 20px 40px -32px rgba(15,30,60,.35)}
+.smsite .nav .conta{white-space:nowrap}
+@media (max-width:480px){.smsite .nav .so-grande{display:none}.smsite .nav .in{gap:10px}.smsite .bag{padding:11px 14px}}
