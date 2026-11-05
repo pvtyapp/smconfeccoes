@@ -4,7 +4,6 @@ import "./site.css"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
 import { loadCart, saveCart, type CartItem } from "@/app/catalogo/cart"
-import { colorToHex } from "@/app/catalogo/colorSwatch"
 import FichaPeca, { FichaDtf } from "./FichaPeca"
 import PedidoDrawer from "./PedidoDrawer"
 import AcessoFlow from "./AcessoFlow"
@@ -58,8 +57,6 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
   const pecasNoPedido = cart.reduce((s, i) => s + i.qty, 0)
   const capas = useMemo(() => Object.fromEntries(products.map((p) => [p.id, capaDo(p)])), [products])
   const comMedida = useMemo(() => products.filter((p) => medidasDo(p)), [products])
-  const maisCores = useMemo(() => [...products].sort((a, b) => coresDo(b).length - coresDo(a).length)[0], [products])
-  const totalCores = useMemo(() => new Set(products.flatMap(coresDo)).size, [products])
 
   // trava a rolagem com painel aberto + Esc fecha
   useEffect(() => {
@@ -99,12 +96,10 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       // corre pela margem e só atravessa no respiro do topo de cada seção (cruzar na diagonal cobre os títulos)
       const mg = (W - Math.min(1240, W)) / 2
       const L = mob ? 8 : Math.max(TW / 2 + 6, mg / 2 + 8), R = W - L, pad = mob ? 36 : 60
-      // desktop: nasce no chão da torre; celular: na borda, pra não cruzar o texto da abertura
-      const pts: [number, number][] = mob
-        ? [[L, hb - 40], [L, hb + 10], [L, y("pecas") + pad]]
-        : [[W * 0.6, hb * 0.86], [W * 0.6, hb + 10], [L, y("pecas") + pad]]
+      // nasce escondida embaixo do letreiro (z-index maior) e desce pelas seções: nunca passa na abertura (PIV 05/11)
+      const pts: [number, number][] = [[L, hb + 5], [L, y("pecas") + pad]]
       let lado = L
-      for (const id of ["cores", "como", "medida", "dtf", "fabrica"]) {
+      for (const id of ["valor", "como", "medida", "dtf", "fabrica"]) {
         if (!document.getElementById(id)) continue
         pts.push([lado, y(id) + 10]); lado = lado === L ? R : L; pts.push([lado, y(id) + pad + 20])
       }
@@ -179,7 +174,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
         <div className="in">
           <a href={home ? "#topo" : "/"} aria-label="SM Confecções, início"><img className="logo" src="/smsemfundo.png" alt="SM Confecções" /></a>
           {home
-            ? <div className="links"><a href="#pecas">Peças</a><a href="#cores">Cores</a>{dtfPreco !== null && <a href="#dtf">DTF</a>}<a href="#como">Como funciona</a></div>
+            ? <div className="links"><a href="#pecas">Peças</a><a href="#valor">Por que a SM</a>{dtfPreco !== null && <a href="#dtf">DTF</a>}<a href="#como">Como funciona</a></div>
             : <div className="links"><a href="/">Início</a>{logado && <a href="/portal">Meus pedidos</a>}</div>}
           <div className="direita">
             {logado
@@ -261,23 +256,22 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
         </section>
 
         {home && (<>
-        {maisCores && totalCores > 1 && (
-          <section className="sec cores" id="cores">
-            <div className="in grid">
-              <div className="voa rv"><img src="/site/voando.jpg" alt="Camisetas coloridas voando" /></div>
-              <div className="txt">
-                <span className="eye rv">Cartela</span>
-                <h2 className="rv">{coresDo(maisCores).length} cores.<br /><span>Escolhe a sua.</span></h2>
-                <p className="rv">Toca numa cor pra abrir a grade da {maisCores.name.toLowerCase()}.</p>
-                <div className="amostras rv">
-                  {coresDo(maisCores).map((c) => (
-                    <button key={c} type="button" onClick={() => abrirPeca(maisCores.id)}><i style={{ background: colorToHex(c) }} />{c}</button>
-                  ))}
-                </div>
-              </div>
+        <section className="sec valor" id="valor">
+          <div className="in grid">
+            <div className="voa rv"><img src="/site/voando.jpg" alt="Camisetas coloridas" /></div>
+            <div className="txt">
+              <span className="eye rv">Por que a SM</span>
+              <h2 className="rv">Fábrica de verdade.<br /><span>Pedido sem susto.</span></h2>
+              <ul className="valores rv">
+                <li><b>Produção própria</b><span>Corte e costura aqui dentro, em Franca.</span></li>
+                <li><b>A mesma grade de tamanhos sempre</b><span>O G desse pedido é o G do próximo.</span></li>
+                <li><b>Peças revisadas</b><span>Cada peça é conferida antes de sair.</span></li>
+                <li><b>Estoque renovado todos os dias</b><span>Todo dia sai peça da produção pro estoque.</span></li>
+              </ul>
+              <a className="btn azul rv" href="#pecas">Montar meu pedido</a>
             </div>
-          </section>
-        )}
+          </div>
+        </section>
 
         <section className="sec como" id="como">
           <div className="in">
@@ -285,11 +279,11 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
             <h2 className="rv" style={{ marginTop: 14 }}>Como funciona<br /><span>seu pedido.</span></h2>
             <div className="passos">
               <div className="passo rv"><span className="cm">0 CM</span><span className="n">01</span><h3>Monta a grade</h3><p>Escolhe a peça e digita quantas de cada cor e tamanho.</p></div>
-              <div className="passo rv"><span className="cm">25 CM</span><span className="n">02</span><h3>Manda o pedido</h3><p>Coloca seu WhatsApp e o código que chega lá. Sem senha.</p></div>
+              <div className="passo rv"><span className="cm">25 CM</span><span className="n">02</span><h3>Manda o pedido</h3><p>Entra com seu WhatsApp e senha. Primeira vez? Cria sua conta na hora.</p></div>
               <div className="passo rv"><span className="cm">50 CM</span><span className="n">03</span><h3>A gente te chama</h3><p>Pagamento e frete combinados direto no WhatsApp.</p></div>
               <div className="passo rv"><span className="cm">75 CM</span><span className="n">04</span><h3>Retira ou recebe</h3><p>Na fábrica, em Franca, ou onde você estiver.</p></div>
             </div>
-            <p className="aviso rv">Primeira vez? Seu cadastro passa por aprovação e o pedido fica guardado até liberar.</p>
+            <p className="aviso rv">Primeira vez? Cria sua conta na hora com seu WhatsApp e já manda o pedido.</p>
           </div>
         </section>
 
@@ -299,7 +293,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
               <img src={medida ? medidasDo(medida)! : "/site/leque.jpg"} alt={medida ? `Tabela de medidas: ${medida.name}` : "Camisetas com fita métrica"} />
             </div>
             <div className="txt">
-              <span className="eye rv">Por que a SM</span>
+              <span className="eye rv">Medidas</span>
               <h2 className="rv">O G desse lote<br /><span>é o G do próximo.</span></h2>
               <p className="rv">Mesmo molde, mesma gradação, corte e costura aqui dentro. Confere a medida de cada peça.</p>
               {comMedida.length > 0 && (

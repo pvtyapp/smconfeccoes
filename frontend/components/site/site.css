@@ -339,3 +339,36 @@
 .smsite .pt-vazio p{color:var(--mut);max-width:44ch}
 .smsite.pt .nav .bag{text-decoration:none}
 @media (max-width:760px){.smsite .pt-resumo{grid-template-columns:1fr}.smsite .pt-abas button{font-size:12px;padding:12px 4px}.smsite .pt-et{font-size:9px}.smsite .pt-prazo-lin{grid-template-columns:1fr auto;font-size:13px}.smsite .pt-prazo-lin span:nth-child(2){grid-column:1;grid-row:2;font-size:12px}}
+
+/* ficha da peça: cabeçalho compacto + grade logo abaixo (PIV 05/11) */
+.smsite .fcab{display:grid;grid-template-columns:120px minmax(0,1fr);gap:18px;align-items:center}
+.smsite .fthumb{border:0;padding:0;width:120px;height:120px;border-radius:16px;overflow:hidden;background:var(--soft)}
+.smsite .fthumb img{width:100%;height:100%;object-fit:cover}
+.smsite .fcab .finfo{gap:6px}
+.smsite .fcab .finfo h2{font-size:clamp(30px,3.4vw,44px)}
+.smsite .fcab .finfo .pr{font-size:40px}
+.smsite .fgal{max-width:520px}
+@media (max-width:600px){.smsite .fcab{grid-template-columns:84px minmax(0,1fr);gap:12px}.smsite .fthumb{width:84px;height:84px}.smsite .fcab .finfo .pr{font-size:32px}}
+
+/* bloco "Por que a SM" (substituiu o das 13 cores, PIV 05/11) */
+.smsite .valor .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:clamp(24px,4vw,64px);align-items:center}
+.smsite .valor .voa{position:relative;max-height:640px;justify-self:center}
+.smsite .valor .voa img{width:100%;height:auto;animation:sm-flut 7s ease-in-out infinite;will-change:transform}
+.smsite .valor .txt{display:grid;gap:22px;justify-items:start}
+.smsite .valores{list-style:none;margin:0;padding:0;display:grid;gap:12px;width:100%}
+.smsite .valores li{display:grid;grid-template-columns:34px minmax(0,1fr);column-gap:14px;align-items:center;background:var(--soft);border-radius:18px;padding:14px 16px}
+.smsite .valores li::before{content:"";grid-row:span 2;width:34px;height:34px;border-radius:50%;background:var(--royal) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 10.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/70% no-repeat}
+.smsite .valores b{font:400 22px/1.05 var(--f-head);text-transform:uppercase}
+.smsite .valores span{font-size:14px;color:var(--mut)}
+@media (max-width:860px){.smsite .valor .grid{grid-template-columns:1fr}.smsite .valor .voa{max-width:380px}}
+/* grade no celular: cabe P a GG sem arrastar de lado (infantil, com 6 tamanhos, ainda rola) */
+@media (max-width:600px){
+  .smsite .gr{min-width:0}
+  .smsite .gr th,.smsite .gr td{padding:5px 2px}
+  .smsite .gr th:first-child,.smsite .gr td:first-child{padding-left:10px}
+  .smsite .gr .c{white-space:normal;font-size:13px;gap:6px;line-height:1.15}
+  .smsite .gr .c i{width:14px;height:14px;flex:none}
+  .smsite .gr input{width:44px;height:44px;font-size:16px}
+  .smsite .gr .esg{width:44px;font-size:8px}
+  .smsite .gr td.t{font-size:13px;padding-right:8px}
+}

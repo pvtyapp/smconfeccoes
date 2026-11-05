@@ -19,6 +19,7 @@ export default function FichaPeca({ product, atual, onSalvar }: {
   const [qtd, setQtd] = useState<Record<string, number>>(() => Object.fromEntries(atual.map((i) => [i.variantId, i.qty])))
   const fotos = product.images.length ? product.images.map((i) => i.url) : []
   const [foto, setFoto] = useState(0)
+  const [verFotos, setVerFotos] = useState(false)
   const algumDisponivel = product.variants.some((v) => v.available)
 
   const total = Object.entries(qtd).reduce((s, [id, q]) => s + (product.variants.find((v) => v.id === id)?.price ?? 0) * q, 0)
@@ -34,8 +35,25 @@ export default function FichaPeca({ product, atual, onSalvar }: {
 
   return (
     <>
-      <div className="fichatop">
-        <div className="gal">
+      {/* PIV 05/11: a grade tem que aparecer de cara, igual carrinho. Foto pequena no canto;
+          fotos e tabela de medidas só abrem se a pessoa pedir. */}
+      <div className="fcab">
+        <button type="button" className="fthumb" onClick={() => setVerFotos((v) => !v)} aria-label="Ver fotos">
+          {fotos[0] && <img src={fotos[0]} alt={product.name} />}
+        </button>
+        <div className="finfo">
+          <span className="eye">{cores.length} {cores.length === 1 ? "cor" : "cores"} · {tamanhos[0]} a {tamanhos[tamanhos.length - 1]}</span>
+          <h2>{product.name}</h2>
+          <div className="pr">{brl(product.salePrice)}<small>a peça · sem pedido mínimo</small></div>
+          {fotos.length > 0 && (
+            <button className="link" type="button" onClick={() => setVerFotos((v) => !v)}>
+              {verFotos ? "Esconder fotos" : fotos.length > 1 ? "Ver fotos e tabela de medidas" : "Ver foto"}
+            </button>
+          )}
+        </div>
+      </div>
+      {verFotos && (
+        <div className="gal fgal">
           <div className="main">{fotos[foto] && <img src={fotos[foto]} alt={product.name} />}</div>
           {fotos.length > 1 && (
             <div className="th">
@@ -44,15 +62,8 @@ export default function FichaPeca({ product, atual, onSalvar }: {
               ))}
             </div>
           )}
-          {fotos.length > 1 && <button className="link" type="button" onClick={() => setFoto(fotos.length - 1)}>Ver tabela de medidas</button>}
         </div>
-        <div className="finfo">
-          <span className="eye">{cores.length} {cores.length === 1 ? "cor" : "cores"} · {tamanhos[0]} a {tamanhos[tamanhos.length - 1]}</span>
-          <h2>{product.name}</h2>
-          {product.description && <p className="desc">{product.description}</p>}
-          <div className="pr">{brl(product.salePrice)}<small>a peça · sem pedido mínimo</small></div>
-        </div>
-      </div>
+      )}
 
       {!algumDisponivel ? (
         <div className="indisp">Sem estoque agora. Volta a abrir quando sair da produção.</div>
