@@ -7,7 +7,7 @@ import { loadCart, saveCart, type CartItem } from "@/app/catalogo/cart"
 import { colorToHex } from "@/app/catalogo/colorSwatch"
 import FichaPeca, { FichaDtf } from "./FichaPeca"
 import PedidoDrawer from "./PedidoDrawer"
-import EntrarFlow from "./EntrarFlow"
+import AcessoFlow from "./AcessoFlow"
 import { brl, capaDo, coresDo, medidasDo, tamanhosDo } from "./util"
 
 const WA = "https://wa.me/5516992692363?text=" + encodeURIComponent("Olá! Vim pelo site da SM Confecções.")
@@ -33,8 +33,6 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
   const [solid, setSolid] = useState(false)
   const [abaMedida, setAbaMedida] = useState(0)
   const [aviso, setAviso] = useState("")
-  // WhatsApp já confirmado por quem é novo (pelo botão Entrar): o pedido usa direto, sem pedir código de novo
-  const [verificado, setVerificado] = useState<string | null>(null)
 
   useEffect(() => {
     setCart(loadCart())
@@ -365,7 +363,7 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
         <div className="sc">
           {painel?.tipo === "pedido" && (
             <PedidoDrawer
-              itens={cart} dtfMetros={dtfMetros} dtfPreco={dtfPreco} capas={capas} logado={logado} tokenNovo={verificado}
+              itens={cart} dtfMetros={dtfMetros} dtfPreco={dtfPreco} capas={capas} logado={logado}
               onLogou={setLogado}
               onTirar={(pid) => { if (pid === "dtf") salvaDtf(0); else salvaCart(cart.filter((i) => i.productId !== pid)) }}
               onLimpar={() => { salvaCart([]); salvaDtf(0) }}
@@ -374,14 +372,14 @@ export default function SiteHome({ products, dtfPreco, clientName }: {
           )}
           {painel?.tipo === "entrar" && (aviso ? (
             <>
-              <p className="tit">Você ainda não tem cadastro</p>
+              <p className="tit">Cadastro recebido</p>
               <p className="obs">{aviso}</p>
-              <button className="btn azul grande" type="button" onClick={() => { setPainel(null); setAviso(""); document.getElementById("pecas")?.scrollIntoView({ behavior: "smooth" }) }}>Ver peças</button>
+              <button className="btn azul grande" type="button" onClick={() => { setPainel(null); setAviso("") }}>Ok</button>
             </>
           ) : (
-            <EntrarFlow onFim={(r) => {
+            <AcessoFlow onFim={(r) => {
               if (r.tipo === "logado") { setLogado(r.name); setPainel(null); avisar(`Oi, ${r.name.split(" ")[0]}! Você entrou.`) }
-              else { setVerificado(r.token); setAviso("É só escolher as peças e mandar o pedido: a gente faz seu cadastro junto, no mesmo passo.") }
+              else setAviso("Nossa equipe confere seu cadastro e te avisa no WhatsApp assim que liberar.")
             }} />
           ))}
         </div>

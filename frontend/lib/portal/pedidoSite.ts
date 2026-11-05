@@ -81,10 +81,19 @@ export async function criarPedidoDoCarrinho(db: Queryable, contactId: number, it
   return number
 }
 
-// Coluna nova, criada na primeira vez que alguém usa (mesmo padrão do
-// hero_banners na home): não precisa rodar migração à parte.
-export async function garantirColunaCarrinho(db: Queryable = pool) {
+// Colunas novas, criadas na primeira vez que alguém usa (mesmo padrão do
+// hero_banners na home): não precisa rodar migração à parte. password_hash =
+// senha que a pessoa já escolheu ao criar a conta com a trava de aprovação ligada.
+export async function garantirColunasSolicitacao(db: Queryable = pool) {
   await db.query(`ALTER TABLE fornecedor_solicitacoes ADD COLUMN IF NOT EXISTS carrinho JSONB`)
+  await db.query(`ALTER TABLE fornecedor_solicitacoes ADD COLUMN IF NOT EXISTS password_hash TEXT`)
+}
+
+// Trava de aprovação de cadastro novo (Configurações → Cadastro no site).
+// Desligada por padrão (PIV 05/11): confirmou o código, a conta já está ativa.
+export async function aprovacaoCadastroLigada(db: Queryable = pool): Promise<boolean> {
+  const { rows } = await db.query(`SELECT value FROM app_settings WHERE key = 'portal_aprovacao_cadastro'`)
+  return rows[0]?.value === "true"
 }
 
 export function resumoCarrinho(c: CarrinhoSite): string {

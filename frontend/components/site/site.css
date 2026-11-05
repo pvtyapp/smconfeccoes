@@ -257,3 +257,11 @@
 .smsite .entrar-box{width:min(460px,100%);background:#fff;border-radius:26px;padding:30px 24px;display:grid;gap:18px;box-shadow:0 40px 80px -50px rgba(15,30,60,.5)}
 
 @media (prefers-reduced-motion:reduce){.smsite *,.smsite *::before,.smsite *::after{animation:none!important;transition:none!important}.smsite .pre{opacity:1;transform:none}}
+
+/* acesso: abas Entrar / Criar conta e campo de senha com "mostrar" */
+.smsite .abas{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--soft);border-radius:999px;padding:5px}
+.smsite .abas button{border:0;background:transparent;border-radius:999px;padding:12px 10px;font:800 14px var(--f-body);letter-spacing:.04em;text-transform:uppercase;color:var(--mut)}
+.smsite .abas button[aria-selected="true"]{background:var(--navy);color:#fff}
+.smsite .senha{position:relative}
+.smsite .senha input{width:100%;padding-right:96px}
+.smsite .senha button{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;background:var(--soft);border-radius:999px;padding:8px 12px;font:700 12px var(--f-body);text-transform:uppercase;color:var(--mut)}

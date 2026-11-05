@@ -13,6 +13,7 @@ const ALLOWED_KEYS = new Set([
   "dtf_film_alerta_m", "dtf_film_tamanho_padrao",
   "fiscal_cnpj_emitente", "fiscal_token_homologacao", "fiscal_token_producao",
   "fiscal_ambiente_ativo", "fiscal_serie_ativa",
+  "portal_aprovacao_cadastro",
 ])
 
 export async function GET() {

@@ -3,22 +3,20 @@
 import { useState } from "react"
 import Link from "next/link"
 import type { CartItem } from "@/app/catalogo/cart"
-import EntrarFlow, { type EntrarResultado } from "./EntrarFlow"
+import AcessoFlow, { type AcessoResultado } from "./AcessoFlow"
 import { brl } from "./util"
 
-type Etapa = "lista" | "entrar" | "cadastro" | "enviando" | "fim" | "faltaDados"
-const CANAIS = ["Shopee", "Mercado Livre", "TikTok", "Loja física", "Outros"]
+type Etapa = "lista" | "entrar" | "enviando" | "fim" | "faltaDados"
 
-// Seu pedido → Enviar. Quem já está logado manda direto; quem não está entra
-// com WhatsApp + código no meio do caminho (sem perder o carrinho). Cliente
-// novo manda o pedido junto do cadastro, que passa por aprovação.
-export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado, tokenNovo, onLogou, onTirar, onLimpar, onVerPecas }: {
+// Seu pedido → Mandar. Quem já está logado manda direto; quem não está entra
+// ou cria a conta no meio do caminho, sem perder o carrinho. Com a trava de
+// aprovação ligada, o pedido de quem é novo vai junto do cadastro pra aprovar.
+export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado, onLogou, onTirar, onLimpar, onVerPecas }: {
   itens: CartItem[]
   dtfMetros: number
   dtfPreco: number | null
   capas: Record<string, string | null>
   logado: string | null
-  tokenNovo: string | null
   onLogou: (name: string) => void
   onTirar: (productId: string) => void
   onLimpar: () => void
@@ -28,9 +26,6 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
   const [erro, setErro] = useState("")
   const [faltam, setFaltam] = useState<string[]>([])
   const [fim, setFim] = useState<{ novo: boolean; numeros: string[]; pecas: number; metros: number; total: number } | null>(null)
-  const [token, setToken] = useState("")
-  const [nome, setNome] = useState("")
-  const [canais, setCanais] = useState<string[]>([])
 
   const pecas = itens.reduce((s, i) => s + i.qty, 0)
   const total = itens.reduce((s, i) => s + i.price * i.qty, 0) + (dtfPreco ? dtfPreco * dtfMetros : 0)
@@ -70,29 +65,9 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
     }
   }
 
-  async function enviarCadastro() {
-    setErro("")
-    if (!nome.trim()) { setErro("Escreve seu nome."); return }
-    setEtapa("enviando")
-    try {
-      const res = await fetch("/api/portal/solicitacao", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, name: nome, salesChannels: canais, itens: itens.map((i) => ({ variantId: i.variantId, qty: i.qty })), dtfMetros }),
-      })
-      const data = await res.json()
-      if (res.status === 401) { setErro(data.error); setEtapa("entrar"); return }
-      if (!res.ok) { setErro(data.error ?? "Não deu pra mandar."); setEtapa("cadastro"); return }
-      setFim({ novo: true, numeros: [], pecas, metros: dtfMetros, total })
-      onLimpar()
-      setEtapa("fim")
-    } catch {
-      setErro("Sem internet? Tenta de novo."); setEtapa("cadastro")
-    }
-  }
-
-  function aoEntrar(r: EntrarResultado) {
+  function aoEntrar(r: AcessoResultado) {
     if (r.tipo === "logado") { onLogou(r.name); enviarLogado() }
-    else { setToken(r.token); setEtapa("cadastro") }
+    else { setFim({ novo: true, numeros: [], pecas, metros: dtfMetros, total }); onLimpar(); setEtapa("fim") }
   }
 
   if (etapa === "fim" && fim) {
@@ -123,35 +98,10 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
   if (etapa === "entrar") {
     return (
       <>
-        <span className="passoN">Falta pouco</span>
-        <EntrarFlow titulo="Qual seu WhatsApp?" onFim={aoEntrar} />
+        <span className="passoN">Falta pouco: entra ou cria sua conta</span>
+        <AcessoFlow carrinho={{ itens: itens.map((i) => ({ variantId: i.variantId, qty: i.qty })), dtfMetros }} onFim={aoEntrar} />
         {erro && <p className="erro">{erro}</p>}
         <button className="link" type="button" onClick={() => setEtapa("lista")}>← Voltar pro pedido</button>
-      </>
-    )
-  }
-
-  if (etapa === "cadastro") {
-    return (
-      <>
-        <span className="passoN">Primeira vez aqui</span>
-        <p className="tit">Como te chamamos?</p>
-        <div className="fld">
-          <label htmlFor="cad-nome">Seu nome</label>
-          <input id="cad-nome" type="text" autoComplete="name" value={nome} onChange={(e) => setNome(e.target.value)} autoFocus />
-        </div>
-        <div className="fld">
-          <label>Onde você vende? <span style={{ fontWeight: 500, color: "var(--mut)" }}>(pode marcar mais de um)</span></label>
-          <div className="canais">
-            {CANAIS.map((c) => (
-              <button key={c} type="button" aria-pressed={canais.includes(c)}
-                onClick={() => setCanais((s) => s.includes(c) ? s.filter((x) => x !== c) : [...s, c])}>{c}</button>
-            ))}
-          </div>
-        </div>
-        <p className="obs">Seu pedido vai junto com o cadastro. Quando a gente aprovar, ele já entra na fila.</p>
-        {erro && <p className="erro">{erro}</p>}
-        <button className="btn azul grande" type="button" onClick={enviarCadastro}>Mandar pedido</button>
       </>
     )
   }
@@ -206,7 +156,7 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
       <p className="obs">Depois de mandar, a gente te chama no WhatsApp pra combinar pagamento e frete.</p>
       {erro && <p className="erro">{erro}</p>}
       <button className="btn azul grande" type="button" disabled={etapa === "enviando"}
-        onClick={() => { if (logado) enviarLogado(); else if (tokenNovo) { setToken(tokenNovo); setEtapa("cadastro") } else setEtapa("entrar") }}>
+        onClick={() => (logado ? enviarLogado() : setEtapa("entrar"))}>
         {etapa === "enviando" ? "Mandando…" : "Mandar pedido"}
       </button>
     </>

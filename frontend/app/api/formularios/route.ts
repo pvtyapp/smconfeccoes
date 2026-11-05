@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
-import { garantirColunaCarrinho } from "@/lib/portal/pedidoSite"
+import { garantirColunasSolicitacao } from "@/lib/portal/pedidoSite"
 
 export async function GET() {
   try {
-    await garantirColunaCarrinho()
+    await garantirColunasSolicitacao()
     const { rows } = await pool.query(`
       SELECT id, name, phone, sales_channels AS "salesChannels", carrinho,
              status, reviewed_by AS "reviewedBy", reviewed_at AS "reviewedAt", created_at AS "createdAt"

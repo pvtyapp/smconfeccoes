@@ -169,6 +169,24 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Cadastro no site (PIV 05/11): conta nova ativa sozinha depois do código no WhatsApp; a trava fica desligada até precisar */}
+          <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-3">
+            <h2 className="text-sm font-bold text-[#0F1E3C]">Cadastro no site</h2>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 w-4 h-4 accent-[#4361EE]"
+                checked={settings.portal_aprovacao_cadastro === "true"}
+                onChange={e => set("portal_aprovacao_cadastro", e.target.checked ? "true" : "false")} />
+              <span>
+                <span className="text-sm font-semibold text-[#0F1E3C]">Cliente novo precisa de aprovação</span>
+                <span className="block text-[11px] text-[#0F1E3C]/45 leading-relaxed mt-0.5">
+                  Desligado: quem cria conta no site confirma o WhatsApp pelo código e já pode comprar.
+                  Ligado: o cadastro (e o pedido que veio junto) cai em Formulários pra alguém aprovar antes.
+                  Quem já comprou com a SM nunca passa pela aprovação.
+                </span>
+              </span>
+            </label>
+          </section>
+
           {/* Pagamento */}
           <section className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-4">
             <h2 className="text-sm font-bold text-[#0F1E3C]">Pagamento</h2>
