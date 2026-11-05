@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
 import type { CartItem } from "@/app/catalogo/cart"
 import { colorToHex } from "@/app/catalogo/colorSwatch"
-import { brl, coresDo, tamanhosDo } from "./util"
+import { brl, coresDo, otim, tamanhosDo } from "./util"
 
 // Ficha da peça com a GRADE: digita a quantidade de cada cor × tamanho de uma
 // vez (jeito de comprar do atacado). Cor/tamanho sem estoque aparece "esgotado".
@@ -39,7 +39,7 @@ export default function FichaPeca({ product, atual, onSalvar }: {
           fotos e tabela de medidas só abrem se a pessoa pedir. */}
       <div className="fcab">
         <button type="button" className="fthumb" onClick={() => setVerFotos((v) => !v)} aria-label="Ver fotos">
-          {fotos[0] && <img src={fotos[0]} alt={product.name} />}
+          {fotos[0] && <img src={otim(fotos[0], 256)} alt={product.name} />}
         </button>
         <div className="finfo">
           <span className="eye">{cores.length} {cores.length === 1 ? "cor" : "cores"} · {tamanhos[0]} a {tamanhos[tamanhos.length - 1]}</span>
@@ -54,11 +54,11 @@ export default function FichaPeca({ product, atual, onSalvar }: {
       </div>
       {verFotos && (
         <div className="gal fgal">
-          <div className="main">{fotos[foto] && <img src={fotos[foto]} alt={product.name} />}</div>
+          <div className="main">{fotos[foto] && <img src={otim(fotos[foto], 1080)} alt={product.name} />}</div>
           {fotos.length > 1 && (
             <div className="th">
               {fotos.map((u, i) => (
-                <button key={u + i} type="button" aria-pressed={i === foto} aria-label={`Foto ${i + 1}`} onClick={() => setFoto(i)}><img src={u} alt="" /></button>
+                <button key={u + i} type="button" aria-pressed={i === foto} aria-label={`Foto ${i + 1}`} onClick={() => setFoto(i)}><img src={otim(u, 128)} alt="" /></button>
               ))}
             </div>
           )}

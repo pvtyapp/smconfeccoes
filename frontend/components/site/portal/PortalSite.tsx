@@ -63,6 +63,8 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
       </nav>
 
       <main className="in pt-main">
+        {/* aba Catálogo: só o catálogo na tela (PIV 05/11) */}
+        {aba !== "catalogo" && (<>
         <span className="eye">Minha conta</span>
         <h1 className="pt-oi">Oi, {name.split(" ")[0]}.</h1>
 
@@ -89,6 +91,7 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
           </button>
         </div>
 
+        </>)}
         <div className="abas pt-abas" role="tablist">
           <button type="button" role="tab" aria-selected={aba === "catalogo"} onClick={() => setAba("catalogo")}>Catálogo</button>
           <button type="button" role="tab" aria-selected={aba === "pedidos"} onClick={() => setAba("pedidos")}>Meus pedidos</button>

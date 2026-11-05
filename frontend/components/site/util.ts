@@ -24,3 +24,11 @@ export function medidasDo(p: PublicCatalogProduct): string | null {
   const lista = gerais.length ? gerais : p.images
   return lista.length > 1 ? lista[lista.length - 1].url : null
 }
+
+// Foto do cadastro vem do Vercel Blob em PNG de ~1,8 MB (1254 px). Passa pelo
+// otimizador do Next (blob já liberado no next.config) no tamanho de cada lugar:
+// cartão 640, miniatura 128, galeria 1080. Tamanhos da lista padrão do Next.
+export function otim(url: string | null | undefined, w: 128 | 256 | 640 | 1080 = 640): string {
+  if (!url) return ""
+  return `/_next/image?url=${encodeURIComponent(url)}&w=${w}&q=75`
+}

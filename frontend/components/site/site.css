@@ -430,3 +430,28 @@
 .smsite .nav .links .lnk{border:0;background:none;padding:0;font:inherit;letter-spacing:inherit;text-transform:inherit;position:relative}
 .smsite .pt-abas{max-width:820px;grid-template-columns:repeat(4,1fr)}
 .smsite button.pt-card{border:0;text-align:left;cursor:pointer}
+
+/* aba Catálogo: peças à esquerda, carrinho fixo à direita (PIV 05/11: "onde fica o carrinho?") */
+.smsite .embut-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:22px;align-items:start}
+.smsite .embut .pecas{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.smsite .embut .card,.smsite .embut .card.lg{grid-column:span 1}
+.smsite .embut .card .ph,.smsite .embut .card.lg .ph{aspect-ratio:1/1}
+.smsite .embut .card .bd{padding:12px 14px 14px;flex-direction:column;align-items:start;gap:6px}
+.smsite .embut .card h3{font-size:21px}
+.smsite .embut .card .pr{font-size:26px;text-align:left}
+.smsite .embut .card .pr small{display:inline;margin-left:4px}
+.smsite .carrinho-lado{position:sticky;top:86px;background:#fff;border-radius:22px;padding:18px;display:grid;gap:14px;align-content:start;max-height:calc(100vh - 106px);overflow:auto;box-shadow:0 1px 0 var(--line),0 30px 60px -40px rgba(15,30,60,.4)}
+.smsite .carrinho-tit{font:400 30px/1 var(--f-head);text-transform:uppercase}
+.smsite .carrinho-lado .vazio{padding:20px 6px}
+.smsite .carrinho-lado .vazio b{font-size:24px}
+.smsite .embut .barra-pedido{display:none}
+@media (max-width:980px){
+  .smsite .embut-grid{grid-template-columns:1fr}
+  .smsite .carrinho-lado{display:none}
+  .smsite .embut .pecas{grid-template-columns:1fr 1fr}
+  .smsite .embut .barra-pedido{display:flex;position:fixed;left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));width:auto;margin:0}
+  .smsite .embut{padding-bottom:84px}
+}
+@media (max-width:980px){.smsite.pt:has(.embut) .zapflut{display:none}}
+.smsite .carrinho-lado .vazio .btn{display:none}
+@media (max-width:980px){.smsite .embut .barra-pedido b{font-size:19px}}

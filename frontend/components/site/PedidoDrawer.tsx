@@ -4,7 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import type { CartItem } from "@/app/catalogo/cart"
 import AcessoFlow, { type AcessoResultado } from "./AcessoFlow"
-import { brl } from "./util"
+import { brl, otim } from "./util"
 
 type Etapa = "lista" | "entrar" | "enviando" | "fim" | "faltaDados"
 
@@ -138,7 +138,7 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
         for (const l of linhas) porCor.set(l.color ?? "", [...(porCor.get(l.color ?? "") ?? []), `${l.size ?? ""}: ${l.qty}`])
         return (
           <div className="lin" key={pid}>
-            {capas[pid] ? <img src={capas[pid]!} alt="" /> : <span />}
+            {capas[pid] ? <img src={otim(capas[pid], 128)} alt="" /> : <span />}
             <div>
               <b>{linhas[0].productName}</b>
               <div className="gd">{[...porCor.entries()].map(([cor, l]) => <span key={cor}>{cor ? `${cor} · ` : ""}{l.join(", ")}</span>)}</div>

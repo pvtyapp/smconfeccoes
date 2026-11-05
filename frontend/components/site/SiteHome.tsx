@@ -8,7 +8,7 @@ import FichaPeca, { FichaDtf } from "./FichaPeca"
 import PedidoDrawer from "./PedidoDrawer"
 import AcessoFlow from "./AcessoFlow"
 import CreditoIluminado from "./CreditoIluminado"
-import { brl, capaDo, coresDo, medidasDo, tamanhosDo } from "./util"
+import { brl, capaDo, coresDo, medidasDo, otim, tamanhosDo } from "./util"
 
 const WA = "https://wa.me/5516992692363?text=" + encodeURIComponent("Olá! Vim pelo site da SM Confecções.")
 const DTF_KEY = "sm_dtf_metros"
@@ -49,7 +49,8 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
     // veio do "Pedir de novo" da página do cliente: abre o pedido já montado
     const rep = repetido ?? new URLSearchParams(location.search).get("repetido")
     if (rep) {
-      setPainel({ tipo: "pedido" })
+      // no portal em tela grande o carrinho já está na coluna da direita
+      if (!(portal && innerWidth >= 980)) setPainel({ tipo: "pedido" })
       setToast(rep === "parcial" ? "Montamos o pedido de novo. Algumas peças estão sem estoque e ficaram de fora." : "Montamos o pedido de novo. Confere e manda.")
       window.setTimeout(() => setToast(""), 4000)
       if (!repetido) history.replaceState(null, "", location.pathname)
@@ -265,7 +266,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
 
       </>)}
 
-      <main>
+      <main className={portal ? "embut-grid" : undefined}>
         <section className={portal ? "embut-pecas" : `sec ${home ? "" : "catalogo"}`} id="pecas">
           <div className="in">
             {home ? (<>
@@ -283,7 +284,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
                 return (
                   <button key={p.id} className={`card ${home ? "rv" : ""} ${idx < 2 ? "lg" : ""}`} type="button" onClick={() => abrirPeca(p.id)}>
                     <div className="ph">
-                      {capas[p.id] && <img src={capas[p.id]!} alt={p.name} loading="lazy" />}
+                      {capas[p.id] && <img src={otim(capas[p.id])} alt={p.name} loading="lazy" decoding="async" />}
                       {!disponivel && <span className="off">Sem estoque agora</span>}
                       {disponivel && <span className="mais">Montar grade</span>}
                     </div>
@@ -339,7 +340,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
         <section className="sec medida" id="medida">
           <div className="in grid">
             <div className={`foto rv ${medida ? "tabela" : ""}`}>
-              <img src={medida ? medidasDo(medida)! : "/site/leque.jpg"} alt={medida ? `Tabela de medidas: ${medida.name}` : "Camisetas com fita métrica"} />
+              <img src={medida ? otim(medidasDo(medida), 1080) : "/site/leque.jpg"} alt={medida ? `Tabela de medidas: ${medida.name}` : "Camisetas com fita métrica"} />
             </div>
             <div className="txt">
               <span className="eye rv">Medidas</span>
@@ -388,6 +389,19 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
           </div>
         </section>
         </>)}
+        {portal && (
+          <aside className="carrinho-lado" aria-label="Seu pedido">
+            <b className="carrinho-tit">Seu pedido</b>
+            <PedidoDrawer
+              itens={cart} dtfMetros={dtfMetros} dtfPreco={dtfPreco} capas={capas} logado={logado}
+                onLogou={setLogado}
+                onVerPedidos={onVerPedidos ? () => { setPainel(null); onVerPedidos() } : undefined}
+                onTirar={(pid) => { if (pid === "dtf") salvaDtf(0); else salvaCart(cart.filter((i) => i.productId !== pid)) }}
+                onLimpar={() => { salvaCart([]); salvaDtf(0) }}
+                onVerPecas={() => { setPainel(null); document.getElementById("pecas")?.scrollIntoView({ behavior: "smooth" }) }}
+            />
+          </aside>
+        )}
       </main>
 
       {!portal && (<>
@@ -409,10 +423,13 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       </a>
       </>)}
 
-      {portal && (pecasNoPedido > 0 || dtfMetros > 0) && (
+      {/* celular: o carrinho vira esta barra fixa, sempre à vista (no computador ele fica na coluna da direita) */}
+      {portal && (
         <button type="button" className="barra-pedido" onClick={() => setPainel({ tipo: "pedido" })}>
-          <span>Ver meu pedido</span>
-          <b>{pecasNoPedido} {pecasNoPedido === 1 ? "peça" : "peças"}{dtfMetros ? ` + ${dtfMetros} m DTF` : ""} · {brl(cart.reduce((t, i) => t + i.price * i.qty, 0) + (dtfPreco ?? 0) * dtfMetros)}</b>
+          <span>Seu pedido</span>
+          <b>{pecasNoPedido || dtfMetros
+            ? <>{pecasNoPedido} {pecasNoPedido === 1 ? "peça" : "peças"}{dtfMetros ? ` + ${dtfMetros} m DTF` : ""} · {brl(cart.reduce((t, i) => t + i.price * i.qty, 0) + (dtfPreco ?? 0) * dtfMetros)}</>
+            : "vazio · monta a grade"}</b>
         </button>
       )}
 
