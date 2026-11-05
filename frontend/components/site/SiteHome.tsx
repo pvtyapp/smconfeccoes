@@ -21,13 +21,18 @@ type Painel = { tipo: "peca"; id: string } | { tipo: "dtf" } | { tipo: "pedido" 
 // pedido que fecha no WhatsApp.
 // variante "catalogo" (/catalogo, usado também por quem está logado): mesmas peças,
 // mesma grade e mesmo pedido, sem o vídeo e as seções de apresentação.
-export default function SiteHome({ products, dtfPreco, clientName, variante = "home" }: {
+// variante "portal": a aba Catálogo dentro da página do cliente (PIV 05/11) — só as
+// peças, a ficha com grade e o pedido, com uma barra fixa "Ver meu pedido" embaixo.
+export default function SiteHome({ products, dtfPreco, clientName, variante = "home", repetido = null, onVerPedidos }: {
   products: PublicCatalogProduct[]
   dtfPreco: number | null
   clientName: string | null
-  variante?: "home" | "catalogo"
+  variante?: "home" | "catalogo" | "portal"
+  repetido?: "1" | "parcial" | null
+  onVerPedidos?: () => void
 }) {
   const home = variante === "home"
+  const portal = variante === "portal"
   const [cart, setCart] = useState<CartItem[]>([])
   const [dtfMetros, setDtfMetros] = useState(0)
   const [painel, setPainel] = useState<Painel>(null)
@@ -42,14 +47,14 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
     setCart(loadCart())
     try { setDtfMetros(Number(localStorage.getItem(DTF_KEY)) || 0) } catch { /* sem localStorage */ }
     // veio do "Pedir de novo" da página do cliente: abre o pedido já montado
-    const rep = new URLSearchParams(location.search).get("repetido")
+    const rep = repetido ?? new URLSearchParams(location.search).get("repetido")
     if (rep) {
       setPainel({ tipo: "pedido" })
       setToast(rep === "parcial" ? "Montamos o pedido de novo. Algumas peças estão sem estoque e ficaram de fora." : "Montamos o pedido de novo. Confere e manda.")
       window.setTimeout(() => setToast(""), 4000)
-      history.replaceState(null, "", location.pathname)
+      if (!repetido) history.replaceState(null, "", location.pathname)
     }
-  }, [])
+  }, [repetido])
 
   const salvaCart = useCallback((c: CartItem[]) => { setCart(c); saveCart(c); setBump(false); requestAnimationFrame(() => setBump(true)) }, [])
   const salvaDtf = useCallback((m: number) => { setDtfMetros(m); try { localStorage.setItem(DTF_KEY, String(m)) } catch { /* ok */ }; setBump(false); requestAnimationFrame(() => setBump(true)) }, [])
@@ -203,13 +208,14 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
   const medida = comMedida[abaMedida] ?? null
 
   return (
-    <div className="smsite" ref={raiz}>
+    <div className={portal ? "embut" : "smsite"} ref={raiz}>
       {home && <svg className="fita" ref={fitaSvg} aria-hidden="true">
         <defs><mask id="smFitaMask" maskUnits="userSpaceOnUse"><path className="rev" fill="none" stroke="#fff" strokeLinecap="round" /></mask></defs>
         <g mask="url(#smFitaMask)"><path className="corpo" /><path className="tick t1" /><path className="tick t2" /><g className="nums" /></g>
         <g className="ponta" />
       </svg>}
 
+      {!portal && (
       <nav className={`nav ${solid || !home ? "solid" : ""}`}>
         <div className="in">
           <a href={home ? "#topo" : "/"} aria-label="SM Confecções, início"><img className="logo" src="/smsemfundo.png" alt="SM Confecções" /></a>
@@ -226,6 +232,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
           </div>
         </div>
       </nav>
+      )}
 
       {home && (<>
       <header className="hero" id="topo">
@@ -259,12 +266,14 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       </>)}
 
       <main>
-        <section className={`sec ${home ? "" : "catalogo"}`} id="pecas">
+        <section className={portal ? "embut-pecas" : `sec ${home ? "" : "catalogo"}`} id="pecas">
           <div className="in">
             {home ? (<>
               <span className="eye rv">Peças · preço por peça</span>
               <h2 className="rv" style={{ marginTop: 14 }}>Escolhe a peça.<br /><span>Monta a grade.</span></h2>
-            </>) : (<>
+            </>) : portal ? (
+              <span className="eye">Toca na peça e monta a grade · preço por peça · sem pedido mínimo</span>
+            ) : (<>
               <span className="eye">{logado ? `Oi, ${logado.split(" ")[0]}! · ` : ""}Preço por peça · sem pedido mínimo</span>
               <h2 style={{ marginTop: 14 }}>Catálogo.<br /><span>Toca na peça e monta a grade.</span></h2>
             </>)}
@@ -381,6 +390,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
         </>)}
       </main>
 
+      {!portal && (<>
       <footer>
         <div className="in">
           <img src="/smsemfundo.png" alt="SM Confecções" />
@@ -397,6 +407,14 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
       <a className="zapflut" href={WA} target="_blank" rel="noopener noreferrer" aria-label="Chamar no WhatsApp">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="#06290f" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-3.9-4.7-4.1-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.4.6-.4.4c-.1.1-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.4 2.4 1.5.3.1.5.1.6-.1l.9-1.1c.2-.3.4-.2.7-.1l2 .9c.3.1.5.2.5.3.1.2.1.8-.1 1.4Z" /></svg>
       </a>
+      </>)}
+
+      {portal && (pecasNoPedido > 0 || dtfMetros > 0) && (
+        <button type="button" className="barra-pedido" onClick={() => setPainel({ tipo: "pedido" })}>
+          <span>Ver meu pedido</span>
+          <b>{pecasNoPedido} {pecasNoPedido === 1 ? "peça" : "peças"}{dtfMetros ? ` + ${dtfMetros} m DTF` : ""} · {brl(cart.reduce((t, i) => t + i.price * i.qty, 0) + (dtfPreco ?? 0) * dtfMetros)}</b>
+        </button>
+      )}
 
       <div className={`ov ${painel ? "on" : ""}`} onClick={() => setPainel(null)} />
 
@@ -425,6 +443,7 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
             <PedidoDrawer
               itens={cart} dtfMetros={dtfMetros} dtfPreco={dtfPreco} capas={capas} logado={logado}
               onLogou={setLogado}
+              onVerPedidos={onVerPedidos ? () => { setPainel(null); onVerPedidos() } : undefined}
               onTirar={(pid) => { if (pid === "dtf") salvaDtf(0); else salvaCart(cart.filter((i) => i.productId !== pid)) }}
               onLimpar={() => { salvaCart([]); salvaDtf(0) }}
               onVerPecas={() => { setPainel(null); document.getElementById("pecas")?.scrollIntoView({ behavior: "smooth" }) }}

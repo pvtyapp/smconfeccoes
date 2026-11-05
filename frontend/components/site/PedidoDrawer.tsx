@@ -11,7 +11,7 @@ type Etapa = "lista" | "entrar" | "enviando" | "fim" | "faltaDados"
 // Seu pedido → Mandar. Quem já está logado manda direto; quem não está entra
 // ou cria a conta no meio do caminho, sem perder o carrinho. Com a trava de
 // aprovação ligada, o pedido de quem é novo vai junto do cadastro pra aprovar.
-export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado, onLogou, onTirar, onLimpar, onVerPecas }: {
+export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado, onLogou, onTirar, onLimpar, onVerPecas, onVerPedidos }: {
   itens: CartItem[]
   dtfMetros: number
   dtfPreco: number | null
@@ -21,6 +21,7 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
   onTirar: (productId: string) => void
   onLimpar: () => void
   onVerPecas: () => void
+  onVerPedidos?: () => void
 }) {
   const [etapa, setEtapa] = useState<Etapa>("lista")
   const [erro, setErro] = useState("")
@@ -88,7 +89,9 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
               {fim.pecas ? ` com ${fim.pecas} ${fim.pecas === 1 ? "peça" : "peças"}` : ""}
               {fim.metros ? `${fim.pecas ? " e" : " com"} ${fim.metros} m de DTF` : ""}. Já já a gente te chama no WhatsApp pra combinar pagamento e frete.
             </p>
-            <a className="btn navy" href="/portal">Ver meus pedidos</a>
+            {onVerPedidos
+              ? <button className="btn navy" type="button" onClick={onVerPedidos}>Ver meus pedidos</button>
+              : <a className="btn navy" href="/portal">Ver meus pedidos</a>}
           </>
         )}
       </div>

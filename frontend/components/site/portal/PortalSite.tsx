@@ -8,17 +8,22 @@ import PedidosCliente, { emAberto, type Pedido } from "./PedidosCliente"
 import { brl } from "../util"
 import CreditoIluminado from "../CreditoIluminado"
 import { CardGrafico, ModalGrafico } from "./GraficoPedidos"
+import SiteHome from "../SiteHome"
+import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
 
-type Aba = "pedidos" | "dados" | "notas"
+type Aba = "catalogo" | "pedidos" | "dados" | "notas"
 
 // Página do cliente no visual do site novo (PIV 05/11). Regras de Meus Dados e
 // Nota Fiscal continuam nas abas que já existiam; Meus Pedidos ganhou etapas,
 // itens agrupados por peça/cor e "Pedir de novo".
-export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name: string; catalogoHref?: string }) {
+export default function PortalSite({ name, products, dtfPreco }: { name: string; products: PublicCatalogProduct[]; dtfPreco: number | null }) {
   const [aba, setAba] = useState<Aba>("pedidos")
   const [pedidos, setPedidos] = useState<Pedido[] | null>(null)
   const [erro, setErro] = useState(false)
   const [grafico, setGrafico] = useState(false)
+  // "Pedir de novo": remonta a aba Catálogo com o pedido aberto
+  const [repetido, setRepetido] = useState<{ v: "1" | "parcial"; n: number } | null>(null)
+  const irCatalogo = () => { setAba("catalogo"); window.scrollTo({ top: 0, behavior: "smooth" }) }
 
   const carregar = useCallback(() => {
     fetch("/api/portal/orders")
@@ -29,7 +34,7 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
   useEffect(() => { carregar() }, [carregar])
 
   // "Completar meus dados" do pedido manda pra cá com #dados
-  useEffect(() => { if (location.hash === "#dados") setAba("dados"); else if (location.hash === "#notas") setAba("notas") }, [])
+  useEffect(() => { if (location.hash === "#dados") setAba("dados"); else if (location.hash === "#notas") setAba("notas"); else if (location.hash === "#catalogo") setAba("catalogo") }, [])
 
   const lista = pedidos ?? []
   const andando = lista.filter((o) => ["triagem", "em_separacao", "pronto"].includes(o.status)).length
@@ -49,10 +54,10 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
       <nav className="nav solid">
         <div className="in">
           <a href="/" aria-label="SM Confecções, início"><img className="logo" src="/smsemfundo.png" alt="SM Confecções" /></a>
-          <div className="links"><a href="/">Início</a><a href="/catalogo">Catálogo</a></div>
+          <div className="links"><a href="/">Início</a><button type="button" className="lnk" onClick={irCatalogo}>Catálogo</button></div>
           <div className="direita">
             <button className="conta" type="button" onClick={sair}>Sair</button>
-            <a className="bag" href="/catalogo">Fazer pedido</a>
+            <button className="bag" type="button" onClick={irCatalogo}>Fazer pedido</button>
           </div>
         </div>
       </nav>
@@ -77,14 +82,15 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
               <span>{vencidoValor > 0 ? `${brl(vencidoValor)} vencido` : "nada vencido"}</span>
             </div>
           )}
-          <a className="pt-card novo" href="/catalogo">
+          <button type="button" className="pt-card novo" onClick={irCatalogo}>
             <small>Repor estoque</small>
             <b>Fazer pedido →</b>
             <span>monta a grade em 1 minuto</span>
-          </a>
+          </button>
         </div>
 
         <div className="abas pt-abas" role="tablist">
+          <button type="button" role="tab" aria-selected={aba === "catalogo"} onClick={() => setAba("catalogo")}>Catálogo</button>
           <button type="button" role="tab" aria-selected={aba === "pedidos"} onClick={() => setAba("pedidos")}>Meus pedidos</button>
           <button type="button" role="tab" aria-selected={aba === "dados"} onClick={() => setAba("dados")}>Meus dados</button>
           <button type="button" role="tab" aria-selected={aba === "notas"} onClick={() => setAba("notas")}>Nota fiscal</button>
@@ -94,7 +100,12 @@ export default function PortalSite({ name, catalogoHref = "/catalogo" }: { name:
           {aba === "pedidos" && (
             pedidos === null ? <p className="obs">Carregando seus pedidos…</p>
               : erro ? <p className="erro">Não deu pra carregar seus pedidos. Atualiza a página.</p>
-              : <PedidosCliente pedidos={lista} recarregar={carregar} catalogoHref={catalogoHref} />
+              : <PedidosCliente pedidos={lista} recarregar={carregar} catalogoHref="#catalogo"
+                  onRepetido={(parcial) => { setRepetido((r) => ({ v: parcial ? "parcial" : "1", n: (r?.n ?? 0) + 1 })); irCatalogo() }} />
+          )}
+          {aba === "catalogo" && (
+            <SiteHome key={repetido?.n ?? 0} variante="portal" products={products} dtfPreco={dtfPreco} clientName={name}
+              repetido={repetido?.v ?? null} onVerPedidos={() => { carregar(); setAba("pedidos") }} />
           )}
           {aba === "dados" && <div className="pt-legado"><DadosTab /></div>}
           {aba === "notas" && <div className="pt-legado"><NotaFiscalTab /></div>}

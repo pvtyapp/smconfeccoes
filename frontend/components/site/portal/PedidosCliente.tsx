@@ -61,7 +61,7 @@ function agrupar(items: ItemPedido[]) {
   return [...m.values()]
 }
 
-export default function PedidosCliente({ pedidos, recarregar, catalogoHref = "/catalogo" }: { pedidos: Pedido[]; recarregar: () => void; catalogoHref?: string }) {
+export default function PedidosCliente({ pedidos, recarregar, catalogoHref = "/catalogo", onRepetido }: { pedidos: Pedido[]; recarregar: () => void; catalogoHref?: string; onRepetido?: (parcial: boolean) => void }) {
   const router = useRouter()
   const [aberto, setAberto] = useState<number | null>(pedidos[0]?.id ?? null)
   const [rec, setRec] = useState<SaleReceipt | null>(null)
@@ -93,7 +93,8 @@ export default function PedidosCliente({ pedidos, recarregar, catalogoHref = "/c
       if (!novos.length) { setAviso("As peças desse pedido estão sem estoque agora."); return }
       const atual = loadCart().filter((c) => !novos.some((n) => n.variantId === c.variantId))
       saveCart([...atual, ...novos])
-      router.push(`${catalogoHref}?repetido=${fora ? "parcial" : "1"}`)
+      if (onRepetido) onRepetido(fora > 0)
+      else router.push(`${catalogoHref}?repetido=${fora ? "parcial" : "1"}`)
     } catch {
       setAviso("Não deu pra montar agora. Tenta de novo.")
     }
@@ -104,7 +105,7 @@ export default function PedidosCliente({ pedidos, recarregar, catalogoHref = "/c
       <div className="pt-vazio">
         <b>Você ainda não tem pedidos</b>
         <p>Escolhe as peças, monta a grade e manda. A gente te chama no WhatsApp pra fechar.</p>
-        <a className="btn azul" href="/catalogo">Fazer meu primeiro pedido</a>
+        <a className="btn azul" href={catalogoHref}>Fazer meu primeiro pedido</a>
       </div>
     )
   }
