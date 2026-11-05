@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import Sidebar from "@/components/layout/Sidebar"
 import BuscaTela from "@/components/layout/BuscaTela"
+import ContaNumeros from "@/components/layout/ContaNumeros"
 import { isAuthenticated } from "@/lib/auth"
 
 // Esqueleto do painel (PIV 05/11): menu novo, Ctrl+K pra buscar tela, transição
@@ -45,6 +46,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div key={pathname} className="pn-tela">{children}</div>
       </main>
       <BuscaTela aberto={busca} onFechar={() => setBusca(false)} />
+      <ContaNumeros chave={pathname} />
     </div>
   )
 }

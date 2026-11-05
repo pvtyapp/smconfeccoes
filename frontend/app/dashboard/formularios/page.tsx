@@ -41,7 +41,7 @@ export default function FormulariosPage() {
     setLoading(true)
     try {
       const res = await fetch("/api/formularios")
-      setItems(await res.json())
+      { const d = await res.json(); setItems(Array.isArray(d) ? d : []) }
     } finally { setLoading(false) }
   }, [])
 

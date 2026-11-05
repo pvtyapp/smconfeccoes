@@ -37,12 +37,16 @@ function buscarUmaVez() {
     .catch(() => {})
 }
 
+// Começa igual no servidor e no navegador (sem sessão) e lê a sessão salva só depois
+// de montar: lida na renderização, o servidor desenhava "•••" e o navegador o valor,
+// e a tela dava o erro de hidratação #418 (Dashboard, Estoque e telas com valor, 05/11).
 export function useAcesso(): AcessoTela {
-  const [estado, setEstado] = useState<AcessoTela>(() => deSessao(atual ?? getSession(), atual !== null))
+  const [estado, setEstado] = useState<AcessoTela>(() => deSessao(null, false))
   useEffect(() => {
     const ouvir = () => setEstado(deSessao(atual, true))
     ouvintes.add(ouvir)
     if (atual) ouvir()
+    else setEstado(deSessao(getSession(), false))
     buscarUmaVez()
     return () => { ouvintes.delete(ouvir) }
   }, [])

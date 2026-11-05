@@ -68,7 +68,7 @@ export default function ContasAPagarPage() {
     setLoading(true)
     try {
       const res = await fetch("/api/payables")
-      setPayables(await res.json())
+      { const d = await res.json(); setPayables(Array.isArray(d) ? d : []) }
     } finally { setLoading(false) }
   }, [])
 

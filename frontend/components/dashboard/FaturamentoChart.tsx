@@ -14,22 +14,34 @@ type Resp = {
   marketplace: { vendas: number; lucro: number; pedidos: number; diasIncompletos: string[] }
 }
 
+// Período curto (Hoje, Ontem, 2-6 dias) virava uma barra só ocupando o gráfico inteiro
+// (o "bloco azul", PIV 05/11): nesse caso o gráfico mostra os últimos 14 dias, com os
+// dias do período destacados; os cartões ao lado continuam no período escolhido.
+function menosDias(iso: string, n: number) {
+  const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() - n)
+  return d.toLocaleDateString("en-CA")
+}
+
 export default function FaturamentoChart({ start, end, resultadoDireto }: { start: string; end: string; resultadoDireto: number | null }) {
   const [data, setData] = useState<Resp | null>(null)
+  const [serie, setSerie] = useState<Resp["daily"] | null>(null)
+  const dias = start && end ? Math.round((new Date(end + "T12:00:00").getTime() - new Date(start + "T12:00:00").getTime()) / 86400000) + 1 : 0
+  const curto = dias > 0 && dias < 7
+  const iniGrafico = curto ? menosDias(end, 13) : start
 
   useEffect(() => {
     if (!start || !end) return
     let vivo = true
-    fetch(`/api/dashboard/marketplace?from=${start}&to=${end}`, { cache: "no-store" })
-      .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (vivo) setData(j) })
-      .catch(() => { if (vivo) setData(null) })
+    const pega = (de: string) => fetch(`/api/dashboard/marketplace?from=${de}&to=${end}`, { cache: "no-store" }).then(r => (r.ok ? r.json() : null))
+    Promise.all([pega(start), curto ? pega(iniGrafico) : Promise.resolve(null)])
+      .then(([j, g]) => { if (vivo) { setData(j); setSerie((g ?? j)?.daily ?? null) } })
+      .catch(() => { if (vivo) { setData(null); setSerie(null) } })
     return () => { vivo = false }
-  }, [start, end])
+  }, [start, end, curto, iniGrafico])
 
-  if (!data) return <div className="h-[260px] rounded-2xl bg-[#0F1E3C]/4 animate-pulse" />
+  if (!data || !serie) return <div className="h-[260px] rounded-2xl bg-[#0F1E3C]/4 animate-pulse" />
 
-  const daily = data.daily.map(d => ({ ...d, total: d.direta + (d.marketplace ?? 0) }))
+  const daily = serie.map(d => ({ ...d, total: d.direta + (d.marketplace ?? 0) }))
   const max = Math.max(1, ...daily.map(d => d.total))
   const labels = daily.length <= 15
   const hoje = todayBR()
@@ -40,21 +52,22 @@ export default function FaturamentoChart({ start, end, resultadoDireto }: { star
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-3">
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5 flex flex-col">
-        <p className="text-xs font-semibold uppercase tracking-wider text-[#0F1E3C]/40 mb-3">Faturamento por dia</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-[#0F1E3C]/40 mb-3">Faturamento por dia{curto ? " · últimos 14 dias" : ""}</p>
         <div className="flex items-end gap-1 h-40 lg:h-auto lg:flex-1 lg:min-h-40">
           {daily.map(d => {
             const pct = Math.max(2, (d.total / max) * 100)
             const mkt = d.marketplace ?? 0
             const title = `${ddmm(d.date)}: ${fmtBRL(d.total)}\nVenda direta: ${fmtBRL(d.direta)}\nMarketplace: ${d.marketplace === null ? "sem lançamento" : fmtBRL(mkt)}`
+            const fora = d.date < start || d.date > end
             return (
-              <div key={d.date} className="flex-1 min-w-0 h-full flex flex-col items-center justify-end" title={title}>
+              <div key={d.date} className={`flex-1 min-w-0 h-full flex flex-col items-center justify-end transition-opacity ${fora ? "opacity-35" : ""}`} title={title}>
                 {d.total > 0 ? (
-                  <div className="w-full flex flex-col justify-end group" style={{ height: `${pct}%` }}>
+                  <div className="w-full max-w-[28px] flex flex-col justify-end group" style={{ height: `${pct}%` }}>
                     {mkt > 0 && <div className="w-full rounded-t-sm bg-[#8FA5F5] group-hover:bg-[#7B94F2]" style={{ height: `${(mkt / d.total) * 100}%` }} />}
                     {d.direta > 0 && <div className={`w-full bg-[#4361EE] group-hover:bg-[#3451D1] ${mkt > 0 ? "" : "rounded-t-sm"}`} style={{ height: `${(d.direta / d.total) * 100}%` }} />}
                   </div>
                 ) : (
-                  <div className="w-full rounded-t-sm bg-[#0F1E3C]/8" style={{ height: "2%" }} />
+                  <div className="w-full max-w-[28px] rounded-t-sm bg-[#0F1E3C]/8" style={{ height: "2%" }} />
                 )}
                 {labels && <span className="text-[9px] text-[#0F1E3C]/35 mt-1.5 whitespace-nowrap">{ddmm(d.date)}</span>}
               </div>

@@ -160,7 +160,8 @@ export default function ClientesPage() {
     setLoading(true)
     try {
       const res = await fetch("/api/clientes")
-      setContacts(await res.json())
+      // rota com erro devolve objeto, não lista: mostra vazio em vez de quebrar a tela
+      { const d = await res.json(); setContacts(Array.isArray(d) ? d : []) }
     } finally { setLoading(false) }
   }, [])
 

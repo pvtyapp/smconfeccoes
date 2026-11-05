@@ -35,7 +35,7 @@
 .pn-gtit:hover{color:rgba(255,255,255,.6)}
 .pn-gtit svg{transition:transform .25s}
 .pn-gtit svg.fechado{transform:rotate(-90deg)}
-.pn-itens{display:grid;gap:2px;animation:pnAbre .25s ease both}
+.pn-itens{display:grid;gap:2px;animation:pnAbre .25s ease backwards}
 @keyframes pnAbre{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .pn-link{position:relative;z-index:1;display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:12px;color:rgba(255,255,255,.58);font:600 14px var(--font-dm-sans),sans-serif;text-decoration:none;transition:color .2s,background .2s}
 .pn-link:hover{color:#fff;background:rgba(255,255,255,.06)}
@@ -71,7 +71,10 @@
 @keyframes pnSobe{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
 
 /* ── transição entre telas ───────────────────────────────── */
-.pn-tela{animation:pnTela .45s cubic-bezier(.2,.8,.2,1) both}
+/* "backwards": a animação não deixa transform no fim — com transform a camada vira
+   referência de position:absolute/fixed e o Autoatendimento (absolute inset-0) e as
+   janelas sumiam */
+.pn-tela{animation:pnTela .45s cubic-bezier(.2,.8,.2,1) backwards}
 @keyframes pnTela{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
 /* ── camada que moderniza as telas antigas ───────────────── */
@@ -89,7 +92,7 @@
 .pn-tela table thead th{font-size:11px!important;letter-spacing:.08em;text-transform:uppercase;color:var(--pn-mut)!important;font-weight:800!important}
 .pn-tela table tbody tr{transition:background .15s}
 .pn-tela table tbody tr:hover{background:#F6F8FD}
-.pn-tela table tbody tr{animation:pnLinha .4s cubic-bezier(.2,.8,.2,1) both}
+.pn-tela table tbody tr{animation:pnLinha .4s cubic-bezier(.2,.8,.2,1) backwards}
 .pn-tela table tbody tr:nth-child(2){animation-delay:.03s}.pn-tela table tbody tr:nth-child(3){animation-delay:.06s}
 .pn-tela table tbody tr:nth-child(4){animation-delay:.09s}.pn-tela table tbody tr:nth-child(5){animation-delay:.12s}
 .pn-tela table tbody tr:nth-child(6){animation-delay:.15s}.pn-tela table tbody tr:nth-child(7){animation-delay:.18s}

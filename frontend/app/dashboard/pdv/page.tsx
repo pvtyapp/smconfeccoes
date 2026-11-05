@@ -600,6 +600,14 @@ export default function PDVPage() {
 
   return (
     <>
+      {/* cabeçalho (PIV 05/11: o PDV abria direto na busca, sem título) */}
+      <div className="flex items-end justify-between gap-4 mb-5">
+        <div>
+          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>PDV de Vendas</h1>
+          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">Venda no balcão: escolhe a peça, o cliente e a forma de pagamento.</p>
+        </div>
+      </div>
+
       <div className="flex gap-5 items-start">
 
         {/* ─── Left: product browser ──────────────────────────────────── */}

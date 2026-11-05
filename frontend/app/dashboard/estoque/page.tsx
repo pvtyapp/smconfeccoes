@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
-import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, AlertTriangle, PackageOpen, ClipboardList, Calendar, SlidersHorizontal } from "lucide-react"
+import { ChevronDown, ChevronRight, RefreshCw, X, Loader2, PackageOpen, ClipboardList, Calendar, SlidersHorizontal } from "lucide-react"
 import type { BalanceRow } from "@/lib/calculations"
 import { effectiveCost } from "@/lib/calculations"
 import { todayBR } from "@/lib/tz"
@@ -421,7 +421,18 @@ export default function EstoquePage() {
                         {colorGroups.length} {colorGroups.length === 1 ? "cor" : "cores"} · {group.totalQty} peças{verFinanceiro && ` · ${fmtCurrency(group.totalValue)}`}
                       </p>
                     </div>
-                    {group.hasCritical && <AlertTriangle size={14} className="text-orange-500 flex-shrink-0" />}
+                    {/* quantas variações pedem atenção (antes: o mesmo triângulo em todo produto) */}
+                    {(() => {
+                      const zer = group.rows.filter(r => stockStatus(r) === "zerado").length
+                      const cri = group.rows.filter(r => stockStatus(r) === "critico").length
+                      if (!zer && !cri) return <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full flex-shrink-0">em dia</span>
+                      return (
+                        <span className="flex items-center gap-1.5 flex-shrink-0">
+                          {zer > 0 && <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2.5 py-1 rounded-full whitespace-nowrap">{zer} zerada{zer > 1 ? "s" : ""}</span>}
+                          {cri > 0 && <span className="text-[11px] font-bold text-orange-600 bg-orange-50 px-2.5 py-1 rounded-full whitespace-nowrap">{cri} no mínimo</span>}
+                        </span>
+                      )
+                    })()}
                   </button>
 
                   {/* Actions */}

@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react"
 import Link from "next/link"
 import {
   RefreshCw, TrendingUp, Package, FileDown,
-  ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Layers, Store, AlertTriangle,
+  ChevronDown, ChevronUp, Layers, Store, AlertTriangle,
 } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import RelatorioPrintSheet from "./RelatorioPrintSheet"
@@ -526,62 +526,7 @@ export default function RelatorioFinanceiroPage() {
             </div>
           </div>
 
-          {/* ── 3. Fluxo de Insumos ─────────────────────────────────────────── */}
-          <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
-              <p className="text-sm font-bold text-[#0F1E3C]">Fluxo de Insumos</p>
-              <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">
-                compras e consumo no período · saldo é snapshot atual
-              </p>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Entradas */}
-                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <ArrowUpRight size={14} className="text-emerald-600" />
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Compras (entradas)</p>
-                  </div>
-                  <p className="text-2xl font-black text-emerald-700 leading-none">
-                    {fmtRDRE(data.materialFlow.entradas.total)}
-                  </p>
-                  <p className="text-[10px] text-emerald-600 mt-1.5">
-                    {data.materialFlow.entradas.count} {data.materialFlow.entradas.count === 1 ? "lote comprado" : "lotes comprados"}
-                  </p>
-                </div>
-
-                {/* Saídas */}
-                <div className="rounded-xl bg-red-50 border border-red-100 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <ArrowDownRight size={14} className="text-red-600" />
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-red-700">Consumo (saídas)</p>
-                  </div>
-                  <p className="text-2xl font-black text-red-700 leading-none">
-                    {data.materialFlow.saidas.total > 0
-                      ? `(${fmtRDRE(data.materialFlow.saidas.total)})`
-                      : "—"}
-                  </p>
-                  <p className="text-[10px] text-red-600 mt-1.5">
-                    {data.materialFlow.saidas.count} {data.materialFlow.saidas.count === 1 ? "bobina esgotada" : "bobinas esgotadas"}
-                  </p>
-                </div>
-
-                {/* Saldo */}
-                <div className="rounded-xl bg-[#4361EE]/5 border border-[#4361EE]/12 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Layers size={14} className="text-[#4361EE]" />
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#4361EE]">Saldo em Insumos</p>
-                  </div>
-                  <p className="text-2xl font-black text-[#4361EE] leading-none">
-                    {fmtRDRE(stockVal?.rawMaterials.totalCost ?? null)}
-                  </p>
-                  <p className="text-[10px] text-[#4361EE]/60 mt-1.5">
-                    snapshot atual · {stockVal?.rawMaterials.items.length ?? 0} lotes disponíveis
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* Fluxo de Insumos (matéria-prima da Produção) saiu com a Produção (PIV 05/11) */}
 
           {/* ── 4. Ranking de Produtos ───────────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">

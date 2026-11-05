@@ -148,7 +148,7 @@ export default function ClientesAReceberPage() {
     setLoading(true)
     try {
       const res = await fetch("/api/clientes-a-receber")
-      setOrders(await res.json())
+      { const d = await res.json(); setOrders(Array.isArray(d) ? d : []) }
     } finally { setLoading(false) }
   }, [])
 

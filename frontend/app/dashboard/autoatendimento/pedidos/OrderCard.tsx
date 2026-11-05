@@ -4,22 +4,6 @@ import { useEffect, useState } from "react"
 import { Phone, Clock, AlertTriangle, FileText, Printer, Check } from "lucide-react"
 import type { Order } from "./page"
 
-const STATUS_LABEL: Record<string, string> = {
-  triagem:       "Triagem",
-  em_separacao:  "Em Separação",
-  pronto:        "Pronto p/ Retirada",
-  concluido:     "Retirado",
-  cancelado:     "Cancelado",
-}
-
-const STATUS_COLOR: Record<string, string> = {
-  triagem:       "bg-amber-50 text-amber-700 border-amber-200",
-  em_separacao:  "bg-blue-50 text-blue-700 border-blue-200",
-  pronto:        "bg-orange-50 text-orange-700 border-orange-200",
-  concluido:     "bg-[#0F1E3C]/5 text-[#0F1E3C]/40 border-[#0F1E3C]/10",
-  cancelado:     "bg-red-50 text-red-600 border-red-200",
-}
-
 // Selo de origem — WhatsApp é o canal padrão/implícito (maioria dos pedidos),
 // por isso não ganha selo próprio; só os canais "especiais" (fácil confundir
 // um COB- manual com um pedido de verdade, por exemplo) aparecem marcados.
@@ -132,26 +116,21 @@ export default function OrderCard({ order, onClick, onSetPaidLabel, onPrint }: P
 
       {/* Header row */}
       <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <p className="text-sm font-bold text-[#0F1E3C]">{order.number}</p>
+            <p className="text-sm font-bold text-[#0F1E3C] whitespace-nowrap">{order.number}</p>
             {SOURCE_LABEL[order.source] && (
               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#0F1E3C]/5 text-[#0F1E3C]/50">
                 {SOURCE_LABEL[order.source]}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1 mt-0.5 text-[#0F1E3C]/45 text-xs">
-            <Phone size={10} />
-            <span>{order.contactName}</span>
-            <span>·</span>
-            <span>{order.contactPhone}</span>
-          </div>
+          {/* nome inteiro numa linha e telefone embaixo (antes os dois se espremiam lado a lado) */}
+          <p className="mt-0.5 text-xs font-semibold text-[#0F1E3C]/70 truncate" title={order.contactName ?? ""}>{order.contactName}</p>
+          <p className="flex items-center gap-1 text-[10px] text-[#0F1E3C]/40 whitespace-nowrap"><Phone size={9} />{order.contactPhone}</p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_COLOR[order.status] ?? "bg-gray-100 text-gray-500 border-gray-200"}`}>
-            {STATUS_LABEL[order.status] ?? order.status}
-          </span>
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          {/* o status já é a coluna do quadro: o selo repetido no cartão quebrava em 3 linhas */}
           {/* Sub-estado da Triagem — confirmação ainda não é uma coluna própria */}
           {isTriagem && (
             <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
