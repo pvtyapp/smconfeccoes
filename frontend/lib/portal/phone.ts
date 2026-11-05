@@ -37,12 +37,18 @@ export type MatchedContact = {
 // WhatsApp registra sem o 9 (JID 55DDNNNNNNNN), e a mensagem recebida regrava o phone
 // assim. Sem isso o portal não achava o cliente e criava um 2º cadastro (Luiz Henrique,
 // duplicado 2x: 11/09 e 22/09). O número exato digitado tem preferência.
+//
+// Quando o mesmo número tem mais de um cadastro, o que já tem conta no portal vem
+// primeiro (PIV 05/11): antes o LIMIT 1 pegava o cadastro sem conta, o "já tem
+// conta" passava batido e nascia uma 2ª conta com o mesmo WhatsApp (Dayane).
 export async function findContactByPhone(phone: string): Promise<MatchedContact | null> {
   const sem9 = variantesDo9(phone)[1] ?? phone
   const { rows } = await pool.query(
-    `SELECT id, COALESCE(nome_cadastro, name) AS name, jid, phone_jid FROM wa_contacts
-     WHERE phone IN ($1, $2) OR phone_jid LIKE $1 || '@%' OR phone_jid LIKE $2 || '@%'
-     ORDER BY (phone = $1 OR phone_jid LIKE $1 || '@%') DESC, id
+    `SELECT c.id, COALESCE(c.nome_cadastro, c.name) AS name, c.jid, c.phone_jid FROM wa_contacts c
+     LEFT JOIN client_accounts a ON a.contact_id = c.id
+     WHERE c.phone IN ($1, $2) OR c.phone_jid LIKE $1 || '@%' OR c.phone_jid LIKE $2 || '@%'
+     ORDER BY (a.id IS NOT NULL) DESC, a.last_login_at DESC NULLS LAST,
+              (c.phone = $1 OR c.phone_jid LIKE $1 || '@%') DESC, c.id
      LIMIT 1`,
     [phone, sem9]
   )
