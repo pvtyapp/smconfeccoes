@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 import { getClientSessionFromRequest } from "@/lib/clientSession"
-import PortalHub from "./PortalHub"
+import PortalSite from "@/components/site/portal/PortalSite"
 import ForcePasswordChangeScreen from "./ForcePasswordChangeScreen"
 
 export default async function PortalHomePage() {
@@ -8,5 +8,5 @@ export default async function PortalHomePage() {
   if (!session) redirect("/portal/login")
   if (session.mustChangePassword) return <ForcePasswordChangeScreen name={session.name} />
 
-  return <PortalHub name={session.name} />
+  return <PortalSite name={session.name} />
 }

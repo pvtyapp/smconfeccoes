@@ -41,6 +41,14 @@ export default function SiteHome({ products, dtfPreco, clientName, variante = "h
   useEffect(() => {
     setCart(loadCart())
     try { setDtfMetros(Number(localStorage.getItem(DTF_KEY)) || 0) } catch { /* sem localStorage */ }
+    // veio do "Pedir de novo" da página do cliente: abre o pedido já montado
+    const rep = new URLSearchParams(location.search).get("repetido")
+    if (rep) {
+      setPainel({ tipo: "pedido" })
+      setToast(rep === "parcial" ? "Montamos o pedido de novo. Algumas peças estão sem estoque e ficaram de fora." : "Montamos o pedido de novo. Confere e manda.")
+      window.setTimeout(() => setToast(""), 4000)
+      history.replaceState(null, "", location.pathname)
+    }
   }, [])
 
   const salvaCart = useCallback((c: CartItem[]) => { setCart(c); saveCart(c); setBump(false); requestAnimationFrame(() => setBump(true)) }, [])

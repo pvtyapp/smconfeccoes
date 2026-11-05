@@ -112,7 +112,7 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
         <p className="tit">Falta um dado seu</p>
         <p className="obs">Pra fechar o pedido com nota, precisamos de: <b>{faltam.join(", ")}</b>.</p>
         <p className="obs">Seu pedido continua guardado aqui. Completa e volta pra mandar.</p>
-        <a className="btn azul grande" href="/portal">Completar meus dados</a>
+        <a className="btn azul grande" href="/portal#dados">Completar meus dados</a>
         <button className="link" type="button" onClick={() => setEtapa("lista")}>← Voltar pro pedido</button>
       </>
     )

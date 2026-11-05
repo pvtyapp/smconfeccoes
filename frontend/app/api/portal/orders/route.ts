@@ -23,7 +23,8 @@ export async function GET() {
           json_agg(
             json_build_object(
               'id', oi.id, 'productName', oi.product_name, 'color', oi.color, 'size', oi.size,
-              'qty', oi.qty, 'unitPrice', oi.unit_price
+              'qty', oi.qty, 'unitPrice', oi.unit_price,
+              'variantId', oi.variant_id, 'productId', oi.product_id
             ) ORDER BY oi.id
           ) FILTER (WHERE oi.id IS NOT NULL), '[]'
         ) AS items
