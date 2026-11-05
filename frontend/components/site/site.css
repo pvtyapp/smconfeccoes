@@ -372,3 +372,22 @@
   .smsite .gr .esg{width:44px;font-size:8px}
   .smsite .gr td.t{font-size:13px;padding-right:8px}
 }
+
+/* crédito Iluminado Seller embaixo do rodapé (tema da Iluminado: âmbar #C9770F, creme #F7F4EC) */
+.smsite .ilu{position:relative;display:block;overflow:hidden;text-decoration:none;color:#F7F4EC;background:#0d0b08;z-index:3;isolation:isolate}
+.smsite .ilu-fundo{position:absolute;inset:0;z-index:-2;background:url(/site/iluminado/fundo.jpg) center 60%/cover;transform:scale(1.04);transition:transform 1.4s cubic-bezier(.2,.8,.2,1)}
+.smsite .ilu::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(13,11,8,.92) 0%,rgba(13,11,8,.72) 45%,rgba(13,11,8,.25) 100%)}
+.smsite .ilu:hover .ilu-fundo{transform:scale(1.09)}
+.smsite .ilu-in{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:24px;min-height:260px}
+.smsite .ilu-txt{display:grid;gap:10px;justify-items:start;align-self:center;padding-block:34px}
+.smsite .ilu-txt small{font:800 11px var(--f-body);letter-spacing:.24em;text-transform:uppercase;color:#C9A84C}
+.smsite .ilu-logo{height:54px;width:auto;filter:brightness(0) invert(.95) sepia(.25)}
+.smsite .ilu-txt b{font:400 clamp(26px,3vw,38px)/1 var(--f-head);text-transform:uppercase}
+.smsite .ilu-btn{display:inline-flex;align-items:center;margin-top:6px;background:#C9770F;color:#1C1810;border-radius:999px;padding:13px 22px;font:800 13px var(--f-body);letter-spacing:.08em;text-transform:uppercase;transition:transform .25s cubic-bezier(.3,1.6,.5,1),background .2s}
+.smsite .ilu:hover .ilu-btn{transform:translateY(-3px);background:#E08A16}
+.smsite .ilu-masc{position:relative;width:200px;align-self:end;animation:sm-flut 6s ease-in-out infinite}
+.smsite .ilu-masc img{width:100%;height:auto;display:block}
+.smsite .ilu-luz{position:absolute;left:50%;top:2%;width:150px;height:150px;margin-left:-62px;border-radius:50%;background:radial-gradient(circle,rgba(255,196,92,.75) 0%,rgba(255,170,60,.25) 40%,rgba(255,170,60,0) 70%);animation:sm-luz 2.8s ease-in-out infinite;pointer-events:none}
+@keyframes sm-luz{0%,100%{opacity:.55;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
+@media (max-width:640px){.smsite .ilu-in{grid-template-columns:minmax(0,1fr) 120px;min-height:220px}.smsite .ilu-masc{width:120px}.smsite .ilu-luz{width:96px;height:96px;margin-left:-40px}.smsite .ilu-logo{height:40px}}
+@media (max-width:640px){.smsite .ilu-btn{white-space:nowrap;font-size:11px;padding:12px 16px;letter-spacing:.05em}}
