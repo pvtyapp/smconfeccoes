@@ -2,10 +2,10 @@ import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { todayBR } from "@/lib/tz"
 import { LOJAS_MKT, paraNumero, arred, avisosDe, type LojaMkt } from "@/lib/mktFechamento"
-import { SELECT_FECHAMENTO, FROM_FECHAMENTO, comLucro, lerFechamento, recalcularCustos, quemEsta } from "@/lib/mktFechamentoDb"
+import { garantirEstruturaMkt, SELECT_FECHAMENTO, FROM_FECHAMENTO, comLucro, lerFechamento, recalcularCustos, quemEsta } from "@/lib/mktFechamentoDb"
 import { exigirFinanceiro } from "@/lib/acesso"
 
-// Fechamento diário do marketplace (SHP_MARI, SHP_SAMU, TKTK_SAMU). Mesma sessão do painel:
+// Fechamento diário do marketplace (SHP_MARI, SHP_SAMU, TKTK_SAMU, ML_MARI). Mesma sessão do painel:
 // o agente do outro PC chama de dentro do navegador logado, igual às devoluções.
 // Formato completo e exemplo: aba Marketplace → Lançamentos → "Como lançar".
 
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   }
 }
 
-type ItemIn = { pedido: string | null; sku: string | null; titulo: string | null; variacao: string | null; qtd: number; valor: number; taxa: number; cupom: number; frete: number }
+type ItemIn = { pedido: string | null; sku: string | null; titulo: string | null; variacao: string | null; qtd: number; valor: number; taxa: number; cupom: number; frete: number; custoRobo: number | null }
 
 // POST /api/marketplace/fechamento → grava o dia + loja. Se já existe, SUBSTITUI (totais e itens).
 // Corpo: { dia, loja, pedidos?, vendas?, taxas?, cupom?, frete?, ads?, pedidosUpseller?, repasse?,
@@ -84,7 +84,10 @@ export async function POST(req: Request) {
         n[k] = Math.abs(v ?? 0)
       }
       if (!txt(it.sku) && !txt(it.titulo)) return erro(`itens[${i}] precisa de sku ou titulo`)
-      itens.push({ pedido: txt(it.pedido), sku: txt(it.sku), titulo: txt(it.titulo), variacao: txt(it.variacao), qtd, valor: n.valor, taxa: n.taxa, cupom: n.cupom, frete: n.frete })
+      // custo do item (opcional, total da linha): o robô manda quando sabe; vale só se o SKU não cair em regra da SM
+      const cr = paraNumero(it.custo)
+      if (cr !== null && Number.isNaN(cr)) return erro(`itens[${i}].custo não é número`)
+      itens.push({ pedido: txt(it.pedido), sku: txt(it.sku), titulo: txt(it.titulo), variacao: txt(it.variacao), qtd, valor: n.valor, taxa: n.taxa, cupom: n.cupom, frete: n.frete, custoRobo: cr === null ? null : Math.abs(cr) })
     }
   }
   const temItens = itens.length > 0
@@ -106,6 +109,7 @@ export async function POST(req: Request) {
   const observacao = b.observacao === undefined || b.observacao === null ? null : String(b.observacao).trim() || null
 
   const quem = await quemEsta()
+  await garantirEstruturaMkt()
   const client = await pool.connect()
   try {
     await client.query("BEGIN")
@@ -128,9 +132,9 @@ export async function POST(req: Request) {
     await client.query("DELETE FROM marketplace_vendas_itens WHERE dia = $1 AND loja = $2", [dia, loja])
     for (const it of itens) {
       await client.query(
-        `INSERT INTO marketplace_vendas_itens (dia, loja, pedido, sku, titulo, variacao, qtd, valor, taxa, cupom, frete)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [dia, loja, it.pedido, it.sku, it.titulo, it.variacao, it.qtd, it.valor, it.taxa, it.cupom, it.frete])
+        `INSERT INTO marketplace_vendas_itens (dia, loja, pedido, sku, titulo, variacao, qtd, valor, taxa, cupom, frete, custo_robo)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [dia, loja, it.pedido, it.sku, it.titulo, it.variacao, it.qtd, it.valor, it.taxa, it.cupom, it.frete, it.custoRobo])
     }
     if (temItens) await recalcularCustos(client, { dia, loja })
     await client.query("COMMIT")

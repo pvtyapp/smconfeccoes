@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { todayBR } from "@/lib/tz"
-import { MKT_INICIO, diasEntre, lucroDe, plataformaDaLoja } from "@/lib/mktFechamento"
+import { MKT_INICIO, INICIO_LOJA, LOJAS_MKT, diasEntre, lucroDe, plataformaDaLoja } from "@/lib/mktFechamento"
 import { exigirFinanceiro } from "@/lib/acesso"
 
 // Painel do marketplace (estilo Metrizap, igual à aba da Vision): GET ?from&to&loja=<LOJA|todas>
@@ -79,12 +79,12 @@ export async function GET(req: Request) {
 
     // dia + loja sem lançamento (a partir de 01/10; hoje nunca, o dia fecha amanhã)
     const hoje = todayBR()
-    const lojasEsperadas = loja ? [loja] : ["SHP_MARI", "SHP_SAMU", "TKTK_SAMU"]
+    const lojasEsperadas: string[] = loja ? [loja] : [...LOJAS_MKT]
     const lancados = new Set(atual.map(f => `${f.dia}|${f.loja}`))
     const faltando: { dia: string; loja: string }[] = []
     for (const d of dias) {
       if (d < MKT_INICIO || d >= hoje) continue
-      for (const l of lojasEsperadas) if (!lancados.has(`${d}|${l}`)) faltando.push({ dia: d, loja: l })
+      for (const l of lojasEsperadas) if (d >= (INICIO_LOJA[l] ?? MKT_INICIO) && !lancados.has(`${d}|${l}`)) faltando.push({ dia: d, loja: l })
     }
 
     // Curva ABC por produto (título), pelo faturamento: A até 80% acumulado, B até 95%, C o resto
@@ -116,7 +116,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       period: { from, to }, previous: { from: prevFrom, to: prevTo }, loja,
-      lojas: lojasRes.length ? lojasRes : ["SHP_MARI", "SHP_SAMU", "TKTK_SAMU"],
+      lojas: lojasRes.length ? lojasRes : [...LOJAS_MKT],
       totais: { ...tot, ticketMedio: tot.pedidos ? tot.vendas / tot.pedidos : 0, lucroMedio: tot.pedidos ? tot.lucro / tot.pedidos : 0 },
       anterior: totPrev,
       variacao: { vendas: variacao(tot.vendas, totPrev.vendas), lucro: variacao(tot.lucro, totPrev.lucro), pedidos: variacao(tot.pedidos, totPrev.pedidos) },

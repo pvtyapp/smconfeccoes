@@ -3,14 +3,18 @@
 // logado) ou corrigido à mão na aba Lançamentos. Este arquivo não fala com o banco: serve pra
 // tela e pras rotas. A parte de banco fica em lib/mktFechamentoDb.ts.
 
-export const LOJAS_MKT = ["SHP_MARI", "SHP_SAMU", "TKTK_SAMU"] as const
+// ML_MARI entrou em 06/11/2026 (PIV: "completinho igual o da Vision"); vende desde 01/11.
+export const LOJAS_MKT = ["SHP_MARI", "SHP_SAMU", "TKTK_SAMU", "ML_MARI"] as const
 export type LojaMkt = typeof LOJAS_MKT[number]
 
 export const PLATAFORMA_MKT: Record<string, { nome: string; cor: string }> = {
   shopee: { nome: "Shopee", cor: "#EE4D2D" },
   tiktok: { nome: "TikTok", cor: "#111827" },
+  mercadolivre: { nome: "Mercado Livre", cor: "#E0B400" },
 }
-export const plataformaDaLoja = (loja: string) => (loja.startsWith("TKTK") ? "tiktok" : "shopee")
+export const plataformaDaLoja = (loja: string) => (loja.startsWith("TKTK") ? "tiktok" : loja.startsWith("ML_") ? "mercadolivre" : "shopee")
+// Primeiro dia de cada loja (antes disso o painel não cobra lançamento)
+export const INICIO_LOJA: Record<string, string> = { ML_MARI: "2026-11-01" }
 
 // Primeiro dia do histórico (PIV 15/10/2026): antes disso não cobra lançamento.
 export const MKT_INICIO = "2026-10-01"

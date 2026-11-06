@@ -431,7 +431,7 @@ export default function RelatorioFinanceiroPage() {
                           style={{ width: `${channelTotal > 0 ? (data.marketplace.vendas / channelTotal) * 100 : 0}%` }} />
                       </div>
                       <p className="text-[10px] text-amber-700/60 mt-1.5 font-semibold">
-                        {data.marketplace.lojas.map(l => `${l.loja.replace("SHP_", "Shopee ").replace("TKTK_", "TikTok ")} ${fmtRDRE(l.vendas)}`).join(" · ") || "sem fechamento no período"}
+                        {data.marketplace.lojas.map(l => `${l.loja.replace("SHP_", "Shopee ").replace("TKTK_", "TikTok ").replace("ML_", "Mercado Livre ")} ${fmtRDRE(l.vendas)}`).join(" · ") || "sem fechamento no período"}
                       </p>
                       {data.marketplace.custoIncompleto && (
                         <p className="text-[9px] text-amber-700 mt-1 flex items-center gap-1">
@@ -718,7 +718,7 @@ export default function RelatorioFinanceiroPage() {
               <div className="px-6 py-4">
                 <DRERow bold label="(+) Receita Bruta" value={comp.receitaBruta} />
                 <DRERow label="Loja (balcão, WhatsApp, site, DTF, avarias)" value={comp.receitaLoja} indent />
-                <DRERow label="Marketplace (Shopee e TikTok)" value={comp.receitaMarketplace} indent
+                <DRERow label="Marketplace (Shopee, TikTok e Mercado Livre)" value={comp.receitaMarketplace} indent
                   sub={data.marketplace.lojas.length ? `${data.marketplace.lojas.map(l => l.loja).join(", ")} · fechamento diário` : "sem fechamento no período"} />
                 <DRERow label="(-) Taxas e comissões do marketplace" value={-comp.taxasMarketplace} indent negative />
                 {comp.cupomMarketplace > 0 && <DRERow label="(-) Cupons do marketplace" value={-comp.cupomMarketplace} indent negative />}

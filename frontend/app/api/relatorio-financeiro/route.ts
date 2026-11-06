@@ -352,7 +352,7 @@ export async function GET(req: Request) {
     // Lucro por canal = receita − deduções (imposto, taxas, cupom, frete) − custo das peças − ads.
     // Custo fixo, custo variável e perdas não são rateados: ficam só no total.
     const imp = (v: number) => v * aliquota / 100
-    const LABEL: Record<string, string> = { pdv: "Balcão (PDV)", whatsapp: "WhatsApp", site: "Site", SHP_MARI: "Shopee MARI", SHP_SAMU: "Shopee SAMU", TKTK_SAMU: "TikTok SAMU" }
+    const LABEL: Record<string, string> = { pdv: "Balcão (PDV)", whatsapp: "WhatsApp", site: "Site", SHP_MARI: "Shopee MARI", SHP_SAMU: "Shopee SAMU", TKTK_SAMU: "TikTok SAMU", ML_MARI: "Mercado Livre MARI" }
     const canais: { canal: string; nome: string; receita: number; deducoes: number; custo: number | null; ads: number; lucro: number | null; margem: number | null }[] = []
     for (const ch of ["pdv", "whatsapp", "site"]) {
       const receita = byChannel[ch] ?? 0

@@ -40,6 +40,22 @@ export async function lerFechamento(db: Db, id: number): Promise<FechamentoMkt |
 }
 
 // Regras com o custo por peça já somado (material_cost atual dos produtos + extra).
+// 06/11/2026: ML_MARI na lista de lojas e custo por item vindo do robô (custo_robo), usado quando o
+// SKU não cai em nenhuma regra (o ML MARI vende chinelo/trança/body, fora das regras da SM). Roda 1x por processo.
+let estruturaOk = false
+export async function garantirEstruturaMkt(db: Db = pool) {
+  if (estruturaOk) return
+  await db.query(`ALTER TABLE marketplace_vendas_itens ADD COLUMN IF NOT EXISTS custo_robo NUMERIC(12,2)`)
+  const { rows } = await db.query(`SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint
+    WHERE conrelid = 'marketplace_fechamentos'::regclass AND conname = 'marketplace_fechamentos_loja_check'`)
+  if (!rows[0] || !String(rows[0].d).includes("ML_MARI")) {
+    await db.query(`ALTER TABLE marketplace_fechamentos DROP CONSTRAINT IF EXISTS marketplace_fechamentos_loja_check`)
+    await db.query(`ALTER TABLE marketplace_fechamentos ADD CONSTRAINT marketplace_fechamentos_loja_check
+      CHECK (loja IN ('SHP_MARI', 'SHP_SAMU', 'TKTK_SAMU', 'ML_MARI'))`)
+  }
+  estruturaOk = true
+}
+
 export async function carregarRegras(db: Db = pool): Promise<RegraCusto[]> {
   const { rows } = await db.query(`
     SELECT r.id, r.prefixo, r.nome, r.produtos::text[] AS produtos, r.extra::float AS extra,
@@ -52,9 +68,10 @@ export async function carregarRegras(db: Db = pool): Promise<RegraCusto[]> {
 // Recalcula custo de todos os itens (ou só de um dia + loja) e atualiza custo/itens_sem_custo
 // dos fechamentos que têm itens. Fechamento sem item nenhum não é tocado.
 export async function recalcularCustos(db: Db, filtro?: { dia: string; loja: string }) {
+  await garantirEstruturaMkt(db)
   const regras = await carregarRegras(db)
   const { rows: itens } = await db.query(
-    `SELECT id, sku, qtd, titulo, variacao FROM marketplace_vendas_itens ${filtro ? "WHERE dia = $1 AND loja = $2" : ""}`,
+    `SELECT id, sku, qtd, titulo, variacao, custo_robo FROM marketplace_vendas_itens ${filtro ? "WHERE dia = $1 AND loja = $2" : ""}`,
     filtro ? [filtro.dia, filtro.loja] : [])
   const semSku = itens.some(it => !it.sku?.trim())
   const acharSku = semSku ? await skuPorSemelhanca(db, regras) : null
@@ -62,7 +79,8 @@ export async function recalcularCustos(db: Db, filtro?: { dia: string; loja: str
   const porCusto = new Map<string, number[]>()
   for (const it of itens) {
     const c = custoDoSku(regras, it.sku?.trim() ? it.sku : acharSku?.(it.titulo, it.variacao))
-    const k = c ? String(arred(c.unitario * it.qtd)) : "null"
+    // regra da SM primeiro; sem regra, o custo que o robô mandou (ML MARI: chinelo/trança/body)
+    const k = c ? String(arred(c.unitario * it.qtd)) : it.custo_robo != null ? String(arred(Number(it.custo_robo))) : "null"
     const l = porCusto.get(k) ?? []
     l.push(it.id)
     porCusto.set(k, l)

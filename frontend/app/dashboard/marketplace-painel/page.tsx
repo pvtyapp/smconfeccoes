@@ -90,7 +90,7 @@ export default function MarketplacePainelPage() {
     <div className="flex items-start justify-between gap-4 flex-wrap">
       <div>
         <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Painel Marketplace</h1>
-        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">SHP MARI, SHP SAMU e TKTK SAMU pelos lançamentos do outro PC. O dia entra no dia seguinte.</p>
+        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">SHP MARI, SHP SAMU, TKTK SAMU e ML MARI pelos lançamentos do outro PC. O dia entra no dia seguinte.</p>
       </div>
       <div className="flex flex-col items-end gap-2">
         <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { AlertTriangle, Bot, Hand, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react"
 import { todayBR, subDaysBR } from "@/lib/tz"
 import {
-  LOJAS_MKT, MKT_INICIO, PLATAFORMA_MKT, plataformaDaLoja, diasEntre, ddmm, fmtBRL, lucroDe,
+  LOJAS_MKT, MKT_INICIO, INICIO_LOJA, PLATAFORMA_MKT, plataformaDaLoja, diasEntre, ddmm, fmtBRL, lucroDe,
   type FechamentoMkt, type RegraCusto,
 } from "@/lib/mktFechamento"
 
@@ -33,7 +33,7 @@ export default function LancamentosPage() {
         <div>
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Lançamentos do Marketplace</h1>
           <p className="text-sm text-[#0F1E3C]/45 mt-0.5 max-w-2xl">
-            Fechamento de cada dia da SHP MARI, SHP SAMU e TKTK SAMU. O robô do outro PC lança; aqui dá pra conferir e corrigir.
+            Fechamento de cada dia da SHP MARI, SHP SAMU, TKTK SAMU e ML MARI. O robô do outro PC lança; aqui dá pra conferir e corrigir.
           </p>
         </div>
         <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0F1E3C]/5 border border-[#0F1E3C]/8">
@@ -93,11 +93,11 @@ function Grade() {
     const por = new Map(linhas.map(l => [`${l.dia}|${l.loja}`, l]))
     const lojas = loja ? [loja] : [...LOJAS_MKT]
     const out: { dia: string; loja: string; f: Linha | null }[] = []
-    for (const d of diasEntre(de, ate).reverse()) for (const l of lojas) out.push({ dia: d, loja: l, f: por.get(`${d}|${l}`) ?? null })
+    for (const d of diasEntre(de, ate).reverse()) for (const l of lojas) { if (INICIO_LOJA[l] && d < INICIO_LOJA[l]) continue; out.push({ dia: d, loja: l, f: por.get(`${d}|${l}`) ?? null }) }
     return out
   }, [linhas, de, ate, loja])
 
-  const faltando = grade.filter(g => !g.f && g.dia >= MKT_INICIO && g.dia < todayBR()).length
+  const faltando = grade.filter(g => !g.f && g.dia >= (INICIO_LOJA[g.loja] ?? MKT_INICIO) && g.dia < todayBR()).length
   const comAviso = grade.filter(g => g.f && g.f.avisos.length > 0).length
 
   async function salvar(f: Linha, campo: keyof FechamentoMkt, texto: string) {
@@ -185,7 +185,7 @@ function Grade() {
           <tbody>
             {grade.map(({ dia, loja: l, f }) => {
               if (!f) {
-                const cobrado = dia >= MKT_INICIO && dia < todayBR()
+                const cobrado = dia >= (INICIO_LOJA[l] ?? MKT_INICIO) && dia < todayBR()
                 return (
                   <tr key={`${dia}|${l}`} className={`border-t border-[#0F1E3C]/5 ${cobrado ? "bg-amber-50/40" : ""}`}>
                     <td className="px-3 py-2 text-[#0F1E3C]/60 whitespace-nowrap">{ddmm(dia)}</td>
@@ -448,7 +448,7 @@ const EXEMPLO = `await fetch("/api/marketplace/fechamento", {
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     dia: "2026-10-14",            // dia das vendas (YYYY-MM-DD)
-    loja: "SHP_MARI",             // SHP_MARI, SHP_SAMU ou TKTK_SAMU
+    loja: "SHP_MARI",             // SHP_MARI, SHP_SAMU, TKTK_SAMU ou ML_MARI
     pedidosUpseller: 12,          // quantos pedidos o Upseller mostra no dia (conferência)
     repasse: 401.37,              // o "a receber" que a plataforma mostra, se tiver (conferência)
     ads: 15.00,                   // gasto com anúncio do dia, se tiver
@@ -465,12 +465,13 @@ function ComoLancar() {
     <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-6 space-y-5 text-sm text-[#0F1E3C]/80 max-w-4xl leading-relaxed">
       <section className="space-y-1.5">
         <h2 className="font-bold text-[#0F1E3C]">Quando</h2>
-        <p>Todo dia de manhã, fechando o dia anterior das 3 lojas: SHP_MARI, SHP_SAMU e TKTK_SAMU. Dia que ficou pra trás pode ser lançado depois (o histórico começa em 01/10/2026).</p>
+        <p>Todo dia de manhã, fechando o dia anterior das 4 lojas: SHP_MARI, SHP_SAMU, TKTK_SAMU e ML_MARI (desde 01/11/2026). Dia que ficou pra trás pode ser lançado depois (o histórico começa em 01/10/2026).</p>
       </section>
       <section className="space-y-1.5">
         <h2 className="font-bold text-[#0F1E3C]">De onde tirar os números</h2>
         <ul className="list-disc pl-5 space-y-1">
           <li><b>Shopee (SHP_MARI e SHP_SAMU):</b> relatório de pedidos exportado da própria Shopee (Meus Pedidos → Exportar), com preço, cupom do vendedor, comissão, taxa de serviço e frete por item.</li>
+          <li><b>Mercado Livre (ML_MARI):</b> cada venda do dia lida no painel do vendedor (valor, tarifa, envio e desconto), com o custo da peça calculado pelo robô e o gasto de Ads do dia.</li>
           <li><b>TikTok (TKTK_SAMU):</b> extrato financeiro do Seller Center (Finanças → extrato/liquidações). A lista de pedidos do TikTok some com o pedido depois de liquidado, então dia antigo sai incompleto por lá.</li>
           <li><b>Upseller:</b> só pra conferência. Mande a quantidade de pedidos do dia em <code>pedidosUpseller</code>. Se não bater com o relatório, o lançamento entra com ⚠️ e é pra avisar no grupo.</li>
         </ul>
