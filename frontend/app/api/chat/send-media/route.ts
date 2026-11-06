@@ -7,7 +7,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
 const ALLOWED_MIMES = new Set([
   "image/jpeg", "image/png", "image/gif", "image/webp",
   "video/mp4",
-  "audio/ogg", "audio/mpeg", "audio/mp4", "audio/opus",
+  "audio/ogg", "audio/mpeg", "audio/mp4", "audio/opus", "audio/webm",
   "application/pdf", "image/svg+xml",
 ])
 
@@ -18,11 +18,14 @@ export async function POST(req: Request) {
     const contactId  = formData.get("contactId")  as string | null
     const caption    = formData.get("caption")    as string | null
     const file       = formData.get("file")       as File | null
+    // gravado no microfone do painel: sai como mensagem de voz, não como arquivo
+    const voz        = formData.get("voz") === "1"
 
     if (!jid || !file)
       return NextResponse.json({ error: "jid e file obrigatórios" }, { status: 400 })
 
-    const mimeType = file.type || "application/octet-stream"
+    // "audio/webm;codecs=opus" do gravador do navegador: compara só o tipo
+    const mimeType = (file.type || "application/octet-stream").split(";")[0]
 
     if (!ALLOWED_MIMES.has(mimeType))
       return NextResponse.json({ error: "Tipo de arquivo não permitido" }, { status: 415 })
@@ -51,10 +54,12 @@ export async function POST(req: Request) {
 
     try {
       const provider = await getProvider()
-      const result = await provider.sendMedia(number, {
-        mediatype, mimetype: mimeType, caption: caption ?? "", media: base64, fileName,
-        timeoutMs: 12_000,
-      })
+      const result = voz && mediatype === "audio"
+        ? await provider.sendAudio(sendJid.endsWith("@lid") ? sendJid : number, base64)
+        : await provider.sendMedia(number, {
+            mediatype, mimetype: mimeType, caption: caption ?? "", media: base64, fileName,
+            timeoutMs: 12_000,
+          })
       evoMsgId = result.id
     } catch { /* non-blocking */ }
 

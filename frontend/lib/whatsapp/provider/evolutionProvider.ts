@@ -1,6 +1,7 @@
 import type {
   WhatsAppProvider, ConnectionState, SendResult, SendMediaOpts, SendTextOpts,
   ReadReceipt, DownloadedMedia, QrCodeResult, CreateInstanceResult, GroupParticipant,
+  MsgKey, Presence,
 } from "./types"
 
 const EVO_URL      = (process.env.EVOLUTION_API_URL  ?? "").trim().replace(/\/+$/, "")
@@ -176,6 +177,55 @@ export const evolutionProvider: WhatsAppProvider = {
     }
     const raw = await res.json().catch(() => null) as { key?: { id?: string } } | null
     return { id: raw?.key?.id ?? null, raw }
+  },
+
+  // Áudio gravado no painel sai como mensagem de voz (bolinha azul do microfone),
+  // não como arquivo de áudio. encoding:true faz a Evolution converter o webm
+  // do navegador pro ogg/opus que o WhatsApp exige.
+  async sendAudio(number: string, base64: string): Promise<SendResult> {
+    const res = await fetch(`${EVO_URL}/message/sendWhatsAppAudio/${EVO_INSTANCE}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: EVO_KEY },
+      body: JSON.stringify({ number, audio: base64, encoding: true }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) throw new Error(`Evolution sendWhatsAppAudio ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`)
+    const raw = await res.json().catch(() => null) as { key?: { id?: string } } | null
+    return { id: raw?.key?.id ?? null, raw }
+  },
+
+  // emoji vazio tira a reação
+  async sendReaction(key: MsgKey, emoji: string): Promise<void> {
+    const res = await fetch(`${EVO_URL}/message/sendReaction/${EVO_INSTANCE}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: EVO_KEY },
+      body: JSON.stringify({ key, reaction: emoji }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!res.ok) throw new Error(`Evolution sendReaction ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`)
+  },
+
+  // WhatsApp só deixa editar mensagem própria de texto até 15 min depois do envio
+  async editMessage(number: string, key: MsgKey, text: string): Promise<void> {
+    const res = await fetch(`${EVO_URL}/chat/updateMessage/${EVO_INSTANCE}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: EVO_KEY },
+      body: JSON.stringify({ number, key, text }),
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!res.ok) throw new Error(`Evolution updateMessage ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`)
+  },
+
+  // "digitando…" / "gravando áudio…" no celular do cliente. A Evolution segura a
+  // resposta pelo tempo do delay, então fica curto. As versões divergem entre
+  // presence no topo ou dentro de options; manda nos dois.
+  async sendPresence(number: string, presence: Presence): Promise<void> {
+    await fetch(`${EVO_URL}/chat/sendPresence/${EVO_INSTANCE}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: EVO_KEY },
+      body: JSON.stringify({ number, presence, delay: 1200, options: { presence, delay: 1200 } }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {})
   },
 
   async markRead(readMessages: ReadReceipt[], instanceName): Promise<void> {

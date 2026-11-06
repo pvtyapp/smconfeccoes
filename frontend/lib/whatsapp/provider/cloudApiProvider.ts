@@ -168,6 +168,18 @@ export const cloudApiProvider: WhatsAppProvider = {
     throw new Error("Cloud API não suporta apagar conversa — recurso exclusivo do Evolution/Baileys")
   },
 
+  // Recursos do chat do painel que hoje só existem no Evolution
+  async sendAudio(): Promise<SendResult> {
+    throw new Error("Cloud API: mensagem de voz ainda não ligada — recurso do Evolution")
+  },
+  async sendReaction(): Promise<void> {
+    throw new Error("Cloud API: reação ainda não ligada — recurso do Evolution")
+  },
+  async editMessage(): Promise<void> {
+    throw new Error("Cloud API não suporta editar mensagem — recurso exclusivo do Evolution/Baileys")
+  },
+  async sendPresence(): Promise<void> {},
+
   // Sem histórico pra puxar — a Cloud API não tem endpoint de "listar
   // conversas/mensagens antigas". Tudo que existe daqui pra frente chega
   // via webhook e já fica salvo no nosso banco; não tem o que sincronizar

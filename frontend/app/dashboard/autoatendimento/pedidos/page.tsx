@@ -7,12 +7,14 @@ import {
   ChevronDown, ChevronUp, Users, AlertCircle, BotOff, Bot,
   Reply, Trash2, X, Phone, Paperclip, Download, PanelRight, Loader2, Check,
   Image as ImageIcon, Video as VideoIcon, Plus,
+  Smile, Forward, Pencil, Copy,
 } from "lucide-react"
 import OrderCard from "./OrderCard"
 import PrintSheet from "./PrintSheet"
 import { printWhenReady } from "@/components/print/print-utils"
 import OrderModal from "./OrderModal"
 import AudioPlayer from "./AudioPlayer"
+import { EmojiPicker, BarraReacao, ReacoesBolha, EncaminharModal, GravadorAudio, TextoWA } from "./ChatFerramentas"
 import DtfOrderCard, { type DtfOrder, type DtfAttachment } from "./DtfOrderCard"
 import DtfOrderModal from "./DtfOrderModal"
 import NewManualOrderForm from "./NewManualOrderForm"
@@ -121,6 +123,8 @@ type Message = {
   createdAt: string
   deletedAt?: string | null
   mediaFailed?: boolean
+  reactions?: Record<string, string> | null
+  editedAt?: string | null
 }
 
 // ─── Group types (Evolution-direct) ──────────────────────────────────────────
@@ -312,6 +316,15 @@ export default function PedidosPage() {
   const [replyTo,        setReplyTo]        = useState<Message | null>(null)
   const [hoveredMsg,     setHoveredMsg]     = useState<number | null>(null)
   const [deletingMsg,    setDeletingMsg]    = useState<number | null>(null)
+  // ferramentas do WhatsApp (PIV 05/11)
+  const [reagindo,       setReagindo]       = useState<number | null>(null)
+  const [editando,       setEditando]       = useState<Message | null>(null)
+  const [encaminhando,   setEncaminhando]   = useState<Message | null>(null)
+  const [enviandoEnc,    setEnviandoEnc]    = useState(false)
+  const [showEmoji,      setShowEmoji]      = useState(false)
+  const [buscaMsg,       setBuscaMsg]       = useState<string | null>(null)
+  const [gravandoAudio,  setGravandoAudio]  = useState(false)
+  const [avisoChat,      setAvisoChat]      = useState<string | null>(null)
 
   // Groups
   const [groups,         setGroups]         = useState<Group[]>([])
@@ -619,14 +632,13 @@ export default function PedidosPage() {
   // Sync chatContactRef with state so pollMessages can access jid without stale closure
   useEffect(() => { chatContactRef.current = chatContact }, [chatContact])
 
-  // Poll conversations from DB every 3s — só quando não tem chat aberto. Com um
-  // contato aberto, pollMessages (2s) já chama loadConvs a cada rodada; manter os
-  // dois rodando juntos duplicava a mesma chamada sem necessidade.
+  // Poll conversations from DB every 3s sem chat aberto. Com chat aberto a lista
+  // também precisa andar (antes congelava: cliente novo só aparecia ao fechar a
+  // conversa), mas a cada 6s, já que a conversa aberta tem o poll próprio de 2s.
   useEffect(() => {
-    if (chatContact) return
     const t = setInterval(() => {
       if (document.visibilityState === "visible") loadConvs()
-    }, 3_000)
+    }, chatContact ? 6_000 : 3_000)
     return () => clearInterval(t)
   }, [chatContact, loadConvs])
 
@@ -883,9 +895,9 @@ export default function PedidosPage() {
     return () => document.removeEventListener("visibilitychange", onVisible)
   }, [loadMessages])
 
-  // Atualiza ticks (sent/delivered/read) e apagadas (deletedAt) nas mensagens já
-  // carregadas a cada 30s — só lê do DB local. deletedAt entrou aqui porque apagar
-  // pra todos é um UPDATE, não some por id; o poll de 2s (afterId) nunca pegaria isso.
+  // Atualiza ticks (sent/delivered/read), apagadas (deletedAt), reações e edições nas
+  // mensagens já carregadas a cada 8s — só lê do DB local. Tudo isso é UPDATE, não
+  // mensagem nova por id; o poll de 2s (afterId) nunca pegaria.
   useEffect(() => {
     if (!chatContact) return
     const contactId = chatContact.id
@@ -903,15 +915,17 @@ export default function PedidosPage() {
         let changed = false
         const updated = prev.map(m => {
           const f = byId.get(m.id)
-          if (f && (f.status !== m.status || f.deletedAt !== m.deletedAt)) {
+          if (f && (f.status !== m.status || f.deletedAt !== m.deletedAt || f.editedAt !== m.editedAt
+            || JSON.stringify(f.reactions ?? null) !== JSON.stringify(m.reactions ?? null))) {
             changed = true
-            return { ...m, status: f.status, deletedAt: f.deletedAt, content: f.deletedAt ? null : m.content, mediaType: f.deletedAt ? null : m.mediaType }
+            return { ...m, status: f.status, deletedAt: f.deletedAt, reactions: f.reactions, editedAt: f.editedAt,
+              content: f.deletedAt ? null : f.editedAt ? f.content : m.content, mediaType: f.deletedAt ? null : m.mediaType }
           }
           return m
         })
         return changed ? updated : prev
       })
-    }, 30_000)
+    }, 8_000)
     return () => clearInterval(t)
   }, [chatContact])
 
@@ -938,20 +952,30 @@ export default function PedidosPage() {
     setAttLoading(false)
   }
 
+  // Desce pro fim só quando chega mensagem nova (ou troca de conversa). Reação,
+  // edição e visto mudam a lista também, e antes puxavam a tela pra baixo no meio
+  // da leitura de mensagem antiga.
+  const fimVisto = useRef("")
   useEffect(() => {
-    if (messages.length === 0) return
+    if (messages.length === 0) { fimVisto.current = ""; return }
+    const fim = `${messages.length}:${messages[messages.length - 1].id}`
+    if (fim === fimVisto.current) return
+    fimVisto.current = fim
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" })
   }, [messages])
 
   // ── Send message ───────────────────────────────────────────────────────────
 
   async function sendMessage() {
+    if (editando) { salvarEdicao(); return }
     if (!chatContact || !chatInput.trim() || sendingChat) return
     setSendingChat(true)
     const text = chatInput.trim()
     const quoted = replyTo
     setChatInput("")
     setReplyTo(null)
+    setShowEmoji(false)
+    ultimoDigitando.current = 0
 
     const tempId = -Date.now()
     setMessages(prev => [...prev, {
@@ -1009,7 +1033,8 @@ export default function PedidosPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messageDbId: m.id,
-        messageId: null,
+        // antes ia null e o "Apagar para todos" só sumia daqui, nunca do celular do cliente
+        messageId: m.messageId,
         jid: chatContact.jid,
         fromMe: m.direction === "out",
         onlyLocally,
@@ -1022,6 +1047,129 @@ export default function PedidosPage() {
       : prev.map(x => x.id === m.id ? { ...x, deletedAt: new Date().toISOString(), content: null, mediaType: null } : x))
     setDeletingMsg(null)
   }
+
+  // ── Ferramentas do WhatsApp (PIV 05/11) ───────────────────────────────────
+
+  function avisa(t: string) { setAvisoChat(t); setTimeout(() => setAvisoChat(a => a === t ? null : a), 3500) }
+
+  async function chatAcao(dados: Record<string, unknown>): Promise<{ ok: boolean; content?: string; error?: string }> {
+    const r = await fetch("/api/chat/acao", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+    }).catch(() => null)
+    const d = (await r?.json().catch(() => ({}))) ?? {}
+    return r?.ok ? { ok: true, ...d } : { ok: false, error: d.error ?? "Sem conexão" }
+  }
+
+  async function reagir(m: Message, emoji: string) {
+    setReagindo(null)
+    const antes = m.reactions ?? null
+    const depois = { ...(antes ?? {}) }
+    if (emoji) depois.eu = emoji; else delete depois.eu
+    setMessages(prev => prev.map(x => x.id === m.id ? { ...x, reactions: depois } : x))
+    const r = await chatAcao({ acao: "reagir", messageDbId: m.id, emoji })
+    if (!r.ok) {
+      setMessages(prev => prev.map(x => x.id === m.id ? { ...x, reactions: antes } : x))
+      avisa(r.error ?? "Não deu pra reagir")
+    }
+  }
+
+  // texto sem a assinatura (*Nome* _função_) que o envio coloca na primeira linha
+  function semAssinatura(t: string | null) {
+    return (t ?? "").replace(/^\*[^*\n]+\*(?: _[^_\n]+_)?\n/, "")
+  }
+
+  function podeEditar(m: Message) {
+    return m.direction === "out" && !m.mediaType && !!m.messageId && !m.deletedAt
+      && Date.now() - new Date(m.createdAt).getTime() < 15 * 60_000
+  }
+
+  function comecarEdicao(m: Message) {
+    setReplyTo(null); setStagedFile(null)
+    setEditando(m)
+    setChatInput(semAssinatura(m.content))
+    setTimeout(() => chatInputRef.current?.focus(), 0)
+  }
+
+  async function salvarEdicao() {
+    const m = editando
+    const texto = chatInput.trim()
+    if (!m || !texto) return
+    setEditando(null); setChatInput("")
+    if (texto === semAssinatura(m.content).trim()) return
+    const antes = { content: m.content, editedAt: m.editedAt }
+    const assinatura = (m.content ?? "").slice(0, (m.content ?? "").length - semAssinatura(m.content).length)
+    setMessages(prev => prev.map(x => x.id === m.id ? { ...x, content: assinatura + texto, editedAt: new Date().toISOString() } : x))
+    const r = await chatAcao({ acao: "editar", messageDbId: m.id, texto })
+    if (!r.ok) {
+      setMessages(prev => prev.map(x => x.id === m.id ? { ...x, ...antes } : x))
+      avisa(r.error ?? "Não deu pra editar")
+    }
+  }
+
+  async function encaminhar(m: Message, destino: Conversation) {
+    setEnviandoEnc(true)
+    const r = await chatAcao({ acao: "encaminhar", messageDbId: m.id, paraContactId: destino.id })
+    setEnviandoEnc(false)
+    setEncaminhando(null)
+    avisa(r.ok ? `Encaminhada para ${destino.name || fmtPhone(destino.phone)}` : (r.error ?? "Não deu pra encaminhar"))
+    if (r.ok) loadConvs()
+  }
+
+  function copiar(m: Message) {
+    const t = m.caption || semAssinatura(m.content)
+    navigator.clipboard?.writeText(t).then(() => avisa("Copiada")).catch(() => {})
+  }
+
+  // "digitando…" no celular do cliente: no máximo um aviso a cada 4s, e só quando
+  // tem texto sendo escrito, pra não gastar chamada à toa
+  const ultimoDigitando = useRef(0)
+  function avisarDigitando(estado: "composing" | "recording" = "composing") {
+    if (!chatContact) return
+    const agora = Date.now()
+    if (estado === "composing" && agora - ultimoDigitando.current < 4_000) return
+    ultimoDigitando.current = agora
+    fetch("/api/chat/acao", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ acao: "digitando", jid: chatContact.jid, estado }),
+    }).catch(() => {})
+  }
+
+  async function enviarAudio(arquivo: File) {
+    if (!chatContact) return
+    const form = new FormData()
+    form.append("jid", chatContact.jid)
+    form.append("contactId", String(chatContact.id))
+    form.append("voz", "1")
+    form.append("file", arquivo)
+    setSendingFile(true)
+    try {
+      const r = await fetch("/api/chat/send-media", { method: "POST", body: form })
+      if (!r.ok) throw new Error("status " + r.status)
+      await loadMessages(chatContact.id, true)
+      loadConvs()
+    } catch {
+      avisa("Não deu pra enviar o áudio. Tente de novo.")
+    } finally {
+      setSendingFile(false)
+    }
+  }
+
+  // Esc fecha o que estiver aberto (edição, resposta, busca), igual ao WhatsApp
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || encaminhando) return
+      if (editando) { setEditando(null); setChatInput("") }
+      else if (replyTo) setReplyTo(null)
+      else if (buscaMsg !== null) setBuscaMsg(null)
+    }
+    window.addEventListener("keydown", esc)
+    return () => window.removeEventListener("keydown", esc)
+  }, [editando, replyTo, buscaMsg, encaminhando])
+
+  // troca de contato limpa as ferramentas abertas
+  useEffect(() => {
+    setEditando(null); setEncaminhando(null); setReagindo(null); setBuscaMsg(null); setShowEmoji(false)
+  }, [chatContact?.id])
 
   async function deleteConversation() {
     if (!chatContact || !confirm(`Apagar toda a conversa com ${chatContact.name || chatContact.phone}? Isso remove as mensagens daqui e do WhatsApp da SM.`)) return
@@ -1453,6 +1601,11 @@ export default function PedidosPage() {
                 </div>
               </div>
               <div className="flex items-center gap-0.5 flex-shrink-0">
+                <button onClick={() => setBuscaMsg(b => b === null ? "" : null)} title="Buscar na conversa"
+                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10"
+                  style={{ color: buscaMsg !== null ? "#00A884" : "#AEBAC1" }}>
+                  <Search size={16} />
+                </button>
                 <button onClick={() => attAction("toggle_silence")} disabled={attLoading}
                   title={chatContact.chatbotSilenced ? "Reativar bot nessa conversa" : "Silenciar bot nessa conversa"}
                   className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 disabled:opacity-40"
@@ -1472,6 +1625,20 @@ export default function PedidosPage() {
               </div>
             </div>
 
+            {buscaMsg !== null && (() => {
+              const t = buscaMsg.trim().toLowerCase()
+              const n = t ? messages.filter(m => !m.deletedAt && `${m.content ?? ""} ${m.caption ?? ""} ${m.fileName ?? ""}`.toLowerCase().includes(t)).length : 0
+              return (
+                <div className="wa-pop flex items-center gap-2 px-4 py-2 flex-shrink-0" style={{ background: "#202C33", borderTop: "1px solid #2A3942" }}>
+                  <Search size={14} style={{ color: "#8696A0" }} />
+                  <input autoFocus value={buscaMsg} onChange={e => setBuscaMsg(e.target.value)} placeholder="Buscar mensagem nesta conversa"
+                    className="flex-1 bg-transparent text-[13px] focus:outline-none" style={{ color: "#E9EDEF", border: "none", boxShadow: "none" }} />
+                  {t && <span className="text-[11px]" style={{ color: "#8696A0" }}>{n} {n === 1 ? "achada" : "achadas"}</span>}
+                  <button onClick={() => setBuscaMsg(null)} style={{ color: "#8696A0" }}><X size={14} /></button>
+                </div>
+              )
+            })()}
+
             {/* Messages area — WA warm background */}
             <div className={`flex-1 overflow-y-auto px-4 py-2 relative`}
               style={{ background: "#EFEAE2" }}
@@ -1482,6 +1649,13 @@ export default function PedidosPage() {
                     <Paperclip size={24} className="mx-auto mb-1" style={{ color: "#00A884" }} />
                     <p className="text-xs font-bold" style={{ color: "#00A884" }}>Solte o arquivo aqui</p>
                   </div>
+                </div>
+              )}
+              {!loadingMessages && !hasMoreMsgs && messages.length > 0 && buscaMsg === null && (
+                <div className="flex justify-center pt-2 pb-1">
+                  <span className="text-[11px] text-center px-3 py-1.5 rounded-lg max-w-[420px]" style={{ background: "#FFEECD", color: "#54656F" }}>
+                    🔒 Aqui ficam as conversas das últimas 48 horas. Mais antigas, veja no WhatsApp do celular.
+                  </span>
                 </div>
               )}
               {hasMoreMsgs && (
@@ -1506,15 +1680,20 @@ export default function PedidosPage() {
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {messages.map((m, i) => {
+                  {(() => {
+                    const t = buscaMsg?.trim().toLowerCase()
+                    const lista = t ? messages.filter(m => !m.deletedAt && `${m.content ?? ""} ${m.caption ?? ""} ${m.fileName ?? ""}`.toLowerCase().includes(t)) : messages
+                    if (t && !lista.length) return <p className="text-center text-[12px] py-10" style={{ color: "#667781" }}>Nenhuma mensagem com &ldquo;{buscaMsg}&rdquo; nas últimas 48 horas</p>
+                    return lista.map((m, i) => {
                     const isOut = m.direction === "out"
-                    const showDate = i === 0 || dateBRKey(messages[i - 1].createdAt) !== dateBRKey(m.createdAt)
-                    const nextSame = i < messages.length - 1
-                      && messages[i + 1].direction === m.direction
-                      && dateBRKey(messages[i + 1].createdAt) === dateBRKey(m.createdAt)
+                    const showDate = i === 0 || dateBRKey(lista[i - 1].createdAt) !== dateBRKey(m.createdAt)
+                    const nextSame = i < lista.length - 1
+                      && lista[i + 1].direction === m.direction
+                      && dateBRKey(lista[i + 1].createdAt) === dateBRKey(m.createdAt)
                     const prevSame = i > 0
-                      && messages[i - 1].direction === m.direction
-                      && dateBRKey(messages[i - 1].createdAt) === dateBRKey(m.createdAt)
+                      && lista[i - 1].direction === m.direction
+                      && dateBRKey(lista[i - 1].createdAt) === dateBRKey(m.createdAt)
+                    const temReacao = Object.values(m.reactions ?? {}).some(Boolean)
                     const showTail = !nextSame
 
                     return (
@@ -1526,9 +1705,9 @@ export default function PedidosPage() {
                             </span>
                           </div>
                         )}
-                        <div className={`flex ${isOut ? "justify-end" : "justify-start"} ${prevSame ? "mt-0.5" : "mt-1.5"}`}
+                        <div className={`flex ${isOut ? "justify-end" : "justify-start"} ${prevSame ? "mt-0.5" : "mt-1.5"} ${temReacao ? "mb-5" : ""}`}
                           onMouseEnter={() => setHoveredMsg(m.id)}
-                          onMouseLeave={() => setHoveredMsg(null)}>
+                          onMouseLeave={() => setHoveredMsg(h => reagindo === m.id ? h : null)}>
                           <div className="relative max-w-[65%] group">
                             {/* WA bubble tail */}
                             {showTail && (
@@ -1567,6 +1746,7 @@ export default function PedidosPage() {
                                 const msgMediaExpired = mediaLoaded[m.id] === "expired" || m.mediaFailed === true
                                 const timeEl = (extra?: string) => (
                                   <span className={`flex items-center justify-end gap-1 text-[10px] select-none ${extra ?? ""}`} style={{ color: "#667781" }}>
+                                    {m.editedAt && !m.deletedAt && <span className="italic">Editada</span>}
                                     {fmtTime(m.createdAt)}
                                     {isOut && (
                                       m.status === "failed"
@@ -1646,7 +1826,7 @@ export default function PedidosPage() {
                                         <div className="absolute bottom-1 right-1 text-white text-[8px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.55)" }}>Mídia expirada</div>
                                       )}
                                     </div>
-                                    {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>{m.caption}</p>}
+                                    {m.caption && <p className="px-3 pt-1 pb-0 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}><TextoWA texto={m.caption} termo={buscaMsg ?? ""} /></p>}
                                     {!isOut && m.mediaCategory === "dtf" && !msgMediaExpired && (
                                       <div className="px-3 pt-1.5">
                                         <button onClick={() => linkDtfFile(m)} disabled={linkingDtfMsg === m.id}
@@ -1723,7 +1903,7 @@ export default function PedidosPage() {
                                   <div className="px-3 py-1.5 whitespace-pre-wrap break-words" style={{ color: "#111B21" }}>
                                     {m.mediaType && !msgMediaData && !m.mediaThumb
                                       ? <span style={{ color: "#667781" }}>{MEDIA_EMOJI[m.mediaType] ?? formatMsgPreview(m.content)}</span>
-                                      : formatMsgPreview(m.content)
+                                      : <TextoWA texto={formatMsgPreview(m.content)} termo={buscaMsg ?? ""} />
                                     }
                                     {timeEl("mt-0.5")}
                                   </div>
@@ -1731,13 +1911,44 @@ export default function PedidosPage() {
                               })()}
                             </div>
 
-                            {hoveredMsg === m.id && (
+                            {!m.deletedAt && <ReacoesBolha reacoes={m.reactions} lado={isOut ? "dir" : "esq"} />}
+                            {reagindo === m.id && (
+                              <BarraReacao atual={m.reactions?.eu ?? null} lado={isOut ? "dir" : "esq"}
+                                onPick={e => reagir(m, e)} onClose={() => setReagindo(null)} />
+                            )}
+                            {(hoveredMsg === m.id || reagindo === m.id) && !m.deletedAt && m.id > 0 && (
                               <div className={`absolute top-0.5 ${isOut ? "left-0 -translate-x-full pr-1" : "right-0 translate-x-full pl-1"} flex items-center gap-0.5`}>
-                                <button onClick={() => setReplyTo(m)}
+                                {m.messageId && (
+                                  <button onClick={() => setReagindo(r => r === m.id ? null : m.id)} title="Reagir"
+                                    className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm hover:bg-white/20"
+                                    style={{ background: "#202C33", color: reagindo === m.id ? "#00A884" : "#AEBAC1" }}>
+                                    <Smile size={13} />
+                                  </button>
+                                )}
+                                <button onClick={() => { setEditando(null); setReplyTo(m); chatInputRef.current?.focus() }} title="Responder"
                                   className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm hover:bg-white/20"
                                   style={{ background: "#202C33", color: "#AEBAC1" }}>
                                   <Reply size={12} />
                                 </button>
+                                <button onClick={() => setEncaminhando(m)} title="Encaminhar"
+                                  className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm hover:bg-white/20"
+                                  style={{ background: "#202C33", color: "#AEBAC1" }}>
+                                  <Forward size={12} />
+                                </button>
+                                {!m.mediaType && (
+                                  <button onClick={() => copiar(m)} title="Copiar texto"
+                                    className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm hover:bg-white/20"
+                                    style={{ background: "#202C33", color: "#AEBAC1" }}>
+                                    <Copy size={12} />
+                                  </button>
+                                )}
+                                {podeEditar(m) && (
+                                  <button onClick={() => comecarEdicao(m)} title="Editar (até 15 min depois do envio)"
+                                    className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm hover:bg-white/20"
+                                    style={{ background: "#202C33", color: "#AEBAC1" }}>
+                                    <Pencil size={12} />
+                                  </button>
+                                )}
                                 <button onClick={() => deleteMessage(m)} disabled={deletingMsg === m.id}
                                   title={isOut ? "Apagar para todos" : "Apagar aqui"}
                                   className="w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-sm disabled:opacity-40 hover:bg-white/20"
@@ -1750,11 +1961,24 @@ export default function PedidosPage() {
                         </div>
                       </div>
                     )
-                  })}
+                  })
+                  })()}
                   <div ref={messagesEndRef} />
                 </div>
               )}
             </div>
+
+            {/* Editando mensagem */}
+            {editando && (
+              <div className="wa-pop flex-shrink-0 mx-3 mb-1.5 rounded-lg overflow-hidden border-l-4 flex items-center justify-between gap-2 px-3 py-2"
+                style={{ background: "#2A3942", borderColor: "#53BDEB" }}>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold flex items-center gap-1" style={{ color: "#53BDEB" }}><Pencil size={10} /> Editando mensagem</p>
+                  <p className="text-[11px] truncate" style={{ color: "#AEBAC1" }}>{semAssinatura(editando.content).slice(0, 90)}</p>
+                </div>
+                <button onClick={() => { setEditando(null); setChatInput("") }} title="Cancelar (Esc)" style={{ color: "#8696A0" }}><X size={14} /></button>
+              </div>
+            )}
 
             {/* Reply preview */}
             {replyTo && (
@@ -1781,29 +2005,75 @@ export default function PedidosPage() {
             )}
 
             {/* Input bar — WA dark */}
-            <div className="flex-shrink-0 flex items-end gap-2 px-3 py-3" style={{ background: "#202C33" }}>
-              <button onClick={() => fileInputRef.current?.click()} title="Enviar arquivo"
+            <div className="relative flex-shrink-0 flex items-end gap-1 px-3 py-3" style={{ background: "#202C33" }}>
+              {avisoChat && (
+                <span className="wa-pop absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap text-[12px] px-3 py-1.5 rounded-lg shadow-lg z-20"
+                  style={{ background: "#E9EDEF", color: "#111B21" }}>{avisoChat}</span>
+              )}
+              {showEmoji && (
+                <EmojiPicker onClose={() => setShowEmoji(false)} onPick={e => {
+                  const el = chatInputRef.current
+                  const ini = el?.selectionStart ?? chatInput.length, fim = el?.selectionEnd ?? chatInput.length
+                  setChatInput(chatInput.slice(0, ini) + e + chatInput.slice(fim))
+                  setTimeout(() => { el?.focus(); el?.setSelectionRange(ini + e.length, ini + e.length) }, 0)
+                }} />
+              )}
+              {!gravandoAudio && <>
+              <button onClick={() => setShowEmoji(v => !v)} title="Emoji"
+                className="w-10 h-10 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 flex-shrink-0"
+                style={{ color: showEmoji ? "#00A884" : "#8696A0" }}>
+                <Smile size={22} />
+              </button>
+              {!editando && (
+              <button onClick={() => fileInputRef.current?.click()} title="Enviar arquivo (ou cole um print com Ctrl+V)"
                 className="w-10 h-10 rounded-full flex items-center justify-center transition-colors hover:bg-white/10 flex-shrink-0"
                 style={{ color: "#8696A0" }}>
                 <Paperclip size={20} />
               </button>
+              )}
+              </>}
               <input ref={fileInputRef} type="file" className="hidden"
                 onChange={e => { if (e.target.files?.[0]) { setStagedFile(e.target.files[0]); e.target.value = "" } }} />
-              <textarea ref={chatInputRef} value={chatInput} onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); stagedFile ? sendFile() : sendMessage() } }}
-                placeholder={stagedFile ? "Legenda (opcional)..." : "Mensagem..."}
+              {!gravandoAudio && (
+              <textarea ref={chatInputRef} value={chatInput}
+                onChange={e => {
+                  // cresce com o texto, igual ao WhatsApp (até ~5 linhas)
+                  e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 128) + "px"
+                  if (e.target.value.length > chatInput.length && !editando) avisarDigitando()
+                  setChatInput(e.target.value)
+                }}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); stagedFile ? sendFile() : sendMessage(); (e.target as HTMLTextAreaElement).style.height = "auto" }
+                  // seta pra cima com a caixa vazia edita a última mensagem nossa (atalho do WhatsApp Web)
+                  if (e.key === "ArrowUp" && !chatInput && !stagedFile) {
+                    const ult = [...messages].reverse().find(m => m.direction === "out")
+                    if (ult && podeEditar(ult)) { e.preventDefault(); comecarEdicao(ult) }
+                  }
+                }}
+                placeholder={editando ? "Edite a mensagem..." : stagedFile ? "Legenda (opcional)..." : "Mensagem..."}
                 rows={1}
                 className="flex-1 resize-none px-4 py-2.5 rounded-lg text-[13px] focus:outline-none max-h-32 overflow-y-auto"
                 style={{ background: "#2A3942", color: "#E9EDEF", border: "none", minHeight: "44px" }} />
+              )}
+              {chatInput.trim() || stagedFile || editando ? (
               <button
                 onClick={stagedFile ? sendFile : sendMessage}
                 disabled={stagedFile ? sendingFile : (!chatInput.trim() || sendingChat)}
+                title={editando ? "Salvar edição" : "Enviar"}
                 className="w-10 h-10 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 flex-shrink-0"
                 style={{ background: "#00A884" }}>
                 {sendingFile
                   ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <Send size={18} style={{ color: "#fff" }} />}
+                  : editando ? <Check size={18} style={{ color: "#fff" }} /> : <Send size={18} style={{ color: "#fff" }} />}
               </button>
+              ) : sendingFile ? (
+                <div className="w-10 h-10 flex items-center justify-center flex-shrink-0">
+                  <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#00A884", borderTopColor: "transparent" }} />
+                </div>
+              ) : (
+                <GravadorAudio onEnviar={enviarAudio}
+                  onGravando={g => { setGravandoAudio(g); setShowEmoji(false); if (g) avisarDigitando("recording") }} />
+              )}
             </div>
           </div>
 
@@ -2468,6 +2738,11 @@ export default function PedidosPage() {
         </div>
       )}
       {/* ── LIGHTBOX ── */}
+      {encaminhando && (
+        <EncaminharModal conversas={convs.filter(c => c.id !== chatContact?.id)} enviando={enviandoEnc} fmt={fmtPhone}
+          onClose={() => setEncaminhando(null)} onPick={c => encaminhar(encaminhando, c)} />
+      )}
+
       {lightboxMsg && (
         <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col items-center justify-center p-4"
           onClick={() => setLightboxMsg(null)}>

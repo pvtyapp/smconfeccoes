@@ -44,6 +44,14 @@ export type SendTextOpts = {
   timeoutMs?: number
 }
 
+export type MsgKey = {
+  id: string
+  fromMe: boolean
+  remoteJid: string
+}
+
+export type Presence = "composing" | "recording" | "paused"
+
 export type DownloadedMedia = {
   base64: string
   mimetype: string
@@ -75,6 +83,12 @@ export interface WhatsAppProvider {
 
   sendText(number: string, text: string, opts?: SendTextOpts): Promise<SendResult>
   sendMedia(number: string, opts: SendMediaOpts): Promise<SendResult>
+
+  // Recursos do WhatsApp de verdade usados no chat do Autoatendimento (PIV 05/11)
+  sendAudio(number: string, base64: string): Promise<SendResult>
+  sendReaction(key: MsgKey, emoji: string): Promise<void>
+  editMessage(number: string, key: MsgKey, text: string): Promise<void>
+  sendPresence(number: string, presence: Presence): Promise<void>
 
   markRead(readMessages: ReadReceipt[], instanceName?: string): Promise<void>
   deleteMessage(id: string, remoteJid: string, fromMe: boolean, onlyLocally: boolean): Promise<void>

@@ -11,6 +11,7 @@ import { handleFinanceiroGroupMessage } from "@/lib/whatsapp/financeiroFlow"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
 import { variantesDo9 } from "@/lib/whatsapp/resolveContact"
 import { getProvider } from "@/lib/whatsapp/provider"
+import { garantirColunasChat } from "@/lib/whatsapp/colunasChat"
 import { isAutomationPaused } from "@/lib/whatsapp/automationGate"
 import { isOutsideBusinessHours } from "@/lib/portal/businessHours"
 import { hasConcludedOrderHistory } from "@/lib/portal/history"
@@ -414,6 +415,45 @@ type SavedInbound = {
 // antes, mensagens além da primeira de um lote passavam por uma implementação
 // separada e mais fraca, sem log de erro nenhum (foi assim que 2 arquivos sumiram
 // sem deixar rastro). Agora é o mesmo código pra todo mundo, com erro sempre logado.
+// Reação (reactionMessage) grava em wa_messages.reactions como {eu, cliente};
+// edição (protocolMessage tipo MESSAGE_EDIT, às vezes embrulhado em editedMessage)
+// troca o texto e marca edited_at. Devolve true quando a mensagem era uma dessas.
+async function aplicarReacaoOuEdicao(msg: Record<string, unknown>, fromMe: boolean): Promise<boolean> {
+  const corpo = msg.message as Record<string, unknown> | undefined
+  if (!corpo) return false
+
+  const reacao = corpo.reactionMessage as Record<string, unknown> | undefined
+  if (reacao) {
+    const alvo = (reacao.key as Record<string, unknown> | undefined)?.id as string | undefined
+    if (alvo) {
+      const quem = fromMe ? "eu" : "cliente"
+      const emoji = (reacao.text as string | undefined) ?? ""
+      await garantirColunasChat().catch(() => {})
+      await pool.query(
+        `UPDATE wa_messages SET reactions = CASE WHEN $3 = '' THEN COALESCE(reactions, '{}'::jsonb) - $2
+                ELSE COALESCE(reactions, '{}'::jsonb) || jsonb_build_object($2::text, $3::text) END,
+                updated_at = NOW()
+          WHERE message_id = $1`, [alvo, quem, emoji]).catch(() => {})
+    }
+    return true
+  }
+
+  const embrulho = (corpo.editedMessage as Record<string, unknown> | undefined)?.message as Record<string, unknown> | undefined
+  const proto = (corpo.protocolMessage ?? embrulho?.protocolMessage) as Record<string, unknown> | undefined
+  const editado = proto?.editedMessage as Record<string, unknown> | undefined
+  if (proto && editado && (proto.type === 14 || proto.type === "MESSAGE_EDIT")) {
+    const alvo = (proto.key as Record<string, unknown> | undefined)?.id as string | undefined
+    const texto = (editado.conversation as string | undefined)
+      ?? ((editado.extendedTextMessage as Record<string, unknown> | undefined)?.text as string | undefined)
+    if (alvo && texto) {
+      await garantirColunasChat().catch(() => {})
+      await pool.query(`UPDATE wa_messages SET content = $2, edited_at = NOW(), updated_at = NOW() WHERE message_id = $1`, [alvo, texto]).catch(() => {})
+    }
+    return true
+  }
+  return false
+}
+
 async function saveInboundMessage(evtMsg: Record<string, unknown>): Promise<SavedInbound | null> {
   const key = evtMsg.key as Record<string, unknown> | undefined
   const jid: string = (key?.remoteJid as string) || ""
@@ -1122,6 +1162,10 @@ export async function POST(req: Request) {
       const key = (m.key as Record<string, unknown> | undefined) ?? {}
       const jid: string = (key.remoteJid as string) || ""
       if (!jid) continue
+
+      // Reação e edição chegam como mensagem própria; não é texto novo, só muda a
+      // mensagem antiga (PIV 05/11, chat igual ao WhatsApp). Vale nos dois sentidos.
+      if (!jid.endsWith("@g.us") && await aplicarReacaoOuEdicao(m, Boolean(key.fromMe))) continue
 
       if (key.fromMe) {
         if (!jid.endsWith("@g.us")) {

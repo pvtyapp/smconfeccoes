@@ -114,3 +114,11 @@
 /* rolagem fina */
 .pn-main{scrollbar-width:thin;scrollbar-color:#C9D1E0 transparent}
 
+
+/* chat do Autoatendimento: balões e gravação (PIV 05/11) */
+.wa-pop{animation:waPop .16s cubic-bezier(.2,.8,.2,1) backwards;transform-origin:bottom center}
+@keyframes waPop{from{opacity:0;transform:scale(.94) translateY(4px)}}
+.wa-rec{animation:waRec 1s ease-in-out infinite}
+@keyframes waRec{50%{opacity:.25}}
+.wa-msg-alvo{animation:waAlvo 1.4s ease-out}
+@keyframes waAlvo{0%,40%{background:rgba(0,168,132,.18)}100%{background:transparent}}
