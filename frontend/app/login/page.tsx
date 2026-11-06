@@ -35,7 +35,7 @@ function LoginForm() {
       if (res.ok) {
         const session = await fetchAndStoreSession()
         const from = searchParams.get("from")
-        const canGoFrom = from && session && (session.isAdmin || session.allowedPages.some(p => from === p || from.startsWith(p + "/")))
+        const canGoFrom = from && session && (session.isAdmin || session.allowedPages.some(p => from === p || (p !== "/dashboard" && from.startsWith(p + "/"))))
         const fallback = session ? (firstAllowedPage(session.isAdmin, session.allowedPages, session.verFinanceiro !== false) ?? "/sem-acesso") : "/sem-acesso"
         router.push(canGoFrom ? from : fallback)
       } else {

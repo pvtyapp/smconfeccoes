@@ -37,7 +37,8 @@ const PUBLIC_API_PREFIXES = [
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[], verFinanceiro = true): boolean {
   if (isAdmin) return true
-  const dentro = (p: string) => pathname === p || pathname.startsWith(p + "/")
+  // "/dashboard" é a tela inicial, não a pasta: liberar ela não libera as telas de dentro (PIV 06/11)
+  const dentro = (p: string) => pathname === p || (p !== "/dashboard" && pathname.startsWith(p + "/"))
   if (!verFinanceiro && FINANCE_PAGES.some(dentro)) return false
   return allowedPages.some(dentro)
 }

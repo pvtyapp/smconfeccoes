@@ -5,19 +5,19 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { logout, getSession } from "@/lib/auth"
 import type { AuthSession } from "@/lib/types"
-import { ChevronLeft, ChevronRight, ChevronDown, LogOut, Search } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronDown, LogOut } from "lucide-react"
 import { NAV_GROUPS, FINANCE_PAGES, type NavItem } from "@/lib/navPages"
 import { useAcesso } from "@/lib/acessoClient"
 
-type Props = { collapsed: boolean; onToggle: () => void; onBuscar: () => void }
+type Props = { collapsed: boolean; onToggle: () => void }
 
 const AUTO = "/dashboard/autoatendimento/pedidos"
 
 // Menu do painel (PIV 05/11): grupos por trabalho, indicador que desliza até a tela
-// ativa, grupos recolhíveis e atalho Ctrl+K. A sessão (localStorage) só é lida depois
+// ativa, grupos recolhíveis. A sessão (localStorage) só é lida depois
 // de montar: lida durante a renderização, o HTML do servidor (sem sessão) e o do
 // navegador saíam diferentes e todas as telas davam o erro #418 do React.
-export default function Sidebar({ collapsed, onToggle, onBuscar }: Props) {
+export default function Sidebar({ collapsed, onToggle }: Props) {
   const pathname = usePathname()
   const router = useRouter()
   const acesso = useAcesso()
@@ -108,11 +108,6 @@ export default function Sidebar({ collapsed, onToggle, onBuscar }: Props) {
         <img src="/smsemfundo.png" alt="SM Confecções" />
         {!collapsed && <span>Painel</span>}
       </div>
-
-      <button type="button" className={`pn-busca ${collapsed ? "mini" : ""}`} onClick={onBuscar} title="Buscar tela (Ctrl+K)">
-        <Search size={15} />
-        {!collapsed && <><span>Buscar tela</span><kbd>Ctrl K</kbd></>}
-      </button>
 
       <nav ref={navRef} className="pn-nav">
         {ind && <span className="pn-ind" style={{ transform: `translateY(${ind.top}px)`, height: ind.h }} aria-hidden="true" />}

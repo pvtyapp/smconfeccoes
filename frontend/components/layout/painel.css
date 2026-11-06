@@ -20,10 +20,6 @@
 .pn-marca img{height:30px;width:auto;filter:brightness(0) invert(1)}
 .pn-side.mini .pn-marca img{height:22px}
 .pn-marca span{font:400 15px/1 var(--font-anton);letter-spacing:.12em;text-transform:uppercase;color:var(--pn-tape);padding:4px 8px;border:1px solid rgba(244,196,48,.35);border-radius:999px}
-.pn-busca{margin:4px 14px 10px;display:flex;align-items:center;gap:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:rgba(255,255,255,.6);border-radius:12px;padding:9px 12px;font:600 13px var(--font-dm-sans),sans-serif;cursor:pointer;transition:background .2s,color .2s}
-.pn-busca:hover{background:rgba(255,255,255,.1);color:#fff}
-.pn-busca.mini{margin:4px auto 10px;padding:9px;justify-content:center}
-.pn-busca kbd{margin-left:auto;font:700 10px var(--font-dm-sans),sans-serif;background:rgba(255,255,255,.1);border-radius:6px;padding:3px 6px;color:rgba(255,255,255,.55)}
 .pn-nav{position:relative;flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 12px 12px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
 .pn-side.mini .pn-nav{padding:4px 10px 12px}
 .pn-ind{position:absolute;left:12px;right:12px;top:0;border-radius:12px;background:linear-gradient(90deg,#4361EE,#5B75F2);box-shadow:0 10px 24px -12px rgba(67,97,238,.9);transition:transform .38s cubic-bezier(.3,1.25,.4,1),height .3s;z-index:0;pointer-events:none}
@@ -59,14 +55,6 @@
 .pn-recolhe:hover{color:#fff;background:rgba(255,255,255,.06)}
 
 /* Ctrl+K */
-.pn-busca-ov{position:fixed;inset:0;z-index:200;background:rgba(15,30,60,.42);backdrop-filter:blur(6px);display:grid;justify-items:center;align-items:start;padding-top:12vh;animation:pnFade .18s both}
-.pn-busca-box{width:min(560px,92vw);background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 40px 80px -30px rgba(0,0,0,.55);animation:pnSobe .25s cubic-bezier(.2,.8,.2,1) both}
-.pn-busca-box input{width:100%;border:0;border-bottom:1px solid var(--pn-linha);padding:18px 20px;font:600 17px var(--font-dm-sans),sans-serif;color:var(--pn-navy);outline:none}
-.pn-busca-lista{max-height:52vh;overflow:auto;padding:8px}
-.pn-busca-lista button{width:100%;display:flex;align-items:center;gap:12px;border:0;background:none;border-radius:12px;padding:11px 12px;font:600 14px var(--font-dm-sans),sans-serif;color:var(--pn-navy);cursor:pointer;text-align:left}
-.pn-busca-lista button small{margin-left:auto;color:var(--pn-mut);font-weight:600;font-size:12px}
-.pn-busca-lista button.sel{background:#EEF2FF;color:var(--pn-royal)}
-.pn-busca-vazio{padding:18px;color:var(--pn-mut);font:500 14px var(--font-dm-sans),sans-serif}
 @keyframes pnFade{from{opacity:0}to{opacity:1}}
 @keyframes pnSobe{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
 
