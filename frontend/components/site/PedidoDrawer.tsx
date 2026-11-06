@@ -94,6 +94,12 @@ export default function PedidoDrawer({ itens, dtfMetros, dtfPreco, capas, logado
               : <a className="btn navy" href="/portal">Ver meus pedidos</a>}
           </>
         )}
+        {/* PIV 06/11: convite da Iluminado Seller (opção B). Quem compra no atacado costuma revender. Frase: Klayver (copy-squad). */}
+        <div className="ilu-convite">
+          <img src="/iluminado-seller.png" alt="Iluminado Seller" width={220} height={94} />
+          <p>Vende no marketplace e passa o dia preso em anúncio, nota e etiqueta? A Iluminado Seller faz essa parte por você.</p>
+          <a href="https://iluminadoseller.com.br" target="_blank" rel="noopener">Ver como funciona →</a>
+        </div>
       </div>
     )
   }

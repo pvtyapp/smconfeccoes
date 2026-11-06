@@ -463,3 +463,10 @@
 .smsite .ilu-masc{width:150px}
 .smsite .ilu-luz{width:110px;height:110px;margin-left:-46px}
 @media (max-width:640px){.smsite .ilu-in{min-height:150px}.smsite .ilu-masc{width:100px}.smsite .ilu-luz{width:76px;height:76px;margin-left:-32px}.smsite .ilu-btn{font-size:12px}}
+
+/* convite da Iluminado Seller na gaveta de pedido enviado (PIV 06/11, opção B) */
+.smsite .ok .ilu-convite{justify-self:stretch;background:var(--soft);border-radius:16px;padding:16px;display:grid;gap:10px;justify-items:start;margin-top:4px}
+.smsite .ok .ilu-convite img{height:40px;width:auto}
+.smsite .ok .ilu-convite p{margin:0;font-size:14px;line-height:1.5;color:var(--navy2)}
+.smsite .ok .ilu-convite a{font:800 13px var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--royal);text-decoration:none}
+.smsite .ok .ilu-convite a:hover{color:var(--royal2);text-decoration:underline}
