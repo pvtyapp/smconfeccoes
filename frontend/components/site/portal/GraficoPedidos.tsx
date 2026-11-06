@@ -11,11 +11,16 @@ import { brl } from "../util"
 
 type Ponto = { ini: string; fim: string; pecas: number; valor: number; pedidos: number }
 type Metrica = "pecas" | "valor"
+// Unidade da série (PIV 06/11): peças (pedidos) ou metros (DTF). O campo "pecas" do ponto guarda a quantidade nessa unidade.
+export type Unidade = { um: string; varios: string; rotulo: string; titulo: string; casas: number }
+export const PECAS: Unidade = { um: "peça", varios: "peças", rotulo: "Peças", titulo: "Seus pedidos", casas: 0 }
+export const METROS: Unidade = { um: "metro", varios: "metros", rotulo: "Metros", titulo: "Seu DTF", casas: 2 }
+const qtd = (u: Unidade, v: number) => { const n = Number(v.toFixed(u.casas)); return `${n.toLocaleString("pt-BR", { maximumFractionDigits: u.casas })} ${n === 1 ? u.um : u.varios}` }
 
 const dia = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 const somaDias = (iso: string, n: number) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return dia(d) }
 const curta = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
-const fmt = (m: Metrica, v: number) => (m === "valor" ? brl(v) : `${v} ${v === 1 ? "peça" : "peças"}`)
+const fmt = (m: Metrica, v: number, u: Unidade = PECAS) => (m === "valor" ? brl(v) : qtd(u, v))
 
 function serie(pedidos: Pedido[], de: string, ate: string): Ponto[] {
   const porDia = new Map<string, { pecas: number; valor: number; pedidos: number }>()
@@ -46,7 +51,7 @@ function teto(v: number) {
   return 10 * p
 }
 
-function Barras({ pontos, metrica, grande }: { pontos: Ponto[]; metrica: Metrica; grande?: boolean }) {
+function Barras({ pontos, metrica, grande, un = PECAS }: { pontos: Ponto[]; metrica: Metrica; grande?: boolean; un?: Unidade }) {
   const [foco, setFoco] = useState<number | null>(null)
   // o grande desenha na largura real (no celular o texto dos eixos não encolhe)
   const caixa = useRef<HTMLDivElement>(null)
@@ -76,7 +81,7 @@ function Barras({ pontos, metrica, grande }: { pontos: Ponto[]; metrica: Metrica
   return (
     <div className="gf-plot" ref={caixa}>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" style={{ height: H }}
-        aria-label={`Volume de ${metrica === "valor" ? "valor" : "peças"} por ${pontos[0]?.ini === pontos[0]?.fim ? "dia" : "semana"}, de ${curta(pontos[0]?.ini ?? "")} a ${curta(pontos[pontos.length - 1]?.fim ?? "")}`}>
+        aria-label={`Volume de ${metrica === "valor" ? "valor" : un.varios} por ${pontos[0]?.ini === pontos[0]?.fim ? "dia" : "semana"}, de ${curta(pontos[0]?.ini ?? "")} a ${curta(pontos[pontos.length - 1]?.fim ?? "")}`}>
         {grande && [0, 0.5, 1].map((f) => (
           <g key={f}>
             <line x1={padL} x2={W} y1={y(max * f)} y2={y(max * f)} className="gf-grade" />
@@ -96,34 +101,34 @@ function Barras({ pontos, metrica, grande }: { pontos: Ponto[]; metrica: Metrica
         })}
         {grande && vals[iMax] > 0 && foco === null && (
           <text x={Math.min(W - 4, Math.max(padL + 4, padL + iMax * slot + slot / 2))} y={y(vals[iMax]) - 6}
-            textAnchor={padL + iMax * slot + slot / 2 > W - 60 ? "end" : padL + iMax * slot + slot / 2 < padL + 60 ? "start" : "middle"} className="gf-rotulo">{fmt(metrica, vals[iMax])}</text>
+            textAnchor={padL + iMax * slot + slot / 2 > W - 60 ? "end" : padL + iMax * slot + slot / 2 < padL + 60 ? "start" : "middle"} className="gf-rotulo">{fmt(metrica, vals[iMax], un)}</text>
         )}
       </svg>
       {grande && p && (
         <div className="gf-tip" style={{ left: `${((padL + (foco! + 0.5) * slot) / W) * 100}%` }}>
           <b>{p.ini === p.fim ? curta(p.ini) : `${curta(p.ini)} a ${curta(p.fim)}`}</b>
-          <span>{fmt("pecas", p.pecas)}</span><span>{brl(p.valor)}</span><span>{p.pedidos} {p.pedidos === 1 ? "pedido" : "pedidos"}</span>
+          <span>{fmt("pecas", p.pecas, un)}</span><span>{brl(p.valor)}</span><span>{p.pedidos} {p.pedidos === 1 ? "pedido" : "pedidos"}</span>
         </div>
       )}
     </div>
   )
 }
 
-export function CardGrafico({ pedidos, onAbrir }: { pedidos: Pedido[]; onAbrir: () => void }) {
+export function CardGrafico({ pedidos, onAbrir, un = PECAS }: { pedidos: Pedido[]; onAbrir: () => void; un?: Unidade }) {
   const hoje = dia(new Date())
   const pts = useMemo(() => serie(pedidos, somaDias(hoje, -29), hoje), [pedidos, hoje])
   const pecas = pts.reduce((s, p) => s + p.pecas, 0), valor = pts.reduce((s, p) => s + p.valor, 0), n = pts.reduce((s, p) => s + p.pedidos, 0)
   return (
-    <button type="button" className="pt-card gf-card" onClick={onAbrir} aria-label="Abrir gráfico de pedidos">
-      <small>Seus pedidos · 30 dias</small>
-      <b>{pecas} {pecas === 1 ? "peça" : "peças"}</b>
-      <Barras pontos={pts} metrica="pecas" />
+    <button type="button" className="pt-card gf-card" onClick={onAbrir} aria-label={`Abrir gráfico: ${un.titulo.toLowerCase()}`}>
+      <small>{un.titulo} · 30 dias</small>
+      <b>{qtd(un, pecas)}</b>
+      <Barras pontos={pts} metrica="pecas" un={un} />
       <span>{n} {n === 1 ? "pedido" : "pedidos"} · {brl(valor)} <em>ver maior →</em></span>
     </button>
   )
 }
 
-export function ModalGrafico({ pedidos, onFechar }: { pedidos: Pedido[]; onFechar: () => void }) {
+export function ModalGrafico({ pedidos, onFechar, un = PECAS }: { pedidos: Pedido[]; onFechar: () => void; un?: Unidade }) {
   const hoje = dia(new Date())
   const [de, setDe] = useState(somaDias(hoje, -29))
   const [ate, setAte] = useState(hoje)
@@ -142,9 +147,9 @@ export function ModalGrafico({ pedidos, onFechar }: { pedidos: Pedido[]; onFecha
 
   return (
     <div className="gf-ov" onClick={onFechar}>
-      <div className="gf-modal" role="dialog" aria-modal="true" aria-label="Volume de pedidos" onClick={(e) => e.stopPropagation()}>
+      <div className="gf-modal" role="dialog" aria-modal="true" aria-label={`Volume: ${un.titulo.toLowerCase()}`} onClick={(e) => e.stopPropagation()}>
         <div className="gf-topo">
-          <div><span className="eye">Seus pedidos</span><p className="tit">Volume no período</p></div>
+          <div><span className="eye">{un.titulo}</span><p className="tit">Volume no período</p></div>
           <button className="x" type="button" onClick={onFechar} aria-label="Fechar">×</button>
         </div>
         <div className="gf-filtros">
@@ -154,24 +159,24 @@ export function ModalGrafico({ pedidos, onFechar }: { pedidos: Pedido[]; onFecha
           <label>De <input type="date" value={de} max={ate} onChange={(e) => e.target.value && setDe(e.target.value)} /></label>
           <label>Até <input type="date" value={ate} min={de} max={hoje} onChange={(e) => e.target.value && setAte(e.target.value)} /></label>
           <div className="tabs" role="group" aria-label="Mostrar">
-            <button type="button" aria-pressed={metrica === "pecas"} onClick={() => setMetrica("pecas")}>Peças</button>
+            <button type="button" aria-pressed={metrica === "pecas"} onClick={() => setMetrica("pecas")}>{un.rotulo}</button>
             <button type="button" aria-pressed={metrica === "valor"} onClick={() => setMetrica("valor")}>R$</button>
           </div>
         </div>
         <div className="gf-totais">
-          <div><small>Peças</small><b>{pecas}</b></div>
+          <div><small>{un.rotulo}</small><b>{Number(pecas.toFixed(un.casas)).toLocaleString("pt-BR")}</b></div>
           <div><small>Valor</small><b>{brl(valor)}</b></div>
           <div><small>Pedidos</small><b>{n}</b></div>
           <div><small>Média por pedido</small><b>{n ? brl(valor / n) : "–"}</b></div>
         </div>
         {n === 0 ? <p className="obs">Nenhum pedido nesse período.</p> : lista ? (
           <div className="gw"><table className="gr">
-            <thead><tr><th>{pts[0]?.ini === pts[0]?.fim ? "Dia" : "Semana"}</th><th>Peças</th><th>Valor</th><th>Pedidos</th></tr></thead>
+            <thead><tr><th>{pts[0]?.ini === pts[0]?.fim ? "Dia" : "Semana"}</th><th>{un.rotulo}</th><th>Valor</th><th>Pedidos</th></tr></thead>
             <tbody>{pts.filter((p) => p.pedidos).map((p) => (
-              <tr key={p.ini}><td>{p.ini === p.fim ? curta(p.ini) : `${curta(p.ini)} a ${curta(p.fim)}`}</td><td>{p.pecas}</td><td>{brl(p.valor)}</td><td>{p.pedidos}</td></tr>
+              <tr key={p.ini}><td>{p.ini === p.fim ? curta(p.ini) : `${curta(p.ini)} a ${curta(p.fim)}`}</td><td>{Number(p.pecas.toFixed(un.casas)).toLocaleString("pt-BR")}</td><td>{brl(p.valor)}</td><td>{p.pedidos}</td></tr>
             ))}</tbody>
           </table></div>
-        ) : <Barras pontos={pts} metrica={metrica} grande />}
+        ) : <Barras pontos={pts} metrica={metrica} grande un={un} />}
         {n > 0 && <button className="link" type="button" onClick={() => setLista((v) => !v)}>{lista ? "Ver gráfico" : "Ver em lista"}</button>}
       </div>
     </div>

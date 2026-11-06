@@ -142,31 +142,42 @@ export async function GET(req: Request) {
         AND DATE(exhausted_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
     `, [from, to])
 
-    // Marketplace — custo de reposição (peças separadas × material_cost),
-    // Só custo: NÃO entra em receitaBruta/custoInsumos/lucroBruto/resultadoOp —
-    // marketplace não tem receita real registrada aqui (vende fora, na
-    // Shopee/ML). A aba Financeiro Marketplace (receita simulada por markup)
-    // foi removida em 2026-10-02: a receita digitada nunca foi usada. Isso
-    // aqui é só visibilidade de quanto saiu do estoque pra esse canal.
-    const { rows: mktRows } = await pool.query(`
-      SELECT
-        SUM(msi.qty)::int AS pecas,
-        SUM(msi.qty * COALESCE(p.material_cost, 0))::float AS custo,
-        COUNT(DISTINCT ms.id)::int AS separacoes,
-        BOOL_OR(p.material_cost IS NULL) AS "custoIncompleto"
-      FROM marketplace_separations ms
-      JOIN marketplace_separation_items msi ON msi.separation_id = ms.id
-      JOIN product_variants pv ON pv.id = msi.variant_id
-      JOIN products p ON p.id = pv.product_id
-      WHERE ms.canceled_at IS NULL
-        AND DATE(ms.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
-    `, [from, to])
+    // Marketplace (PIV 06/11): resultado real das lojas da SM (SHP_MARI, SHP_SAMU,
+    // TKTK_SAMU) que o fechamento diário do PC 01 grava em marketplace_fechamentos
+    // (vendas, taxas, cupom, frete, ads e custo das peças). Antes isso aqui era só
+    // o custo das peças separadas, sem receita; agora entra no DRE completo.
+    const { rows: mktLojas } = await pool.query(`
+      SELECT loja,
+             SUM(pedidos)::int AS pedidos, SUM(pecas)::int AS pecas,
+             SUM(vendas)::float AS vendas, SUM(taxas)::float AS taxas, SUM(cupom)::float AS cupom,
+             SUM(frete)::float AS frete, SUM(ads)::float AS ads,
+             COALESCE(SUM(custo), 0)::float AS custo,
+             BOOL_OR(custo IS NULL) OR SUM(itens_sem_custo) > 0 AS "custoIncompleto",
+             COUNT(*)::int AS dias
+      FROM marketplace_fechamentos
+      WHERE dia BETWEEN $1 AND $2
+      GROUP BY loja ORDER BY loja
+    `, [from, to]).catch(() => ({ rows: [] as Record<string, unknown>[] }))
+    const lojasMkt = mktLojas.map(r => ({
+      loja: String(r.loja), pedidos: Number(r.pedidos), pecas: Number(r.pecas), dias: Number(r.dias),
+      vendas: Number(r.vendas), taxas: Number(r.taxas), cupom: Number(r.cupom), frete: Number(r.frete),
+      ads: Number(r.ads), custo: Number(r.custo), custoIncompleto: Boolean(r.custoIncompleto),
+    }))
+    const somaMkt = (k: "vendas" | "taxas" | "cupom" | "frete" | "ads" | "custo" | "pecas") => lojasMkt.reduce((s, l) => s + l[k], 0)
     const marketplace = {
-      custo:           Number(mktRows[0]?.custo ?? 0),
-      pecas:           Number(mktRows[0]?.pecas ?? 0),
-      separacoes:      Number(mktRows[0]?.separacoes ?? 0),
-      custoIncompleto: Boolean(mktRows[0]?.custoIncompleto ?? false),
+      custo:           somaMkt("custo"),
+      pecas:           somaMkt("pecas"),
+      separacoes:      0,
+      custoIncompleto: lojasMkt.some(l => l.custoIncompleto),
+      vendas:          somaMkt("vendas"),
+      lojas:           lojasMkt,
     }
+
+    // Alíquota de imposto sobre a venda (Simples etc.), em %. Configurável no próprio
+    // relatório; começa em 0 até o PIV informar (06/11).
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).catch(() => {})
+    const { rows: aliqRows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'dre_aliquota_imposto'`).catch(() => ({ rows: [] as { value: string }[] }))
+    const aliquota = Math.max(0, Number(String(aliqRows[0]?.value ?? "0").replace(",", ".")) || 0)
 
     // DTF pedidos concluídos no período — pela data em que o pedido foi FEITO
     // (p.data), não pela data em que fechou no sistema (mesmo critério do
@@ -278,6 +289,14 @@ export async function GET(req: Request) {
       s + (o.items ?? []).reduce((si: number, i: { qty: number }) => si + i.qty, 0), 0)
     const ticketMedio = concluded.length > 0 ? receitaBruta / concluded.length : 0
 
+    // Custo das peças por canal (pedidos concluídos), pro lucro por canal
+    const custoCanal: Record<string, number> = {}
+    for (const o of concluded) {
+      for (const item of (o.items ?? [])) {
+        if (item.costPrice != null) custoCanal[o.source] = (custoCanal[o.source] ?? 0) + item.costPrice * item.qty
+      }
+    }
+
     // Revenue by channel
     const byChannel: Record<string, number> = {}
     for (const o of concluded) {
@@ -298,8 +317,66 @@ export async function GET(req: Request) {
       }))
       .sort((a, b) => b.revenue - a.revenue)
 
+    // ── DRE completo (PIV 06/11): lucro de verdade, com o marketplace dentro ──
+    const r2 = (v: number) => Math.round(v * 100) / 100
+    const receitaLojaTotal = receitaBruta + marketplace.vendas
+    const impostos         = r2(receitaLojaTotal * aliquota / 100)
+    const deducoesMkt      = somaMkt("taxas") + somaMkt("cupom") + somaMkt("frete")
+    const receitaLiquida   = receitaLojaTotal - deducoesMkt - impostos
+    const cmv              = (custoInsumosKnown ? custoInsumos : 0) + marketplace.custo
+    const lucroBrutoTotal  = receitaLiquida - cmv
+    const despesasVenda    = somaMkt("ads") + custoVariavel
+    const lucroLiquido     = lucroBrutoTotal - despesasVenda - custoFixo - perdasDescarte
+    const completo = {
+      aliquota,
+      receitaBruta: receitaLojaTotal,
+      receitaLoja: receitaBruta,
+      receitaMarketplace: marketplace.vendas,
+      taxasMarketplace: somaMkt("taxas"), cupomMarketplace: somaMkt("cupom"), freteMarketplace: somaMkt("frete"),
+      impostos,
+      receitaLiquida,
+      custoPecasLoja: custoInsumosKnown ? custoInsumos : null,
+      custoPecasMarketplace: marketplace.custo,
+      cmv,
+      lucroBruto: lucroBrutoTotal,
+      adsMarketplace: somaMkt("ads"),
+      custoVariavel,
+      custoFixo,
+      perdasDescarte,
+      lucroLiquido,
+      margemBruta:   receitaLojaTotal > 0 ? (lucroBrutoTotal / receitaLojaTotal) * 100 : null,
+      margemLiquida: receitaLojaTotal > 0 ? (lucroLiquido / receitaLojaTotal) * 100 : null,
+      custoIncompleto: !custoInsumosKnown && receitaOrdens > 0 || marketplace.custoIncompleto || (metrosDtf > 0 && custoDtfUnitario === null),
+    }
+
+    // Lucro por canal = receita − deduções (imposto, taxas, cupom, frete) − custo das peças − ads.
+    // Custo fixo, custo variável e perdas não são rateados: ficam só no total.
+    const imp = (v: number) => v * aliquota / 100
+    const LABEL: Record<string, string> = { pdv: "Balcão (PDV)", whatsapp: "WhatsApp", site: "Site", SHP_MARI: "Shopee MARI", SHP_SAMU: "Shopee SAMU", TKTK_SAMU: "TikTok SAMU" }
+    const canais: { canal: string; nome: string; receita: number; deducoes: number; custo: number | null; ads: number; lucro: number | null; margem: number | null }[] = []
+    for (const ch of ["pdv", "whatsapp", "site"]) {
+      const receita = byChannel[ch] ?? 0
+      if (!receita) continue
+      const custo = custoCanal[ch] ?? (custoInsumosKnown ? 0 : null)
+      const lucro = custo == null ? null : receita - imp(receita) - custo
+      canais.push({ canal: ch, nome: LABEL[ch], receita, deducoes: imp(receita), custo, ads: 0, lucro, margem: lucro != null && receita ? (lucro / receita) * 100 : null })
+    }
+    if (receitaDtf > 0) {
+      const custo = custoDtfUnitario != null ? custoDtfUnitario * metrosDtf : null
+      const lucro = custo == null ? null : receitaDtf - imp(receitaDtf) - custo
+      canais.push({ canal: "dtf", nome: "DTF", receita: receitaDtf, deducoes: imp(receitaDtf), custo, ads: 0, lucro, margem: lucro != null ? (lucro / receitaDtf) * 100 : null })
+    }
+    if (receitaAvarias > 0) canais.push({ canal: "avarias", nome: "Avarias vendidas", receita: receitaAvarias, deducoes: imp(receitaAvarias), custo: 0, ads: 0, lucro: receitaAvarias - imp(receitaAvarias), margem: 100 - aliquota })
+    for (const l of lojasMkt) {
+      const ded = l.taxas + l.cupom + l.frete + imp(l.vendas)
+      const lucro = l.vendas - ded - l.custo - l.ads
+      canais.push({ canal: l.loja, nome: LABEL[l.loja] ?? l.loja, receita: l.vendas, deducoes: ded, custo: l.custo, ads: l.ads, lucro, margem: l.vendas ? (lucro / l.vendas) * 100 : null })
+    }
+
     return NextResponse.json({
       period: { from, to, days },
+      completo,
+      canais,
       dre: {
         receitaBruta,
         receitaAvarias,

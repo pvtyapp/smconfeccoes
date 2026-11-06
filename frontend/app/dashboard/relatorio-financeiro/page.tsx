@@ -48,11 +48,36 @@ export type MaterialFlow = {
   saidas:   { total: number; count: number }
 }
 
+export type LojaMkt = {
+  loja: string; pedidos: number; pecas: number; dias: number
+  vendas: number; taxas: number; cupom: number; frete: number; ads: number; custo: number; custoIncompleto: boolean
+}
+
 export type MarketplaceCusto = {
   custo: number
   pecas: number
   separacoes: number
   custoIncompleto: boolean
+  vendas: number
+  lojas: LojaMkt[]
+}
+
+// DRE completo (PIV 06/11): lucro de verdade, com o marketplace dentro
+export type DreCompleto = {
+  aliquota: number
+  receitaBruta: number; receitaLoja: number; receitaMarketplace: number
+  taxasMarketplace: number; cupomMarketplace: number; freteMarketplace: number; impostos: number
+  receitaLiquida: number
+  custoPecasLoja: number | null; custoPecasMarketplace: number; cmv: number
+  lucroBruto: number
+  adsMarketplace: number; custoVariavel: number; custoFixo: number; perdasDescarte: number
+  lucroLiquido: number
+  margemBruta: number | null; margemLiquida: number | null
+  custoIncompleto: boolean
+}
+
+export type CanalLucro = {
+  canal: string; nome: string; receita: number; deducoes: number; custo: number | null; ads: number; lucro: number | null; margem: number | null
 }
 
 export type ReportData = {
@@ -61,6 +86,8 @@ export type ReportData = {
   summary:        Summary
   byChannel:      Record<string, number>
   marketplace:    MarketplaceCusto
+  completo:       DreCompleto
+  canais:         CanalLucro[]
   productRanking: ProductRow[]
   materialFlow:   MaterialFlow
   diagnostico:    { semCusto: string[]; dtfSemCusto: boolean }
@@ -210,7 +237,9 @@ export default function RelatorioFinanceiroPage() {
   const [data,       setData]       = useState<ReportData | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [error,      setError]      = useState("")
-  const [dreOpen,    setDreOpen]    = useState(false)
+  const [dreOpen,    setDreOpen]    = useState(true)
+  const [aliqEdit,   setAliqEdit]   = useState<string | null>(null)
+  const [aliqSaving, setAliqSaving] = useState(false)
   const [stockOpen,  setStockOpen]  = useState(true)
   const [stockVal,   setStockVal]   = useState<StockValuation | null>(null)
   const [showReport, setShowReport] = useState(false)
@@ -244,7 +273,19 @@ export default function RelatorioFinanceiroPage() {
 
   const dre          = data?.dre
   const summary      = data?.summary
-  const channelTotal = Object.values(data?.byChannel ?? {}).reduce((s, v) => s + v, 0)
+  const comp         = data?.completo
+  const channelTotal = Object.values(data?.byChannel ?? {}).reduce((s, v) => s + v, 0) + (data?.marketplace.vendas ?? 0)
+  const pedidosMkt   = (data?.marketplace.lojas ?? []).reduce((n, l) => n + l.pedidos, 0)
+
+  async function salvarAliquota() {
+    if (aliqEdit === null) return
+    setAliqSaving(true)
+    try {
+      const r = await fetch("/api/relatorio-financeiro/imposto", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aliquota: aliqEdit }) })
+      if (!r.ok) { const d = await r.json().catch(() => ({})); setError(d.error ?? "Não deu pra salvar a alíquota"); return }
+      setAliqEdit(null); await load()
+    } finally { setAliqSaving(false) }
+  }
 
   return (
     <div className="space-y-6">
@@ -344,7 +385,7 @@ export default function RelatorioFinanceiroPage() {
               </p>
             </div>
             <div className="p-6">
-              {Object.keys(data.byChannel).length === 0 && data.marketplace.custo === 0 ? (
+              {Object.keys(data.byChannel).length === 0 && data.marketplace.vendas === 0 ? (
                 <p className="text-sm text-center text-[#0F1E3C]/30 py-4">Sem vendas concluídas no período</p>
               ) : (
                 <>
@@ -375,37 +416,38 @@ export default function RelatorioFinanceiroPage() {
                       )
                     })}
 
-                    {/* Marketplace — custo de reposição, não receita. Fora do
-                        cálculo de %/total dos canais acima de propósito: não
-                        tem receita real registrada aqui (vende fora, na
-                        Shopee/ML). Detalhe por loja/período fica no
-                        Relatório de baixas da aba Marketplace. */}
+                    {/* Marketplace (PIV 06/11): receita das lojas da SM pelo fechamento diário
+                        (marketplace_fechamentos); entra no total e no DRE. */}
                     <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
                       <div className="flex items-center gap-1.5 mb-2">
                         <Store size={11} className="text-amber-700/70" />
                         <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700/70">Marketplace</p>
                       </div>
                       <p className="text-2xl font-black leading-none text-amber-700">
-                        {data.marketplace.custo > 0 ? `(${fmtRDRE(data.marketplace.custo)})` : "—"}
+                        {data.marketplace.vendas > 0 ? fmtRDRE(data.marketplace.vendas) : "—"}
                       </p>
+                      <div className="mt-3 h-1.5 bg-[#0F1E3C]/6 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-amber-500 transition-all duration-500"
+                          style={{ width: `${channelTotal > 0 ? (data.marketplace.vendas / channelTotal) * 100 : 0}%` }} />
+                      </div>
                       <p className="text-[10px] text-amber-700/60 mt-1.5 font-semibold">
-                        custo de reposição · {data.marketplace.pecas} peças
+                        {data.marketplace.lojas.map(l => `${l.loja.replace("SHP_", "Shopee ").replace("TKTK_", "TikTok ")} ${fmtRDRE(l.vendas)}`).join(" · ") || "sem fechamento no período"}
                       </p>
                       {data.marketplace.custoIncompleto && (
                         <p className="text-[9px] text-amber-700 mt-1 flex items-center gap-1">
-                          <AlertTriangle size={10} /> produto sem custo cadastrado
+                          <AlertTriangle size={10} /> dia ou item sem custo no fechamento
                         </p>
                       )}
-                      <Link href="/dashboard/marketplace"
+                      <Link href="/dashboard/marketplace-painel"
                         className="text-[10px] font-bold text-amber-700 hover:underline mt-2 inline-block">
-                        Ver baixas do marketplace →
+                        Ver painel do marketplace →
                       </Link>
                     </div>
                   </div>
                   {/* Total */}
                   <div className="flex items-center justify-between pt-3 border-t border-[#0F1E3C]/6">
                     <span className="text-xs font-semibold text-[#0F1E3C]/40 uppercase tracking-wider">
-                      Total · {summary?.pedidosConcluidos ?? 0} pedidos concluídos
+                      Total · {summary?.pedidosConcluidos ?? 0} pedidos concluídos{pedidosMkt > 0 ? ` + ${pedidosMkt} do marketplace` : ""}
                     </span>
                     <span className="text-lg font-black text-[#0F1E3C]">{fmtRDRE(channelTotal)}</span>
                   </div>
@@ -444,72 +486,53 @@ export default function RelatorioFinanceiroPage() {
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Faturamento</p>
                 <p className="text-3xl font-black text-[#4361EE] leading-none">
-                  {fmtRDRE(dre?.receitaBruta ?? 0)}
+                  {fmtRDRE(comp?.receitaBruta ?? dre?.receitaBruta ?? 0)}
                 </p>
                 <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
-                  {summary?.totalPecas ?? 0} peças · ticket {fmtRDRE(summary?.ticketMedio ?? 0)}
+                  loja {fmtRDRE(comp?.receitaLoja ?? 0)} · marketplace {fmtRDRE(comp?.receitaMarketplace ?? 0)}
                 </p>
               </div>
 
-              {/* Lucro */}
+              {/* Lucro líquido (PIV 06/11) */}
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Lucro</p>
-                {dre?.resultadoOp != null ? (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Lucro líquido</p>
+                {comp ? (
                   <>
-                    <p className={`text-3xl font-black leading-none ${dre.resultadoOp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {fmtRDRE(dre.resultadoOp)}
+                    <p className={`text-3xl font-black leading-none ${comp.lucroLiquido >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {fmtRDRE(comp.lucroLiquido)}
                     </p>
-                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">resultado operacional</p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">
+                      depois de taxas, imposto, peças, ads e custo fixo
+                      {comp.custoIncompleto && <span className="ml-1 text-amber-600 font-semibold">· tem custo faltando</span>}
+                    </p>
                   </>
-                ) : (
-                  <>
-                    <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>
-                    <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">custos não cadastrados</p>
-                  </>
-                )}
+                ) : <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>}
               </div>
 
-              {/* Margem */}
+              {/* Margem líquida */}
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Margem</p>
-                {summary?.margemOp != null ? (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Margem líquida</p>
+                {comp?.margemLiquida != null ? (
                   <>
-                    <p className={`text-3xl font-black leading-none ${summary.margemOp >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {summary.margemOp.toFixed(1)}%
+                    <p className={`text-3xl font-black leading-none ${comp.margemLiquida >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {comp.margemLiquida.toFixed(1)}%
                     </p>
-                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem operacional sobre receita</p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">lucro líquido sobre a receita bruta</p>
                   </>
-                ) : summary?.margemBruta != null ? (
-                  <>
-                    <p className={`text-3xl font-black leading-none ${summary.margemBruta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {summary.margemBruta.toFixed(1)}%
-                    </p>
-                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem bruta (s/ insumos)</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>
-                    <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">sem custo cadastrado</p>
-                  </>
-                )}
+                ) : <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>}
               </div>
 
-              {/* Resultado s/ Insumos */}
+              {/* Lucro bruto */}
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Resultado s/ Insumos</p>
-                {dre?.lucroBruto != null ? (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/35 mb-1">Lucro bruto</p>
+                {comp ? (
                   <>
-                    <p className={`text-3xl font-black leading-none ${dre.lucroBruto >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {fmtRDRE(dre.lucroBruto)}
+                    <p className={`text-3xl font-black leading-none ${comp.lucroBruto >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {fmtRDRE(comp.lucroBruto)}
                     </p>
-                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem {pct(summary?.margemBruta ?? null)} · após custo de material</p>
+                    <p className="text-[10px] text-[#0F1E3C]/40 mt-1.5">margem {pct(comp.margemBruta)} · receita líquida menos o custo das peças</p>
                   </>
-                ) : (
-                  <>
-                    <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>
-                    <p className="text-[10px] text-[#0F1E3C]/30 mt-1.5">custo de material não cadastrado</p>
-                  </>
-                )}
+                ) : <p className="text-3xl font-black leading-none text-[#0F1E3C]/20">—</p>}
               </div>
 
               {/* Peças / Ticket */}
@@ -527,6 +550,51 @@ export default function RelatorioFinanceiroPage() {
           </div>
 
           {/* Fluxo de Insumos (matéria-prima da Produção) saiu com a Produção (PIV 05/11) */}
+
+          {/* ── 3. Lucro por Canal (PIV 06/11) ─────────────────────────────── */}
+          {(data.canais?.length ?? 0) > 0 && (
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-[#0F1E3C]/6">
+                <p className="text-sm font-bold text-[#0F1E3C]">Lucro por Canal</p>
+                <p className="text-[10px] text-[#0F1E3C]/35 mt-0.5">receita − imposto, taxas, cupom e frete − custo das peças − ads · custo fixo e variável ficam só no total</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#0F1E3C]/5 bg-[#F4F6FB]">
+                      {["Canal", "Receita", "Deduções", "Custo das peças", "Ads", "Lucro", "Margem"].map(h => (
+                        <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#0F1E3C]/4">
+                    {data.canais.map(c => (
+                      <tr key={c.canal} className="hover:bg-[#F4F6FB] transition-colors">
+                        <td className="px-4 py-3 font-semibold text-[#0F1E3C] whitespace-nowrap">{c.nome}</td>
+                        <td className="px-4 py-3 font-bold text-[#0F1E3C] tabular-nums">{fmtRDRE(c.receita)}</td>
+                        <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">{c.deducoes > 0 ? `(${fmtRDRE(c.deducoes)})` : "—"}</td>
+                        <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">
+                          {c.custo == null ? <span className="text-amber-600 text-xs">sem custo</span> : c.custo > 0 ? `(${fmtRDRE(c.custo)})` : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-[#0F1E3C]/50 tabular-nums">{c.ads > 0 ? `(${fmtRDRE(c.ads)})` : "—"}</td>
+                        <td className="px-4 py-3 font-bold tabular-nums">
+                          {c.lucro == null ? <span className="text-[#0F1E3C]/20">—</span>
+                            : <span className={c.lucro >= 0 ? "text-emerald-600" : "text-red-600"}>{fmtRDRE(c.lucro)}</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          {c.margem == null ? <span className="text-[10px] text-[#0F1E3C]/20">—</span> : (
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              c.margem >= 30 ? "bg-emerald-100 text-emerald-700" : c.margem >= 10 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+                            }`}>{c.margem.toFixed(1)}%</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* ── 4. Ranking de Produtos ───────────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
@@ -646,36 +714,70 @@ export default function RelatorioFinanceiroPage() {
                 : <ChevronDown size={16} className="text-[#0F1E3C]/30" />
               }
             </button>
-            {dreOpen && (
+            {dreOpen && comp && (
               <div className="px-6 py-4">
-                <DRERow bold label="(+) Receita Bruta" value={dre?.receitaBruta} />
-                {(dre?.receitaAvarias ?? 0) > 0 && (
-                  <DRERow label="↳ Avarias vendidas" value={dre?.receitaAvarias} indent
-                    sub="vendas de peças com desconto" />
-                )}
-                <DRERow label="(-) Custo de Insumos" value={dre?.custoInsumos != null ? -(dre.custoInsumos) : null}
-                  indent negative sub="material_cost dos produtos vendidos, já embute mão de obra" />
+                <DRERow bold label="(+) Receita Bruta" value={comp.receitaBruta} />
+                <DRERow label="Loja (balcão, WhatsApp, site, DTF, avarias)" value={comp.receitaLoja} indent />
+                <DRERow label="Marketplace (Shopee e TikTok)" value={comp.receitaMarketplace} indent
+                  sub={data.marketplace.lojas.length ? `${data.marketplace.lojas.map(l => l.loja).join(", ")} · fechamento diário` : "sem fechamento no período"} />
+                <DRERow label="(-) Taxas e comissões do marketplace" value={-comp.taxasMarketplace} indent negative />
+                {comp.cupomMarketplace > 0 && <DRERow label="(-) Cupons do marketplace" value={-comp.cupomMarketplace} indent negative />}
+                {comp.freteMarketplace > 0 && <DRERow label="(-) Frete do marketplace" value={-comp.freteMarketplace} indent negative />}
+                <div className="flex items-center justify-between py-2 pl-4">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[#0F1E3C]/25 text-xs">↳</span>
+                    <span className="text-sm text-[#0F1E3C]/70">(-) Impostos</span>
+                    {aliqEdit === null ? (
+                      <button onClick={() => setAliqEdit(String(comp.aliquota))}
+                        className="text-[10px] font-bold text-[#4361EE] hover:underline">
+                        {comp.aliquota > 0 ? `${comp.aliquota}% sobre a venda · editar` : "definir alíquota"}
+                      </button>
+                    ) : (
+                      <span className="flex items-center gap-1">
+                        <input value={aliqEdit} onChange={e => setAliqEdit(e.target.value)} inputMode="decimal"
+                          className="w-16 px-2 py-0.5 rounded-md border border-[#0F1E3C]/15 text-xs text-right focus:outline-none focus:ring-2 focus:ring-[#4361EE]/25" />
+                        <span className="text-xs text-[#0F1E3C]/50">%</span>
+                        <button onClick={salvarAliquota} disabled={aliqSaving}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#4361EE] text-white disabled:opacity-50">
+                          {aliqSaving ? "Salvando…" : "Salvar"}
+                        </button>
+                        <button onClick={() => setAliqEdit(null)} className="text-[10px] text-[#0F1E3C]/40 hover:underline">cancelar</button>
+                      </span>
+                    )}
+                  </div>
+                  <span className={`text-sm font-bold tabular-nums ${comp.impostos > 0 ? "text-red-600" : "text-[#0F1E3C]/25"}`}>
+                    {comp.impostos > 0 ? fmtRDRE(-comp.impostos) : "—"}
+                  </span>
+                </div>
                 <DRERow separator />
-                <DRERow bold label="Resultado s/ Insumos" value={dre?.lucroBruto}
-                  sub={dre?.lucroBruto != null ? `margem ${pct(summary?.margemBruta ?? null)}` : undefined} />
-                <DRERow label="(-) Custo Fixo" value={-(dre?.custoFixo ?? 0)} indent negative
-                  sub={`${data.period.days}d proporcionais ao mês · aluguel, energia`} />
-                {(dre?.perdasDescarte ?? 0) > 0 && (
-                  <DRERow label="(-) Perdas por Descarte" value={-(dre?.perdasDescarte ?? 0)} indent negative
-                    sub="qty × custo médio · avarias descartadas no período" />
+                <DRERow bold label="= Receita Líquida" value={comp.receitaLiquida} />
+                <DRERow label="(-) Custo das peças vendidas na loja" value={comp.custoPecasLoja != null ? -comp.custoPecasLoja : null} indent negative
+                  sub="custo cadastrado × qtd, inclui o DTF" />
+                <DRERow label="(-) Custo das peças do marketplace" value={-comp.custoPecasMarketplace} indent negative
+                  sub="pelo fechamento diário de cada loja" />
+                <DRERow separator />
+                <DRERow bold label="= Lucro Bruto" value={comp.lucroBruto} sub={`margem ${pct(comp.margemBruta)}`} />
+                <DRERow label="(-) Ads do marketplace" value={-comp.adsMarketplace} indent negative />
+                <DRERow label="(-) Custo variável" value={-comp.custoVariavel} indent negative sub="despesas variáveis lançadas no período" />
+                <DRERow label="(-) Custo fixo" value={-comp.custoFixo} indent negative
+                  sub={`${data.period.days}d proporcionais ao mês · aluguel, energia, folha`} />
+                {comp.perdasDescarte > 0 && (
+                  <DRERow label="(-) Perdas por descarte" value={-comp.perdasDescarte} indent negative sub="avarias descartadas no período" />
                 )}
                 <DRERow separator />
-                <DRERow bold label="Resultado Operacional" value={dre?.resultadoOp}
-                  sub={dre?.resultadoOp != null ? `margem op. ${pct(summary?.margemOp ?? null)}` : undefined} />
+                <DRERow bold label="= Lucro Líquido" value={comp.lucroLiquido} sub={`margem líquida ${pct(comp.margemLiquida)}`} />
+                {comp.custoIncompleto && (
+                  <p className="text-[10px] text-amber-600 font-semibold mt-1 flex items-center gap-1">
+                    <AlertTriangle size={10} /> Tem produto, DTF ou dia do marketplace sem custo: o lucro real é menor que o mostrado.
+                  </p>
+                )}
 
                 <div className="mt-4 pt-3 border-t border-dashed border-[#0F1E3C]/10">
                   <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider mb-1">
-                    Referência — não desconta do resultado acima
+                    Referência — não desconta do lucro acima
                   </p>
                   <DRERow label="Custo de Costura (simulador)" value={dre?.custoCostura ?? 0} indent
                     sub={`${data.period.days}d proporcionais ao mês · use pra ajustar o custo cadastrado do produto`} />
-                  <DRERow label="Custo Variável" value={dre?.custoVariavel ?? 0} indent
-                    sub="despesas variáveis lançadas no período" />
                   {(dre?.despesasPagas ?? 0) > 0 && (
                     <DRERow label="Contas a Pagar quitadas" value={dre?.despesasPagas ?? 0} indent
                       sub={`${dre?.despesasPagasCount ?? 0} conta${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} paga${(dre?.despesasPagasCount ?? 0) !== 1 ? "s" : ""} no período`} />

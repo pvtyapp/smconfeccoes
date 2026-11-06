@@ -1,7 +1,7 @@
 import type { ElementType } from "react"
 import {
   LayoutDashboard, Package, FolderTree, Wallet, Boxes,
-  UserRound, Users, Images, ShoppingBag,
+  UserRound, Users, ShoppingBag,
   Receipt, Store, TrendingDown,
   BarChart2, Printer, FlaskConical, FileBarChart, Megaphone, PieChart,
   Settings, Signal, CalendarDays, ShoppingCart, FileText, ClipboardList, Undo2, LineChart, ClipboardPen,
@@ -56,7 +56,6 @@ export const NAV_GROUPS: NavGroup[] = [
   ] },
   { label: "Marketing", items: [
     { href: "/dashboard/marketing",               label: "Marketing",          icon: Megaphone       },
-    { href: "/dashboard/catalogo",                label: "Produtos no site",   icon: Images          },
   ] },
   { label: "Sistema", items: [
     { href: "/dashboard/usuarios",                label: "Usuários",           icon: Users           },

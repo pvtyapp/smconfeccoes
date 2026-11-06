@@ -6,7 +6,7 @@ import DadosTab from "@/app/portal/DadosTab"
 import NotaFiscalTab from "@/app/portal/NotaFiscalTab"
 import PedidosCliente, { type Pedido } from "./PedidosCliente"
 import CreditoIluminado from "../CreditoIluminado"
-import { CardGrafico, ModalGrafico } from "./GraficoPedidos"
+import { CardGrafico, ModalGrafico, METROS } from "./GraficoPedidos"
 import SiteHome from "../SiteHome"
 import type { PublicCatalogProduct } from "@/lib/catalog/getPublicCatalog"
 
@@ -20,6 +20,9 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
   const [pedidos, setPedidos] = useState<Pedido[] | null>(null)
   const [erro, setErro] = useState(false)
   const [grafico, setGrafico] = useState(false)
+  // DTF do cliente (PIV 06/11): mesmo gráfico, contando metros. Card só aparece pra quem já pediu DTF.
+  const [dtf, setDtf] = useState<Pedido[]>([])
+  const [graficoDtf, setGraficoDtf] = useState(false)
   // "Pedir de novo": remonta a aba Catálogo com o pedido aberto
   const [repetido, setRepetido] = useState<{ v: "1" | "parcial"; n: number } | null>(null)
   const irCatalogo = () => { setAba("catalogo"); window.scrollTo({ top: 0, behavior: "smooth" }) }
@@ -31,6 +34,16 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
       .catch(() => { setPedidos([]); setErro(true) })
   }, [])
   useEffect(() => { carregar() }, [carregar])
+  useEffect(() => {
+    fetch("/api/portal/dtf")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: { id: number; status: string; createdAt: string; metros: number; valor: number }[]) => setDtf((Array.isArray(d) ? d : []).map((x) => ({
+        id: x.id, number: `DTF-${x.id}`, status: x.status, source: "dtf", totalValue: x.valor, paymentMethod: null, paidAt: null, dueDate: null,
+        createdAt: x.createdAt, contactName: null, contactPhone: null, fiscalNoteId: null, fiscalNoteStatus: null,
+        items: [{ id: x.id, productName: "DTF", color: null, size: null, qty: x.metros, unitPrice: null }],
+      }))))
+      .catch(() => setDtf([]))
+  }, [])
 
   // "Completar meus dados" do pedido manda pra cá com #dados
   useEffect(() => { if (location.hash === "#dados") setAba("dados"); else if (location.hash === "#notas") setAba("notas"); else if (location.hash === "#catalogo") setAba("catalogo") }, [])
@@ -73,6 +86,7 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
           {pedidos === null
             ? <div className="pt-card"><small>Seus pedidos · 30 dias</small><b>…</b></div>
             : <CardGrafico pedidos={lista} onAbrir={() => setGrafico(true)} />}
+          {dtf.length > 0 && <CardGrafico pedidos={dtf} un={METROS} onAbrir={() => setGraficoDtf(true)} />}
           <button type="button" className="pt-card novo" onClick={irCatalogo}>
             <small>Repor estoque</small>
             <b>Fazer pedido →</b>
@@ -105,6 +119,7 @@ export default function PortalSite({ name, products, dtfPreco }: { name: string;
       </main>
 
       {grafico && <ModalGrafico pedidos={lista} onFechar={() => setGrafico(false)} />}
+      {graficoDtf && <ModalGrafico pedidos={dtf} un={METROS} onFechar={() => setGraficoDtf(false)} />}
 
       <CreditoIluminado />
 

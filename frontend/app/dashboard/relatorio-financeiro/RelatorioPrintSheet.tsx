@@ -64,7 +64,8 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
   stockVal: StockValuation | null
   onDone: () => void
 }) {
-  const { dre, summary } = data
+  const { dre } = data
+  const c = data.completo
   const tz = "America/Sao_Paulo"
   const now = new Date()
   const emitDate = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: tz })
@@ -114,28 +115,26 @@ export default function RelatorioPrintSheet({ data, stockVal, onDone }: {
           <div style={{
             border: `1px solid #d8dde8`, borderRadius: "4px", padding: "10px 14px", background: NAVY_LIGHT,
           }}>
-            <DreLine bold label="(+) Receita Bruta" value={dre.receitaBruta} />
-            {dre.receitaAvarias > 0 && (
-              <DreLine label="↳ Avarias vendidas" value={dre.receitaAvarias} indent sub="vendas de peças com desconto" />
-            )}
-            <DreLine label="(-) Custo de Insumos" value={dre.custoInsumos != null ? -dre.custoInsumos : null}
-              indent sub="material dos produtos vendidos, já embute mão de obra" />
-            <DreLine bold label="Resultado s/ Insumos" value={dre.lucroBruto}
-              sub={dre.lucroBruto != null ? `margem ${pct(summary.margemBruta)}` : undefined} />
-            <DreLine label="(-) Custo Fixo" value={-dre.custoFixo} indent sub={`${data.period.days}d proporcionais ao mês · aluguel, energia`} />
-            {dre.perdasDescarte > 0 && (
-              <DreLine label="(-) Perdas por Descarte" value={-dre.perdasDescarte} indent sub="avarias descartadas no período" />
-            )}
-            <DreLine bold label="Resultado Operacional" value={dre.resultadoOp}
-              sub={dre.resultadoOp != null ? `margem op. ${pct(summary.margemOp)}` : undefined} />
+            <DreLine bold label="(+) Receita Bruta" value={c.receitaBruta} />
+            <DreLine label="Loja (balcão, WhatsApp, site, DTF, avarias)" value={c.receitaLoja} indent />
+            <DreLine label="Marketplace (Shopee e TikTok)" value={c.receitaMarketplace} indent />
+            <DreLine label="(-) Taxas, cupons e frete do marketplace" value={-(c.taxasMarketplace + c.cupomMarketplace + c.freteMarketplace)} indent />
+            <DreLine label={`(-) Impostos (${c.aliquota}%)`} value={-c.impostos} indent />
+            <DreLine bold label="= Receita Líquida" value={c.receitaLiquida} />
+            <DreLine label="(-) Custo das peças (loja + marketplace)" value={-c.cmv} indent />
+            <DreLine bold label="= Lucro Bruto" value={c.lucroBruto} sub={`margem ${pct(c.margemBruta)}`} />
+            <DreLine label="(-) Ads do marketplace" value={-c.adsMarketplace} indent />
+            <DreLine label="(-) Custo variável" value={-c.custoVariavel} indent />
+            <DreLine label="(-) Custo fixo" value={-c.custoFixo} indent sub={`${data.period.days}d proporcionais ao mês`} />
+            {c.perdasDescarte > 0 && <DreLine label="(-) Perdas por descarte" value={-c.perdasDescarte} indent />}
+            <DreLine bold label="= Lucro Líquido" value={c.lucroLiquido} sub={`margem líquida ${pct(c.margemLiquida)}${c.custoIncompleto ? " · tem custo faltando" : ""}`} />
 
             <div style={{ marginTop: "8px", paddingTop: "6px", borderTop: "1px dashed #c8cdd8" }}>
               <p style={{ fontSize: "7px", fontWeight: 800, color: "#999", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "2px" }}>
-                Referência — não desconta do resultado acima
+                Referência — não desconta do lucro acima
               </p>
               <DreLine label="Custo de Costura (simulador)" value={dre.custoCostura} indent
                 sub={`${data.period.days}d proporcionais ao mês`} />
-              <DreLine label="Custo Variável" value={dre.custoVariavel} indent sub="despesas variáveis lançadas no período" />
               {dre.despesasPagas > 0 && (
                 <DreLine label="Contas a Pagar quitadas" value={dre.despesasPagas} indent
                   sub={`${dre.despesasPagasCount} conta${dre.despesasPagasCount !== 1 ? "s" : ""} paga${dre.despesasPagasCount !== 1 ? "s" : ""} no período`} />
