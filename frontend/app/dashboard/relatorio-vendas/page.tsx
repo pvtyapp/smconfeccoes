@@ -8,6 +8,7 @@ import Toggle from "@/components/Toggle"
 import PdvReceiptModal, { type SaleReceipt } from "@/app/dashboard/pdv/PdvReceiptModal"
 import { printWhenReady } from "@/components/print/print-utils"
 import VendasRelatorioPrintSheet from "./VendasRelatorioPrintSheet"
+import VendasGrafico from "./VendasGrafico"
 import { cancelarPedido } from "@/lib/fiscal/cancelarPedidoClient"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -553,6 +554,12 @@ export default function RelatorioVendasPage() {
           />
         </div>
       )}
+
+      {/* Gráfico do volume no período (altas e quedas), mesmos pedidos dos cartões */}
+      {sourceFilter !== "avarias" && (() => {
+        const d = getPeriodDates(period, rangeStart, rangeEnd)
+        return d ? <VendasGrafico pedidos={orders} de={d[0]} ate={d[1]} fonte={sourceFilter} busca={search} /> : null
+      })()}
 
       {/* Vendas por produto — nome genérico, soma pedidos concluídos + avarias vendidas */}
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
