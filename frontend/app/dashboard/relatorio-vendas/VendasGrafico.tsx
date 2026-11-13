@@ -1,7 +1,8 @@
 "use client"
 
 // Gráfico do volume de vendas do período (PIV 12/11/2026: "um gráfico pra acompanhar as altas e quedas").
-// Usa os mesmos pedidos que a tela já carregou (só concluídos, como os cartões). "Hoje"/"Ontem" = por hora; o resto = por dia.
+// Usa os mesmos pedidos que a tela já carregou (só vendas feitas, como os cartões). Receita segue a regra do prazo
+// (PIV 13/11): venda a prazo não soma no dia da venda, a baixa soma na hora em que o dinheiro entrou. "Hoje"/"Ontem" = por hora; o resto = por dia.
 // A linha tracejada é o período anterior do mesmo tamanho, buscado na mesma API, com o mesmo filtro de canal.
 // Um eixo só: receita, pedidos e peças trocam pelo botão (escalas diferentes não dividem o mesmo gráfico).
 
@@ -11,7 +12,9 @@ import { TZ } from "@/lib/tz"
 import { fmtR } from "@/lib/format"
 
 type Item = { productName: string; qty: number }
-export type PedidoGrafico = { number: string; source: string; status: string; totalValue: string | null; createdAt: string; contactName: string | null; items: Item[] | null }
+export type PedidoGrafico = { number: string; source: string; status: string; totalValue: string | null; createdAt: string; contactName: string | null; items: Item[] | null; dueDate?: string | null }
+export type RecebimentoGrafico = { source: string; contactName: string | null; amount: number; pagoEm: string }
+type Evento = { iso: string; receita: number; pedidos: number; pecas: number }
 type Metrica = "receita" | "pedidos" | "pecas"
 
 const METRICAS: { key: Metrica; label: string }[] = [
@@ -30,29 +33,37 @@ const rotDia = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
 const SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"]
 const semana = (d: string) => SEMANA[new Date(`${d}T12:00:00Z`).getUTCDay()]
 
-function valor(p: PedidoGrafico, m: Metrica) {
-  if (m === "receita") return Number(p.totalValue ?? 0)
-  if (m === "pedidos") return 1
-  return (p.items ?? []).filter(i => !isDtf(i.productName)).reduce((s, i) => s + i.qty, 0)
-}
+const valor = (e: Evento, m: Metrica) => e[m]
 const fmt = (v: number, m: Metrica) => m === "receita" ? fmtR(v) : v.toLocaleString("pt-BR")
 
 // mesmo filtro de canal/busca da tela
-function filtra(lista: PedidoGrafico[], fonte: string, busca: string) {
+// Pedido = 1 evento no dia da venda (peças e pedidos sempre; receita só se à vista).
+// Baixa de prazo = evento no dia do pagamento, só com a receita.
+function eventos(lista: PedidoGrafico[], recebs: RecebimentoGrafico[], fonte: string, busca: string): Evento[] {
   const q = busca.trim().toLowerCase()
-  return lista.filter(o => {
-    if (o.status !== "concluido") return false
+  const peds = lista.filter(o => {
+    const venda = o.status === "concluido" || (o.source === "pdv" && o.status === "pronto" && !!o.dueDate)
+    if (!venda) return false
     if (fonte === "manual" && o.number.startsWith("COB-")) return false
     if (q && !(o.contactName ?? "").toLowerCase().includes(q)) return false
     return fonte === "all" || o.source === fonte
-  })
+  }).map(o => ({
+    iso: o.createdAt,
+    receita: o.dueDate ? 0 : Number(o.totalValue ?? 0),
+    pedidos: 1,
+    pecas: (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((s, i) => s + i.qty, 0),
+  }))
+  const recs = fonte === "manual" || fonte === "avarias" ? [] : recebs.filter(r =>
+    (fonte === "all" || r.source === fonte) && (!q || (r.contactName ?? "").toLowerCase().includes(q))
+  ).map(r => ({ iso: r.pagoEm, receita: Number(r.amount), pedidos: 0, pecas: 0 }))
+  return [...peds, ...recs]
 }
 
-export default function VendasGrafico({ pedidos, de, ate, fonte, busca }: {
-  pedidos: PedidoGrafico[]; de: string; ate: string; fonte: string; busca: string
+export default function VendasGrafico({ pedidos, recebimentos = [], de, ate, fonte, busca }: {
+  pedidos: PedidoGrafico[]; recebimentos?: RecebimentoGrafico[]; de: string; ate: string; fonte: string; busca: string
 }) {
   const [metrica, setMetrica] = useState<Metrica>("receita")
-  const [anteriores, setAnteriores] = useState<PedidoGrafico[] | null>(null)
+  const [anteriores, setAnteriores] = useState<{ pedidos: PedidoGrafico[]; recebimentos: RecebimentoGrafico[] } | null>(null)
   const dias = difDias(de, ate) + 1
   const porHora = dias === 1
   const antDe = addDias(de, -dias), antAte = addDias(de, -1)
@@ -61,18 +72,22 @@ export default function VendasGrafico({ pedidos, de, ate, fonte, busca }: {
     let vivo = true
     setAnteriores(null)
     fetch(`/api/relatorio-vendas?${new URLSearchParams({ from: antDe, to: antAte })}`)
-      .then(r => r.json()).then(d => { if (vivo) setAnteriores(Array.isArray(d.orders) ? d.orders : []) })
-      .catch(() => { if (vivo) setAnteriores([]) })
+      .then(r => r.json()).then(d => { if (vivo) setAnteriores({
+        pedidos: Array.isArray(d.orders) ? d.orders : [],
+        recebimentos: Array.isArray(d.recebimentos) ? d.recebimentos : [],
+      }) })
+      .catch(() => { if (vivo) setAnteriores({ pedidos: [], recebimentos: [] }) })
     return () => { vivo = false }
   }, [antDe, antAte])
 
   const { pontos, total, totalAnt, media, melhor, pior } = useMemo(() => {
-    const atual = filtra(pedidos, fonte, busca), ant = anteriores ? filtra(anteriores, fonte, busca) : null
+    const atual = eventos(pedidos, recebimentos, fonte, busca)
+    const ant = anteriores ? eventos(anteriores.pedidos, anteriores.recebimentos, fonte, busca) : null
     const n = porHora ? 24 : dias
     const chave = (iso: string, base: string) => porHora ? horaBR(iso) : difDias(base, diaBR(iso))
     const serie = new Array(n).fill(0), serieAnt = new Array(n).fill(0)
-    for (const o of atual) { const k = chave(o.createdAt, de); if (k >= 0 && k < n) serie[k] += valor(o, metrica) }
-    if (ant) for (const o of ant) { const k = chave(o.createdAt, antDe); if (k >= 0 && k < n) serieAnt[k] += valor(o, metrica) }
+    for (const e of atual) { const k = chave(e.iso, de); if (k >= 0 && k < n) serie[k] += valor(e, metrica) }
+    if (ant) for (const e of ant) { const k = chave(e.iso, antDe); if (k >= 0 && k < n) serieAnt[k] += valor(e, metrica) }
     // hoje: não desenha as horas que ainda não chegaram
     const agora = porHora && de === new Date().toLocaleDateString("en-CA", { timeZone: TZ }) ? horaBR(new Date().toISOString()) : 23
     const pontos = serie.map((v, i) => {
@@ -93,7 +108,7 @@ export default function VendasGrafico({ pedidos, de, ate, fonte, busca }: {
     const melhor = comVenda.length ? comVenda.reduce((a, b) => (b.v > a.v ? b : a)) : null
     const pior = !porHora && validos.length > 1 ? validos.reduce((a, b) => (b.v < a.v ? b : a)) : null
     return { pontos, total, totalAnt, media, melhor, pior }
-  }, [pedidos, anteriores, fonte, busca, metrica, de, antDe, dias, porHora])
+  }, [pedidos, recebimentos, anteriores, fonte, busca, metrica, de, antDe, dias, porHora])
 
   const varPct = totalAnt != null && totalAnt > 0 ? ((total - totalAnt) / totalAnt) * 100 : null
   const unidade = porHora ? "hora" : "dia"

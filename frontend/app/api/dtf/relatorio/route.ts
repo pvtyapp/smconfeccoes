@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { getAcesso, ocultarValores } from "@/lib/acesso"
+import { recebimentosPrazo } from "@/lib/reports/receitaCaixa"
 
 // Valores que só vão pra quem tem a permissão (lib/acesso.ts).
-const CAMPOS_VALOR = { financeiro: ["custo", "custoPorMetro", "custoPorMetroAtual", "custoCombinado", "custoTotalInsumos", "custoUnitario", "custoTotal", "custo_total", "custo_unitario", "custo_por_metro", "totalReceita", "receita"], preco: ["precoCobrado"] }
+const CAMPOS_VALOR = { financeiro: ["custo", "custoPorMetro", "custoPorMetroAtual", "custoCombinado", "custoTotalInsumos", "custoUnitario", "custoTotal", "custo_total", "custo_unitario", "custo_por_metro", "totalReceita", "receita", "totalVendido", "recebidoPrazo", "vendidoPrazo"], preco: ["precoCobrado"] }
 
 export async function GET(req: Request) {
   try {
@@ -35,7 +36,15 @@ export async function GET(req: Request) {
     `, params)
 
     const totalMetros  = pedidos.reduce((s, p) => s + Number(p.metrosFinais ?? p.metros ?? 0), 0)
-    const totalReceita = pedidos.reduce((s, p) => s + (p.precoCobrado ? Number(p.precoCobrado) : 0), 0)
+    // Venda a prazo (PIV 13/11): receita = dinheiro que entrou no período. Pedido
+    // a prazo não soma no dia da venda; cada baixa soma no dia em que foi dada.
+    // totalVendido (tudo que foi vendido, à vista e a prazo) fica pro preço médio/ticket.
+    const totalVendido  = pedidos.reduce((s, p) => s + (p.precoCobrado ? Number(p.precoCobrado) : 0), 0)
+    const vendidoPrazo  = pedidos.filter(p => p.dueDate).reduce((s, p) => s + (p.precoCobrado ? Number(p.precoCobrado) : 0), 0)
+    const recebidoPrazo = from && to
+      ? (await recebimentosPrazo(from, to)).filter(r => r.kind === "dtf").reduce((s, r) => s + r.amount, 0)
+      : 0
+    const totalReceita  = from && to ? totalVendido - vendidoPrazo + recebidoPrazo : totalVendido
 
     // Todos os insumos
     const { rows: insumosBase } = await pool.query(`
@@ -330,6 +339,9 @@ export async function GET(req: Request) {
       pedidos,
       totalMetros,
       totalReceita,
+      totalVendido,
+      vendidoPrazo,
+      recebidoPrazo,
       insumos: insumosComCusto,
       custoCombinado: custoCombinado > 0 ? custoCombinado : null,
       impressoras,

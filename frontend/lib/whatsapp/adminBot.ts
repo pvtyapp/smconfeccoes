@@ -5,7 +5,8 @@ import { createProdOrder } from "@/lib/prodOrders/createOrder"
 import { concludeProdOrder } from "@/lib/prodOrders/concludeOrder"
 import { createBobinaForColor } from "@/lib/rawMaterials/createBobinaForColor"
 import { payOrder, payDtfPedido } from "@/lib/receivables/payReceivable"
-import { todayBR, subDaysBR } from "@/lib/tz"
+import { todayBR, subDaysBR, dateBR } from "@/lib/tz"
+import { recebimentosPrazo, vendasPrazo, VENDA_FEITA_SQL } from "@/lib/reports/receitaCaixa"
 import { CHATBOT_COMMANDS } from "@/lib/chatbotCommands"
 
 // ─── Bot administrativo — operadores cadastrados em Usuários conversando com o
@@ -333,15 +334,23 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
   // receita fantasma). DTF entra pela data em que foi FEITO (p.data), não
   // pela data em que fechou no sistema — pedido tirado à noite e concluído
   // só de manhã continua contando no dia em que foi impresso de verdade.
+  // Venda a prazo (PIV 13/11): conta como pedido no dia da venda, mas a receita
+  // só entra no dia em que o dinheiro chega (baixas em recebimentosPrazo).
   const { rows: ordRows } = await pool.query(`
-    SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total_value), 0)::float AS receita
-    FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp','site')
-      AND number NOT LIKE 'COB-%' AND created_at >= $1
+    SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(o.total_value) FILTER (WHERE o.due_date IS NULL), 0)::float AS receita
+    FROM orders o WHERE ${VENDA_FEITA_SQL} AND o.source IN ('pdv','whatsapp','site')
+      AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
-    SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(preco_cobrado), 0)::float AS receita
+    SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(preco_cobrado) FILTER (WHERE due_date IS NULL), 0)::float AS receita
     FROM dtf_pedidos WHERE status = 'concluido' AND data >= ($1 AT TIME ZONE 'America/Sao_Paulo')::date
   `, [desde])
+  const [recebidos, prazoVendido] = await Promise.all([
+    recebimentosPrazo(dateBR(desde), todayBR()),
+    vendasPrazo(dateBR(desde), todayBR()),
+  ])
+  const recProduto = recebidos.filter(r => r.kind === "produto").reduce((s, r) => s + r.amount, 0)
+  const recDtf     = recebidos.filter(r => r.kind === "dtf").reduce((s, r) => s + r.amount, 0)
   const { rows: avariaAgg } = await pool.query(`
     SELECT COUNT(*)::int AS vendas, COALESCE(SUM(sale_price), 0)::float AS receita
     FROM defect_stock WHERE disposition = 'vendido' AND COALESCE(resolved_at, created_at) >= $1
@@ -351,7 +360,7 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
            SUM(oi.qty)::int AS pecas, SUM(oi.qty * COALESCE(oi.unit_price, 0))::float AS receita
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
-    WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp','site')
+    WHERE ${VENDA_FEITA_SQL} AND o.source IN ('pdv','whatsapp','site')
       AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
     GROUP BY oi.product_name
   `, [desde])
@@ -373,12 +382,16 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
   const porProdutoList = [...porProdutoMap.entries()].sort((a, b) => b[1].receita - a[1].receita)
 
   const totalPedidos = ordRows[0].pedidos + dtfRows[0].pedidos + avariaAgg[0].vendas
-  const totalReceita = ordRows[0].receita + dtfRows[0].receita + avariaAgg[0].receita
-  const receitaProduto = ordRows[0].receita + avariaAgg[0].receita
+  const receitaDtf   = dtfRows[0].receita + recDtf
+  const receitaProduto = ordRows[0].receita + recProduto + avariaAgg[0].receita
+  const totalReceita = receitaProduto + receitaDtf
+  const vendidoPrazo = prazoVendido.reduce((s, v) => s + v.total, 0)
 
   let msg = `📊 *Relatório de Vendas — ${label}*\n\n` +
     `Pedidos: *${totalPedidos}*\nReceita: *${fmtMoney(totalReceita)}*\n` +
-    `(Produto: ${fmtMoney(receitaProduto)} · DTF: ${fmtMoney(dtfRows[0].receita)})`
+    `(Produto: ${fmtMoney(receitaProduto)} · DTF: ${fmtMoney(receitaDtf)})`
+  if (recProduto + recDtf > 0) msg += `\n💰 Recebido de prazo: ${fmtMoney(recProduto + recDtf)} (já está na receita)`
+  if (vendidoPrazo > 0) msg += `\n🗓️ Vendido a prazo: ${fmtMoney(vendidoPrazo)} (${prazoVendido.length}) fora da receita, entra quando pagar`
 
   if (porProdutoList.length > 0) {
     const top = porProdutoList.slice(0, 8)
@@ -390,31 +403,33 @@ async function buildVendasMsg(desde: Date, label: string): Promise<string> {
 }
 
 async function buildFinanceiroMsg(desde: Date, label: string): Promise<string> {
-  // Mesmo critério do buildVendasMsg — só concluído, DTF pela data do pedido.
+  // Mesmo critério do buildVendasMsg — só concluído, DTF pela data do pedido;
+  // venda a prazo entra pelas baixas do período (receita e custo proporcional).
   const { rows } = await pool.query(`
     SELECT COALESCE(SUM(total_value), 0)::float AS receita
     FROM orders WHERE status = 'concluido' AND source IN ('pdv','whatsapp','site')
-      AND number NOT LIKE 'COB-%' AND created_at >= $1
+      AND number NOT LIKE 'COB-%' AND due_date IS NULL AND created_at >= $1
   `, [desde])
   const { rows: dtfRows } = await pool.query(`
     SELECT COALESCE(SUM(preco_cobrado), 0)::float AS receita
-    FROM dtf_pedidos WHERE status = 'concluido' AND data >= ($1 AT TIME ZONE 'America/Sao_Paulo')::date
+    FROM dtf_pedidos WHERE status = 'concluido' AND due_date IS NULL AND data >= ($1 AT TIME ZONE 'America/Sao_Paulo')::date
   `, [desde])
+  const recebidos = await recebimentosPrazo(dateBR(desde), todayBR())
   const { rows: custoRows } = await pool.query(`
     SELECT COALESCE(SUM(oi.qty * COALESCE(p.material_cost, 0)), 0)::float AS custo
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
     LEFT JOIN products p ON LOWER(p.name) = LOWER(oi.product_name) AND p.status = 'active'
     WHERE o.status = 'concluido' AND o.source IN ('pdv','whatsapp','site')
-      AND o.number NOT LIKE 'COB-%' AND o.created_at >= $1
+      AND o.number NOT LIKE 'COB-%' AND o.due_date IS NULL AND o.created_at >= $1
   `, [desde])
   const { rows: despesaRows } = await pool.query(`
     SELECT COALESCE(SUM(amount), 0)::float AS despesas
     FROM variable_costs WHERE cost_date >= $1
   `, [desde])
 
-  const receita   = rows[0].receita + dtfRows[0].receita
-  const custo     = custoRows[0].custo
+  const receita   = rows[0].receita + dtfRows[0].receita + recebidos.reduce((s, r) => s + r.amount, 0)
+  const custo     = custoRows[0].custo + recebidos.filter(r => r.kind === "produto").reduce((s, r) => s + (r.custo ?? 0), 0)
   const despesas  = despesaRows[0].despesas
   const resultado = receita - custo - despesas
 

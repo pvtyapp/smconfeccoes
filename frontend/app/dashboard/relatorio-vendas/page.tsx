@@ -53,6 +53,20 @@ type AvariaRecord = {
   orderNumber: string | null
 }
 
+// Baixa de venda a prazo dada no período (PIV 13/11: o dinheiro do prazo conta
+// no dia em que entra, não no dia da venda). Vem pronta da API.
+type RecebimentoRecord = {
+  orderId: number
+  number: string
+  source: string
+  contactName: string | null
+  amount: number
+  total: number
+  custo: number | null
+  vendaData: string
+  pagoEm: string
+}
+
 type SaleEntry =
   | { kind: "order";  data: OrderRecord  }
   | { kind: "avaria"; data: AvariaRecord }
@@ -118,6 +132,11 @@ function fmtPhone(phone: string | null) {
 
 function isDtf(name: string) { return name.toLowerCase().startsWith("dtf") }
 
+// Venda feita: concluído, ou venda a prazo do PDV (fica "pronto" até quitar).
+function isVenda(o: { status: string; source: string; dueDate: string | null }) {
+  return o.status === "concluido" || (o.source === "pdv" && o.status === "pronto" && !!o.dueDate)
+}
+
 function getPeriodDates(key: PeriodKey, rs: string, re: string): [string, string] | null {
   const t = todayBR()
   switch (key) {
@@ -162,6 +181,7 @@ export default function RelatorioVendasPage() {
   const [sourceFilter, setSourceFilter] = useState("all")
   const [orders,       setOrders]       = useState<OrderRecord[]>([])
   const [avarias,      setAvarias]      = useState<AvariaRecord[]>([])
+  const [recebimentos, setRecebimentos] = useState<RecebimentoRecord[]>([])
   const [loading,      setLoading]      = useState(true)
   const [expanded,     setExpanded]     = useState<Set<string>>(new Set())
   const [canceling,    setCanceling]    = useState<OrderRecord | null>(null)
@@ -183,6 +203,7 @@ export default function RelatorioVendasPage() {
       const data = await res.json()
       setOrders(Array.isArray(data.orders) ? data.orders : [])
       setAvarias(Array.isArray(data.avarias) ? data.avarias : [])
+      setRecebimentos(Array.isArray(data.recebimentos) ? data.recebimentos : [])
     } finally {
       setLoading(false)
     }
@@ -233,6 +254,16 @@ export default function RelatorioVendasPage() {
     return list
   }, [orders, avarias, sourceFilter, search])
 
+  // Baixas de prazo com o mesmo filtro de canal/busca da lista
+  const recebFiltrados = useMemo(() => {
+    if (sourceFilter === "avarias" || sourceFilter === "manual") return []
+    const q = search.trim().toLowerCase()
+    return recebimentos.filter(r =>
+      (sourceFilter === "all" || r.source === sourceFilter) &&
+      (!q || (r.contactName ?? "").toLowerCase().includes(q))
+    )
+  }, [recebimentos, sourceFilter, search])
+
   // Mesma lista formatada pro relatório impresso (sem paginação/expansão)
   const printEntries = useMemo(() => entries.map(entry => {
     if (entry.kind === "order") {
@@ -277,7 +308,7 @@ export default function RelatorioVendasPage() {
     for (const entry of entries) {
       if (entry.kind === "order") {
         const o = entry.data
-        if (o.status !== "concluido") continue
+        if (!isVenda(o)) continue
         for (const item of (o.items ?? [])) {
           if (isDtf(item.productName)) continue
           const cur = map.get(item.productName) ?? { qty: 0, revenue: 0, cost: 0, costKnown: false, sales: new Set<string>() }
@@ -313,18 +344,32 @@ export default function RelatorioVendasPage() {
   const stats = useMemo(() => {
     const ords    = entries.filter(e => e.kind === "order").map(e => (e as { kind: "order"; data: OrderRecord }).data)
     const avars   = entries.filter(e => e.kind === "avaria").map(e => (e as { kind: "avaria"; data: AvariaRecord }).data)
-    const concluded = ords.filter(o => o.status === "concluido")
+    const concluded = ords.filter(isVenda)
 
-    const totalR         = concluded.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    // Receita Confirmada = dinheiro que entrou no período: venda à vista do
+    // período + baixas de prazo dadas no período (de venda feita em qualquer dia).
+    // Venda a prazo feita no período fica no cartão "A prazo" até pagar.
+    const avista         = concluded.filter(o => !o.dueDate)
+    const prazo          = concluded.filter(o => !!o.dueDate)
+    const recebidoPrazo  = recebFiltrados.reduce((s, r) => s + Number(r.amount), 0)
+    const totalAvista    = avista.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    const totalR         = totalAvista + recebidoPrazo
+    const vendidoPrazo   = prazo.reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    const prazoEmAberto  = prazo.filter(o => !o.paidAt).reduce((s, o) => s + Number(o.totalValue ?? 0), 0)
+    const totalVendido   = totalAvista + vendidoPrazo
     const pecas          = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => !isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
     const metros         = concluded.reduce((s, o) => s + (o.items ?? []).filter(i => isDtf(i.productName)).reduce((si, i) => si + i.qty, 0), 0)
     const avarPecas      = avars.reduce((s, a) => s + a.qty, 0)
     const avarProductCount = new Set(avars.map(a => a.productName)).size
-    const ticket         = concluded.length > 0 ? totalR / concluded.length : 0
+    const ticket         = concluded.length > 0 ? totalVendido / concluded.length : 0
 
+    // Custo acompanha o dinheiro: à vista pelo pedido, prazo pela parte paga.
     let custoTotal = 0
     let custoKnown = false
-    for (const o of concluded) {
+    for (const r of recebFiltrados) {
+      if (r.custo != null) { custoTotal += Number(r.custo); custoKnown = true }
+    }
+    for (const o of avista) {
       for (const item of (o.items ?? [])) {
         if (item.costPrice != null) {
           custoTotal += item.costPrice * item.qty
@@ -335,8 +380,8 @@ export default function RelatorioVendasPage() {
     const lucroTotal  = custoKnown ? totalR - custoTotal : null
     const margemMedia = (custoKnown && totalR > 0) ? ((totalR - custoTotal) / totalR) * 100 : null
 
-    return { totalR, pedidos: ords.length, concludedCount: concluded.length, pecas, metros, avarPecas, avarProductCount, ticket, lucroTotal, margemMedia }
-  }, [entries])
+    return { totalR, totalAvista, recebidoPrazo, vendidoPrazo, prazoEmAberto, prazoCount: prazo.length, pedidos: ords.length, concludedCount: concluded.length, pecas, metros, avarPecas, avarProductCount, ticket, lucroTotal, margemMedia }
+  }, [entries, recebFiltrados])
 
   function buildReceipt(o: OrderRecord): SaleReceipt {
     // payment_method só existe pra vendas feitas após essa coluna ser criada —
@@ -443,7 +488,7 @@ export default function RelatorioVendasPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-[#0F1E3C]">Relatório de Vendas</h1>
-          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Manual · Avarias vendidas — só pedidos concluídos, pela data em que foram feitos</p>
+          <p className="text-sm text-[#0F1E3C]/40 mt-0.5">PDV · WhatsApp · Site · Avarias vendidas — pedidos pela data em que foram feitos; venda a prazo soma na receita no dia em que é paga</p>
         </div>
         <div className="flex items-center gap-2">
           {selected.size > 0 && (
@@ -531,11 +576,20 @@ export default function RelatorioVendasPage() {
             icon={ShoppingBag} color="bg-purple-100 text-purple-700" />
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <StatCard
             label="Receita Confirmada" value={fmtR(stats.totalR)}
-            sub={`${stats.concludedCount} concluído${stats.concludedCount !== 1 ? "s" : ""}`}
+            sub={stats.recebidoPrazo > 0
+              ? `à vista ${fmtR(stats.totalAvista)} + prazo recebido ${fmtR(stats.recebidoPrazo)}`
+              : "dinheiro que entrou no período"}
             icon={DollarSign}  color="bg-green-100 text-green-700"
+          />
+          <StatCard
+            label="Vendido a Prazo" value={fmtR(stats.vendidoPrazo)}
+            sub={stats.prazoCount > 0
+              ? `${stats.prazoCount} venda${stats.prazoCount !== 1 ? "s" : ""} · ${fmtR(stats.prazoEmAberto)} a receber`
+              : "fora da receita até pagar"}
+            icon={FileText}  color="bg-amber-100 text-amber-700"
           />
           <StatCard
             label="Pedidos Concluídos" value={String(stats.concludedCount)}
@@ -549,16 +603,53 @@ export default function RelatorioVendasPage() {
           />
           <StatCard
             label="Ticket Médio" value={stats.concludedCount > 0 ? fmtR(stats.ticket) : "—"}
-            sub="pedidos concluídos"
-            icon={TrendingUp}  color="bg-amber-100 text-amber-700"
+            sub="à vista + a prazo"
+            icon={TrendingUp}  color="bg-sky-100 text-sky-700"
           />
+        </div>
+      )}
+
+      {/* Baixas de venda a prazo dadas no período — já somadas na Receita Confirmada */}
+      {sourceFilter !== "avarias" && recebFiltrados.length > 0 && (
+        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[#0F1E3C]/6">
+            <p className="text-sm font-bold text-[#0F1E3C]">Recebido de vendas a prazo</p>
+            <p className="text-[11px] text-[#0F1E3C]/35 mt-0.5">Pagamentos que entraram no período · já estão na Receita Confirmada</p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#0F1E3C]/6 bg-[#F9FAFB]">
+                <th className="text-left  px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Pago em</th>
+                <th className="text-left  px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Pedido</th>
+                <th className="text-left  px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Cliente</th>
+                <th className="text-center px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Venda de</th>
+                <th className="text-right px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#0F1E3C]/40">Recebido</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#0F1E3C]/4">
+              {recebFiltrados.map((r, i) => (
+                <tr key={`${r.orderId}-${i}`} className="hover:bg-[#F4F6FB] transition-colors">
+                  <td className="px-5 py-3 text-xs text-[#0F1E3C]/60 whitespace-nowrap">{fmtDate(r.pagoEm)}</td>
+                  <td className="px-4 py-3 text-xs font-bold text-[#0F1E3C]">{r.number}</td>
+                  <td className="px-4 py-3 text-xs font-semibold text-[#0F1E3C]">{r.contactName || "Balcão"}</td>
+                  <td className="px-4 py-3 text-center text-xs text-[#0F1E3C]/60">{fmtDateOnlyBR(r.vendaData)}</td>
+                  <td className="px-5 py-3 text-right font-black text-[#0F1E3C] whitespace-nowrap">
+                    {fmtR(r.amount)}
+                    {Number(r.amount) < Number(r.total) - 0.01 && (
+                      <span className="block text-[10px] font-semibold text-[#0F1E3C]/40">de {fmtR(r.total)}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {/* Gráfico do volume no período (altas e quedas), mesmos pedidos dos cartões */}
       {sourceFilter !== "avarias" && (() => {
         const d = getPeriodDates(period, rangeStart, rangeEnd)
-        return d ? <VendasGrafico pedidos={orders} de={d[0]} ate={d[1]} fonte={sourceFilter} busca={search} /> : null
+        return d ? <VendasGrafico pedidos={orders} recebimentos={recebimentos} de={d[0]} ate={d[1]} fonte={sourceFilter} busca={search} /> : null
       })()}
 
       {/* Vendas por produto — nome genérico, soma pedidos concluídos + avarias vendidas */}
@@ -644,7 +735,7 @@ export default function RelatorioVendasPage() {
 
                 const { label: pagLabel, cls: pagCls } = pagamento(o)
 
-                const isConcluido  = o.status === "concluido"
+                const isConcluido  = isVenda(o)
                 const rowBaseCls   = isConcluido
                   ? (isOpen ? "bg-emerald-50/60" : "bg-emerald-50/30 hover:bg-emerald-50/60")
                   : (isOpen ? "bg-[#4361EE]/4"   : "opacity-60 hover:opacity-80 hover:bg-[#0F1E3C]/3")

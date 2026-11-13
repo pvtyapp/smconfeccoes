@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { exigirFinanceiro } from "@/lib/acesso"
+import { recebimentosPrazo, VENDA_FEITA_SQL, type Recebimento } from "@/lib/reports/receitaCaixa"
 
 export async function GET(req: Request) {
   const semPermissao = await exigirFinanceiro()
@@ -11,7 +12,7 @@ export async function GET(req: Request) {
     const from = searchParams.get("from")
     const to   = searchParams.get("to")
 
-    // Só conta pedido concluído (fixa o "sem preço"), mas pela data em que foi
+    // Só conta venda feita (concluído, ou PDV a prazo ainda em "pronto"), pela data em que foi
     // FEITO — não pela data em que fechou no sistema. Pedido tirado à noite e
     // concluído só de manhã (depois da meia-noite) continua contando no dia em
     // que rodou de verdade.
@@ -82,7 +83,7 @@ export async function GET(req: Request) {
           WHERE fno.order_id = o.id AND fn.status NOT IN ('rejeitada', 'cancelada')
           ORDER BY fn.id DESC LIMIT 1
         ) fn ON true
-        WHERE o.status = 'concluido'
+        WHERE ${VENDA_FEITA_SQL}
           AND o.source IN ('pdv', 'whatsapp', 'site')
           AND o.number NOT LIKE 'COB-%'
           ${orderDateCond}
@@ -120,10 +121,23 @@ export async function GET(req: Request) {
       throw new Error(`avarias: ${e instanceof Error ? e.message : String(e)}`)
     }
 
+    // Venda a prazo (PIV 13/11): o dinheiro conta no dia da baixa, não no da
+    // venda. Aqui vêm as baixas dadas no período (de vendas feitas em qualquer
+    // dia) pra tela somar na Receita Confirmada.
+    let recebimentos: Recebimento[] = []
+    if (hasDate) {
+      try {
+        recebimentos = await recebimentosPrazo(from as string, to as string, { dtf: false })
+      } catch (e) {
+        console.error("[relatorio-vendas:recebimentos]", e instanceof Error ? e.message : e)
+        throw new Error(`recebimentos: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+
     // DTF fica de fora daqui de propósito — esse relatório é exclusivo de
     // Produto. DTF tem o Relatório DTF próprio; o conjunto dos dois (Produto +
     // DTF + avarias) só existe no Dashboard Financeiro.
-    return NextResponse.json({ orders, avarias })
+    return NextResponse.json({ orders, avarias, recebimentos })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("[relatorio-vendas]", msg)

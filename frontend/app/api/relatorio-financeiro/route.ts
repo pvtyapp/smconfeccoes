@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { pool } from "@/lib/db"
 import { exigirFinanceiro } from "@/lib/acesso"
+import { recebimentosPrazo } from "@/lib/reports/receitaCaixa"
 
 // GET /api/relatorio-financeiro?from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: Request) {
@@ -30,6 +31,7 @@ export async function GET(req: Request) {
       SELECT
         o.id, o.number, o.source, o.status,
         o.total_value AS "totalValue",
+        o.due_date    AS "dueDate",
         json_agg(
           json_build_object(
             'productName', oi.product_name,
@@ -183,17 +185,28 @@ export async function GET(req: Request) {
     // (p.data), não pela data em que fechou no sistema (mesmo critério do
     // Relatório DTF/Vendas — pedido tirado à noite e concluído só de manhã
     // continua contando no dia em que foi impresso de verdade).
+    //
+    // Venda a prazo (PIV 13/11/2026): DTF com vencimento não entra na receita
+    // no dia da venda; entra cada baixa no dia em que o dinheiro chegou
+    // (recebimentosPrazo). Metros e quantidade continuam pelo dia da venda.
     const { rows: dtfRows } = await pool.query(`
-      SELECT COALESCE(SUM(preco_cobrado), 0)::float AS total,
+      SELECT COALESCE(SUM(preco_cobrado) FILTER (WHERE due_date IS NULL), 0)::float AS "totalAvista",
+             COALESCE(SUM(preco_cobrado), 0)::float AS "totalVendido",
              COUNT(*)::int AS count,
+             COALESCE(SUM(COALESCE(metros_finais, metros, 0)) FILTER (WHERE due_date IS NULL), 0)::float AS "metrosAvista",
              COALESCE(SUM(COALESCE(metros_finais, metros, 0)), 0)::float AS metros
       FROM dtf_pedidos
       WHERE status = 'concluido'
         AND data BETWEEN $1 AND $2
     `, [from, to])
-    const receitaDtf = Number(dtfRows[0]?.total ?? 0)
-    const dtfCount   = Number(dtfRows[0]?.count ?? 0)
-    const metrosDtf  = Number(dtfRows[0]?.metros ?? 0)
+    const recebimentos   = await recebimentosPrazo(from, to)
+    const recProduto     = recebimentos.filter(r => r.kind === "produto")
+    const recDtf         = recebimentos.filter(r => r.kind === "dtf")
+    const receitaDtf     = Number(dtfRows[0]?.totalAvista ?? 0) + recDtf.reduce((s, r) => s + r.amount, 0)
+    const vendidoDtf     = Number(dtfRows[0]?.totalVendido ?? 0)
+    const dtfCount       = Number(dtfRows[0]?.count ?? 0)
+    const metrosDtf      = Number(dtfRows[0]?.metros ?? 0)
+    const metrosDtfAvista = Number(dtfRows[0]?.metrosAvista ?? 0)
 
     // Custo do DTF — mesma fonte usada por qualquer outro produto: material_cost
     // cadastrado no produto "DTF 60cm" (mesmo cadastro que já é fonte única de
@@ -214,13 +227,18 @@ export async function GET(req: Request) {
     // Kanban 3 estágios: "pago" deixou de existir como status — todo pedido que
     // recebia pagamento e concluía (ou concluía a prazo) já cai direto em
     // "concluido" agora, sem parar num status intermediário.
-    const concluded = orders.filter(o => o.status === "concluido")
+    // Venda feita = concluído, ou PDV a prazo ainda "pronto" (fica assim até quitar).
+    const concluded = orders.filter(o => o.status === "concluido" || (o.source === "pdv" && o.status === "pronto" && o.dueDate))
+    // Só a venda à vista soma receita/custo no dia da venda; a prazo entra pelas baixas (recProduto).
+    const avista    = concluded.filter(o => !o.dueDate)
 
     const receitaAvarias  = Number(avariaVendas[0]?.total   ?? 0)
     const perdasDescarte  = Number(avariaDescartes[0]?.total ?? 0)
 
-    // Receita bruta — pedidos concluídos + DTF concluídos + avarias vendidas
-    const receitaOrdens = concluded.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
+    // Receita bruta — dinheiro que entrou: pedidos à vista + baixas de prazo
+    // dadas no período + DTF (mesma regra) + avarias vendidas
+    const receitaOrdens = avista.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
+      + recProduto.reduce((s, r) => s + r.amount, 0)
     const receitaBruta  = receitaOrdens + receitaDtf + receitaAvarias
 
     // Custo de insumos (material_cost × qty) — só para pedidos concluídos
@@ -228,6 +246,9 @@ export async function GET(req: Request) {
     let custoInsumosKnown = false
     const byProduct: Map<string, { revenue: number; cost: number; qty: number; hasCost: boolean }> = new Map()
 
+    // Ranking por produto = o que foi VENDIDO no período (à vista e a prazo,
+    // pelo dia da venda). Custo de insumos do DRE = só o que acompanha o
+    // dinheiro do período (à vista + parte paga do prazo).
     for (const o of concluded) {
       for (const item of (o.items ?? [])) {
         const lineRevenue = (item.unitPrice ?? 0) * item.qty
@@ -236,29 +257,35 @@ export async function GET(req: Request) {
         cur.qty     += item.qty
         if (item.costPrice != null) {
           const lineCost = item.costPrice * item.qty
-          custoInsumos += lineCost
-          custoInsumosKnown = true
+          if (!o.dueDate) { custoInsumos += lineCost; custoInsumosKnown = true }
           cur.cost    += lineCost
           cur.hasCost  = true
         }
         byProduct.set(item.productName, cur)
       }
     }
+    for (const r of recProduto) {
+      if (r.custo != null) { custoInsumos += r.custo; custoInsumosKnown = true }
+    }
 
     // DTF entra no mesmo modelo dos demais produtos — 1 "unidade" = 1 metro,
     // custo e receita vindos do cadastro do produto (nunca do monitor de insumo).
     if (metrosDtf > 0) {
       const cur = byProduct.get(dtfProdutoNome) ?? { revenue: 0, cost: 0, qty: 0, hasCost: false }
-      cur.revenue += receitaDtf
+      cur.revenue += vendidoDtf
       cur.qty     += metrosDtf
       if (custoDtfUnitario != null) {
-        const lineCost = custoDtfUnitario * metrosDtf
-        custoInsumos      += lineCost
-        custoInsumosKnown  = true
-        cur.cost    += lineCost
+        cur.cost    += custoDtfUnitario * metrosDtf
         cur.hasCost  = true
       }
       byProduct.set(dtfProdutoNome, cur)
+    }
+    const custoDtfCaixa = custoDtfUnitario != null
+      ? custoDtfUnitario * metrosDtfAvista + recDtf.reduce((s, r) => s + (r.custo ?? 0), 0)
+      : null
+    if (custoDtfCaixa != null && (metrosDtfAvista > 0 || recDtf.length > 0)) {
+      custoInsumos      += custoDtfCaixa
+      custoInsumosKnown  = true
     }
 
     // Custo operacional pro-rateado pelo período
@@ -287,20 +314,27 @@ export async function GET(req: Request) {
 
     const totalPecas  = concluded.reduce((s: number, o: { items: Array<{ qty: number }> | null }) =>
       s + (o.items ?? []).reduce((si: number, i: { qty: number }) => si + i.qty, 0), 0)
-    const ticketMedio = concluded.length > 0 ? receitaBruta / concluded.length : 0
+    const vendidoOrdens = concluded.reduce((s: number, o: { totalValue: string | null }) => s + Number(o.totalValue ?? 0), 0)
+    const ticketMedio = concluded.length + dtfCount > 0 ? (vendidoOrdens + vendidoDtf) / (concluded.length + dtfCount) : 0
 
-    // Custo das peças por canal (pedidos concluídos), pro lucro por canal
+    // Custo das peças por canal (mesma regra do dinheiro), pro lucro por canal
     const custoCanal: Record<string, number> = {}
-    for (const o of concluded) {
+    for (const o of avista) {
       for (const item of (o.items ?? [])) {
         if (item.costPrice != null) custoCanal[o.source] = (custoCanal[o.source] ?? 0) + item.costPrice * item.qty
       }
     }
+    for (const r of recProduto) {
+      if (r.custo != null) custoCanal[r.source] = (custoCanal[r.source] ?? 0) + r.custo
+    }
 
-    // Revenue by channel
+    // Revenue by channel — à vista + baixas de prazo do período
     const byChannel: Record<string, number> = {}
-    for (const o of concluded) {
+    for (const o of avista) {
       byChannel[o.source] = (byChannel[o.source] ?? 0) + Number(o.totalValue ?? 0)
+    }
+    for (const r of recProduto) {
+      byChannel[r.source] = (byChannel[r.source] ?? 0) + r.amount
     }
     if (receitaDtf > 0) {
       byChannel["dtf"] = receitaDtf
@@ -346,7 +380,7 @@ export async function GET(req: Request) {
       lucroLiquido,
       margemBruta:   receitaLojaTotal > 0 ? (lucroBrutoTotal / receitaLojaTotal) * 100 : null,
       margemLiquida: receitaLojaTotal > 0 ? (lucroLiquido / receitaLojaTotal) * 100 : null,
-      custoIncompleto: !custoInsumosKnown && receitaOrdens > 0 || marketplace.custoIncompleto || (metrosDtf > 0 && custoDtfUnitario === null),
+      custoIncompleto: !custoInsumosKnown && receitaOrdens > 0 || marketplace.custoIncompleto || (receitaDtf > 0 && custoDtfUnitario === null),
     }
 
     // Lucro por canal = receita − deduções (imposto, taxas, cupom, frete) − custo das peças − ads.
@@ -362,7 +396,7 @@ export async function GET(req: Request) {
       canais.push({ canal: ch, nome: LABEL[ch], receita, deducoes: imp(receita), custo, ads: 0, lucro, margem: lucro != null && receita ? (lucro / receita) * 100 : null })
     }
     if (receitaDtf > 0) {
-      const custo = custoDtfUnitario != null ? custoDtfUnitario * metrosDtf : null
+      const custo = custoDtfCaixa
       const lucro = custo == null ? null : receitaDtf - imp(receitaDtf) - custo
       canais.push({ canal: "dtf", nome: "DTF", receita: receitaDtf, deducoes: imp(receitaDtf), custo, ads: 0, lucro, margem: lucro != null ? (lucro / receitaDtf) * 100 : null })
     }

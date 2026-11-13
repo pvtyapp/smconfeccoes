@@ -74,6 +74,9 @@ type Relatorio = {
   pedidos: Pedido[]
   totalMetros: number
   totalReceita: number
+  totalVendido?: number
+  vendidoPrazo?: number
+  recebidoPrazo?: number
   insumos: InsumoRelatorio[]
   custoCombinado: number | null
   impressoras: Impressora[]
@@ -194,8 +197,9 @@ export default function DTFRelatorioPage() {
               partir do custo cadastrado no produto "DTF 60cm". */}
           {(() => {
             const film = data.insumos.find(i => i.unidade === "metro")
-            const precoMedioM = data.totalMetros > 0 ? data.totalReceita / data.totalMetros : null
-            const ticketMedio = data.pedidos.length > 0 ? data.totalReceita / data.pedidos.length : null
+            const vendido     = data.totalVendido ?? data.totalReceita
+            const precoMedioM = data.totalMetros > 0 ? vendido / data.totalMetros : null
+            const ticketMedio = data.pedidos.length > 0 ? vendido / data.pedidos.length : null
             const metroMedio  = data.pedidos.length > 0 ? data.totalMetros  / data.pedidos.length : null
 
             const ws = film?.pctDesperdicioMedio != null
@@ -219,6 +223,10 @@ export default function DTFRelatorioPage() {
                 </div>
                 <p className="text-xs text-gray-400">
                   Conta pedidos concluídos, pela data em que foram feitos — pedido criado à noite e fechado só de manhã continua no dia em que foi impresso.
+                  {" "}Venda a prazo só soma na receita no dia em que é paga
+                  {(data.vendidoPrazo ?? 0) > 0 || (data.recebidoPrazo ?? 0) > 0
+                    ? ` (vendido a prazo no período: ${fmtR(data.vendidoPrazo ?? 0)} · recebido de prazo no período: ${fmtR(data.recebidoPrazo ?? 0)}, já na receita).`
+                    : "."}
                 </p>
 
                 {/* Linha 2: monitor de insumo (informativo) */}
