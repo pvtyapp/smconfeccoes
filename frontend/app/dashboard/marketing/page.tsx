@@ -959,97 +959,6 @@ const BADGE_COLORS = [
   "bg-rose-500/12 text-rose-600",
 ]
 
-// ─── Schedule Card ────────────────────────────────────────────────────────────
-
-function ScheduleCard({ schedule, groups, onToggle, onDelete, onClick, onEdit }: {
-  schedule: Schedule
-  groups: Group[]
-  onToggle: () => void
-  onDelete: () => void
-  onClick: () => void
-  onEdit: () => void
-}) {
-  const [deleting, setDeleting] = useState(false)
-
-  const daysLabel = schedule.daysOfWeek.length === 7 ? "Todos os dias"
-    : schedule.daysOfWeek.length === 5 && !schedule.daysOfWeek.includes(0) && !schedule.daysOfWeek.includes(6)
-      ? "Seg–Sex"
-      : schedule.daysOfWeek.map(d => DAYS[d]).join(", ")
-
-  const audienceLabel = (() => {
-    const lc = LIFECYCLE_OPTS.find(o => o.value === (schedule.audienceLifecycle ?? "all"))?.label ?? "Todos"
-    const grps = schedule.audienceGroupJids.map(jid => groups.find(g => g.jid === jid)?.name ?? jid.split("@")[0]).join(", ")
-    if (schedule.audienceType === "groups") return grps || "Sem grupos"
-    if (schedule.audienceType === "lifecycle") return `Clientes — ${lc}`
-    return `${lc} + ${grps || "grupos"}`
-  })()
-
-  async function handleDelete(e: React.MouseEvent) {
-    e.stopPropagation()
-    if (!confirm("Remover esta programação?")) return
-    setDeleting(true)
-    await fetch(`/api/marketing/schedules/${schedule.id}`, { method: "DELETE" })
-    onDelete()
-  }
-
-  return (
-    <div
-      onClick={onClick}
-      className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden cursor-pointer hover:border-[#4361EE]/30 transition-colors"
-    >
-      <div className="flex items-center gap-3 px-4 py-3.5">
-        {schedule.firstItemMediaUrl && (
-          <img src={schedule.firstItemMediaUrl} alt="" className="h-11 w-11 rounded-xl object-cover border border-[#0F1E3C]/8 flex-shrink-0" />
-        )}
-
-        <button
-          onClick={e => { e.stopPropagation(); onToggle() }}
-          className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors flex-shrink-0"
-        >
-          {schedule.active
-            ? <ToggleRight size={22} className="text-[#4361EE]" />
-            : <ToggleLeft size={22} />}
-        </button>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-bold text-[#0F1E3C] truncate">{schedule.name}</p>
-            {!schedule.active && (
-              <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full flex-shrink-0">Pausado</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <span className="text-[11px] text-[#0F1E3C]/40 flex items-center gap-1">
-              <Clock size={9} /> {schedule.timeOfDay.slice(0,5)} · {daysLabel}
-            </span>
-            <span className="text-[11px] text-[#0F1E3C]/40 flex items-center gap-1">
-              <Layers size={9} /> {schedule.itemCount} item{schedule.itemCount !== 1 ? "s" : ""}
-            </span>
-          </div>
-          <p className={`text-[10px] mt-0.5 truncate ${audienceLabel === "Sem grupos" ? "text-amber-500 font-semibold" : "text-[#0F1E3C]/30"}`}>
-            {audienceLabel}
-          </p>
-        </div>
-
-        <button
-          onClick={e => { e.stopPropagation(); onEdit() }}
-          className="p-1.5 rounded-lg hover:bg-[#4361EE]/8 text-[#0F1E3C]/25 hover:text-[#4361EE] transition-colors flex-shrink-0"
-          title="Editar programação"
-        >
-          <Pencil size={13} />
-        </button>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400 transition-colors flex-shrink-0 disabled:opacity-40"
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ─── Schedule Modal ───────────────────────────────────────────────────────────
 
 function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle, onRefresh }: {
@@ -1438,280 +1347,6 @@ function ScheduleModal({ schedule, groups, stats, startInEdit, onClose, onToggle
   )
 }
 
-// ─── Schedule Row (expanded with queue) — LEGACY placeholder ─────────────────
-
-function ScheduleRow({
-  schedule, groups, onToggle, onDelete, onRefresh,
-}: {
-  schedule: Schedule
-  groups: Group[]
-  onToggle: () => void
-  onDelete: () => void
-  onRefresh: () => void
-}) {
-  const [expanded,    setExpanded]   = useState(false)
-  const [panel,       setPanel]      = useState<"fila" | "historico">("fila")
-  const [items,       setItems]      = useState<ScheduleItem[]>([])
-  const [executions,  setExecutions] = useState<ScheduleExecution[]>([])
-  const [loadingQ,    setLoadingQ]   = useState(false)
-  const [loadingH,    setLoadingH]   = useState(false)
-  const [newContent,  setNewContent] = useState("")
-  const [newMedia,    setNewMedia]   = useState<string | null>(null)
-  const [addingItem,  setAddingItem] = useState(false)
-  const [deleting,    setDeleting]   = useState(false)
-
-  const groupNames = schedule.audienceGroupJids
-    .map(jid => groups.find(g => g.jid === jid)?.name ?? jid.split("@")[0])
-    .join(", ")
-
-  const audienceLabel = (() => {
-    const lifecycleLabel = LIFECYCLE_OPTS.find(o => o.value === (schedule.audienceLifecycle ?? "all"))?.label ?? "Todos"
-    if (schedule.audienceType === "groups") {
-      return groupNames || "Sem grupos definidos"
-    }
-    if (schedule.audienceType === "lifecycle") {
-      return `Clientes — ${lifecycleLabel}`
-    }
-    if (schedule.audienceType === "mixed") {
-      const grpPart = groupNames || "sem grupos"
-      return `Clientes (${lifecycleLabel}) + ${grpPart}`
-    }
-    return "—"
-  })()
-
-  async function loadItems() {
-    setLoadingQ(true)
-    const r = await fetch(`/api/marketing/schedules/${schedule.id}/items`)
-    if (r.ok) setItems(await r.json())
-    setLoadingQ(false)
-  }
-
-  async function loadHistory() {
-    setLoadingH(true)
-    const r = await fetch(`/api/marketing/schedules/${schedule.id}/history`)
-    if (r.ok) setExecutions(await r.json())
-    setLoadingH(false)
-  }
-
-  async function addItem() {
-    if (!newContent.trim()) return
-    setAddingItem(true)
-    const r = await fetch(`/api/marketing/schedules/${schedule.id}/items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: newContent, mediaUrl: newMedia }),
-    })
-    if (r.ok) { setNewContent(""); setNewMedia(null); loadItems() }
-    setAddingItem(false)
-  }
-
-  async function deleteItem(itemId: number) {
-    await fetch(`/api/marketing/schedules/${schedule.id}/items/${itemId}`, { method: "DELETE" })
-    loadItems()
-  }
-
-  async function handleDelete() {
-    if (!confirm("Remover esta programação?")) return
-    setDeleting(true)
-    await fetch(`/api/marketing/schedules/${schedule.id}`, { method: "DELETE" })
-    onDelete()
-    onRefresh()
-  }
-
-  useEffect(() => {
-    if (!expanded) return
-    if (panel === "fila") loadItems()
-    else loadHistory()
-  }, [expanded, panel])
-
-  const daysLabel = schedule.daysOfWeek.length === 7 ? "Todos os dias"
-    : schedule.daysOfWeek.length === 5 && !schedule.daysOfWeek.includes(0) && !schedule.daysOfWeek.includes(6)
-      ? "Seg–Sex"
-      : schedule.daysOfWeek.map(d => DAYS[d]).join(", ")
-
-  return (
-    <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm overflow-hidden">
-      {/* Header row */}
-      <div className="flex items-center gap-3 px-4 py-3.5">
-        <button onClick={onToggle} className="text-[#0F1E3C]/30 hover:text-[#4361EE] transition-colors flex-shrink-0">
-          {schedule.active
-            ? <ToggleRight size={22} className="text-[#4361EE]" />
-            : <ToggleLeft size={22} />}
-        </button>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-bold text-[#0F1E3C]">{schedule.name}</p>
-            {!schedule.active && (
-              <span className="text-[10px] font-bold bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">Pausado</span>
-            )}
-          </div>
-          <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-            <span className="flex items-center gap-1 text-[11px] text-[#0F1E3C]/40">
-              <Clock size={10} /> {schedule.timeOfDay.slice(0,5)} · {daysLabel}
-            </span>
-            <span className={`text-[11px] truncate max-w-52 ${
-              audienceLabel === "Sem grupos definidos"
-                ? "text-amber-500 font-semibold"
-                : "text-[#0F1E3C]/40"
-            }`}>{audienceLabel}</span>
-            <span className="flex items-center gap-1 text-[11px] text-[#0F1E3C]/40">
-              <Layers size={10} /> {schedule.itemCount} item{schedule.itemCount !== 1 ? "s" : ""}
-            </span>
-            {schedule.lastExecutedAt && (
-              <span className="flex items-center gap-1 text-[11px] text-[#0F1E3C]/30">
-                <CheckCircle size={9} className="text-emerald-500" />
-                último: {fmtBR(schedule.lastExecutedAt)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <button
-            onClick={() => setExpanded(v => !v)}
-            className="p-1.5 rounded-lg hover:bg-[#F4F6FB] text-[#0F1E3C]/40"
-          >
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-          <button onClick={handleDelete} disabled={deleting}
-            className="p-1.5 rounded-lg hover:bg-red-50 text-[#0F1E3C]/30 hover:text-red-500 transition-colors">
-            <Trash2 size={14} />
-          </button>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="border-t border-[#0F1E3C]/6 bg-[#F9FAFC]">
-          {/* Panel toggle */}
-          <div className="flex gap-1 px-4 pt-3 pb-0">
-            {(["fila", "historico"] as const).map(p => (
-              <button
-                key={p}
-                onClick={() => setPanel(p)}
-                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
-                  panel === p
-                    ? "bg-white text-[#4361EE] shadow-sm border border-[#0F1E3C]/8"
-                    : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
-                }`}
-              >
-                {p === "fila" ? `Fila (${items.length || schedule.itemCount})` : "Histórico"}
-              </button>
-            ))}
-          </div>
-
-          {/* Fila panel */}
-          {panel === "fila" && (
-            <div className="px-4 py-3 space-y-3">
-              <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider">
-                {items.length > 1 ? "Rotaciona automaticamente — próximo é o mais antigo" : "Só 1 item cadastrado — sem rotação, sempre sai esse. Adicione mais pra variar."}
-              </p>
-
-              {loadingQ ? (
-                <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-[#4361EE]" /></div>
-              ) : items.length === 0 ? (
-                <p className="text-xs text-[#0F1E3C]/30 text-center py-3">Sem conteúdo na fila. Adicione itens abaixo.</p>
-              ) : (
-                <div className="space-y-2">
-                  {items.map((item, idx) => (
-                    <div key={item.id} className="flex gap-2 items-start bg-white rounded-xl p-3 border border-[#0F1E3C]/6">
-                      <span className={`text-[9px] font-bold mt-0.5 w-9 shrink-0 ${idx === 0 ? "text-[#4361EE]" : "text-[#0F1E3C]/25"}`}>
-                        {idx === 0 ? "PRÓXIMO" : idx + 1}
-                      </span>
-                      {item.mediaUrl && (
-                        <a href={item.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                          <img src={item.mediaUrl} alt="" className="h-10 w-10 rounded-lg object-cover border border-[#0F1E3C]/8 hover:opacity-75 transition-opacity" />
-                        </a>
-                      )}
-                      <p className="flex-1 text-xs text-[#0F1E3C] whitespace-pre-wrap break-words">{item.content}</p>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        {item.lastSentAt && (
-                          <span className="text-[9px] text-[#0F1E3C]/30">Enviado {fmtBR(item.lastSentAt)}</span>
-                        )}
-                        {item.sentCount > 0 && (
-                          <span className="text-[9px] text-emerald-600 font-bold">{item.sentCount}× enviado (desde sempre)</span>
-                        )}
-                        <button onClick={() => deleteItem(item.id)}
-                          className="p-1 rounded-lg hover:bg-red-50 text-[#0F1E3C]/25 hover:text-red-400">
-                          <X size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Add item */}
-              <div className="space-y-2 pt-1">
-                <p className="text-[10px] text-[#0F1E3C]/35">Não envia agora — só entra na rotação pro dia em que for a vez dele.</p>
-                <textarea
-                  value={newContent}
-                  onChange={e => setNewContent(e.target.value)}
-                  rows={3}
-                  placeholder="Texto do próximo post..."
-                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20 bg-white"
-                />
-                <ImageUpload value={newMedia} onChange={setNewMedia} label="Foto (opcional)" />
-                <button
-                  onClick={addItem}
-                  disabled={!newContent.trim() || addingItem}
-                  className="w-full flex items-center justify-center gap-1.5 px-4 py-2 bg-[#4361EE] text-white text-xs font-bold rounded-xl hover:bg-[#3451d1] disabled:opacity-40 transition-colors"
-                >
-                  {addingItem ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-                  Adicionar à fila
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Histórico panel */}
-          {panel === "historico" && (
-            <div className="px-4 py-3 space-y-2">
-              <p className="text-[10px] font-bold text-[#0F1E3C]/35 uppercase tracking-wider mb-1">
-                Últimas 30 execuções
-              </p>
-
-              {loadingH ? (
-                <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin text-[#4361EE]" /></div>
-              ) : executions.length === 0 ? (
-                <div className="text-center py-6">
-                  <Clock size={20} className="mx-auto text-[#0F1E3C]/15 mb-2" />
-                  <p className="text-xs text-[#0F1E3C]/30">Nenhuma execução ainda.</p>
-                  <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">O histórico aparecerá após o primeiro disparo automático.</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {executions.map(ex => (
-                    <div key={ex.id} className="bg-white rounded-xl border border-[#0F1E3C]/6 p-3 flex gap-3 items-start">
-                      {ex.mediaUrl && (
-                        <a href={ex.mediaUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                          <img src={ex.mediaUrl} alt="" className="h-10 w-10 rounded-lg object-cover border border-[#0F1E3C]/8 hover:opacity-75 transition-opacity" />
-                        </a>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs text-[#0F1E3C] whitespace-pre-wrap break-words line-clamp-2">{ex.content}</p>
-                        <div className="flex items-center gap-3 mt-1 flex-wrap">
-                          <span className="text-[10px] text-[#0F1E3C]/40">{fmtBR(ex.executedAt)}</span>
-                          <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-semibold">
-                            <CheckCircle size={9} /> {ex.sentCount} enviados
-                          </span>
-                          {ex.errorCount > 0 && (
-                            <span className="text-[10px] text-red-500">{ex.errorCount} erros</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Lifecycle Tab ────────────────────────────────────────────────────────────
 
 type LCStep =
@@ -1729,32 +1364,32 @@ type LCSection = {
 const LC_SECTIONS: LCSection[] = [
   {
     id: "lead",
-    label: "LEAD NOVO",
-    state: "lifecycle = new",
+    label: "CLIENTE NOVO",
+    state: "ainda não comprou",
     badgeCls: "bg-blue-50 text-blue-600 border border-blue-200",
     steps: [
-      { type: "msg",    key: "novo_d2_msg",    title: "D2 — Sem compra em 48h",          chip: "idle > 48h · novo_seq=0 · disparo 1×" },
-      { type: "silent", title: "D9+ — Sem resposta ao D2",                                desc: "7 dias após D2 sem resposta → transita para lifecycle=frio. Sem mensagem enviada." },
+      { type: "msg",    key: "novo_d2_msg",    title: "2 dias sem comprar",          chip: "Sai uma vez, 48 h depois do cadastro" },
+      { type: "silent", title: "Não respondeu a primeira",                                desc: "7 dias depois, sem resposta: o cliente vira frio. Não manda mensagem." },
     ],
   },
   {
     id: "ativo",
-    label: "CLIENTE ATIVO",
-    state: "lifecycle = active",
+    label: "CLIENTE QUE JÁ COMPROU",
+    state: "comprou há pouco",
     badgeCls: "bg-emerald-50 text-emerald-600 border border-emerald-200",
     steps: [
-      { type: "msg",    key: "ausente_d15_msg", title: "D15 — Sem compra há 15 dias",    chip: "last_order_at > 15d · transita para ausente · disparo 1×" },
+      { type: "msg",    key: "ausente_d15_msg", title: "15 dias sem comprar",    chip: "Sai uma vez e o cliente passa pra sumido" },
     ],
   },
   {
     id: "ausente",
-    label: "AUSENTE",
-    state: "lifecycle = ausente",
+    label: "CLIENTE SUMIDO",
+    state: "parou de comprar",
     badgeCls: "bg-amber-50 text-amber-600 border border-amber-200",
     steps: [
-      { type: "msg",    key: "ausente_d30_msg", title: "D30 — Segunda tentativa",        chip: "ausente_seq=1 · last_order_at > 30d" },
-      { type: "msg",    key: "ausente_d45_msg", title: "D45 — Última mensagem",          chip: "ausente_seq=2 · last_order_at > 45d" },
-      { type: "silent", title: "D75+ — Sem resposta ao D45",                              desc: "30 dias após D45 sem resposta → transita para lifecycle=frio. Sem mensagem enviada." },
+      { type: "msg",    key: "ausente_d30_msg", title: "30 dias sem comprar",        chip: "Segunda tentativa" },
+      { type: "msg",    key: "ausente_d45_msg", title: "45 dias sem comprar",          chip: "Última mensagem" },
+      { type: "silent", title: "Não respondeu a última",                              desc: "30 dias depois, sem resposta: o cliente vira frio. Não manda mensagem." },
     ],
   },
 ]
@@ -1848,6 +1483,8 @@ function LifecycleTab() {
     D45: "bg-red-100 text-red-700",
   }
 
+  const STAGE_LBL: Record<string, string> = { D2: "2 dias", D15: "15 dias", D30: "30 dias", D45: "45 dias" }
+
   function dueLabel(dueAt: string, overdue: boolean) {
     const diff = Math.round((new Date(dueAt).getTime() - Date.now()) / 86_400_000)
     if (overdue) return Math.abs(diff) <= 1 ? "hoje" : `${Math.abs(diff)}d atrasado`
@@ -1863,8 +1500,8 @@ function LifecycleTab() {
       <div className="flex gap-1 bg-[#F4F6FB] p-1 rounded-xl w-fit">
         {([
           { v: "mensagens",  l: "Mensagens"  },
-          { v: "tarefas",    l: "Tarefas"    },
-          { v: "concluidas", l: "Concluídas" },
+          { v: "tarefas",    l: "Próximas"   },
+          { v: "concluidas", l: "Enviadas"   },
         ] as const).map(({ v, l }) => (
           <button
             key={v}
@@ -1886,12 +1523,12 @@ function LifecycleTab() {
       <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm p-5">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-sm font-bold text-[#0F1E3C]">Mensagens Proativas do Lifecycle</p>
+            <p className="text-sm font-bold text-[#0F1E3C]">Mensagens automáticas</p>
             <p className="text-xs text-[#0F1E3C]/40 mt-0.5">
               {loading ? "Carregando..."
                 : lifecycleOn
-                  ? "Ativo — D2, D15, D30 e D45 disparando às 07h · cobranças sempre ativas"
-                  : "Pausado — chatbot de pedidos e cobranças continuam funcionando"}
+                  ? "Ligadas: saem sozinhas às 7h conforme o cliente fica sem comprar. Cobrança sempre ligada"
+                  : "Desligadas. Cobrança de vencimento e chatbot de pedidos continuam funcionando"}
             </p>
           </div>
           <button
@@ -1908,7 +1545,7 @@ function LifecycleTab() {
           <div className="mt-3 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
             <AlertCircle size={13} className="text-amber-500 shrink-0" />
             <p className="text-xs text-amber-700">
-              D2, D15, D30 e D45 pausados. Cobranças de prazo e chatbot de pedidos continuam normais.
+              As mensagens de 2, 15, 30 e 45 dias estão paradas. Cobrança e chatbot de pedidos continuam normais.
             </p>
           </div>
         )}
@@ -1916,11 +1553,11 @@ function LifecycleTab() {
         <div className="mt-4 grid grid-cols-2 gap-2">
           <div className="flex items-center gap-2 bg-[#F4F6FB] rounded-xl px-3 py-2">
             <div className="w-1.5 h-1.5 rounded-full bg-[#4361EE] shrink-0" />
-            <p className="text-[10px] text-[#0F1E3C]/50 font-medium">Controlado pelo toggle: D2, D15, D30, D45</p>
+            <p className="text-[10px] text-[#0F1E3C]/50 font-medium">Esta chave liga e desliga: 2, 15, 30 e 45 dias</p>
           </div>
           <div className="flex items-center gap-2 bg-[#F4F6FB] rounded-xl px-3 py-2">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-            <p className="text-[10px] text-[#0F1E3C]/50 font-medium">Sempre ativo: cobranças de vencimento</p>
+            <p className="text-[10px] text-[#0F1E3C]/50 font-medium">Sempre ligada: cobrança de vencimento</p>
           </div>
         </div>
       </div>
@@ -1999,7 +1636,7 @@ function LifecycleTab() {
           {/* Cobrança individual */}
           <div className="bg-[#F9FAFC] rounded-2xl border border-[#0F1E3C]/8 p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-bold text-[#0F1E3C]">D0 — Vencimento por pedido</p>
+              <p className="text-sm font-bold text-[#0F1E3C]">No dia do vencimento (um pedido)</p>
               <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">prazo em dias</span>
             </div>
             <div className="bg-white rounded-xl border border-[#0F1E3C]/6 px-3 py-2.5">
@@ -2012,7 +1649,7 @@ function LifecycleTab() {
           {/* Cobrança agrupada */}
           <div className="bg-[#F9FAFC] rounded-2xl border border-[#0F1E3C]/8 p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-bold text-[#0F1E3C]">D0 — Vencimento agrupado por cliente</p>
+              <p className="text-sm font-bold text-[#0F1E3C]">No dia do vencimento (todos os pedidos do cliente)</p>
               <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">data fixa</span>
             </div>
             <div className="bg-white rounded-xl border border-[#0F1E3C]/6 px-3 py-2.5">
@@ -2020,7 +1657,7 @@ function LifecycleTab() {
                 Oi <span className="text-[#4361EE] font-semibold">[nome]</span>! Os pedidos <span className="text-[#4361EE] font-semibold">[números]</span> vencem hoje — total: <span className="text-[#4361EE] font-semibold">[valor total]</span>. Pode efetuar o pagamento quando puder!
               </p>
             </div>
-            <p className="text-[10px] text-[#0F1E3C]/30">Mensagens hardcoded. Edição de templates de cobrança disponível em breve.</p>
+            <p className="text-[10px] text-[#0F1E3C]/30">Estes textos são fixos por enquanto.</p>
           </div>
         </div>
       </div>
@@ -2046,7 +1683,7 @@ function LifecycleTab() {
       {subTab === "tarefas" && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-[#0F1E3C]/40">Próximos disparos por cliente · ordenados por data</p>
+            <p className="text-xs text-[#0F1E3C]/40">Próximas mensagens por cliente, da mais próxima pra mais longe</p>
             <button
               onClick={() => {
                 setTasksLoading(true)
@@ -2085,7 +1722,7 @@ function LifecycleTab() {
                     }`}
                   >
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${STAGE_CLS[t.stage] ?? "bg-slate-100 text-slate-600"}`}>
-                      {t.stage}
+                      {STAGE_LBL[t.stage] ?? t.stage}
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-[#0F1E3C] truncate">{t.name ?? t.phone ?? "—"}</p>
@@ -2142,14 +1779,14 @@ function LifecycleTab() {
             <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-10 text-center">
               <CheckCircle size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
               <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhum envio nesse período</p>
-              <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Mensagens enviadas pelo lifecycle aparecem aqui</p>
+              <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">As mensagens automáticas enviadas aparecem aqui</p>
             </div>
           ) : (
             <div className="space-y-2">
               {completed.map(c => (
                 <div key={c.id} className="bg-white rounded-xl border border-[#0F1E3C]/8 px-4 py-3 flex items-center gap-3">
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${STAGE_CLS[c.stage] ?? "bg-slate-100 text-slate-600"}`}>
-                    {c.stage}
+                    {STAGE_LBL[c.stage] ?? c.stage}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-[#0F1E3C] truncate">{c.contactName ?? c.phone ?? "—"}</p>
@@ -2172,36 +1809,447 @@ function LifecycleTab() {
   )
 }
 
+// ─── Listas de grupos (PIV 13/11) ─────────────────────────────────────────────
+// Guardadas em app_settings.marketing_listas_grupos (JSON). `uso` liga cada
+// programação à lista escolhida: mudou a lista, as programações dela são
+// atualizadas junto (a programação continua guardando os jids, o motor de envio
+// não muda).
+
+type ListaGrupos = { id: number; nome: string; jids: string[] }
+type ListasStore = { listas: ListaGrupos[]; uso: Record<string, number> }
+
+const LISTAS_KEY = "marketing_listas_grupos"
+
+function lerListas(raw: string | undefined): ListasStore {
+  try {
+    const d = JSON.parse(raw || "{}")
+    return { listas: Array.isArray(d.listas) ? d.listas : [], uso: d.uso && typeof d.uso === "object" ? d.uso : {} }
+  } catch { return { listas: [], uso: {} } }
+}
+
+async function salvarListas(store: ListasStore) {
+  await fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ [LISTAS_KEY]: JSON.stringify(store) }),
+  })
+}
+
+const mesmoConjunto = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x))
+
+function diasLabel(d: number[]) {
+  const s = [...d].sort().join()
+  if (d.length === 7) return "Todo dia"
+  if (s === "1,2,3,4,5") return "Seg a Sex"
+  if (s === "1,2,3,4,5,6") return "Seg a Sáb"
+  return d.map(x => DAYS[x]).join(", ")
+}
+
+function nomeDosGrupos(s: { id: number; audienceGroupJids: string[] }, store: ListasStore) {
+  const l = store.listas.find(l => l.id === store.uso[String(s.id)])
+  if (l) return `${l.nome} (${l.jids.length})`
+  const igual = store.listas.find(l => mesmoConjunto(l.jids, s.audienceGroupJids))
+  if (igual) return `${igual.nome} (${igual.jids.length})`
+  return `${s.audienceGroupJids.length} grupo${s.audienceGroupJids.length !== 1 ? "s" : ""}`
+}
+
+// ─── Escolher grupos ──────────────────────────────────────────────────────────
+
+function EscolherGrupos({ groups, store, jids, listaId, onChange, onNovaLista }: {
+  groups: Group[]
+  store: ListasStore
+  jids: string[]
+  listaId: number | null
+  onChange: (jids: string[], listaId: number | null) => void
+  onNovaLista: (nome: string, jids: string[]) => Promise<number>
+}) {
+  const [busca, setBusca] = useState("")
+  const [nomeNova, setNomeNova] = useState("")
+  const [salvando, setSalvando] = useState(false)
+  const q = busca.trim().toLowerCase()
+  const vis = groups.filter(g => g.name.toLowerCase().includes(q))
+
+  function marcar(next: string[]) {
+    const l = store.listas.find(l => mesmoConjunto(l.jids, next))
+    onChange(next, l ? l.id : null)
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex gap-1.5 flex-wrap">
+        {store.listas.map(l => (
+          <button key={l.id} type="button" onClick={() => onChange([...l.jids], l.id)}
+            className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+              listaId === l.id ? "bg-[#4361EE]/10 border-[#4361EE] text-[#4361EE]" : "bg-white border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:border-[#4361EE]/40"
+            }`}>
+            {l.nome} ({l.jids.length})
+          </button>
+        ))}
+        <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${listaId === null ? "bg-[#4361EE]/10 border-[#4361EE] text-[#4361EE]" : "bg-white border-[#0F1E3C]/12 text-[#0F1E3C]/40"}`}>
+          Escolhidos na mão
+        </span>
+      </div>
+
+      <div className="border border-[#0F1E3C]/12 rounded-xl overflow-hidden">
+        <div className="flex gap-1.5 p-2 border-b border-[#0F1E3C]/8 flex-wrap">
+          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar grupo"
+            className="flex-1 min-w-[120px] border border-[#0F1E3C]/12 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+          <button type="button" onClick={() => marcar(groups.map(g => g.jid))}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-[#F4F6FB] text-[#0F1E3C]/60 hover:text-[#4361EE]">Marcar todos</button>
+          <button type="button" onClick={() => marcar([])}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-[#F4F6FB] text-[#0F1E3C]/60 hover:text-[#4361EE]">Desmarcar</button>
+        </div>
+        <div className="max-h-60 overflow-y-auto divide-y divide-[#0F1E3C]/6">
+          {groups.length === 0 && <p className="text-xs text-[#0F1E3C]/35 p-3">O WhatsApp da SM não está em nenhum grupo agora.</p>}
+          {groups.length > 0 && vis.length === 0 && <p className="text-xs text-[#0F1E3C]/35 p-3">Nenhum grupo com esse nome.</p>}
+          {vis.map(g => (
+            <label key={g.jid} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-[#F4F6FB]">
+              <input type="checkbox" className="w-4 h-4 accent-[#4361EE]" checked={jids.includes(g.jid)}
+                onChange={() => marcar(jids.includes(g.jid) ? jids.filter(j => j !== g.jid) : [...jids, g.jid])} />
+              <span className="text-sm text-[#0F1E3C] truncate">{g.name}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 bg-[#F4F6FB] border-t border-[#0F1E3C]/8">
+          <span className="text-xs font-bold text-[#0F1E3C]">{jids.length} de {groups.length} grupos marcados</span>
+          {listaId === null && jids.length > 0 && (
+            <span className="flex gap-1.5 flex-wrap">
+              <input value={nomeNova} onChange={e => setNomeNova(e.target.value)} placeholder="Nome da nova lista"
+                className="w-40 border border-[#0F1E3C]/12 rounded-lg px-2 py-1 text-xs bg-white" />
+              <button type="button" disabled={!nomeNova.trim() || salvando}
+                onClick={async () => { setSalvando(true); const id = await onNovaLista(nomeNova.trim(), jids); onChange(jids, id); setNomeNova(""); setSalvando(false) }}
+                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-[#0F1E3C]/12 text-[#4361EE] disabled:opacity-40">
+                Salvar como lista
+              </button>
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Gaveta: postagem nos grupos ──────────────────────────────────────────────
+
+type PostDraft = { schedule: Schedule | null; item: ScheduleItem | null; itemCount: number; horaSugerida?: string }
+
+function PostagemDrawer({ draft, groups, store, onClose, onSaved, onNovaLista, setUso }: {
+  draft: PostDraft
+  groups: Group[]
+  store: ListasStore
+  onClose: () => void
+  onSaved: (msg: string) => void
+  onNovaLista: (nome: string, jids: string[]) => Promise<number>
+  setUso: (scheduleId: number, listaId: number | null) => Promise<void>
+}) {
+  const s = draft.schedule
+  const primeiraLista = store.listas[0]
+  const [nome,    setNome]    = useState(s?.name ?? "")
+  const [texto,   setTexto]   = useState(draft.item?.content ?? "")
+  const [foto,    setFoto]    = useState<string | null>(draft.item?.mediaUrl ?? null)
+  const [modo,    setModo]    = useState<"prog" | "agora">("prog")
+  const [hora,    setHora]    = useState(s?.timeOfDay?.slice(0, 5) ?? draft.horaSugerida ?? "11:00")
+  const [dias,    setDias]    = useState<number[]>(s?.daysOfWeek ?? [1, 2, 3, 4, 5, 6])
+  const inicialLista = s ? (store.uso[String(s.id)] ?? store.listas.find(l => mesmoConjunto(l.jids, s.audienceGroupJids))?.id ?? null) : (primeiraLista?.id ?? null)
+  const [listaId, setListaId] = useState<number | null>(inicialLista)
+  const [jids,    setJids]    = useState<string[]>(s ? s.audienceGroupJids : (primeiraLista ? [...primeiraLista.jids] : []))
+  const [saving,  setSaving]  = useState(false)
+  const [erro,    setErro]    = useState<string | null>(null)
+
+  async function salvar() {
+    if (!texto.trim()) return setErro("Escreve o texto da postagem")
+    if (jids.length === 0) return setErro("Marca pelo menos 1 grupo")
+    setSaving(true); setErro(null)
+    const titulo = nome.trim() || texto.replace(/[*_~]/g, "").split("\n").map(x => x.trim()).find(Boolean)?.slice(0, 50) || "Postagem"
+    try {
+      if (modo === "agora") {
+        const r = await fetch("/api/marketing/campaigns", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: titulo, content: texto, mediaUrl: foto, audienceType: "groups", audienceLifecycle: null, audienceGroupJids: jids, scheduledAt: null }),
+        })
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Erro ao enviar")
+        onSaved(`Enviando pra ${jids.length} grupos`); return
+      }
+      if (dias.length === 0) throw new Error("Escolhe pelo menos 1 dia")
+      const meta = { name: titulo, daysOfWeek: dias, timeOfDay: hora, audienceType: "groups", audienceLifecycle: null, audienceGroupJids: jids }
+      let id = s?.id
+      if (s) {
+        const r = await fetch(`/api/marketing/schedules/${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) })
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Erro ao salvar")
+        const r2 = draft.item
+          ? await fetch(`/api/marketing/schedules/${s.id}/items/${draft.item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: texto, mediaUrl: foto }) })
+          : await fetch(`/api/marketing/schedules/${s.id}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: texto, mediaUrl: foto }) })
+        if (!r2.ok) throw new Error("Erro ao salvar o texto")
+      } else {
+        const r = await fetch("/api/marketing/schedules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meta) })
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Erro ao criar")
+        id = (await r.json()).id
+        await fetch(`/api/marketing/schedules/${id}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: texto, mediaUrl: foto }) })
+      }
+      if (id) await setUso(id, listaId)
+      onSaved(s ? "Postagem salva" : "Postagem programada")
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao salvar")
+    } finally { setSaving(false) }
+  }
+
+  const lbl = "text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block"
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/30" onClick={onClose} />
+      <div className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#0F1E3C]/8">
+          <h2 className="text-base font-bold text-[#0F1E3C]">{s ? "Editar postagem" : "Nova postagem"}</h2>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:text-[#0F1E3C]">Fechar</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <ImageUpload value={foto} onChange={setFoto} label="Foto" />
+
+          <div>
+            <label className={lbl}>Texto</label>
+            <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={8}
+              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+            <p className="text-[11px] text-[#0F1E3C]/40 mt-1">Do jeito que aparece no WhatsApp. *negrito* funciona.</p>
+            {draft.itemCount > 1 && <p className="text-[11px] text-amber-700 mt-1">Este horário reveza {draft.itemCount} textos. Aqui você edita o primeiro.</p>}
+          </div>
+
+          <div>
+            <label className={lbl}>Nome <span className="normal-case font-normal text-[#0F1E3C]/35">(se ficar vazio, usa a 1ª linha do texto)</span></label>
+            <input value={nome} onChange={e => setNome(e.target.value)}
+              className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+          </div>
+
+          <div>
+            <label className={lbl}>Quando</label>
+            <div className="flex gap-2">
+              {([["prog", "Todo dia no horário"], ["agora", "Uma vez, agora"]] as const).map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setModo(v)} disabled={!!s && v === "agora"}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors disabled:opacity-30 ${modo === v ? "border-[#4361EE] bg-[#4361EE]/10 text-[#4361EE]" : "border-[#0F1E3C]/12 text-[#0F1E3C]/60"}`}>{l}</button>
+              ))}
+            </div>
+          </div>
+
+          {modo === "prog" && (
+            <>
+              <div>
+                <label className={lbl}>Horário</label>
+                <input type="time" value={hora} onChange={e => setHora(e.target.value)}
+                  className="border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+                <span className="text-[11px] text-[#0F1E3C]/40 ml-2">sai em até 5 min do horário</span>
+              </div>
+              <div>
+                <label className={lbl}>Dias</label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {DAYS.map((d, i) => (
+                    <button key={i} type="button" onClick={() => setDias(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i].sort())}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${dias.includes(i) ? "bg-[#4361EE] border-[#4361EE] text-white" : "bg-white border-[#0F1E3C]/12 text-[#0F1E3C]/50"}`}>{d}</button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          <div>
+            <label className={lbl}>Onde enviar</label>
+            <EscolherGrupos groups={groups} store={store} jids={jids} listaId={listaId}
+              onChange={(j, l) => { setJids(j); setListaId(l) }} onNovaLista={onNovaLista} />
+          </div>
+
+          {erro && (
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+              <AlertCircle size={14} className="text-red-500 shrink-0" />
+              <p className="text-xs text-red-600">{erro}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-[#0F1E3C]/8 flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-bold border border-[#0F1E3C]/12 text-[#0F1E3C]/60">Cancelar</button>
+          <button onClick={salvar} disabled={saving}
+            className="flex-[2] flex items-center justify-center gap-2 py-2.5 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl disabled:opacity-50">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : modo === "agora" ? <Send size={14} /> : <CalendarClock size={14} />}
+            {modo === "agora" ? "Enviar agora" : s ? "Salvar" : "Programar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Gaveta: listas de grupos ─────────────────────────────────────────────────
+
+function ListasDrawer({ groups, store, schedules, onClose, onSave }: {
+  groups: Group[]
+  store: ListasStore
+  schedules: Schedule[]
+  onClose: () => void
+  onSave: (store: ListasStore, mudou: ListaGrupos | null) => Promise<void>
+}) {
+  const [editando, setEditando] = useState<ListaGrupos | null>(null)
+  const [nome, setNome] = useState("")
+  const [sel, setSel] = useState<string[]>([])
+  const [busca, setBusca] = useState("")
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const nomeG = (j: string) => groups.find(g => g.jid === j)?.name ?? j.split("@")[0]
+
+  function abrir(l: ListaGrupos | null) {
+    setEditando(l ?? { id: 0, nome: "", jids: [] }); setNome(l?.nome ?? ""); setSel(l ? [...l.jids] : []); setBusca(""); setAviso(null)
+  }
+
+  async function salvarLista() {
+    if (!editando) return
+    if (!nome.trim()) return setAviso("Dá um nome pra lista")
+    if (sel.length === 0) return setAviso("Marca pelo menos 1 grupo")
+    setSaving(true)
+    const l: ListaGrupos = { id: editando.id || Date.now(), nome: nome.trim(), jids: sel }
+    const listas = editando.id ? store.listas.map(x => x.id === l.id ? l : x) : [...store.listas, l]
+    await onSave({ ...store, listas }, editando.id ? l : null)
+    setEditando(null); setSaving(false)
+  }
+
+  async function apagar(l: ListaGrupos) {
+    const usa = schedules.filter(s => store.uso[String(s.id)] === l.id).length
+    if (usa) return setAviso(`"${l.nome}" está em ${usa} postagem(ns). Troque a lista delas antes de apagar.`)
+    await onSave({ ...store, listas: store.listas.filter(x => x.id !== l.id) }, null)
+  }
+
+  const q = busca.trim().toLowerCase()
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/30" onClick={onClose} />
+      <div className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#0F1E3C]/8">
+          <h2 className="text-base font-bold text-[#0F1E3C]">Listas de grupos</h2>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:text-[#0F1E3C]">Fechar</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <p className="text-xs text-[#0F1E3C]/50">Uma lista junta os grupos que recebem a mesma postagem. Mudou a lista, muda em todas as postagens que usam ela.</p>
+          {aviso && <p className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">{aviso}</p>}
+
+          {!editando && (
+            <>
+              {store.listas.length === 0 && <p className="text-sm text-[#0F1E3C]/40 py-2">Nenhuma lista ainda.</p>}
+              {store.listas.map(l => (
+                <div key={l.id} className="border border-[#0F1E3C]/10 rounded-xl px-3.5 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-[#0F1E3C]">{l.nome} <span className="text-xs font-semibold text-[#0F1E3C]/40">· {l.jids.length} grupos</span></p>
+                    <p className="text-[11px] text-[#0F1E3C]/40 truncate">{l.jids.map(nomeG).join(", ")}</p>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button onClick={() => abrir(l)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-[#0F1E3C]/70 hover:text-[#4361EE]">Editar</button>
+                    <button onClick={() => apagar(l)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-red-500 hover:bg-red-50">Apagar</button>
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => abrir(null)} className="w-full py-2.5 rounded-xl text-sm font-bold border border-dashed border-[#4361EE]/40 text-[#4361EE] hover:bg-[#4361EE]/5">+ Nova lista</button>
+              <p className="text-[11px] text-[#0F1E3C]/35">Os grupos vêm sozinhos: são os grupos em que o WhatsApp da SM está. Entrou num grupo novo, ele aparece aqui pra marcar.</p>
+            </>
+          )}
+
+          {editando && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-[#0F1E3C]/50 uppercase tracking-wider mb-1.5 block">Nome da lista</label>
+                <input value={nome} onChange={e => setNome(e.target.value)} autoFocus
+                  className="w-full border border-[#0F1E3C]/12 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4361EE]/20" />
+              </div>
+              <div className="border border-[#0F1E3C]/12 rounded-xl overflow-hidden">
+                <div className="flex gap-1.5 p-2 border-b border-[#0F1E3C]/8 flex-wrap">
+                  <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar grupo"
+                    className="flex-1 min-w-[120px] border border-[#0F1E3C]/12 rounded-lg px-2.5 py-1.5 text-sm" />
+                  <button onClick={() => setSel(groups.map(g => g.jid))} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-[#F4F6FB] text-[#0F1E3C]/60">Marcar todos</button>
+                  <button onClick={() => setSel([])} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-[#F4F6FB] text-[#0F1E3C]/60">Desmarcar</button>
+                </div>
+                <div className="max-h-72 overflow-y-auto divide-y divide-[#0F1E3C]/6">
+                  {groups.filter(g => g.name.toLowerCase().includes(q)).map(g => (
+                    <label key={g.jid} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-[#F4F6FB]">
+                      <input type="checkbox" className="w-4 h-4 accent-[#4361EE]" checked={sel.includes(g.jid)}
+                        onChange={() => setSel(p => p.includes(g.jid) ? p.filter(j => j !== g.jid) : [...p, g.jid])} />
+                      <span className="text-sm text-[#0F1E3C] truncate">{g.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="px-3 py-2 bg-[#F4F6FB] border-t border-[#0F1E3C]/8 text-xs font-bold text-[#0F1E3C]">{sel.length} grupos</div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setEditando(null)} className="flex-1 py-2.5 rounded-xl text-sm font-bold border border-[#0F1E3C]/12 text-[#0F1E3C]/60">Cancelar</button>
+                <button onClick={salvarLista} disabled={saving} className="flex-[2] flex items-center justify-center gap-2 py-2.5 bg-[#4361EE] text-white text-sm font-bold rounded-xl disabled:opacity-50">
+                  {saving && <Loader2 size={14} className="animate-spin" />} Salvar lista
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+function hojeBR() {
+  const p = new Intl.DateTimeFormat("en-CA", { timeZone: TZ_BR, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date())
+  const g = (t: string) => p.find(x => x.type === t)?.value ?? ""
+  const wd = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(g("weekday"))
+  return { data: `${g("year")}-${g("month")}-${g("day")}`, dia: wd, hora: `${g("hour").replace("24", "00")}:${g("minute")}` }
+}
+
+function dataBR(iso: string) {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: TZ_BR })
+}
+
+const DIA_NOME = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"]
+
 export default function MarketingPage() {
-  const [tab,              setTab]             = useState<"campanhas" | "lifecycle">("campanhas")
+  const [tab,              setTab]             = useState<"grupos" | "clientes" | "auto">("grupos")
   const [stats,            setStats]           = useState<Stats | null>(null)
   const [groups,           setGroups]          = useState<Group[]>([])
   const [campaigns,        setCampaigns]       = useState<Campaign[]>([])
   const [schedules,        setSchedules]       = useState<Schedule[]>([])
+  const [primeiros,        setPrimeiros]       = useState<Record<number, ScheduleItem | null>>({})
+  const [store,            setStore]           = useState<ListasStore>({ listas: [], uso: {} })
   const [loading,          setLoading]         = useState(true)
-  const [createDrawer,     setCreateDrawer]    = useState(false)
+  const [clienteDrawer,    setClienteDrawer]   = useState(false)
+  const [postDraft,        setPostDraft]       = useState<PostDraft | null>(null)
+  const [listasAberto,     setListasAberto]    = useState(false)
+  const [apagando,         setApagando]        = useState<number | null>(null)
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
-  const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
-  const [scheduleEditIntent, setScheduleEditIntent] = useState(false)
-  const [campaignView, setCampaignView] = useState<"ativas" | "historico">("ativas")
+  const [historico,        setHistorico]       = useState<Schedule | null>(null)
+  const [campaignView,     setCampaignView]    = useState<"ativas" | "historico">("ativas")
+  const [toast,            setToast]           = useState<string | null>(null)
+  const [hoje,             setHoje]            = useState<{ data: string; dia: number; hora: string } | null>(null)
 
-  const tickRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const tickRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollingIdsRef = useRef<Set<number>>(new Set())
+
+  function avisar(m: string) { setToast(m); setTimeout(() => setToast(null), 2600) }
 
   const loadAll = useCallback(async () => {
     setLoading(true)
-    const [sR, gR, cR, scR] = await Promise.all([
+    const [sR, gR, cR, scR, stR] = await Promise.all([
       fetch("/api/marketing/stats"),
       fetch("/api/marketing/groups"),
       fetch("/api/marketing/campaigns"),
       fetch("/api/marketing/schedules"),
+      fetch("/api/settings"),
     ])
     if (sR.ok) setStats(await sR.json())
     if (gR.ok) setGroups(await gR.json())
     if (cR.ok) setCampaigns(await cR.json())
-    if (scR.ok) setSchedules(await scR.json())
+    let scs: Schedule[] = []
+    if (scR.ok) { scs = await scR.json(); setSchedules(scs) }
+    if (stR.ok) setStore(lerListas(((await stR.json()) as Record<string, string>)[LISTAS_KEY]))
+    const itens = await Promise.all(scs.map(async s => {
+      const r = await fetch(`/api/marketing/schedules/${s.id}/items`).catch(() => null)
+      const l: ScheduleItem[] = r && r.ok ? await r.json() : []
+      return [s.id, l[0] ?? null] as const
+    }))
+    setPrimeiros(Object.fromEntries(itens))
+    setHoje(hojeBR())
     setLoading(false)
   }, [])
 
@@ -2220,27 +2268,17 @@ export default function MarketingPage() {
       if (!r.ok) return
       const d = await r.json() as { done: boolean; status: string; sentCount: number; totalCount: number; pauseReason: string | null }
       setCampaigns(prev => prev.map(c =>
-        c.id === campaignId
-          ? { ...c, sentCount: d.sentCount, totalCount: d.totalCount, status: d.status }
-          : c
+        c.id === campaignId ? { ...c, sentCount: d.sentCount, totalCount: d.totalCount, status: d.status } : c
       ))
       if (d.done) pollingIdsRef.current.delete(campaignId)
     } catch { /* retry next tick */ }
   }, [])
 
-  // Cada número (instância) roda sua campanha independente — várias podem
-  // estar "sending" ao mesmo tempo quando o envio pra clientes é dividido
-  // entre N números. Uma rodada só cutuca todas as que estão ativas.
+  // Mesmo ritmo do motor server-side (40-60s com jitter), reagendado só depois
+  // que a rodada anterior termina (ver processCampaign.ts randDelayClient).
   async function pollAll() {
     await Promise.all([...pollingIdsRef.current].map(tickCampaign))
   }
-
-  // setTimeout recursivo (não setInterval fixo) com o mesmo jitter 40-60s do
-  // motor server-side (processCampaign.ts randDelayClient) — antes era
-  // setInterval fixo de 30s, cadência exata demais (parece bot) e mais rápida
-  // que o delay configurado no cron de fallback (tela fechada). Reagenda só
-  // depois que a rodada anterior termina, então o intervalo real entre envios
-  // nunca fica menor que o mínimo mesmo com latência de rede.
   function scheduleNextPoll() {
     const delay = 40_000 + Math.random() * 20_000
     tickRef.current = setTimeout(async () => {
@@ -2248,37 +2286,24 @@ export default function MarketingPage() {
       if (pollingIdsRef.current.size > 0) scheduleNextPoll()
     }, delay)
   }
-
   function startPolling(campaignIds: number[]) {
     for (const id of campaignIds) pollingIdsRef.current.add(id)
-    if (!tickRef.current) {
-      pollAll()
-      scheduleNextPoll()
-    }
+    if (!tickRef.current) { pollAll(); scheduleNextPoll() }
   }
 
   useEffect(() => {
     const active = campaigns.filter(c => c.status === "sending" || c.status === "generating")
     if (active.length > 0) startPolling(active.map(c => c.id))
     else if (pollingIdsRef.current.size > 0) stopPolling()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaigns])
 
-  useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
+  useEffect(() => () => { if (tickRef.current) clearTimeout(tickRef.current) }, [])
 
-  // Sync open modals when list refreshes
   useEffect(() => {
-    if (selectedCampaign) {
-      const updated = campaigns.find(c => c.id === selectedCampaign.id)
-      setSelectedCampaign(updated ?? null)
-    }
+    if (selectedCampaign) setSelectedCampaign(campaigns.find(c => c.id === selectedCampaign.id) ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaigns])
-
-  useEffect(() => {
-    if (selectedSchedule) {
-      const updated = schedules.find(s => s.id === selectedSchedule.id)
-      setSelectedSchedule(updated ?? null)
-    }
-  }, [schedules])
 
   useEffect(() => {
     fetch("/api/marketing/migrate", { method: "POST" }).then(() => loadAll())
@@ -2296,35 +2321,62 @@ export default function MarketingPage() {
 
   async function toggleSchedule(s: Schedule) {
     await fetch(`/api/marketing/schedules/${s.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: !s.active }),
     })
+    avisar(s.active ? "Postagem pausada" : "Postagem ligada")
     loadAll()
   }
 
-  // ─── Campaign card (coluna esquerda) ─────────────────────────────────────
+  async function apagarSchedule(s: Schedule) {
+    await fetch(`/api/marketing/schedules/${s.id}`, { method: "DELETE" })
+    const uso = { ...store.uso }; delete uso[String(s.id)]
+    const next = { ...store, uso }; setStore(next); await salvarListas(next)
+    setApagando(null); avisar("Postagem apagada"); loadAll()
+  }
+
+  async function novaLista(nome: string, jids: string[]) {
+    const l = { id: Date.now(), nome, jids: [...jids] }
+    const next = { ...store, listas: [...store.listas, l] }
+    setStore(next); await salvarListas(next); avisar("Lista salva")
+    return l.id
+  }
+
+  async function setUso(scheduleId: number, listaId: number | null) {
+    const uso = { ...store.uso }
+    if (listaId) uso[String(scheduleId)] = listaId; else delete uso[String(scheduleId)]
+    const next = { ...store, uso }; setStore(next); await salvarListas(next)
+  }
+
+  async function salvarStore(next: ListasStore, mudou: ListaGrupos | null) {
+    setStore(next); await salvarListas(next)
+    if (mudou) {
+      const afetadas = schedules.filter(s => next.uso[String(s.id)] === mudou.id)
+      await Promise.all(afetadas.map(s => fetch(`/api/marketing/schedules/${s.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audienceGroupJids: mudou.jids }),
+      })))
+      avisar(afetadas.length ? `Lista salva e ${afetadas.length} postagem(ns) atualizada(s)` : "Lista salva")
+      loadAll()
+    } else avisar("Listas salvas")
+  }
+
+  async function abrirPostagem(s: Schedule | null, horaSugerida?: string) {
+    if (!s) return setPostDraft({ schedule: null, item: null, itemCount: 0, horaSugerida })
+    const r = await fetch(`/api/marketing/schedules/${s.id}/items`)
+    const itens: ScheduleItem[] = r.ok ? await r.json() : []
+    setPostDraft({ schedule: s, item: itens[0] ?? null, itemCount: itens.length })
+  }
+
+  // ─── Campanha (mensagem direta) ──────────────────────────────────────────
   function CampaignCard({ c }: { c: Campaign }) {
     const sm = STATUS_META[c.status] ?? { label: c.status, cls: "bg-slate-100 text-slate-500" }
     const isSending = c.status === "sending"
-
-    const statusLabel = (() => {
-      if (c.status === "cancelled" && c.executedAt) {
-        const d = new Date(c.executedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: TZ_BR })
-        return { text: `Cancelado em ${d}`, cls: "bg-slate-100 text-slate-500" }
-      }
-      return { text: sm.label, cls: sm.cls }
-    })()
-
     return (
-      <div
-        onClick={() => setSelectedCampaign(c)}
-        className="bg-white rounded-2xl border border-[#0F1E3C]/8 shadow-sm px-4 py-3.5 cursor-pointer hover:border-[#4361EE]/30 transition-colors"
-      >
+      <div onClick={() => setSelectedCampaign(c)}
+        className="bg-white rounded-2xl border border-[#0F1E3C]/8 px-4 py-3.5 cursor-pointer hover:border-[#4361EE]/30 transition-colors">
         <div className="flex items-start gap-3">
-          {c.mediaUrl && (
-            <img src={c.mediaUrl} alt="" className="h-12 w-12 rounded-xl object-cover border border-[#0F1E3C]/8 flex-shrink-0" />
-          )}
+          {c.mediaUrl && <img src={c.mediaUrl} alt="" className="h-12 w-12 rounded-xl object-cover border border-[#0F1E3C]/8 flex-shrink-0" />}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               {c.title && <p className="text-sm font-bold text-[#0F1E3C]">{c.title}</p>}
@@ -2333,25 +2385,18 @@ export default function MarketingPage() {
                   <Loader2 size={8} className="animate-spin" /> {c.sentCount}/{c.totalCount}
                 </span>
               ) : (
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusLabel.cls}`}>{statusLabel.text}</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sm.cls}`}>{sm.label}</span>
               )}
             </div>
             <p className="text-xs text-[#0F1E3C]/50 mt-1 truncate">{c.content}</p>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="text-[11px] text-[#0F1E3C]/35">
+            <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] text-[#0F1E3C]/40">
+              <span>
                 {c.audienceType === "groups" ? `${c.audienceGroupJids.length} grupo(s)`
                   : c.audienceType === "lifecycle" ? (LIFECYCLE_OPTS.find(o => o.value === (c.audienceLifecycle ?? "all"))?.label ?? "—")
                   : "Clientes + grupos"}
               </span>
-              {c.scheduledAt && (
-                <span className="text-[11px] text-[#0F1E3C]/35 flex items-center gap-1"><Clock size={9} /> {fmtBR(c.scheduledAt)}</span>
-              )}
-              {c.status === "sent" && (
-                <span className="text-[11px] text-emerald-600 flex items-center gap-1">
-                  <CheckCircle size={9} /> {c.sentCount} enviados{c.errorCount > 0 ? ` · ${c.errorCount} erros` : ""}
-                </span>
-              )}
-              {isSending && <span className="text-[11px] text-blue-500">~30s</span>}
+              {c.scheduledAt && <span className="flex items-center gap-1"><Clock size={9} /> {fmtBR(c.scheduledAt)}</span>}
+              {c.status === "sent" && <span className="text-emerald-600 flex items-center gap-1"><CheckCircle size={9} /> {c.sentCount} enviados{c.errorCount > 0 ? ` · ${c.errorCount} erros` : ""}</span>}
             </div>
           </div>
         </div>
@@ -2363,186 +2408,241 @@ export default function MarketingPage() {
   const historyCampaigns = campaigns.filter(c => c.status === "sent" || c.status === "failed" || c.status === "cancelled")
   const visibleCampaigns = campaignView === "ativas" ? activeCampaigns : historyCampaigns
 
+  // ─── Hoje ────────────────────────────────────────────────────────────────
+  const deHoje = hoje
+    ? schedules.filter(s => s.active && s.daysOfWeek.includes(hoje.dia)).sort((a, b) => a.timeOfDay.localeCompare(b.timeOfDay))
+    : []
+  const ordenadas = [...schedules].sort((a, b) => (Number(b.active) - Number(a.active)) || a.timeOfDay.localeCompare(b.timeOfDay))
+  const ativas = schedules.filter(s => s.active).length
+
+  function situacao(s: Schedule) {
+    if (!hoje) return { t: "", cls: "" }
+    if (s.lastExecutedAt && dataBR(s.lastExecutedAt) === hoje.data) return { t: `Saiu às ${fmtTime(s.lastExecutedAt)}`, cls: "bg-emerald-100 text-emerald-700" }
+    if (s.timeOfDay.slice(0, 5) < hoje.hora) return { t: "Não saiu", cls: "bg-red-100 text-red-700" }
+    return { t: "Vai sair", cls: "bg-[#DCE4FF] text-[#3451D4]" }
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Cabeçalho */}
+      <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>
-            Marketing
-          </h1>
-          <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Campanhas e programação de mensagens</p>
+          <h1 className="text-[38px] leading-none text-[#0F1E3C]" style={{ fontFamily: "var(--font-anton), Anton, Impact, sans-serif" }}>MARKETING</h1>
+          <p className="text-sm text-[#0F1E3C]/50 mt-1.5">O que sai hoje nos grupos e pros clientes</p>
         </div>
-        <button onClick={loadAll} className="p-2 rounded-xl bg-white border border-[#0F1E3C]/8 text-[#0F1E3C]/40 hover:text-[#0F1E3C] transition-colors">
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+        <button onClick={loadAll} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-[#0F1E3C]/8 text-xs font-bold text-[#0F1E3C]/50 hover:text-[#0F1E3C]">
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Atualizar
         </button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-1">
-            <Users size={14} className="text-[#0F1E3C]/40" />
-            <p className="text-[10px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider">Total</p>
+      {/* Hoje */}
+      <section className="bg-[#0F1E3C] rounded-2xl p-5 text-white space-y-3.5">
+        <p className="text-xs font-bold tracking-[.14em] uppercase text-[#AFC0EA]">
+          Hoje{hoje ? ` · ${DIA_NOME[hoje.dia]}, ${hoje.data.slice(8, 10)}/${hoje.data.slice(5, 7)}` : ""}
+        </p>
+        {loading && !hoje ? (
+          <div className="flex justify-center py-4"><Loader2 size={18} className="animate-spin text-[#AFC0EA]" /></div>
+        ) : deHoje.length === 0 ? (
+          <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-dashed border-white/20 px-4 py-4">
+            <p className="text-sm text-[#AFC0EA]">Nenhuma postagem ligada pra hoje.</p>
+            <button onClick={() => abrirPostagem(null)} className="px-3 py-2 rounded-lg text-xs font-bold bg-white/10 hover:bg-white/20">+ Nova postagem</button>
           </div>
-          <p className="text-2xl font-black text-[#0F1E3C]">{loading ? "—" : stats?.total ?? 0}</p>
-          <p className="text-[10px] text-[#0F1E3C]/30 mt-0.5">clientes</p>
-        </div>
-        {Object.entries(STATE_META).map(([key, meta]) => {
-          const count = Number(stats?.byState.find(s => s.state === key)?.total ?? 0)
-          return (
-            <div key={key} className={`rounded-2xl border p-4 shadow-sm ${meta.bg}`}>
-              <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${meta.color}`}>{meta.label}</p>
-              <p className={`text-2xl font-black ${meta.color}`}>{loading ? "—" : count}</p>
-            </div>
-          )
-        })}
-      </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {deHoje.map(s => {
+              const st = situacao(s)
+              const foto = primeiros[s.id]?.mediaUrl ?? s.firstItemMediaUrl
+              return (
+                <button key={s.id} onClick={() => abrirPostagem(s)}
+                  className="text-left flex items-center gap-3 min-w-0 rounded-xl bg-white/5 border border-white/10 hover:border-white/30 p-3 transition-colors">
+                  {foto ? <img src={foto} alt="" className="w-[62px] h-[62px] rounded-lg object-cover flex-shrink-0" />
+                    : <div className="w-[62px] h-[62px] rounded-lg bg-white/10 flex-shrink-0" />}
+                  <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-2xl leading-none" style={{ fontFamily: "var(--font-anton), Anton, Impact, sans-serif" }}>{s.timeOfDay.slice(0, 5)}</span>
+                    <span className="text-sm font-semibold truncate">{s.name}</span>
+                    <span className="text-xs text-[#AFC0EA] truncate">{nomeDosGrupos(s, store)}</span>
+                    <span className={`w-fit text-[11px] font-bold px-2 py-0.5 rounded-full ${st.cls}`}>{st.t}</span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </section>
 
-      {/* Tabs — 2 apenas */}
-      <div className="flex gap-1 bg-[#F4F6FB] p-1 rounded-xl w-fit">
+      {/* Abas */}
+      <div className="flex gap-1 bg-[#E6EAF4] p-1 rounded-xl w-fit max-w-full overflow-x-auto">
         {([
-          { v: "campanhas", l: "Campanhas",  Icon: Megaphone         },
-          { v: "lifecycle", l: "Lifecycle",  Icon: SlidersHorizontal },
-        ] as const).map(({ v, l, Icon }) => (
-          <button
-            key={v}
-            onClick={() => setTab(v)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
-              tab === v ? "bg-white text-[#4361EE] shadow-sm" : "text-[#0F1E3C]/50 hover:text-[#0F1E3C]"
-            }`}
-          >
-            <Icon size={13} />{l}
+          { v: "grupos",   l: "Grupos",      n: ativas ? `${ativas} ligada${ativas !== 1 ? "s" : ""}` : "" },
+          { v: "clientes", l: "Clientes",    n: "" },
+          { v: "auto",     l: "Automáticas", n: "" },
+        ] as const).map(({ v, l, n }) => (
+          <button key={v} onClick={() => setTab(v)}
+            className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${tab === v ? "bg-white text-[#4361EE] shadow-sm" : "text-[#0F1E3C]/50 hover:text-[#0F1E3C]"}`}>
+            {l}{n && <span className="ml-1.5 text-[11px] bg-[#4361EE]/10 text-[#4361EE] rounded-full px-1.5 py-0.5">{n}</span>}
           </button>
         ))}
       </div>
 
-      {/* ── Campanhas ── */}
-      {tab === "campanhas" && (
+      {/* ── Grupos ── */}
+      {tab === "grupos" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-sm text-[#0F1E3C]/55">Postagens que saem sozinhas nos grupos de WhatsApp, no horário e nos dias marcados.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setListasAberto(true)} className="px-4 py-2 rounded-xl text-sm font-bold bg-white border border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:text-[#4361EE]">Listas de grupos</button>
+              <button onClick={() => abrirPostagem(null)} className="flex items-center gap-1.5 px-4 py-2 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl"><Plus size={14} /> Nova postagem</button>
+            </div>
+          </div>
+
+          {loading && schedules.length === 0 ? (
+            <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>
+          ) : ordenadas.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
+              <CalendarClock size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+              <p className="text-sm font-bold text-[#0F1E3C]/40">Nenhuma postagem ainda</p>
+              <p className="text-xs text-[#0F1E3C]/30 mt-0.5">Clica em Nova postagem pra programar a primeira.</p>
+            </div>
+          ) : ordenadas.map(s => {
+            const it = primeiros[s.id]
+            const foto = it?.mediaUrl ?? s.firstItemMediaUrl
+            return (
+              <article key={s.id} className={`bg-white rounded-2xl border border-[#0F1E3C]/8 p-3.5 grid grid-cols-[64px_minmax(0,1fr)] md:grid-cols-[76px_minmax(0,1fr)_auto] gap-4 items-center ${s.active ? "" : "opacity-75"}`}>
+                {foto ? <img src={foto} alt="" className="w-16 h-16 md:w-[76px] md:h-[76px] rounded-xl object-cover" />
+                  : <div className="w-16 h-16 md:w-[76px] md:h-[76px] rounded-xl bg-[#EEF1FD] flex items-center justify-center text-[#4361EE] font-black">SM</div>}
+                <div className="min-w-0 space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <b className="text-[15px] text-[#0F1E3C]">{s.name}</b>
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${s.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{s.active ? "Ligada" : "Pausada"}</span>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap text-xs">
+                    <span className="px-2 py-0.5 rounded-full border border-[#0F1E3C]/10 bg-[#F4F6FB] font-bold text-[#0F1E3C] tabular-nums">{s.timeOfDay.slice(0, 5)}</span>
+                    <span className="px-2 py-0.5 rounded-full border border-[#0F1E3C]/10 bg-[#F4F6FB] text-[#0F1E3C]/60">{diasLabel(s.daysOfWeek)}</span>
+                    <span className="px-2 py-0.5 rounded-full border border-[#0F1E3C]/10 bg-[#F4F6FB] text-[#0F1E3C]/60">{nomeDosGrupos(s, store)}</span>
+                    {s.itemCount > 1 && <span className="px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-700">reveza {s.itemCount} textos</span>}
+                  </div>
+                  <p className="text-[13px] text-[#0F1E3C]/50 truncate">{it?.content.split("\n").find(x => x.trim()) ?? ""}</p>
+                </div>
+                <div className="col-span-2 md:col-span-1 flex gap-1.5 flex-wrap md:justify-end">
+                  <button onClick={() => toggleSchedule(s)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:text-[#4361EE]">{s.active ? "Pausar" : "Ligar"}</button>
+                  <button onClick={() => abrirPostagem(s)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-[#0F1E3C] hover:border-[#4361EE] hover:text-[#4361EE]">Editar</button>
+                  <button onClick={() => setHistorico(s)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-[#0F1E3C]/60 hover:text-[#4361EE]">Histórico</button>
+                  <button onClick={() => setApagando(s.id)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-[#0F1E3C]/12 text-red-500 hover:bg-red-50">Apagar</button>
+                </div>
+                {apagando === s.id && (
+                  <div className="col-span-2 md:col-span-3 flex items-center justify-between gap-2 flex-wrap bg-red-50 rounded-xl px-3 py-2.5 text-sm font-semibold text-red-700">
+                    <span>Apagar &quot;{s.name}&quot;? Ela para de sair nos grupos.</span>
+                    <span className="flex gap-1.5">
+                      <button onClick={() => setApagando(null)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-[#0F1E3C]/12 text-[#0F1E3C]">Manter</button>
+                      <button onClick={() => apagarSchedule(s)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600 text-white">Apagar</button>
+                    </span>
+                  </div>
+                )}
+              </article>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── Clientes ── */}
+      {tab === "clientes" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-[#0F1E3C]">Campanhas</p>
-            <button
-              onClick={() => setCreateDrawer(true)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-[#4361EE] hover:bg-[#3451d1] text-white text-xs font-bold rounded-xl transition-colors"
-            >
-              <Plus size={13} /> Criar
-            </button>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { k: "total",   l: "Clientes", sub: "no total",            cls: "text-[#0F1E3C]", v: (stats?.total ?? 0) as number | null },
+              { k: "new",     l: "Novos",    sub: "ainda sem pedido",    cls: "text-[#4361EE]", v: null },
+              { k: "active",  l: "Ativos",   sub: "compraram há pouco",  cls: "text-emerald-700", v: null },
+              { k: "ausente", l: "Sumidos",  sub: "pararam de comprar",  cls: "text-amber-700", v: null },
+            ].map(x => (
+              <div key={x.k} className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-4">
+                <p className="text-[11px] font-bold tracking-[.12em] uppercase text-[#0F1E3C]/40">{x.l}</p>
+                <p className={`text-[32px] leading-tight tabular-nums ${x.cls}`} style={{ fontFamily: "var(--font-anton), Anton, Impact, sans-serif" }}>
+                  {loading && !stats ? "—" : x.v ?? Number(stats?.byState.find(s => s.state === x.k)?.total ?? 0)}
+                </p>
+                <p className="text-xs text-[#0F1E3C]/45">{x.sub}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-sm text-[#0F1E3C]/55">Mensagem direta no WhatsApp de cada cliente. Sai uma vez só.</p>
+            <button onClick={() => setClienteDrawer(true)} className="flex items-center gap-1.5 px-4 py-2 bg-[#4361EE] hover:bg-[#3451d1] text-white text-sm font-bold rounded-xl"><Plus size={14} /> Mensagem pros clientes</button>
           </div>
 
           <MarketingMonitor />
 
-          {loading ? (
-            <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#4361EE]" /></div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-
-              {/* Coluna 1 — Mensagens Diretas */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider flex items-center gap-1.5">
-                    <Send size={11} /> Mensagens Diretas
-                  </p>
-                  <div className="flex gap-1 bg-[#F4F6FB] p-0.5 rounded-lg">
-                    {([
-                      { v: "ativas",    l: `Em andamento${activeCampaigns.length ? ` (${activeCampaigns.length})` : ""}` },
-                      { v: "historico", l: `Histórico${historyCampaigns.length ? ` (${historyCampaigns.length})` : ""}` },
-                    ] as const).map(({ v, l }) => (
-                      <button
-                        key={v}
-                        onClick={() => setCampaignView(v)}
-                        className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-colors ${
-                          campaignView === v ? "bg-white text-[#4361EE] shadow-sm" : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"
-                        }`}
-                      >
-                        {l}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {visibleCampaigns.length === 0 ? (
-                  <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
-                    <Megaphone size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
-                    <p className="text-xs font-bold text-[#0F1E3C]/30">
-                      {campaignView === "ativas" ? "Nenhuma campanha em andamento" : "Nenhuma campanha no histórico"}
-                    </p>
-                    <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">
-                      {campaignView === "ativas" ? "Envios únicos aparecem aqui" : "Campanhas concluídas, canceladas ou com falha aparecem aqui"}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {visibleCampaigns.map(c => <CampaignCard key={c.id} c={c} />)}
-                  </div>
-                )}
-              </div>
-
-              {/* Coluna 2 — Programação */}
-              <div className="space-y-3">
-                <p className="text-[11px] font-bold text-[#0F1E3C]/40 uppercase tracking-wider flex items-center gap-1.5">
-                  <CalendarClock size={11} /> Programação
-                </p>
-                {schedules.length === 0 ? (
-                  <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
-                    <CalendarClock size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
-                    <p className="text-xs font-bold text-[#0F1E3C]/30">Nenhuma programação</p>
-                    <p className="text-[10px] text-[#0F1E3C]/20 mt-0.5">Mensagens recorrentes aparecem aqui</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {schedules.map(s => (
-                      <ScheduleCard
-                        key={s.id}
-                        schedule={s}
-                        groups={groups}
-                        onToggle={() => toggleSchedule(s)}
-                        onDelete={loadAll}
-                        onClick={() => { setScheduleEditIntent(false); setSelectedSchedule(s) }}
-                        onEdit={() => { setScheduleEditIntent(true); setSelectedSchedule(s) }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold tracking-[.14em] uppercase text-[#0F1E3C]/40">Envios</p>
+            <div className="flex gap-1 bg-[#F4F6FB] p-0.5 rounded-lg">
+              {([
+                { v: "ativas",    l: `Em andamento${activeCampaigns.length ? ` (${activeCampaigns.length})` : ""}` },
+                { v: "historico", l: `Já enviados${historyCampaigns.length ? ` (${historyCampaigns.length})` : ""}` },
+              ] as const).map(({ v, l }) => (
+                <button key={v} onClick={() => setCampaignView(v)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${campaignView === v ? "bg-white text-[#4361EE] shadow-sm" : "text-[#0F1E3C]/40 hover:text-[#0F1E3C]"}`}>{l}</button>
+              ))}
             </div>
+          </div>
+          {visibleCampaigns.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[#0F1E3C]/8 p-8 text-center">
+              <Megaphone size={22} className="mx-auto text-[#0F1E3C]/15 mb-2" />
+              <p className="text-sm font-bold text-[#0F1E3C]/35">{campaignView === "ativas" ? "Nenhum envio em andamento" : "Nenhum envio ainda"}</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">{visibleCampaigns.map(c => <CampaignCard key={c.id} c={c} />)}</div>
           )}
         </div>
       )}
 
-      {/* ── Lifecycle ── */}
-      {tab === "lifecycle" && <LifecycleTab />}
+      {/* ── Automáticas ── */}
+      {tab === "auto" && <LifecycleTab />}
 
-      {/* Drawer unificado */}
+      {/* Gavetas e janelas */}
       <UnifiedDrawer
-        open={createDrawer}
-        onClose={() => setCreateDrawer(false)}
+        open={clienteDrawer}
+        onClose={() => setClienteDrawer(false)}
         groups={groups}
         stats={stats}
         onCampaignCreated={handleCampaignCreated}
         onScheduleCreated={loadAll}
       />
 
-      {/* Modal de campanha */}
-      {selectedCampaign && (
-        <CampaignModal
-          campaign={selectedCampaign}
-          onClose={() => setSelectedCampaign(null)}
-          onCancel={cancelCampaign}
+      {postDraft && (
+        <PostagemDrawer
+          key={postDraft.schedule?.id ?? "nova"}
+          draft={postDraft}
+          groups={groups}
+          store={store}
+          onClose={() => setPostDraft(null)}
+          onSaved={m => { setPostDraft(null); avisar(m); loadAll() }}
+          onNovaLista={novaLista}
+          setUso={setUso}
         />
       )}
 
-      {/* Modal de programação */}
-      {selectedSchedule && (
+      {listasAberto && (
+        <ListasDrawer groups={groups} store={store} schedules={schedules}
+          onClose={() => setListasAberto(false)} onSave={salvarStore} />
+      )}
+
+      {selectedCampaign && (
+        <CampaignModal campaign={selectedCampaign} onClose={() => setSelectedCampaign(null)} onCancel={cancelCampaign} />
+      )}
+
+      {historico && (
         <ScheduleModal
-          schedule={selectedSchedule}
+          schedule={historico}
           groups={groups}
           stats={stats}
-          startInEdit={scheduleEditIntent}
-          onClose={() => { setSelectedSchedule(null); setScheduleEditIntent(false) }}
-          onToggle={() => toggleSchedule(selectedSchedule)}
+          startInEdit={false}
+          onClose={() => setHistorico(null)}
+          onToggle={() => toggleSchedule(historico)}
           onRefresh={loadAll}
         />
+      )}
+
+      {toast && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-6 z-[60] bg-[#0F1E3C] text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg">{toast}</div>
       )}
     </div>
   )
