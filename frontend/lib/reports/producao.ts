@@ -8,7 +8,7 @@
 import { pool } from "@/lib/db"
 import { historicoCortes, proporcoes } from "@/lib/cortes"
 import { calcularCorte, porTamanho } from "@/lib/cortesCalc"
-import { saldosVariantes, abaixoDoMinimo, linhasProduzir, aProduzir } from "@/lib/estoqueMinimo"
+import { saldosVariantes, abaixoDoMinimo, mensagemProduzir, bolinhaCor } from "@/lib/estoqueMinimo"
 
 export type Entrada = { data: string; produto: string; cor: string; tam: string; tamIdx: number; qtd: number }
 
@@ -157,6 +157,30 @@ function agrupa(es: Entrada[]) {
   return [...porProd.entries()].sort((a, b) => b[1].qtd - a[1].qtd)
 }
 
+// PIV 15/11: entradas em bloco por produto, uma linha por cor com os tamanhos
+//   👕 *CAMISETAS ADULTO* · *738*
+//   ⚫ Preto: P 40 · M 60 · G 60 · GG 40 = *200*
+function blocosEntradas(es: Entrada[], extra: (produto: string) => string = () => ""): string[] {
+  const porProd = new Map<string, Map<string, Entrada[]>>()
+  for (const e of es) {
+    const cs = porProd.get(e.produto) ?? new Map<string, Entrada[]>()
+    cs.set(e.cor, [...(cs.get(e.cor) ?? []), e]); porProd.set(e.produto, cs)
+  }
+  const tot = (xs: Entrada[]) => xs.reduce((s, e) => s + e.qtd, 0)
+  const out: string[] = []
+  for (const [p, cs] of [...porProd.entries()].sort((a, b) => tot([...b[1].values()].flat()) - tot([...a[1].values()].flat()))) {
+    out.push(`👕 *${p.toUpperCase()}* · *${n0(tot([...cs.values()].flat()))}*${extra(p)}`)
+    for (const [c, xs] of [...cs.entries()].sort((a, b) => tot(b[1]) - tot(a[1]))) {
+      const tams = new Map<string, { i: number; q: number }>()
+      for (const e of xs) { const t = tams.get(e.tam) ?? { i: e.tamIdx, q: 0 }; t.q += e.qtd; tams.set(e.tam, t) }
+      out.push(`${bolinhaCor(c)} ${c}: ${[...tams.entries()].sort((a, b) => a[1].i - b[1].i).map(([t, v]) => `${t} ${n0(v.q)}`).join(" · ")} = *${n0(tot(xs))}*`)
+    }
+    out.push("")
+  }
+  if (out[out.length - 1] === "") out.pop()
+  return out
+}
+
 function linhasPecaPronta(produtos: string[], tamsDe: (p: string) => string[], malha: Record<string, Record<string, number>>, costura: Record<string, number>): string[] {
   return produtos.filter(p => malha[p]).map(p =>
     `• ${p}: ${tamsDe(p).filter(t => malha[p][t] != null).map(t => `${t} ${brl(malha[p][t] + (costura[p] ?? 0))}`).join(" · ")}`)
@@ -167,7 +191,7 @@ const notaPesos = (ps: Pesos) => {
   return `_Peso de costura (${ps.semanas} semanas, 1x = ${ps.ref}): ${ps.confirmados.map(p => `${p} ${ps.peso[p].toLocaleString("pt-BR", { maximumFractionDigits: 1 })}x`).join(" · ")}; o resto ainda conta 1x._`
 }
 
-export async function mensagemDiaria(data: string): Promise<string> {
+export async function mensagemDiaria(data: string): Promise<string[]> {
   const mensal = await costuraMensal()
   const iniMes = data.slice(0, 8) + "01"
   const [hoje, mes, pesos, malha, vs] = await Promise.all([
@@ -184,8 +208,7 @@ export async function mensagemDiaria(data: string): Promise<string> {
   const out: string[] = [`🧵 *Fechamento da produção · ${DIAS[diaSem(data)]} ${dBR(data)}*`, ""]
   if (!pecas) out.push("Hoje não entrou peça no estoque.")
   else {
-    out.push(`Entraram *${n0(pecas)} peças* no estoque`)
-    for (const [p, x] of g) out.push(`• ${p}: *${n0(x.qtd)}* (${[...x.tams.entries()].sort((a, b) => a[1].idx - b[1].idx).map(([t, v]) => `${t} ${v.q}`).join(" · ")})`)
+    out.push(`Entraram *${n0(pecas)} peças* no estoque`, "", ...blocosEntradas(hoje))
   }
   out.push("", `💰 *Costura*: ${brl(custoDia)} hoje${pecas ? ` ÷ ${n0(pecas)} peças = *${brl(custoDia / pecas)} por peça*` : ""}`)
   if (pecasMes) out.push(`Média do mês até hoje: *${brl(custoMes / pecasMes)} por peça* (${n0(pecasMes)} peças)`)
@@ -196,11 +219,13 @@ export async function mensagemDiaria(data: string): Promise<string> {
   }
   const pronta = linhasPecaPronta(g.map(x => x[0]), tamsDe, malha, costuraMesProd)
   if (pronta.length) out.push("", "👕 *Peça pronta* (malha dos cortes + costura média do mês)", ...pronta)
-  const abaixo = vs.filter(abaixoDoMinimo)
-  if (abaixo.length) out.push("", `🔻 *Abaixo do mínimo* (${abaixo.length}) · tamanho *disponível*/mínimo`, ...linhasProduzir(abaixo, 15), `Pra produzir até o alvo: *${n0(abaixo.reduce((s, v) => s + aProduzir(v), 0))} peças*`)
-  else if (vs.some(v => v.minStock > 0)) out.push("", "✅ Nada abaixo do mínimo.")
   out.push("", notaPesos(pesos))
-  return out.join("\n")
+  // a lista do que produzir vai numa 2ª mensagem, em blocos (PIV 15/11), pra não virar um textão só
+  const abaixo = vs.filter(abaixoDoMinimo)
+  const lista = abaixo.length
+    ? mensagemProduzir(abaixo, `Abaixo do mínimo agora: ${abaixo.length} ${abaixo.length === 1 ? "item" : "itens"}`)
+    : vs.some(v => v.minStock > 0) ? "✅ Nada abaixo do mínimo agora." : null
+  return [out.join("\n"), ...(lista ? [lista] : [])]
 }
 
 // semanal e mensal: mesmo formato, com comparação com o período anterior
@@ -217,22 +242,18 @@ export async function mensagemPeriodo(tipo: "semanal" | "mensal", de: string, at
   const nomeAnt = tipo === "semanal" ? "semana anterior" : "mês anterior"
   const out: string[] = [titulo, ""]
   if (!pecas) { out.push("Não entrou peça no estoque nesse período."); return out.join("\n") }
+  void ratAnt
   const cpp = custo / pecas, cppAnt = pecasAnt ? custoAnt / pecasAnt : null
   out.push(`Entraram *${n0(pecas)} peças*${pecasAnt ? ` (${pct(pecas / pecasAnt - 1)} vs ${nomeAnt}: ${n0(pecasAnt)})` : ""}`)
   out.push(`💰 Costura: ${brl(custo)} ÷ ${n0(pecas)} = *${brl(cpp)} por peça*${cppAnt ? ` (${pct(cpp / cppAnt - 1)} vs ${brl(cppAnt)})` : ""}`)
-  if (pesos.ok) {
-    out.push("", "*Por produto* (peças · costura por peça)")
-    for (const [p, x] of g) {
-      const a = ratAnt[p]
-      out.push(`• ${p}: *${n0(x.qtd)}* · ${brl(rat[p])}${a ? ` (${pct(rat[p] / a - 1)})` : ""}`)
-    }
-  } else {
-    out.push("", `*Por produto* (peças · vs ${nomeAnt})`)
-    for (const [p, x] of g) {
-      const a = qtdAnt[p]
-      out.push(`• ${p}: *${n0(x.qtd)}*${a ? ` (${pct(x.qtd / a - 1)})` : ` (não entrou ${tipo === "semanal" ? "na" : "no"} ${nomeAnt})`}`)
-    }
+  // PIV 15/11: bloco por produto, uma linha por cor com os tamanhos; no título do produto,
+  // a comparação de peças com o período anterior (e a costura por peça quando o peso separa)
+  const extra = (p: string) => {
+    const a = qtdAnt[p]
+    const comp = a ? ` (${pct((qtd[p] ?? 0) / a - 1)})` : ` (não entrou ${tipo === "semanal" ? "na" : "no"} ${nomeAnt})`
+    return comp + (pesos.ok ? ` · costura ${brl(rat[p])}` : "")
   }
+  out.push("", `*Por produto* (peças · vs ${nomeAnt})`, "", ...blocosEntradas(es, extra))
   // dia a dia (semanal) / melhor e pior dia (mensal)
   const porDia: Record<string, number> = {}; for (const e of es) porDia[e.data] = (porDia[e.data] ?? 0) + e.qtd
   const dias = Object.entries(porDia).sort()

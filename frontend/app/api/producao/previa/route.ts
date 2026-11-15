@@ -10,7 +10,8 @@ export async function GET(req: Request) {
   const hoje = u.searchParams.get("hoje") ?? todayBR()
   if (!["diario", "semanal", "mensal"].includes(tipo) || !/^\d{4}-\d{2}-\d{2}$/.test(hoje)) return NextResponse.json({ error: "parâmetros inválidos" }, { status: 400 })
   try {
-    return NextResponse.json({ texto: await montarFechamentoProducao(tipo, hoje) })
+    const msgs = await montarFechamentoProducao(tipo, hoje)
+    return NextResponse.json({ mensagens: msgs, texto: msgs.join("\n\n━━━━━━ próxima mensagem ━━━━━━\n\n") })
   } catch (e) {
     console.error("[producao/previa]", e)
     return NextResponse.json({ error: "não montou" }, { status: 500 })

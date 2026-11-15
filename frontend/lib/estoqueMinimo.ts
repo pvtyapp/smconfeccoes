@@ -38,16 +38,46 @@ export async function saldosVariantes(): Promise<VarianteSaldo[]> {
 export const aProduzir = (v: VarianteSaldo) => Math.max(0, (v.targetStock > v.minStock ? v.targetStock : v.minStock) - v.disponivel)
 export const abaixoDoMinimo = (v: VarianteSaldo) => v.minStock > 0 && v.disponivel <= v.minStock
 
-// "Camisetas Adulto Preto: M 18/30 (produzir 72) · G 9/30 (produzir 81)" — uma linha por produto+cor
-export function linhasProduzir(vs: VarianteSaldo[], limite = 25): string[] {
-  const grupos = new Map<string, VarianteSaldo[]>()
+// bolinha da cor pra mensagem do WhatsApp (por palavra-chave do nome)
+export function bolinhaCor(cor: string): string {
+  const n = cor.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+  const mapa: [string, string][] = [["preto", "⚫"], ["off white", "⚪"], ["branco", "⚪"], ["vermelh", "🔴"], ["bordo", "🟥"], ["vinho", "🟥"],
+    ["azul", "🔵"], ["verde", "🟢"], ["roxo", "🟣"], ["roxa", "🟣"], ["lilas", "🟣"], ["rosa", "🩷"], ["marrom", "🟤"], ["bege", "🟤"],
+    ["amarel", "🟡"], ["laranja", "🟠"], ["cinza", "🩶"], ["mescla", "🩶"]]
+  return mapa.find(([k]) => n.includes(k))?.[1] ?? "▪️"
+}
+
+const n0 = (v: number) => Math.round(v).toLocaleString("pt-BR")
+// PIV 15/11: um bloco por produto, a cor como subtítulo e um tamanho por linha
+//   👕 *CAMISETAS ADULTO* · produzir *1.234*
+//   ⚫ *Preto*
+//      ▸ G: tem *9* · mín 240 · produzir *581*
+export function blocosProduzir(vs: VarianteSaldo[]): string[] {
+  const porProd = new Map<string, Map<string, VarianteSaldo[]>>()
   for (const v of [...vs].sort((a, b) => a.productName.localeCompare(b.productName) || a.color.localeCompare(b.color) || a.sizeIdx - b.sizeIdx)) {
-    const k = `${v.productName} ${v.color}`
-    grupos.set(k, [...(grupos.get(k) ?? []), v])
+    const cores = porProd.get(v.productName) ?? new Map<string, VarianteSaldo[]>()
+    cores.set(v.color, [...(cores.get(v.color) ?? []), v])
+    porProd.set(v.productName, cores)
   }
-  const linhas = [...grupos.entries()].map(([k, xs]) =>
-    `• ${k}: ${xs.map(v => `${v.size} *${v.disponivel}*/${v.minStock}${aProduzir(v) ? ` (produzir ${aProduzir(v)})` : ""}`).join(" · ")}`)
-  return linhas.length > limite ? [...linhas.slice(0, limite), `… e mais ${linhas.length - limite} (lista completa no painel, Estoque > Mínimo e alvo)`] : linhas
+  const out: string[] = []
+  for (const [p, cores] of porProd) {
+    const total = [...cores.values()].flat().reduce((s, v) => s + aProduzir(v), 0)
+    out.push(`👕 *${p.toUpperCase()}* · produzir *${n0(total)}*`)
+    for (const [c, xs] of cores) {
+      out.push(`${bolinhaCor(c)} *${c}*`)
+      for (const v of xs) out.push(`     ▸ ${v.size}: tem *${n0(v.disponivel)}* · mín ${n0(v.minStock)} · produzir *${n0(aProduzir(v))}*${v.disponivel <= 0 ? " ‼️" : ""}`)
+    }
+    out.push("")
+  }
+  if (out[out.length - 1] === "") out.pop()
+  return out
+}
+
+export function mensagemProduzir(vs: VarianteSaldo[], titulo: string): string {
+  const zerados = vs.filter(v => v.disponivel <= 0).length
+  return `🧵 *${titulo}*${zerados ? ` · ${zerados} zerado${zerados > 1 ? "s" : ""} ‼️` : ""}\n` +
+    `_produzir = até o alvo (5 dias de venda)_\n\n${blocosProduzir(vs).join("\n")}\n\n` +
+    `*Total pra produzir: ${n0(vs.reduce((s, v) => s + aProduzir(v), 0))} peças*`
 }
 
 let pronto = false
@@ -78,10 +108,7 @@ export async function checarMinimos(opts: { avisar?: boolean } = {}): Promise<{ 
   if (tirar.length) await pool.query(`DELETE FROM estoque_alertas WHERE variant_id = ANY($1)`, [tirar])
 
   if (novos.length && opts.avisar !== false) {
-    const zerados = novos.filter(v => v.disponivel <= 0).length
-    const msg = `🧵 *Produzir: ${novos.length} ${novos.length === 1 ? "item chegou" : "itens chegaram"} no mínimo*${zerados ? ` (${zerados} zerado${zerados > 1 ? "s" : ""})` : ""}\n` +
-      `_tamanho *disponível*/mínimo_\n\n${linhasProduzir(novos).join("\n")}\n\nTotal pra produzir: *${novos.reduce((s, v) => s + aProduzir(v), 0)} peças*`
-    await sendAdministrativo(msg)
+    await sendAdministrativo(mensagemProduzir(novos, `Produzir: ${novos.length} ${novos.length === 1 ? "item chegou" : "itens chegaram"} no mínimo`))
   }
   if (novos.length) {
     await pool.query(
