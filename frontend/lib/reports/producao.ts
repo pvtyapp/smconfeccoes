@@ -63,7 +63,7 @@ export function custoCosturaPeriodo(mensal: number, de: string, ate: string): nu
 // Toda semana a costura custa ~o mesmo; semana com mais produto pesado entra menos peça.
 // Mínimos quadrados: soma(peso × peças do produto na semana) ≈ custo da semana em "peças-padrão",
 // puxando cada peso pra 1 com a força de ~4 semanas daquele produto (com pouco dado fica perto de 1).
-export type Pesos = { peso: Record<string, number>; semanas: number; ok: boolean }
+export type Pesos = { peso: Record<string, number>; semanas: number; ok: boolean; ref: string | null; confirmados: string[] }
 export async function pesosCostura(ate: string, mensal: number): Promise<Pesos> {
   // semanas completas (seg–sex) das últimas 26, terminando antes de `ate`
   let seg = somaDias(ate, -((diaSem(ate) + 6) % 7))       // segunda da semana de `ate`
@@ -78,25 +78,49 @@ export async function pesosCostura(ate: string, mensal: number): Promise<Pesos> 
   }
   const prods = [...new Set(es.map(e => e.produto))]
   const um = Object.fromEntries(prods.map(p => [p, 1]))
-  if (semanas.length < 4 || prods.length < 2) return { peso: um, semanas: semanas.length, ok: false }
+  if (semanas.length < 8 || prods.length < 2) return { peso: um, semanas: semanas.length, ok: false, ref: null, confirmados: [] }
+  // referência = produto de maior volume (hoje camiseta adulto) = 1x
+  const vol = (p: string) => semanas.reduce((s, w) => s + (w.q[p] ?? 0), 0)
+  const ref = [...prods].sort((a, b) => vol(b) - vol(a))[0]
+  const tudo = ajusta(semanas, prods, ref)
+  const meio = Math.floor(semanas.length / 2)
+  const a = ajusta(semanas.slice(0, meio), prods, ref), b = ajusta(semanas.slice(meio), prods, ref)
+  // Só vale peso próprio o produto que (1) apareceu nas duas metades, (2) as duas metades concordam
+  // (diferença até 30%) e (3) ficou entre 0,5x e 4x. O resto fica 1x: com a semana variando por
+  // lote e falta, a conta não separa com segurança (14/11 a primeira versão deu moletom 24x).
+  const confirmados: string[] = []
+  const peso = Object.fromEntries(prods.map(p => {
+    if (p === ref || !tudo || !a || !b) return [p, 1]
+    const r = tudo[p], ra = a[p], rb = b[p]
+    const firme = ra > 0 && rb > 0 && Math.abs(ra - rb) / ((ra + rb) / 2) <= 0.3 && r >= 0.5 && r <= 4
+      && semanas.slice(0, meio).some(w => (w.q[p] ?? 0) > 0) && semanas.slice(meio).some(w => (w.q[p] ?? 0) > 0)
+    if (firme) confirmados.push(p)
+    return [p, firme ? r : 1]
+  }))
+  return { peso, semanas: semanas.length, ok: confirmados.length > 0, ref, confirmados }
+}
+
+// mínimos quadrados com o peso da referência fixo em 1 e os outros puxados pra 1 (força de ~4 semanas)
+function ajusta(semanas: { q: Record<string, number>; custo: number }[], prods: string[], ref: string): Record<string, number> | null {
+  if (semanas.length < 3) return null
   const totQ = semanas.reduce((s, w) => s + Object.values(w.q).reduce((a, b) => a + b, 0), 0)
+  if (!totQ) return null
   const cpp = semanas.reduce((s, w) => s + w.custo, 0) / totQ
-  const n = prods.length
-  const A = prods.map(() => Array(n).fill(0)), b = Array(n).fill(0)
+  const livres = prods.filter(p => p !== ref), n = livres.length
+  const A = livres.map(() => Array(n).fill(0)), b = Array(n).fill(0)
   for (const w of semanas) {
-    const x = prods.map(p => w.q[p] ?? 0), y = w.custo / cpp
+    const x = livres.map(p => w.q[p] ?? 0), y = w.custo / cpp - (w.q[ref] ?? 0)
     for (let i = 0; i < n; i++) { b[i] += x[i] * y; for (let j = 0; j < n; j++) A[i][j] += x[i] * x[j] }
   }
-  prods.forEach((p, i) => { const lam = 4 * semanas.reduce((s, w) => s + (w.q[p] ?? 0) ** 2, 0) / semanas.length || 1; A[i][i] += lam; b[i] += lam })
+  livres.forEach((p, i) => { const lam = 4 * semanas.reduce((s, w) => s + (w.q[p] ?? 0) ** 2, 0) / semanas.length || 1; A[i][i] += lam; b[i] += lam })
   const M = A.map((r, i) => [...r, b[i]])
   for (let c = 0; c < n; c++) {
     let pv = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[pv][c])) pv = r
-    if (Math.abs(M[pv][c]) < 1e-12) return { peso: um, semanas: semanas.length, ok: false };
+    if (Math.abs(M[pv][c]) < 1e-12) return null;
     [M[c], M[pv]] = [M[pv], M[c]]
     for (let r = 0; r < n; r++) if (r !== c) { const f = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k] }
   }
-  const peso = Object.fromEntries(prods.map((p, i) => [p, Math.min(6, Math.max(0.25, M[i][n] / M[i][i]))]))
-  return { peso, semanas: semanas.length, ok: true }
+  return Object.fromEntries([[ref, 1], ...livres.map((p, i) => [p, M[i][n] / M[i][i]])])
 }
 
 // custo de costura por peça de cada produto num período: divide o custo pelos pesos
@@ -139,9 +163,8 @@ function linhasPecaPronta(produtos: string[], tamsDe: (p: string) => string[], m
 }
 
 const notaPesos = (ps: Pesos) => {
-  if (!ps.ok) return `_Peso de costura: todos iguais por enquanto (precisa de 4 semanas com produtos diferentes; tem ${ps.semanas})._`
-  const ref = Object.entries(ps.peso).sort((a, b) => a[1] - b[1])[0]
-  return `_Peso de costura calculado em ${ps.semanas} semanas: ${Object.entries(ps.peso).sort((a, b) => b[1] - a[1]).map(([p, w]) => `${p} ${(w / ref[1]).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}x`).join(" · ")} (1x = ${ref[0]})._`
+  if (!ps.ok) return `_Peso de costura: todos os produtos iguais por enquanto. Com ${ps.semanas} semanas de entrada a conta ainda não separa com segurança (a semana varia muito por lote lançado e falta); vai separando sozinha conforme entra mais semana com produto diferente._`
+  return `_Peso de costura (${ps.semanas} semanas, 1x = ${ps.ref}): ${ps.confirmados.map(p => `${p} ${ps.peso[p].toLocaleString("pt-BR", { maximumFractionDigits: 1 })}x`).join(" · ")}; o resto ainda conta 1x._`
 }
 
 export async function mensagemDiaria(data: string): Promise<string> {
