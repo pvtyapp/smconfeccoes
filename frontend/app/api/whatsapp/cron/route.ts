@@ -239,7 +239,8 @@ export async function GET(req: Request) {
   // disparar e campanha agendada pra data futura nunca sair de "scheduled".
 
   // ── 13. Contas a Pagar — lembrete no dia do vencimento (grupo SM Administrativo) ─
-  try {
+  // Sábado e domingo não manda (PIV 14/11); a segunda cobre o que venceu no fim de semana.
+  if (!isWeekendBR()) try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS payables (
         id SERIAL PRIMARY KEY,
@@ -258,14 +259,14 @@ export async function GET(req: Request) {
     const { rows: due } = await pool.query(`
       SELECT description, category, amount::float AS amount
       FROM payables
-      WHERE due_date = $1 AND paid_at IS NULL
-      ORDER BY amount DESC
-    `, [today])
+      WHERE due_date BETWEEN $1 AND $2 AND paid_at IS NULL
+      ORDER BY due_date, amount DESC
+    `, [cobrancaDesde, today])
 
     if (due.length > 0) {
       const total = due.reduce((s, p) => s + Number(p.amount), 0)
       const linhas = due.map(p => `• ${p.description}${p.category ? ` (${p.category})` : ""}: R$ ${Number(p.amount).toFixed(2).replace(".", ",")}`)
-      const msg = `📅 *Contas a Pagar — vencem hoje*\n\n${linhas.join("\n")}\n\nTotal: *R$ ${total.toFixed(2).replace(".", ",")}*`
+      const msg = `📅 *Contas a Pagar — ${cobrancaDesde < today ? "venceram no fim de semana e hoje" : "vencem hoje"}*\n\n${linhas.join("\n")}\n\nTotal: *R$ ${total.toFixed(2).replace(".", ",")}*`
       await sendAdministrativo(msg)
       results.payablesDue = due.length
     }

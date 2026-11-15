@@ -133,6 +133,35 @@ async function variableCostsToday(date: string): Promise<number> {
 //
 // Retorna um array de mensagens — uma por bloco (DTF/Balcão/Site/WhatsApp) mais
 // o resumo final — pra cada uma virar uma mensagem separada no grupo.
+// Segunda-feira (PIV 14/11): sábado e domingo não têm fechamento, então o que entrou
+// no fim de semana (quase sempre pedido do site) vem num bloco à parte, fora do total de hoje.
+export async function buildFimDeSemanaBlock(sabado: string, domingo: string): Promise<string> {
+  const { rows } = await pool.query(`
+    SELECT o.source, o.number, o.total_value::float AS "totalValue", COALESCE(c.nome_cadastro, c.name) AS "contactName"
+      FROM orders o JOIN wa_contacts c ON c.id = o.contact_id
+     WHERE o.status = 'concluido' AND o.number NOT LIKE 'COB-%' AND o.due_date IS NULL
+       AND o.source IN ('pdv','site','whatsapp')
+       AND DATE(o.created_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN $1 AND $2
+     ORDER BY o.created_at ASC
+  `, [sabado, domingo])
+  const { rows: dtf } = await pool.query(`
+    SELECT p.number, p.preco_cobrado::float AS "totalValue", COALESCE(c.nome_cadastro, c.name, p.cliente) AS "contactName"
+      FROM dtf_pedidos p LEFT JOIN wa_contacts c ON c.id = p.contact_id
+     WHERE p.status = 'concluido' AND p.data BETWEEN $1 AND $2 AND p.due_date IS NULL
+  `, [sabado, domingo])
+  const recebidos = await recebimentosPrazo(sabado, domingo)
+  const canal: Record<string, string> = { pdv: "balcão", site: "site", whatsapp: "WhatsApp" }
+  const linhas = [
+    ...rows.map((r, i) => `${i + 1}. ${r.contactName ?? "?"} · ${r.number} · ${fmtMoney(Number(r.totalValue))} (${canal[r.source] ?? r.source})`),
+    ...dtf.map(r => `• ${r.contactName ?? "?"} · ${r.number} · ${fmtMoney(Number(r.totalValue))} (DTF)`),
+    ...recebidos.map(r => `💰 ${r.contactName ?? "?"} · ${r.number} · ${fmtMoney(r.amount)} (prazo recebido)`),
+  ]
+  const total = [...rows, ...dtf].reduce((s, r) => s + Number(r.totalValue), 0) + recebidos.reduce((s, r) => s + r.amount, 0)
+  const titulo = `📅 *Fim de semana (${fmtDateBRFromISO(sabado).slice(0, 5)} e ${fmtDateBRFromISO(domingo).slice(0, 5)})*`
+  if (!linhas.length) return `${titulo}\n\nNenhuma venda no fim de semana.`
+  return `${titulo}\nTotal: *${fmtMoney(total)}* (fora do total de hoje)\n\n${linhas.join("\n")}`
+}
+
 export async function buildFechamentoBlocks(date: string, expense: FechamentoExpense): Promise<string[]> {
   const [pdvRows, siteRows, whatsappRows, dtfRows, recebidos, prazoHoje] = await Promise.all([
     ordersForChannel("pdv", date),

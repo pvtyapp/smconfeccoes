@@ -7,6 +7,19 @@ import { effectiveCost } from "@/lib/calculations"
 import { todayBR } from "@/lib/tz"
 import { sizeCompare } from "@/lib/sizeOrder"
 import { useAcesso, OCULTO } from "@/lib/acessoClient"
+import MinimoAlvo from "./MinimoAlvo"
+
+// Abas do Estoque (PIV 14/11): o estoque de sempre + Mínimo e alvo (aviso de produzir)
+function AbasEstoque({ aba, setAba }: { aba: "estoque" | "minimos"; setAba: (a: "estoque" | "minimos") => void }) {
+  return (
+    <div className="flex gap-1.5 mt-2">
+      {([["estoque", "Estoque"], ["minimos", "Mínimo e alvo"]] as const).map(([k, l]) => (
+        <button key={k} onClick={() => setAba(k)}
+          className={"rounded-full border px-3.5 py-1.5 text-[13px] font-bold " + (aba === k ? "bg-[#0F1E3C] text-white border-[#0F1E3C]" : "bg-white text-[#6B7891] border-[#E3E7EF]")}>{l}</button>
+      ))}
+    </div>
+  )
+}
 
 type Movement = {
   id: string
@@ -170,6 +183,7 @@ function isActive(f: FilterMode, active: FilterMode) {
 export default function EstoquePage() {
   // Valor do estoque é custo: só com "ver financeiro" (o servidor já manda o custo vazio).
   const { verFinanceiro } = useAcesso()
+  const [aba, setAba]             = useState<"estoque" | "minimos">("estoque")
   const [balance, setBalance]     = useState<BalanceRow[]>([])
   const [movements, setMovements] = useState<Movement[]>([])
   const [loading, setLoading]     = useState(true)
@@ -281,6 +295,17 @@ export default function EstoquePage() {
     })
   }
 
+  if (aba === "minimos") return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Estoque</h1>
+        <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Mínimo pra avisar de produzir e alvo de até quanto produzir, por cor e tamanho</p>
+        <AbasEstoque aba={aba} setAba={setAba} />
+      </div>
+      <MinimoAlvo />
+    </div>
+  )
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -288,6 +313,7 @@ export default function EstoquePage() {
         <div>
           <h1 className="text-2xl font-black text-[#0F1E3C]" style={{ fontFamily: "var(--font-playfair)" }}>Estoque</h1>
           <p className="text-sm text-[#0F1E3C]/45 mt-0.5">Controle de entradas e saídas por produto</p>
+          <AbasEstoque aba={aba} setAba={setAba} />
         </div>
         <div className="flex items-center gap-2">
           {/* Period filter */}

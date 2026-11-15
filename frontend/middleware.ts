@@ -35,6 +35,11 @@ const PUBLIC_API_PREFIXES = [
   "/api/products/migrate-images",
   // Cortador terceirizado lança o corte pelo celular sem login (PIV 14/11) — só esta rota.
   "/api/cortes/publico",
+  // Crons (PIV 14/11) — protegidos pelo CRON_SECRET dentro da rota
+  "/api/estoque/alerta-minimo-cron",
+  "/api/producao/fechamento-diario-cron",
+  "/api/producao/fechamento-semanal-cron",
+  "/api/producao/fechamento-mensal-cron",
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[], verFinanceiro = true): boolean {

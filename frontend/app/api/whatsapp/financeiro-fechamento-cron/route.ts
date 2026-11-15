@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { forceFechamentoIfPending } from "@/lib/whatsapp/financeiroFlow"
+import { isWeekendBR } from "@/lib/tz"
 
 // Vercel Cron: 0 23 * * * (20h Brasília = 23h UTC) — prazo combinado: se
 // ninguém respondeu a pergunta de despesa (ou o fluxo ficou parado no meio),
@@ -11,6 +12,8 @@ export async function GET(req: Request) {
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
+  // PIV 14/11: sábado e domingo a SM não trabalha
+  if (isWeekendBR()) return NextResponse.json({ ok: true, pulado: "fim de semana" })
   await forceFechamentoIfPending()
   return NextResponse.json({ ok: true })
 }

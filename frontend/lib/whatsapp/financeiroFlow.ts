@@ -1,8 +1,8 @@
 import { pool } from "@/lib/db"
 import { resolveAdminUser, VARIABLE_COST_CATEGORIES } from "@/lib/whatsapp/adminBot"
 import { sendFinanceiro } from "@/lib/whatsapp/financeiroGroup"
-import { buildFechamentoBlocks, type FechamentoExpense } from "@/lib/reports/fechamentoDiario"
-import { todayBR } from "@/lib/tz"
+import { buildFechamentoBlocks, buildFimDeSemanaBlock, type FechamentoExpense } from "@/lib/reports/fechamentoDiario"
+import { todayBR, subDaysBR } from "@/lib/tz"
 
 // Conversa do grupo Financeiro — pergunta de despesa variável no fim do dia,
 // seguida do fechamento. Diferente do bot administrativo (adminBot.ts), cujo
@@ -38,6 +38,9 @@ async function setFlowState(state: FlowState | null, data: Record<string, unknow
 
 async function runFechamento(expense: FechamentoExpense): Promise<void> {
   const blocks = await buildFechamentoBlocks(todayBR(), expense)
+  // Segunda: o fim de semana não teve fechamento (PIV 14/11), então vem antes do resumo.
+  const diaSemana = new Date(todayBR() + "T12:00:00").getDay()
+  if (diaSemana === 1) blocks.splice(blocks.length - 1, 0, await buildFimDeSemanaBlock(subDaysBR(2), subDaysBR(1)))
   for (const block of blocks) {
     await sendFinanceiro(block)
   }

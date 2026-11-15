@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { askDespesaQuestion } from "@/lib/whatsapp/financeiroFlow"
+import { isWeekendBR } from "@/lib/tz"
 
 // Vercel Cron: 0 22 * * * (19h Brasília = 22h UTC) — pergunta se teve despesa
 // variável hoje no grupo Financeiro. Ver /financeiro-fechamento-cron (~20h)
@@ -9,6 +10,8 @@ export async function GET(req: Request) {
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
+  // PIV 14/11: sábado e domingo a SM não trabalha; a segunda traz o fim de semana à parte
+  if (isWeekendBR()) return NextResponse.json({ ok: true, pulado: "fim de semana" })
   await askDespesaQuestion()
   return NextResponse.json({ ok: true })
 }
