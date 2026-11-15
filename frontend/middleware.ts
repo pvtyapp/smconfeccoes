@@ -33,6 +33,8 @@ const PUBLIC_API_PREFIXES = [
   "/api/portal/",
   "/api/catalogo",
   "/api/products/migrate-images",
+  // Cortador terceirizado lança o corte pelo celular sem login (PIV 14/11) — só esta rota.
+  "/api/cortes/publico",
 ]
 
 function hasPagePermission(pathname: string, isAdmin: boolean, allowedPages: string[], verFinanceiro = true): boolean {

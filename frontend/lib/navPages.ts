@@ -4,7 +4,7 @@ import {
   UserRound, Users, ShoppingBag,
   Receipt, Store, TrendingDown,
   BarChart2, Printer, FlaskConical, FileBarChart, Megaphone, PieChart,
-  Settings, Signal, CalendarDays, ShoppingCart, FileText, ClipboardList, Undo2, LineChart, ClipboardPen,
+  Settings, Signal, CalendarDays, ShoppingCart, FileText, ClipboardList, Undo2, LineChart, ClipboardPen, Scissors,
 } from "lucide-react"
 
 // Lista única das páginas do menu — usada pela Sidebar (renderizar/filtrar), pela tela
@@ -38,6 +38,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: "Estoque", items: [
     { href: "/dashboard/estoque",                 label: "Estoque",            icon: Boxes           },
     { href: "/dashboard/produtos",                label: "Produtos",           icon: Package         },
+    { href: "/dashboard/cortes",                  label: "Cortes",             icon: Scissors        },
     { href: "/dashboard/categorias",              label: "Categorias",         icon: FolderTree      },
   ] },
   { label: "Financeiro", items: [

@@ -8,6 +8,8 @@ import { resolveAdminUser, handleAdminMessage } from "@/lib/whatsapp/adminBot"
 import { withInstance } from "@/lib/whatsapp/instanceContext"
 import { FINANCEIRO_GROUP_JID } from "@/lib/whatsapp/financeiroGroup"
 import { handleFinanceiroGroupMessage } from "@/lib/whatsapp/financeiroFlow"
+import { ADMINISTRATIVO_GROUP_JID } from "@/lib/whatsapp/administrativoGroup"
+import { respostaCorteNoGrupo } from "@/lib/cortes"
 import { findOrCreateOperatorContact } from "@/lib/whatsapp/resolveOperatorContact"
 import { variantesDo9 } from "@/lib/whatsapp/resolveContact"
 import { getProvider } from "@/lib/whatsapp/provider"
@@ -363,6 +365,28 @@ async function handleGroupMessage(msg: Record<string, unknown>, jid: string, key
     ).catch(() => ({ rows: [] as { value: string }[] }))
     const adminInstanceName = adminInstRows[0]?.value
     if (!adminInstanceName || instance !== adminInstanceName) return
+
+    // Grupo SM Administrativo: resposta citando o aviso de um corte ("38,90 1,80 160")
+    // aprova o corte com preço do kg, largura e gramatura (PIV 14/11, lib/cortes.ts).
+    if (jid === ADMINISTRATIVO_GROUP_JID) {
+      const ci = (() => {
+        if (msgObj?.contextInfo) return msgObj.contextInfo as Record<string, unknown>
+        for (const v of Object.values(msgObj ?? {})) {
+          const c = (v as Record<string, unknown> | undefined)?.contextInfo
+          if (c) return c as Record<string, unknown>
+        }
+        return undefined
+      })()
+      const quotedId = (ci?.stanzaId as string) ?? null
+      if (quotedId) {
+        const quem = await resolveAdminUser(senderJid, participantAlt ?? "", { groupJid: jid, instance }).catch(() => null)
+        const consumed = await withInstance(instance, () => respostaCorteNoGrupo(quotedId, content.trim(), quem?.name ?? senderName)).catch(e => {
+          console.error("[webhook] resposta de corte falhou:", e instanceof Error ? e.message : e)
+          return false
+        })
+        if (consumed) return
+      }
+    }
 
     // Grupo Financeiro: canal de avisos automáticos com estado por GRUPO (não
     // por pessoa) — pergunta de despesa variável do fim do dia + fechamento.
