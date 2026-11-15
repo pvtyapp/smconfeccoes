@@ -11,15 +11,19 @@ import { colorSwatch } from "@/lib/colorSwatch"
 type V = { variantId: string; productId: string; productName: string; color: string; size: string; sizeIdx: number; minStock: number; targetStock: number; disponivel: number; vendas30: number }
 type Edit = Record<string, { min: string; alvo: string }>
 
-const arred5 = (n: number) => (n <= 0 ? 0 : Math.ceil(n / 5) * 5)
+// PIV 15/11: números redondos de 10 em 10 (30, 40, 50...)
+const arred10 = (n: number) => (n <= 0 ? 0 : Math.ceil(n / 10) * 10)
+// A SM vende de segunda a sexta: o giro é por dia útil (seg–sex dos últimos 30 dias)
+const DIAS_UTEIS_30 = (() => { let n = 0; for (let i = 0; i < 30; i++) { const d = new Date(Date.now() - i * 864e5).getDay(); if (d >= 1 && d <= 5) n++ } return n })()
+const porDia = (v: { vendas30: number }) => v.vendas30 / DIAS_UTEIS_30
 
 export default function MinimoAlvo() {
   const [vs, setVs] = useState<V[] | null>(null)
   const [erro, setErro] = useState("")
   const [prod, setProd] = useState("")
   const [ed, setEd] = useState<Edit>({})
-  const [diasMin, setDiasMin] = useState("7")
-  const [diasAlvo, setDiasAlvo] = useState("21")
+  const [diasMin, setDiasMin] = useState("2")
+  const [diasAlvo, setDiasAlvo] = useState("5")
   const [salvando, setSalvando] = useState(false)
   const [msg, setMsg] = useState("")
 
@@ -48,12 +52,12 @@ export default function MinimoAlvo() {
     setEd(e => {
       const n = { ...e }
       for (const v of lista) {
-        const dia = v.vendas30 / 30
-        n[v.variantId] = { min: String(arred5(dia * dm)), alvo: String(arred5(dia * da)) }
+        const dia = porDia(v)
+        n[v.variantId] = { min: String(arred10(dia * dm)), alvo: String(arred10(dia * da)) }
       }
       return n
     })
-    setMsg(`Sugestão preenchida pelo giro (mínimo = ${dm} dias de venda, alvo = ${da} dias). Confere e salva.`)
+    setMsg(`Sugestão preenchida pelo giro (mínimo = ${dm} dias úteis de venda, alvo = ${da} dias, de 10 em 10). Confere e salva.`)
   }
   function copiarCor(origem: string) {
     setEd(e => {
@@ -107,12 +111,12 @@ export default function MinimoAlvo() {
 
       <div className="bg-white rounded-2xl border border-[#E3E7EF] p-4 grid gap-3">
         <div className="flex flex-wrap items-end gap-2.5">
-          <label className="grid gap-1 text-xs font-bold text-[#6B7891]">Mínimo = dias de venda<input id="dias-min" inputMode="numeric" value={diasMin} onChange={e => setDiasMin(e.target.value.replace(/\D/g, ""))} className="w-24 h-9 rounded-lg border border-[#E3E7EF] bg-[#EEF1F6] text-center font-bold" /></label>
-          <label className="grid gap-1 text-xs font-bold text-[#6B7891]">Alvo = dias de venda<input id="dias-alvo" inputMode="numeric" value={diasAlvo} onChange={e => setDiasAlvo(e.target.value.replace(/\D/g, ""))} className="w-24 h-9 rounded-lg border border-[#E3E7EF] bg-[#EEF1F6] text-center font-bold" /></label>
+          <label className="grid gap-1 text-xs font-bold text-[#6B7891]">Mínimo = dias úteis de venda<input id="dias-min" inputMode="numeric" value={diasMin} onChange={e => setDiasMin(e.target.value.replace(/\D/g, ""))} className="w-24 h-9 rounded-lg border border-[#E3E7EF] bg-[#EEF1F6] text-center font-bold" /></label>
+          <label className="grid gap-1 text-xs font-bold text-[#6B7891]">Alvo = dias úteis de venda<input id="dias-alvo" inputMode="numeric" value={diasAlvo} onChange={e => setDiasAlvo(e.target.value.replace(/\D/g, ""))} className="w-24 h-9 rounded-lg border border-[#E3E7EF] bg-[#EEF1F6] text-center font-bold" /></label>
           <button onClick={() => sugerir(doProd)} className="flex items-center gap-1.5 h-9 rounded-xl bg-[#4361EE] text-white px-3 text-[13px] font-bold"><Wand2 size={14} />Sugerir pelo giro: {prod}</button>
           <button onClick={() => sugerir(vs)} className="flex items-center gap-1.5 h-9 rounded-xl border border-[#4361EE] text-[#4361EE] px-3 text-[13px] font-bold"><Wand2 size={14} />Sugerir em todos os produtos</button>
         </div>
-        <p className="text-xs text-[#6B7891]">O giro usa as saídas dos últimos 30 dias de cada cor e tamanho, arredondado pra cima de 5 em 5. Item que não vendeu fica sem mínimo.</p>
+        <p className="text-xs text-[#6B7891]">O giro usa as vendas dos últimos 30 dias de cada cor e tamanho (balcão, site, WhatsApp e marketplace; ajuste de estoque não conta), por dia útil, arredondado pra cima de 10 em 10. Item que não vendeu fica sem mínimo.</p>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
@@ -145,7 +149,7 @@ export default function MinimoAlvo() {
                           <input id={`min-${v.variantId}`} aria-label={`Mínimo ${c} ${t}`} inputMode="numeric" placeholder="mín" value={x.min} onChange={e => set(v, "min", e.target.value)} className={inp} />
                           <input id={`alvo-${v.variantId}`} aria-label={`Alvo ${c} ${t}`} inputMode="numeric" placeholder="alvo" value={x.alvo} onChange={e => set(v, "alvo", e.target.value)} className={inp + " bg-[#EEF1F6]"} />
                         </div>
-                        <small className={"block text-center text-[11px] mt-0.5 tabular-nums " + (baixo ? "text-[#C62828] font-bold" : "text-[#6B7891]")}>tem {v.disponivel} · vende {Math.round(v.vendas30 / 30 * 10) / 10}/dia</small>
+                        <small className={"block text-center text-[11px] mt-0.5 tabular-nums " + (baixo ? "text-[#C62828] font-bold" : "text-[#6B7891]")}>tem {v.disponivel} · vende {Math.round(porDia(v) * 10) / 10}/dia</small>
                       </td>
                     )
                   })}

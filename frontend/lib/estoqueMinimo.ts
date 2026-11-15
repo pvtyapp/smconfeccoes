@@ -24,7 +24,8 @@ export async function saldosVariantes(): Promise<VarianteSaldo[]> {
       LEFT JOIN (SELECT variant_id, SUM(CASE WHEN type='in' THEN quantity ELSE -quantity END) AS qty
                    FROM stock_movements GROUP BY variant_id) bal ON bal.variant_id = pv.id
       LEFT JOIN (SELECT variant_id, SUM(quantity) AS qty FROM stock_movements
-                  WHERE type='out' AND created_at >= NOW() - INTERVAL '30 days' GROUP BY variant_id) s30 ON s30.variant_id = pv.id
+                  -- só venda: ajuste de estoque ("manutencao", ex.: -371 numa atualização) não é giro
+                  WHERE type='out' AND reason <> 'manutencao' AND created_at >= NOW() - INTERVAL '30 days' GROUP BY variant_id) s30 ON s30.variant_id = pv.id
       LEFT JOIN (SELECT oi.variant_id, SUM(oi.qty) AS qty FROM order_items oi JOIN orders o ON o.id = oi.order_id
                   WHERE o.status IN ('triagem','em_separacao','pronto') AND oi.variant_id IS NOT NULL
                   GROUP BY oi.variant_id) locked ON locked.variant_id = pv.id
