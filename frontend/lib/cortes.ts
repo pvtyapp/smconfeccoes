@@ -198,9 +198,10 @@ export async function aprovarCorte(id: number, malha: MalhaCorte, quem: string |
   return aprovado
 }
 
-export async function cancelarCorte(id: number): Promise<void> {
+// teste=true (só quem está logado, pela rota) tira da lista mesmo já aprovado
+export async function cancelarCorte(id: number, opts: { teste?: boolean } = {}): Promise<void> {
   await ensureCortes()
-  await pool.query(`UPDATE cortes SET status='cancelado' WHERE id=$1 AND status='esperando'`, [id])
+  await pool.query(`UPDATE cortes SET status='cancelado' WHERE id=$1 AND (status='esperando' OR $2)`, [id, !!opts.teste])
 }
 
 // Resposta no grupo SM Administrativo citando o aviso do corte: "38,90 1,80 160".

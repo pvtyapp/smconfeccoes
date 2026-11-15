@@ -14,7 +14,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   try {
     if (body.acao === "cancelar") {
-      await cancelarCorte(Number(id))
+      await cancelarCorte(Number(id), { teste: body.teste === true })
       return NextResponse.json({ ok: true })
     }
     const pos = (v: unknown) => { const n = lerDecimal(v as string); return n > 0 ? n : null }
