@@ -189,7 +189,7 @@ export async function mensagemDiaria(data: string): Promise<string> {
   }
   out.push("", `💰 *Costura*: ${brl(custoDia)} hoje${pecas ? ` ÷ ${n0(pecas)} peças = *${brl(custoDia / pecas)} por peça*` : ""}`)
   if (pecasMes) out.push(`Média do mês até hoje: *${brl(custoMes / pecasMes)} por peça* (${n0(pecasMes)} peças)`)
-  if (pecas && g.length > 1) {
+  if (pecas && g.length > 1 && pesos.ok) {   // com todos 1x a linha só repetiria o mesmo valor
     const qHoje = Object.fromEntries(g.map(([p, x]) => [p, x.qtd]))
     const r = rateioCostura(qHoje, custoDia, pesos)
     out.push(`Por produto hoje: ${g.map(([p]) => `${p} ${brl(r[p])}`).join(" · ")}`)
@@ -220,10 +220,18 @@ export async function mensagemPeriodo(tipo: "semanal" | "mensal", de: string, at
   const cpp = custo / pecas, cppAnt = pecasAnt ? custoAnt / pecasAnt : null
   out.push(`Entraram *${n0(pecas)} peças*${pecasAnt ? ` (${pct(pecas / pecasAnt - 1)} vs ${nomeAnt}: ${n0(pecasAnt)})` : ""}`)
   out.push(`💰 Costura: ${brl(custo)} ÷ ${n0(pecas)} = *${brl(cpp)} por peça*${cppAnt ? ` (${pct(cpp / cppAnt - 1)} vs ${brl(cppAnt)})` : ""}`)
-  out.push("", "*Por produto* (peças · costura por peça)")
-  for (const [p, x] of g) {
-    const a = ratAnt[p]
-    out.push(`• ${p}: *${n0(x.qtd)}* · ${brl(rat[p])}${a ? ` (${pct(rat[p] / a - 1)})` : ""}`)
+  if (pesos.ok) {
+    out.push("", "*Por produto* (peças · costura por peça)")
+    for (const [p, x] of g) {
+      const a = ratAnt[p]
+      out.push(`• ${p}: *${n0(x.qtd)}* · ${brl(rat[p])}${a ? ` (${pct(rat[p] / a - 1)})` : ""}`)
+    }
+  } else {
+    out.push("", `*Por produto* (peças · vs ${nomeAnt})`)
+    for (const [p, x] of g) {
+      const a = qtdAnt[p]
+      out.push(`• ${p}: *${n0(x.qtd)}*${a ? ` (${pct(x.qtd / a - 1)})` : " (novo)"}`)
+    }
   }
   // dia a dia (semanal) / melhor e pior dia (mensal)
   const porDia: Record<string, number> = {}; for (const e of es) porDia[e.data] = (porDia[e.data] ?? 0) + e.qtd
