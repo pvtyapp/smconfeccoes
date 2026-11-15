@@ -6,7 +6,7 @@ import { pool } from "@/lib/db"
 import { sendWhatsApp } from "@/lib/whatsapp/send"
 import { getAdminInstanceName } from "@/lib/whatsapp/adminInstance"
 import { ADMINISTRATIVO_GROUP_JID } from "@/lib/whatsapp/administrativoGroup"
-import { calcularCorte, codigoCorte, kgDaCor, pecasDaCor, r2, type CorCorte, type MalhaCorte } from "@/lib/cortesCalc"
+import { aprenderProporcao, calcularCorte, codigoCorte, desperdicio, kgDaCor, pecasDaCor, porTamanho, r2, type CorCorte, type MalhaCorte, type Proporcao } from "@/lib/cortesCalc"
 
 const SITE = "https://smconfeccoes.com.br"
 
@@ -87,10 +87,39 @@ export async function listarCortes(limite = 100): Promise<Corte[]> {
   return rows.map(deRow)
 }
 
+export async function historicoCortes(de: string, ate: string): Promise<Corte[]> {
+  await ensureCortes()
+  const { rows } = await pool.query(
+    `SELECT * FROM cortes WHERE status = 'aprovado'
+        AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1::date AND $2::date
+      ORDER BY created_at`, [de, ate])
+  return rows.map(deRow)
+}
+
 export async function buscarCorte(id: number): Promise<Corte | null> {
   await ensureCortes()
   const { rows } = await pool.query(`SELECT * FROM cortes WHERE id = $1`, [id])
   return rows[0] ? deRow(rows[0]) : null
+}
+
+// ── proporção por tamanho (custo por tamanho e alerta de desperdício) ──
+// Só cortes aprovados dos últimos 6 meses (PIV 14/11): molde mudou, a conta se ajusta sozinha.
+export async function proporcoes(ate?: string): Promise<Record<string, Proporcao & { sizes: string[] }>> {
+  await ensureCortes()
+  const { rows } = await pool.query(
+    `SELECT product_name, sizes, cores FROM cortes
+      WHERE status = 'aprovado'
+        AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date
+            BETWEEN COALESCE($1::date, (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) - 180
+                AND COALESCE($1::date, (NOW() AT TIME ZONE 'America/Sao_Paulo')::date)`,
+    [ate ?? null]
+  )
+  const porProd: Record<string, { sizes: string[]; linhas: { grade: Record<string, number>; kg: number }[] }> = {}
+  for (const r of rows) {
+    const x = porProd[r.product_name] ??= { sizes: r.sizes ?? [], linhas: [] }
+    for (const c of (r.cores as CorCorte[]) ?? []) x.linhas.push({ grade: c.grade, kg: kgDaCor(c) })
+  }
+  return Object.fromEntries(Object.entries(porProd).map(([p, x]) => [p, { ...aprenderProporcao(x.linhas, x.sizes), sizes: x.sizes }]))
 }
 
 // ── mensagens ───────────────────────────────────────────────
@@ -98,19 +127,23 @@ const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", curren
 const dec = (v: number, d = 1) => v.toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d })
 const quando = (iso: string) => new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", " ·")
 
-export function mensagemCorteNovo(c: Corte): string {
+export function mensagemCorteNovo(c: Corte, prop?: Proporcao | null): string {
   const pecas = c.cores.reduce((s, x) => s + pecasDaCor(x), 0)
   const kg = c.cores.reduce((s, x) => s + kgDaCor(x), 0)
   const linhas = c.cores.map(x =>
     `${x.cor}: ${c.sizes.filter(t => (x.grade[t] ?? 0) > 0).map(t => `${t} ${x.grade[t]}`).join(" · ")} = *${pecasDaCor(x)}* · ${dec(kgDaCor(x))} kg (${x.bobinas.length} bob.)`
   ).join("\n")
+  const d = desperdicio(c.cores, prop)
+  const alerta = d?.alto
+    ? `\n\n⚠️ Gastou *${dec(d.excesso)} kg a mais* que o normal pra essa grade (${dec(d.pct * 100, 0)}% acima; o normal seria ${dec(d.esperado)} kg). Vale perguntar pro cortador se teve defeito na bobina.`
+    : ""
   return `✂️ *Corte novo ${c.codigo}*\n${c.cortador} · ${quando(c.createdAt)}\n\n` +
-    `*${c.productName}*: ${pecas} peças · ${dec(kg)} kg de malha\n${linhas}\n\n` +
+    `*${c.productName}*: ${pecas} peças · ${dec(kg)} kg de malha\n${linhas}${alerta}\n\n` +
     `💰 Falta o preço da malha. Abre pra aprovar:\n${SITE}/dashboard/cortes?c=${c.id}\n\n` +
     `Ou responde *esta mensagem* assim:\n*38,90 1,80 160*\n(preço do kg · largura em metros · gramatura)`
 }
 
-export function mensagemCorteAprovado(c: Corte): string {
+export function mensagemCorteAprovado(c: Corte, prop?: Proporcao | null): string {
   const ct = calcularCorte(c.cores, c.malha)
   const m = c.malha
   const porCor = ct.linhas.length > 1 ? "\n" + ct.linhas.map(l => `${l.cor}: ${l.porPeca != null ? brl(l.porPeca) : "–"}`).join("\n") : ""
@@ -118,7 +151,25 @@ export function mensagemCorteAprovado(c: Corte): string {
     `${c.productName}: ${ct.porPeca != null ? brl(ct.porPeca) : "–"} por peça (tecido${m.maoCorte ? " + corte" : ""})${porCor}\n` +
     `${ct.pecas} peças · ${dec(ct.kg)} kg · malha ${ct.tecido != null ? brl(ct.tecido) : "–"}\n` +
     `Malha: ${m.porCor ? "preço por cor" : brl(m.precoKg ?? 0) + "/kg"} · ${dec(m.largura ?? 0, 2)} m · ${dec(m.gramatura ?? 0, 0)} g/m²` +
-    (ct.metros != null ? ` · ${dec(ct.metros)} m de malha` : "")
+    (ct.metros != null ? ` · ${dec(ct.metros)} m de malha` : "") +
+    linhaTamanhos(c, ct.linhas.map(l => l.tecido ?? 0), prop) + linhaDesperdicio(c, prop, ct.kg ? (ct.tecido ?? 0) / ct.kg : 0)
+}
+
+// "P R$ 7,22 · M R$ 7,73 · ..." = média do corte por tamanho (todas as cores)
+function linhaTamanhos(c: Corte, tecidoPorCor: number[], prop?: Proporcao | null): string {
+  if (!prop?.ok) return ""
+  const soma: Record<string, { v: number; q: number }> = {}
+  c.cores.forEach((cor, i) => {
+    const pt = porTamanho(cor.grade, tecidoPorCor[i], prop.w)
+    for (const [t, v] of Object.entries(pt)) { const x = soma[t] ??= { v: 0, q: 0 }; x.v += v * cor.grade[t]; x.q += cor.grade[t] }
+  })
+  const mao = c.malha.maoCorte || 0
+  const txt = c.sizes.filter(t => soma[t]?.q).map(t => `${t} ${brl(soma[t].v / soma[t].q + mao)}`).join(" · ")
+  return txt ? `\n📏 Por tamanho: ${txt}` : ""
+}
+function linhaDesperdicio(c: Corte, prop: Proporcao | null | undefined, rsKg: number): string {
+  const d = desperdicio(c.cores, prop)
+  return d?.alto ? `\n⚠️ ${dec(d.excesso)} kg acima do normal pra essa grade (~${brl(d.excesso * rsKg)})` : ""
 }
 
 async function mandarNoGrupo(texto: string): Promise<string | null> {
@@ -158,10 +209,9 @@ export async function criarCorte(entrada: { cortador: string; productId: string;
     }
     const bobinas = (c.bobinas ?? []).map(Number).filter(v => Number.isFinite(v) && v > 0)
     if (!bobinas.length || bobinas.length > 60 || bobinas.some(v => v > 300)) throw new Error(`Peso das bobinas inválido em ${c.cor}`)
-    const sobra = Math.max(0, Number(c.sobra) || 0)
-    const cor = { cor: c.cor, grade, bobinas: bobinas.map(v => Math.round(v * 100) / 100), sobra: Math.round(sobra * 100) / 100 }
+    // sobra não entra: já está no custo da bobina (PIV 14/11)
+    const cor = { cor: c.cor, grade, bobinas: bobinas.map(v => Math.round(v * 100) / 100), sobra: 0 }
     if (pecasDaCor(cor) <= 0) throw new Error(`Falta a grade de ${c.cor}`)
-    if (kgDaCor(cor) <= 0) throw new Error(`A sobra de ${c.cor} ficou maior que as bobinas`)
     return cor
   })
 
@@ -171,7 +221,8 @@ export async function criarCorte(entrada: { cortador: string; productId: string;
   )
   const corte = deRow(rows[0])
   if (opts.silencioso) return corte   // teste feito por quem está logado no painel: não avisa o grupo
-  const msgId = await mandarNoGrupo(mensagemCorteNovo(corte))
+  const prop = (await proporcoes().catch(() => ({} as Record<string, Proporcao>)))[corte.productName]
+  const msgId = await mandarNoGrupo(mensagemCorteNovo(corte, prop))
   if (msgId) await pool.query(`UPDATE cortes SET wa_message_id = $1 WHERE id = $2`, [msgId, corte.id])
   return corte
 }
@@ -194,7 +245,14 @@ export async function aprovarCorte(id: number, malha: MalhaCorte, quem: string |
   )
   if (!rows[0]) throw new Error(`${c.codigo} já foi aprovado`)
   const aprovado = deRow(rows[0])
-  if (!opts.silencioso) await mandarNoGrupo(mensagemCorteAprovado(aprovado))
+  if (!opts.silencioso) {
+    // proporção sem o próprio corte (ele acabou de virar aprovado)
+    const { rows: outros } = await pool.query(
+      `SELECT cores FROM cortes WHERE status='aprovado' AND product_name=$1 AND id<>$2 AND created_at >= NOW() - INTERVAL '180 days'`,
+      [aprovado.productName, aprovado.id])
+    const linhas = outros.flatMap(r => ((r.cores as CorCorte[]) ?? []).map(x => ({ grade: x.grade, kg: kgDaCor(x) })))
+    await mandarNoGrupo(mensagemCorteAprovado(aprovado, aprenderProporcao(linhas, aprovado.sizes)))
+  }
   return aprovado
 }
 

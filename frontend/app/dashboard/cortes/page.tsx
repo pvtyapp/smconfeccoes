@@ -7,7 +7,8 @@ import { Suspense, useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2, Copy, Check } from "lucide-react"
 import { colorSwatch } from "@/lib/colorSwatch"
-import { calcularCorte, lerDecimal, type CorCorte, type MalhaCorte } from "@/lib/cortesCalc"
+import { calcularCorte, desperdicio, lerDecimal, porTamanho, type CorCorte, type MalhaCorte, type Proporcao } from "@/lib/cortesCalc"
+import Historico from "./Historico"
 
 type Corte = {
   id: number; codigo: string; cortador: string; productName: string; sizes: string[]; cores: CorCorte[]
@@ -68,12 +69,15 @@ function Tela() {
   const [salvando, setSalvando] = useState(false)
   const [msg, setMsg] = useState("")
   const [copiado, setCopiado] = useState(false)
+  const [props, setProps] = useState<Record<string, Proporcao>>({})
+  const [aba, setAba] = useState<"aprovacao" | "historico">(sp.get("aba") === "historico" ? "historico" : "aprovacao")
 
   async function carregar(manter?: number) {
     try {
       const r = await fetch("/api/cortes"); const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? "Erro")
       setCortes(d.cortes)
+      setProps(d.proporcoes ?? {})
       const want = manter ?? Number(sp.get("c")) ?? null
       const alvo = (d.cortes as Corte[]).find(c => c.id === want) ?? (d.cortes as Corte[]).find(c => c.status === "esperando") ?? d.cortes[0]
       if (alvo) { setSel(alvo.id); setForm(formDe(alvo)) }
@@ -84,6 +88,8 @@ function Tela() {
   const k = cortes?.find(c => c.id === sel) ?? null
   const malha = useMemo(() => (k && form ? (k.status === "aprovado" ? k.malha : malhaDe(form)) : null), [k, form])
   const ct = k && malha ? calcularCorte(k.cores, malha) : null
+  const prop = k ? props[k.productName] : undefined
+  const desp = k ? desperdicio(k.cores, prop) : null
   const ap = k?.status === "aprovado"
   const set = (p: Partial<Form>) => setForm(f => (f ? { ...f, ...p } : f))
 
@@ -115,6 +121,12 @@ function Tela() {
         <div>
           <h1 className="text-2xl font-black" style={{ fontFamily: "var(--font-playfair)" }}>Cortes</h1>
           <p className="text-sm text-[#6B7891] mt-1">O cortador lança pelo celular, aqui entra o preço da malha e sai o custo por peça.</p>
+          <div className="flex gap-1.5 mt-3">
+            {([["aprovacao", "Aprovação"], ["historico", "Histórico de custo"]] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setAba(k)}
+                className={"rounded-full border px-3.5 py-1.5 text-[13px] font-bold " + (aba === k ? "bg-[#0F1E3C] text-white border-[#0F1E3C]" : "bg-white text-[#6B7891] border-[#E3E7EF]")}>{l}</button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-2 text-sm bg-white border border-[#E3E7EF] rounded-xl pl-3 pr-1.5 py-1.5">
           <span className="text-[#6B7891]">Link do cortador:</span><b className="select-all">{LINK.replace("https://", "")}</b>
@@ -124,13 +136,14 @@ function Tela() {
         </div>
       </div>
 
-      {erro && <p className="text-[#C62828] font-bold">{erro}</p>}
-      {!cortes && !erro && <p className="flex items-center gap-2 text-[#6B7891]"><Loader2 className="animate-spin" size={16} /> Carregando…</p>}
-      {cortes && cortes.length === 0 && (
+      {aba === "historico" && <Historico />}
+      {aba === "aprovacao" && erro && <p className="text-[#C62828] font-bold">{erro}</p>}
+      {aba === "aprovacao" && !cortes && !erro && <p className="flex items-center gap-2 text-[#6B7891]"><Loader2 className="animate-spin" size={16} /> Carregando…</p>}
+      {aba === "aprovacao" && cortes && cortes.length === 0 && (
         <div className={card + " p-6 text-[#6B7891]"}>Nenhum corte ainda. Manda o link <b className="text-[#0F1E3C]">{LINK.replace("https://", "")}</b> pro cortador: quando ele enviar, o grupo SM Administrativo recebe o aviso e o corte aparece aqui.</div>
       )}
 
-      {cortes && cortes.length > 0 && (
+      {aba === "aprovacao" && cortes && cortes.length > 0 && (
         <div className="grid gap-5 lg:grid-cols-[300px_minmax(0,1fr)] items-start">
           <aside className={card + " overflow-hidden"}>
             <h3 className="px-4 py-3.5 text-[11px] font-extrabold uppercase tracking-widest text-[#6B7891] border-b border-[#E3E7EF]">Cortes</h3>
@@ -161,7 +174,7 @@ function Tela() {
                 <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-[#6B7891]">O que foi cortado</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
-                    <thead><tr className="border-b border-[#E3E7EF]"><th className={th}>Cor</th>{k.sizes.map(t => <th key={t} className={th}>{t}</th>)}<th className={th}>Peças</th><th className={th}>Bobinas</th><th className={th}>Sobra</th><th className={th}>Kg usado</th><th className={th}>Kg/peça</th></tr></thead>
+                    <thead><tr className="border-b border-[#E3E7EF]"><th className={th}>Cor</th>{k.sizes.map(t => <th key={t} className={th}>{t}</th>)}<th className={th}>Peças</th><th className={th}>Bobinas</th><th className={th}>Kg</th><th className={th}>Kg/peça</th></tr></thead>
                     <tbody>
                       {ct.linhas.map((l, i) => {
                         const c = k.cores[i]
@@ -171,18 +184,17 @@ function Tela() {
                             {k.sizes.map(t => <td key={t} className={td}>{c.grade[t] ?? 0}</td>)}
                             <td className={td + " font-extrabold"}>{l.pecas}</td>
                             <td className={td}>{c.bobinas.map(b => dec(b)).join(" + ")}</td>
-                            <td className={td}>{c.sobra ? dec(c.sobra) : "–"}</td>
                             <td className={td}>{dec(l.kg)}</td>
                             <td className={td}>{dec(l.kgPeca, 3)}</td>
                           </tr>
                         )
                       })}
                     </tbody>
-                    <tfoot><tr className="border-t-2 border-[#E3E7EF] font-extrabold"><td className={td}>Total</td>{k.sizes.map(t => <td key={t} className={td}>{k.cores.reduce((s, c) => s + (c.grade[t] ?? 0), 0)}</td>)}<td className={td}>{ct.pecas}</td><td className={td} /><td className={td} /><td className={td}>{dec(ct.kg)}</td><td className={td}>{dec(ct.pecas ? ct.kg / ct.pecas : 0, 3)}</td></tr></tfoot>
+                    <tfoot><tr className="border-t-2 border-[#E3E7EF] font-extrabold"><td className={td}>Total</td>{k.sizes.map(t => <td key={t} className={td}>{k.cores.reduce((s, c) => s + (c.grade[t] ?? 0), 0)}</td>)}<td className={td}>{ct.pecas}</td><td className={td} /><td className={td}>{dec(ct.kg)}</td><td className={td}>{dec(ct.pecas ? ct.kg / ct.pecas : 0, 3)}</td></tr></tfoot>
                   </table>
                 </div>
-                {ct.gastoAlto.length > 0 && (
-                  <div className="rounded-xl bg-[#FFF4DC] px-3.5 py-3 text-sm">⚠️ <b className="text-[#B06A00]">{ct.gastoAlto.join(", ")}</b> gastou mais de 15% de malha por peça acima da média do corte. Vale perguntar pro cortador se a bobina tinha defeito ou se faltou pesar a sobra.</div>
+                {desp?.alto && (
+                  <div className="rounded-xl bg-[#FFF4DC] px-3.5 py-3 text-sm">⚠️ Gastou <b className="text-[#B06A00]">{dec(desp.excesso)} kg a mais</b> que o normal pra essa grade ({dec(desp.pct * 100, 0)}% acima: o normal seria {dec(desp.esperado)} kg{ct.tecido != null && ct.kg ? `, uns ${brl(desp.excesso * ct.tecido / ct.kg)}` : ""}). Vale perguntar pro cortador se teve defeito na bobina.</div>
                 )}
               </div>
 
@@ -232,7 +244,31 @@ function Tela() {
                   </div>
                 </div>
               )}
-              <p className="text-xs text-[#6B7891]">É a média da grade: G e GG gastam mais malha que P, mas o custo sai igual pra todas. Só tecido{malha?.maoCorte ? " e corte" : ""}, sem costura e estampa.</p>
+              {ct.porPeca != null && (
+                <div className={card + " p-4 grid gap-3 min-w-0"}>
+                  <h3 className="text-[11px] font-extrabold uppercase tracking-widest text-[#6B7891]">Custo por tamanho</h3>
+                  {prop?.ok ? (<>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border-collapse">
+                        <thead><tr className="border-b border-[#E3E7EF]"><th className={th}>Cor</th>{k.sizes.map(t => <th key={t} className={th}>{t}</th>)}</tr></thead>
+                        <tbody>{ct.linhas.map((l, i) => {
+                          const pt = porTamanho(k.cores[i].grade, l.tecido ?? 0, prop.w)
+                          return (
+                            <tr key={l.cor} className="border-b border-[#E3E7EF] last:border-0">
+                              <td className={td}><span className="flex items-center gap-2 font-bold"><Bola cor={l.cor} />{l.cor}</span></td>
+                              {k.sizes.map(t => <td key={t} className={td}>{pt[t] != null ? brl(pt[t] + (malha?.maoCorte || 0)) : "–"}</td>)}
+                            </tr>
+                          )
+                        })}</tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-[#6B7891]">Proporção usada (parte de ~9% a mais por tamanho e vai se ajustando com os cortes; já conta {prop.n} cortes de {k.productName} dos últimos 6 meses): {k.sizes.map(t => `${t} ${dec((prop.w[t] ?? 0) * 1000, 0)} g`).join(" · ")} de malha por peça. Quanto mais cortes, mais certo fica.</p>
+                  </>) : (
+                    <p className="text-sm text-[#6B7891]">Ainda não tem cortes aprovados suficientes de {k.productName} pra achar quanto cada tamanho gasta (precisa de 3 com grades diferentes). Até lá vale a média da grade.</p>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-[#6B7891]">Média de todas as peças do corte; o custo de cada tamanho está acima. Só tecido{malha?.maoCorte ? " e corte" : ""}, sem costura e estampa.</p>
 
               {msg && <div className={"rounded-xl px-3.5 py-3 font-bold text-sm " + (/^(Aprovado|Corte cancelado)/.test(msg) ? "bg-[#E0F5EF]" : "bg-[#FFF4DC]")}>{msg}</div>}
               {ap ? (

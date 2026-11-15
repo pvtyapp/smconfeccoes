@@ -27,7 +27,7 @@ export default function CortePage() {
   const [corAtiva, setCorAtiva] = useState("")
   const [grade, setGrade] = useState<Record<string, Record<string, number>>>({})
   const [bob, setBob] = useState<Record<string, number[]>>({})
-  const [sobra, setSobra] = useState<Record<string, number>>({})
+
   const [kgDigitado, setKgDigitado] = useState<Record<string, string>>({})
   const [kgErro, setKgErro] = useState<string>("")
   const [enviando, setEnviando] = useState(false)
@@ -42,12 +42,12 @@ export default function CortePage() {
   }, [])
 
   const P = useMemo(() => produtos?.find(p => p.id === prodId) ?? null, [produtos, prodId])
-  const linha = (c: string): CorCorte => ({ cor: c, grade: grade[c] ?? {}, bobinas: bob[c] ?? [], sobra: sobra[c] ?? 0 })
+  const linha = (c: string): CorCorte => ({ cor: c, grade: grade[c] ?? {}, bobinas: bob[c] ?? [], sobra: 0 })
   const pecas = (c: string) => pecasDaCor(linha(c))
   const kgLiq = (c: string) => kgDaCor(linha(c))
 
   function escolheProduto(id: string) {
-    if (id !== prodId) { setProdId(id); setCores([]); setGrade({}); setBob({}); setSobra({}) }
+    if (id !== prodId) { setProdId(id); setCores([]); setGrade({}); setBob({}) }
   }
   function alternaCor(c: string) {
     setCores(cs => cs.includes(c) ? cs.filter(x => x !== c) : [...cs, c])
@@ -87,7 +87,7 @@ export default function CortePage() {
     } finally { setEnviando(false) }
   }
 
-  function novo() { setPasso(0); setProdId(""); setCores([]); setGrade({}); setBob({}); setSobra({}); setCodigo("") }
+  function novo() { setPasso(0); setProdId(""); setCores([]); setGrade({}); setBob({}); setCodigo("") }
 
   const podeIr =
     passo === 0 ? !!P && nome.trim().length > 1 :
@@ -219,14 +219,8 @@ export default function CortePage() {
                   <button onClick={() => addBobina(c)} className="h-[50px] px-4 rounded-2xl font-extrabold text-white" style={{ background: NAVY }}>Adicionar</button>
                 </div>
                 {kgErro === c && <p className="text-[13px] font-bold text-[#C77700] -mt-1">Digita o peso da bobina, ex: 13,8</p>}
-                <label className="flex items-center gap-2 text-[13px] text-[#6B7891]">
-                  Sobrou pedaço?
-                  <input id={`sb-${c}`} inputMode="decimal" placeholder="0,0" defaultValue={sobra[c] ? dec(sobra[c]) : ""}
-                    onBlur={e => { const v = lerDecimal(e.target.value); setSobra(s => ({ ...s, [c]: v > 0 ? Math.round(v * 10) / 10 : 0 })) }}
-                    className="w-[84px] h-9 rounded-lg border border-[#E3E7EF] bg-[#EEF1F6] text-center font-bold tabular-nums" /> kg
-                </label>
                 <div className="flex justify-between text-[13px] border-t border-dashed border-[#E3E7EF] pt-2">
-                  <span>Usado no corte</span><b className="text-[15px] tabular-nums">{dec(kgLiq(c))} kg</b>
+                  <span>Total das bobinas</span><b className="text-[15px] tabular-nums">{dec(kgLiq(c))} kg</b>
                 </div>
               </div>
             ))}
