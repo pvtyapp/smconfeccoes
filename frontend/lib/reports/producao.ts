@@ -230,7 +230,7 @@ export async function mensagemPeriodo(tipo: "semanal" | "mensal", de: string, at
     out.push("", `*Por produto* (peças · vs ${nomeAnt})`)
     for (const [p, x] of g) {
       const a = qtdAnt[p]
-      out.push(`• ${p}: *${n0(x.qtd)}*${a ? ` (${pct(x.qtd / a - 1)})` : " (novo)"}`)
+      out.push(`• ${p}: *${n0(x.qtd)}*${a ? ` (${pct(x.qtd / a - 1)})` : ` (não entrou na ${nomeAnt})`}`)
     }
   }
   // dia a dia (semanal) / melhor e pior dia (mensal)
